@@ -32,7 +32,7 @@ jobs:
           repository: OpenXPlay/OpenXPlay-Stream
           path: OpenXPlay-Stream
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy && rustup default 1.99.1
       - name: Fetch dependencies
         run: cargo fetch --locked
       - name: Test

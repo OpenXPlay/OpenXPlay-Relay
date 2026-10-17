@@ -150,7 +150,9 @@ impl SynchronizationPayload {
             max_retransmissions: b[8],
             max_acknowledgements: b[9],
             sessions: b[10..]
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|s| SessionDescriptor {
                     id: s[0],
                     kind: s[1],

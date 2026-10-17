@@ -163,8 +163,10 @@ impl Iap2WireCodec {
             )));
         }
         Ok(bytes
-            .chunks_exact(2)
-            .map(|v| u16::from_be_bytes([v[0], v[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&v| u16::from_be_bytes(v))
             .collect())
     }
 

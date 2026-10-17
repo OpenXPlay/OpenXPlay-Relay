@@ -218,8 +218,8 @@ impl LinuxBluetooth {
     pub fn devices(&self) -> Result<Vec<BondedDevice>> {
         let c = Connection::system().map_err(err)?;
         Ok(objects(&c)?
-            .into_iter()
-            .filter_map(|(_, mut interfaces)| {
+            .into_values()
+            .filter_map(|mut interfaces| {
                 let p = interfaces.remove("org.bluez.Device1")?;
                 let class = p
                     .get("Class")

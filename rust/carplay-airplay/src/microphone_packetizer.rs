@@ -140,7 +140,7 @@ impl MicrophonePacketizer {
 
     pub fn to_wire_pcm(pcm_little_endian: &[u8]) -> Result<Vec<u8>> {
         let mut output = pcm_little_endian.to_vec();
-        for pair in output.chunks_exact_mut(2) {
+        for pair in output.as_chunks_mut::<2>().0 {
             pair.swap(0, 1);
         }
         Ok(output)

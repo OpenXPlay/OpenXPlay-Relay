@@ -71,7 +71,7 @@ impl MicrophoneFrames {
                 .unwrap_or_else(|| Ok(Vec::new()));
         }
         let mono = mono.unwrap_or_else(|| vec![0; self.config.sample_rate as usize / 50 * 2]);
-        for sample in mono.chunks_exact(2) {
+        for sample in mono.as_chunks::<2>().0 {
             for _ in 0..self.config.channels {
                 s.pending.extend_from_slice(sample);
             }

@@ -263,8 +263,10 @@ impl BplistCodec {
                     ),
                     6 => BplistValue::String(String::from_utf16_lossy(
                         &data
-                            .chunks_exact(2)
-                            .map(|p| u16::from_be_bytes([p[0], p[1]]))
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|&p| u16::from_be_bytes(p))
                             .collect::<Vec<_>>(),
                     )),
                     10 | 12 => {

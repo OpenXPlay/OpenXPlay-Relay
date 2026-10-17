@@ -360,11 +360,9 @@ pub fn identification_rejection(frame: &Iap2Frame) -> Result<Iap2IdentificationR
             } else if p.payload.len() % 2 != 0 {
                 result.malformed_payload_count += 1;
             } else {
-                for pair in p.payload.chunks_exact(2) {
+                for &pair in p.payload.as_chunks::<2>().0 {
                     if result.message_ids.len() < 32 {
-                        result
-                            .message_ids
-                            .push(u16::from_be_bytes([pair[0], pair[1]]));
+                        result.message_ids.push(u16::from_be_bytes(pair));
                     } else {
                         result.omitted_message_count += 1;
                     }

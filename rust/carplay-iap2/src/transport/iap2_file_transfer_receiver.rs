@@ -103,14 +103,12 @@ impl Iap2FileTransferReceiver {
                     }
                 }
             }
-            2 => {
-                if self.pending.iter().any(|p| p.0 == id) {
-                    self.pending.retain(|p| p.0 != id);
-                    out.transfer = Some(Iap2ArtworkTransfer {
-                        id,
-                        bytes: Vec::new(),
-                    });
-                }
+            2 if self.pending.iter().any(|p| p.0 == id) => {
+                self.pending.retain(|p| p.0 != id);
+                out.transfer = Some(Iap2ArtworkTransfer {
+                    id,
+                    bytes: Vec::new(),
+                });
             }
             _ => {}
         }

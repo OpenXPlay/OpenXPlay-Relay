@@ -147,16 +147,14 @@ impl StreamReceiveStats {
     }
     fn line(&self, s: &State, now: u64, ended: bool) -> String {
         let mut line = format!("Receive: {} packets={} bytes={} readMaxMs={} processMaxUs={} seqForwardGaps={} lateOrDuplicate={} interArrivalMaxMs={} seqGapEvents={} seqGapMax={} seqGapLast=[{}] seqGapAtMs={} ended={} windowMs={} readsOver250Ms={} seqGapAfterReadOver250Ms={} seqMissingAfterReadOver250Ms={}", self.label, s.packets, s.bytes, s.max_read/1_000_000, s.process/1000, s.gaps, s.late, s.inter/1_000_000, s.gap_events, s.gap_max, s.gap_last, s.gap_at, ended, now.saturating_sub(s.window)/1_000_000, s.long_reads, s.gap_after_long, s.missing_after_long);
-        if s.decrypt_samples > 0 {
+        if let Some(decrypt_avg) = s.decrypt_sum.checked_div(s.decrypt_samples) {
             line += &format!(
                 " decryptAvgUs={} decryptMaxUs={} decryptMBps={}",
-                s.decrypt_sum / s.decrypt_samples / 1000,
+                decrypt_avg / 1000,
                 s.decrypt_max / 1000,
-                if s.decrypt_sum == 0 {
-                    0
-                } else {
-                    s.decrypt_bytes * 1000 / s.decrypt_sum
-                }
+                (s.decrypt_bytes * 1000)
+                    .checked_div(s.decrypt_sum)
+                    .unwrap_or(0)
             );
         }
         line

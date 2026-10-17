@@ -69,7 +69,12 @@ impl AudioPolicy {
         if !pcm.len().is_multiple_of(2) {
             return Err(std::io::Error::other("Odd PCM byte length"));
         }
-        Ok(pcm.chunks_exact(2).flat_map(|p| [p[1], p[0]]).collect())
+        Ok(pcm
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|&[a, b]| [b, a])
+            .collect())
     }
 }
 pub struct AudioNormalizer {

@@ -424,7 +424,7 @@ pub fn unbase64(s: &str) -> Result<Vec<u8>> {
         return Err(std::io::Error::other("Invalid base64"));
     }
     let mut out = Vec::new();
-    for p in s.as_bytes().chunks_exact(4) {
+    for p in s.as_bytes().as_chunks::<4>().0 {
         let mut n = 0u32;
         for b in p {
             n = (n << 6)
