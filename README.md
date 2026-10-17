@@ -1,3 +1,5 @@
+<p align="center"><b>English</b> · <a href="README-zh.md">简体中文</a></p>
+
 # OpenXPlay Relay
 
 The relay of [OpenXPlay](https://github.com/OpenXPlay/OpenXPlay): it connects to the iPhone as a CarPlay receiver and passes the session on to the head unit through [OpenXPlay-Stream](https://github.com/OpenXPlay/OpenXPlay-Stream) outputs, such as the head unit's browser or its Carlink app. Nothing is installed on the head unit.
