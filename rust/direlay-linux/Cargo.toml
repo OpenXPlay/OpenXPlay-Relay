@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-15
+
+[package]
+name = "openxplay-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+autobins = false
+
+[dependencies]
+carplay-iap2.workspace = true
+carplay-airplay.workspace = true
+oxp-wire.workspace = true
+oxp-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+zbus.workspace = true
+mdns-sd.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+rcgen.workspace = true
+hmac = "=0.12.1"
+sha2.workspace = true
+
+[[bin]]
+name = "openxplay-relay"
+path = "src/bin/openxplay-relay.rs"

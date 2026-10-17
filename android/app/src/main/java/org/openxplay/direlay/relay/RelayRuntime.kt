@@ -1,0 +1,686 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-14
+package org.openxplay.direlay.relay
+
+import android.Manifest
+import org.openxplay.direlay.settings.*
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Log
+import org.openxplay.direlay.clink.*
+import org.openxplay.stream.clink.*
+import org.openxplay.direlay.settings.StartupPermissions
+import org.openxplay.direlay.settings.RelaySettingsStore
+import org.openxplay.direlay.identity.IdentityStore
+import org.openxplay.direlay.tls.TlsStore
+import com.shilapi.xcertplay.orchestration.MfiTarget
+import com.shilapi.xcertplay.AirPlayPersistence
+import org.openxplay.direlay.bridge.DiPlayInput
+import org.openxplay.direlay.video.*
+import org.openxplay.stream.core.VideoCodec
+import org.openxplay.stream.core.VideoCodecDecision
+import org.openxplay.stream.core.VideoCodecPolicy
+import org.openxplay.stream.core.VideoCodecRestartLimiter
+import org.openxplay.stream.core.ProjectionHub
+import org.openxplay.stream.web.WebOutput
+import org.openxplay.stream.web.WebOutputConfig
+import java.io.File
+import java.net.Inet4Address
+import java.net.NetworkInterface
+import org.openxplay.direlay.pairing.PairingCodeStore
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import org.openxplay.direlay.bluetooth.AndroidBondedDevices
+import org.openxplay.direlay.bluetooth.BondedDevice
+import org.openxplay.direlay.bluetooth.BondedDevices
+import org.openxplay.direlay.bluetooth.IphoneSelection
+
+/** Application composition root. File, certificate and network discovery work stays off media threads. */
+class RelayRuntime(private val context: Context,
+    private val clinkDiagnostics: ClinkDiagnostics = AndroidClinkDiagnostics(),
+    val bondedDevices: BondedDevices =
+        AndroidBondedDevices(context.applicationContext),
+    /** One Bluetooth pairing window shared by the app and the admin page. */
+    val pairing: org.openxplay.direlay.admin.PairingWindow = org.openxplay.direlay.admin.PairingWindow(
+        org.openxplay.direlay.admin.AndroidBluetoothVisibility(context.applicationContext) { false })) : AutoCloseable {
+    @Volatile var iphoneBonds: List<BondedDevice> = emptyList()
+        private set
+    fun refreshIphoneBonds() { iphoneBonds = bondedDevices.read() }
+    fun iphoneSelection(choice: String? = settingsStore.snapshot.value?.iphoneAddress) =
+        IphoneSelection.select(choice, iphoneBonds)
+    val settingsStore = RelaySettingsStore(context.applicationContext).also { it.startObserving() }
+    private val autoStartBoot = AndroidBootIdentity(context)
+    private val autoStartStorage = AndroidAutoStartStorage(context)
+    val startRequest: StartRequestGate = ProcessStartRequestGate()
+    val autoStartGate: AutoStartGate = PersistentAutoStartGate(autoStartBoot, autoStartStorage) {
+        Log.i("OpenXPlay Relay", "Automatic start resumed: new boot")
+    }
+    val autoStartSessions = AutoStartSessions(context, autoStartGate, autoStartBoot, autoStartStorage)
+    @Volatile private var negotiatedFps = 60
+    val input = DiPlayInput(
+        applyFrameRate = { fps -> negotiatedFps = fps; AirPlayPersistence.saveFps(context, fps) },
+        restartCarPlay = { setup.execute { sessionActions.action("restart") } },
+    )
+    private val bundledPlugins = org.openxplay.direlay.plugins.BundledPlugins(context.applicationContext)
+    fun installedPlugins() = runCatching {
+        org.openxplay.direlay.plugins.RelayPlugins.installed(bundledPlugins.root())
+    }.getOrDefault(emptyList())
+    val pluginContext = org.openxplay.direlay.plugins.PluginContextObserver(input::context)
+    @Volatile private var configuredPlugins: Pair<Boolean, List<String>> = false to emptyList()
+
+    fun prepareCarPlayFrameRate() { AirPlayPersistence.saveFps(context, negotiatedFps) }
+    val status = RelayStatus()
+    internal val displayPolicy = CarDisplayPolicy()
+    private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
+    private val preferences = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
+    private val setup = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "direlay-runtime").apply { isDaemon = true }
+    }
+    // This separate private file must not invalidate the user-settings snapshot cache.
+    private val displayPreferences = context.getSharedPreferences("direlay-car-display", Context.MODE_PRIVATE)
+    @Volatile private var rememberedDisplay: DisplayProfile? = null
+    @Volatile private var screenPrepared = false
+    @Volatile var carPlayScreen: CarPlayScreen? = null
+        private set
+
+    @Synchronized private fun loadRememberedDisplay() {
+        if (rememberedDisplay == null) rememberedDisplay = runCatching {
+            DisplayProfile(displayPreferences.getInt("width", 0), displayPreferences.getInt("height", 0),
+                displayPreferences.getInt("density", 0)).also { it.validate() }
+        }.getOrNull()
+    }
+
+    @Synchronized private fun rememberCarDisplay() {
+        val car = displayPolicy.lastCarDisplay ?: return
+        if (car == rememberedDisplay) return
+        displayPreferences.edit().putInt("width", car.width).putInt("height", car.height)
+            .putInt("density", car.density).apply()
+        rememberedDisplay = car
+    }
+
+    val sharedWifiSelection = org.openxplay.direlay.settings.SharedWifiSelection()
+    private val sharedWifiConnectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
+    private val sharedWifiCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) { sharedWifiSelection.wifiChanged() }
+        override fun onLost(network: android.net.Network) { sharedWifiSelection.wifiChanged() }
+    }
+    init {
+        sharedWifiConnectivity.registerNetworkCallback(android.net.NetworkRequest.Builder()
+            .addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI).build(), sharedWifiCallback)
+    }
+    fun currentSharedWifi(settings: RelaySettings, currentSsid: String? = currentWifiSsid(context)) =
+        sharedWifiSelection.resolve(currentSsid, settings.wirelessNetwork.sharedWifiNetworks)
+
+    /** Called on the start worker; freeze the canvas until the user explicitly reconnects. */
+    @Synchronized fun prepareCarPlayScreen(settings: RelaySettings): CarPlayScreen? {
+        loadRememberedDisplay()
+        rememberCarDisplay()
+        return resolveCarPlayScreen(settings.displayMode, settings.display, displayPolicy.carDisplay, rememberedDisplay).also {
+            settingsStore.prepareDisplay(it?.profile)
+            carPlayScreen = it
+            screenPrepared = true
+        }
+    }
+
+    fun displayMismatch(running: Boolean, settings: RelaySettings): Boolean = carDisplayMismatch(
+        running, settings.displayMode, carPlayScreen?.profile, displayPolicy.lastCarDisplay ?: rememberedDisplay)
+
+    /** The CarPlay canvas as "W × H · D dpi" plus where it came from ("car screen", …, "relay screen"). */
+    val carPlayScreenSummary: Pair<String, String> get() {
+        val settings = settingsStore.snapshot.value
+        val selected = if (screenPrepared) carPlayScreen else settings?.let {
+            resolveCarPlayScreen(it.displayMode, it.display, displayPolicy.carDisplay, rememberedDisplay)
+        }
+        if (selected != null) return "${selected.profile.width} × ${selected.profile.height} · ${selected.profile.density} dpi" to selected.source
+        val metrics = context.resources.displayMetrics
+        return "${metrics.widthPixels} × ${metrics.heightPixels} · ${metrics.densityDpi} dpi" to "relay screen"
+    }
+
+    @Volatile var serverState = "Starting web receiver…"
+        private set
+    @Volatile var ipv4: Set<String> = emptySet()
+        private set
+    /** Addresses a head unit can reach; Wi-Fi Direct groups (p2p-*) only carry the iPhone link. */
+    @Volatile var carIpv4: Set<String> = emptySet()
+        private set
+    @Volatile var receiverUrls: List<String> = emptyList()
+        private set
+    @Volatile var localPreview = false
+        private set
+    @Volatile var playCarPlayAudio = false
+        private set
+    @Volatile var microphoneSource = MicrophoneSource.HEAD_UNIT
+        private set
+    @Volatile private var configuredWebPort: Int? = null
+    @Volatile private var requirePairingCode = false
+    @Volatile private var automaticEnabled: Boolean? = null
+    @Volatile private var webEnabled = true
+    private var networkPermissionAvailable = hasNetworkPermission()
+    @Volatile private var closed = false
+    private val lifecycle = Any()
+    private var web: WebOutput? = null
+    val carlinkPins = DialogPinProvider()
+    private val carlinkTrust = PrivateClinkTrustStore(context.noBackupFilesDir)
+    @Volatile var carlinkState = "Disabled"
+        private set
+    @Volatile var carlinkDetail = ""
+        private set
+    @Volatile var carlinkFailed = false
+        private set
+    // Sensor opt-in belongs to a socket generation and waits for the explicit reconnect action.
+    private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean)
+    private var carlinkConfig: CarlinkConfig? = null
+    private val carlinkBlock = CarlinkWifiDirectBlock()
+    @Volatile private var carlink: ClinkOutput? = null
+    @Volatile var vehicleView = org.openxplay.direlay.vehicle.VehicleView()
+        private set
+    @Volatile private var collectVehicle = false
+    private var vehicleRegistration: AutoCloseable? = null
+    private val pendingVehicle = linkedMapOf<String, Pair<org.openxplay.stream.core.VehicleData, Long>>()
+    private var vehicleDeliveryPending = false
+    private var vehicleGeneration = 0L
+    private var vehicleSession: Pair<Boolean, Boolean>? = null
+    @Volatile var sampleVehicleData = false
+        private set
+    private var sampleTick = 0L
+    fun setSampleVehicleData(enabled: Boolean) { setup.execute {
+        if (sampleVehicleData == enabled) return@execute
+        sampleVehicleData = enabled
+        sampleTick = 0
+        configureVehicle()
+        if (enabled) org.openxplay.direlay.vehicle.sampleVehicleData(sampleTick++).forEach(::queueVehicle)
+    } }
+
+    /** Both real and generated data enter the same bounded, per-type 250 ms mailbox. */
+    private fun queueVehicle(data: org.openxplay.stream.core.VehicleData) {
+        if (!collectVehicle) return
+        synchronized(pendingVehicle) {
+            pendingVehicle[data.javaClass.name] = data to System.currentTimeMillis()
+            if (vehicleDeliveryPending) return
+            vehicleDeliveryPending = true
+            val generation = vehicleGeneration
+            try { setup.schedule({
+                val reports = synchronized(pendingVehicle) {
+                    if (generation != vehicleGeneration) return@schedule
+                    val values = pendingVehicle.values.toList()
+                    pendingVehicle.clear(); vehicleDeliveryPending = false
+                    values
+                }
+                if (collectVehicle) vehicleRecorder?.let { recorder ->
+                    reports.forEach { (report, at) -> recorder.receive(report, at) }
+                    vehicleView = recorder.view()
+                }
+            }, 250, TimeUnit.MILLISECONDS) }
+            catch (_: java.util.concurrent.RejectedExecutionException) { vehicleDeliveryPending = false }
+        }
+    }
+    private var vehicleRecorder: org.openxplay.direlay.vehicle.VehicleRecorder? = null
+    val carlinkConnected: Boolean get() = carlink != null && carlinkState !in setOf("Disabled", "ENDED", "Requires Android 10+", "Waiting for permissions")
+    val pinRejected: Int get() = carlinkPins.rejected
+    val pairingSuccess: Int get() = carlinkPins.successes
+
+    private fun configureVehicle(requestedEnabled: Boolean? = null) {
+        if (closed) return
+        val enabled = sampleVehicleData || (requestedEnabled ?: settingsStore.awaitSnapshot().vehicleInformation)
+        collectVehicle = enabled
+        if (vehicleRecorder == null) {
+            try {
+                vehicleRecorder = org.openxplay.direlay.vehicle.VehicleRecorder(
+                    org.openxplay.direlay.vehicle.VehicleSnapshotFile(File(context.noBackupFilesDir, "vehicle-history.bin")),
+                    android.os.SystemClock::elapsedRealtime, System::currentTimeMillis)
+            } catch (_: Exception) { vehicleView = vehicleView.copy(storageFailed = true); return }
+        }
+        val recorder = vehicleRecorder ?: return
+        val session = enabled to sampleVehicleData
+        if (session != vehicleSession) synchronized(pendingVehicle) {
+            vehicleGeneration++
+            pendingVehicle.clear()
+            vehicleDeliveryPending = false
+            vehicleSession = session
+        }
+        recorder.enable(enabled, sampleVehicleData)
+        if (!enabled) {
+            vehicleRegistration?.close(); vehicleRegistration = null
+            synchronized(pendingVehicle) { pendingVehicle.clear() }
+        }
+        else if (vehicleRegistration == null) vehicleRegistration = hub.addVehicleListener { origin, data ->
+            if (origin.outputId == "clink" && !sampleVehicleData) queueVehicle(data)
+        }
+        vehicleView = recorder.view()
+    }
+    fun clearVehicleHistory() { setup.execute {
+        try { vehicleRecorder?.clear(); vehicleRecorder?.let { vehicleView = it.view() } }
+        catch (_: Exception) { vehicleView = vehicleView.copy(storageFailed = true) }
+    } }
+
+    private var carlinkLink: ClinkLink? = null
+    @Volatile private var carlinkEnded = false
+    private var carlinkRetiring = false
+    private var carlinkRestartPending = false
+
+    private var bindRetry: java.util.concurrent.ScheduledFuture<*>? = null
+    private var urlRefresh: java.util.concurrent.ScheduledFuture<*>? = null
+    val identityStore = IdentityStore(context.noBackupFilesDir) {
+        AirPlayPersistence.saveMfiTarget(context, MfiTarget.LOCAL)
+    }
+    private val pairingStore = PairingCodeStore(context.noBackupFilesDir)
+    @Volatile var pairingCode: String = pairingStore.code()
+        private set
+    fun regeneratePairingCode() {
+        setup.execute { pairingCode = pairingStore.regenerate(); restartWeb() }
+    }
+    val tlsStore = TlsStore(context.noBackupFilesDir) { restartWeb(); adminService.restartTls() }
+    private val sessionController = RelaySessionActions(context.applicationContext, this)
+    val sessionActions: RelayActions get() = sessionController
+    val adminService = org.openxplay.direlay.admin.RelayAdminService(context.applicationContext, this,
+        org.openxplay.direlay.admin.AdminActions { org.openxplay.direlay.admin.AdminResult(sessionActions.action(it)) })
+    private fun adminHosts(): Set<String> = listOfNotNull(adminService.advertisedHost).toSet()
+
+    init {
+        prepareCarPlay()
+        hub.addOutput(status)
+        hub.start()
+        setup.execute {
+            loadRememberedDisplay()
+            val initial = settingsStore.awaitSnapshot()
+            configuredPlugins = initial.plugins to initial.pluginsEnabled
+            runCatching { bundledPlugins.root() }
+                .onFailure { Log.w("OpenXPlay Relay", "Plugin bundle installation failed", it) }
+            microphoneSource = initial.microphoneSource
+            localPreview = initial.localPreview
+            playCarPlayAudio = initial.playCarPlayAudio
+            requirePairingCode = initial.requirePairingCode
+            automaticEnabled = initial.autoStartWhenReady
+            configuredWebPort = initial.webPort
+            webEnabled = !initial.carlinkOutput || initial.bothOutputs
+            prepareCarPlay()
+            ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
+            startWeb()
+            configureVehicle()
+            configureCarlink()
+        }
+        setup.scheduleWithFixedDelay({
+            try {
+                ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
+                if (tlsStore.ensureDefault(ipv4, adminHosts()) && webEnabled) restartWeb()
+            }
+            catch (_: Exception) { /* Retain the last interface snapshot. */ }
+        }, 0, 5, TimeUnit.SECONDS)
+    }
+
+    private val sessionTick = setup.scheduleWithFixedDelay({
+        autoStartSessions.refresh()
+        // A session start or stop can block or release Carlink without a settings change.
+        if (carlinkBlock.sessionChanged(autoStartSessions.tracker.running)) enqueueCarlink()
+    }, 0, 500, TimeUnit.MILLISECONDS)
+
+    private val codecRestarts = VideoCodecRestartLimiter()
+    @Volatile var videoDecision = VideoCodecPolicy.resolve(emptyList())
+        private set
+    @Volatile var appliedVideoDecision = videoDecision
+        private set
+    @Volatile private var codecRestartPending = false
+    private fun currentVideoCodecDecision(): VideoCodecDecision = VideoCodecPolicy.resolve(displayPolicy.activeOutputs,
+        carlinkConnected)
+    private fun refreshVideoCodec() {
+        val next = currentVideoCodecDecision()
+        if (next != videoDecision) {
+            if (next.codec != videoDecision.codec) codecRestarts.changed(android.os.SystemClock.elapsedRealtime())
+            videoDecision = next
+            Log.i("OpenXPlay Relay", "video codec ${next.codec} reason=${next.reason}")
+        }
+        if (autoStartSessions.tracker.running && !sessionActions.restarting && !startRequest.pending &&
+            !codecRestartPending && next.codec != appliedVideoDecision.codec &&
+            codecRestarts.allow(android.os.SystemClock.elapsedRealtime())) {
+            codecRestartPending = true
+            if (sessionActions.action("restart") != null) codecRestartPending = false
+        }
+    }
+    private val displayTick = setup.scheduleWithFixedDelay({ rememberCarDisplay(); refreshVideoCodec() }, 0, 250, TimeUnit.MILLISECONDS)
+
+    private val vehicleTick = setup.scheduleWithFixedDelay({
+        try {
+            if (sampleVehicleData) org.openxplay.direlay.vehicle.sampleVehicleData(sampleTick++).forEach(::queueVehicle)
+            if (collectVehicle) vehicleRecorder?.let { it.tick(); vehicleView = it.view() }
+        } catch (_: Exception) { vehicleView = vehicleView.copy(storageFailed = true) }
+    }, 1, 1, TimeUnit.SECONDS)
+
+    fun prepareCarPlay(chooseVideoCodec: Boolean = false) {
+        input.microphoneAvailable(microphoneSource == MicrophoneSource.HEAD_UNIT &&
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+        if (!chooseVideoCodec) return
+        carlinkBlock.carPlayStarting(AirPlayP2pReservation(context).reservedByCarPlay())
+        enqueueCarlink()
+        synchronized(this) {
+            val decision = currentVideoCodecDecision()
+            videoDecision = decision
+            appliedVideoDecision = decision
+            codecRestartPending = false
+            AirPlayPersistence.saveHevcEnabled(context, decision.codec == VideoCodec.H265)
+            Log.i("OpenXPlay Relay", "video codec ${decision.codec} reason=${decision.reason}")
+        }
+    }
+
+    fun setLocalPreview(enabled: Boolean) {
+        localPreview = enabled
+        preferences.edit().putBoolean("localPreview", enabled).apply()
+    }
+
+    fun reloadSettings() {
+        val requested = settingsStore.snapshot.value ?: return
+        if (automaticEnabled == false && requested.autoStartWhenReady) autoStartSessions.resume("Automatic enabled")
+        automaticEnabled = requested.autoStartWhenReady
+        val vehicleEnabled = requested.vehicleInformation
+        collectVehicle = vehicleEnabled || sampleVehicleData
+        try { setup.execute { configureVehicle(vehicleEnabled); configureCarlink() } }
+        catch (_: java.util.concurrent.RejectedExecutionException) { }
+        val settings = requested
+        localPreview = settings.localPreview
+        playCarPlayAudio = settings.playCarPlayAudio
+        microphoneSource = settings.microphoneSource
+        prepareCarPlay()
+        val plugins = settings.plugins to settings.pluginsEnabled
+        val pluginsChanged = plugins != configuredPlugins
+        if (pluginsChanged) {
+            configuredPlugins = plugins
+            pluginContext.configure(false)
+        }
+        val port = settings.webPort
+        val networkGranted = hasNetworkPermission()
+        val enabled = !settings.carlinkOutput || settings.bothOutputs
+        if (pluginsChanged || port != configuredWebPort || networkGranted != networkPermissionAvailable || enabled != webEnabled ||
+            settings.requirePairingCode != requirePairingCode) {
+            requirePairingCode = settings.requirePairingCode
+            webEnabled = enabled
+            configuredWebPort = port
+            networkPermissionAvailable = networkGranted
+            restartWeb()
+        }
+    }
+
+    fun reconnectCarlink() { status.clearFailure(); enqueueCarlink(true) }
+
+    fun cancelCarlinkPairing() {
+        carlinkPins.cancel()
+        try { setup.execute {
+            carlinkRestartPending = false
+            carlink?.let {
+                carlinkRetiring = !carlinkEnded
+                hub.removeOutput(it.id)
+            }
+            carlinkLink?.disconnect()
+            carlink = null; carlinkLink = null
+            carlinkState = "ENDED"
+        } } catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
+    private fun enqueueCarlink(force: Boolean = false) {
+        try { setup.execute { configureCarlink(force) } }
+        catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
+    private fun configureCarlink(force: Boolean = false) {
+        if (closed) return
+        configureVehicle()
+        val settings = settingsStore.awaitSnapshot()
+        val permitted = StartupPermissions.carlink(Build.VERSION.SDK_INT, true).all {
+            context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }
+        val requested = CarlinkConfig(settings.carlinkOutput || settings.bothOutputs, permitted,
+            settings.carlinkDeviceName, settings.carlinkDeviceModel,
+            carlinkBlock.blocked(CarlinkConnectionPolicy.enabled(settings),
+                settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running))
+        if (!force && requested == carlinkConfig && !carlinkRestartPending) return
+        carlinkConfig = requested
+        if (carlinkRetiring) { carlinkRestartPending = true; return }
+        carlink?.let { output ->
+            carlinkRetiring = !carlinkEnded
+            carlinkRestartPending = carlinkRetiring
+            carlinkPins.retire()
+            hub.removeOutput(output.id)
+            // ClinkOutput.close stops the session; explicitly cancel a pending platform join too.
+            carlinkLink?.disconnect()
+            carlink = null
+            carlinkLink = null
+            if (carlinkRetiring) return
+        }
+        carlinkRestartPending = false
+        carlinkDetail = ""
+        carlinkFailed = false
+        carlinkVideoDetail = ""
+        carlinkVideoFailed = false
+        if (!requested.enabled) { carlinkState = "Disabled"; return }
+        if (requested.blocked) {
+            carlinkState = "Blocked"
+            carlinkFailed = true
+            carlinkDetail = CarlinkConnectionPolicy.REASON
+            return
+        }
+        if (Build.VERSION.SDK_INT < 29) { carlinkState = "Requires Android 10+"; return }
+        if (!permitted) { carlinkState = "Waiting for permissions"; return }
+        val id = preferences.getString("clinkDeviceId", null) ?: java.util.UUID.randomUUID().toString().also {
+            check(preferences.edit().putString("clinkDeviceId", it).commit())
+        }
+        val diagnostics = ClinkDiagnostics { event ->
+            if (event is ClinkDiagnostic.Failure) carlinkDetail = event.code
+            clinkDiagnostics.emit(event)
+        }
+        val reservation = AirPlayP2pReservation(context)
+        val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation)
+        val sessionDiagnostics = ClinkSessionDiagnostics(carlinkPins, carlinkTrust, diagnostics)
+        val output = ClinkOutput(link, sessionDiagnostics.pinProvider, sessionDiagnostics.trustStore,
+            deviceId = id, deviceName = requested.name,
+            vehicleData = settings.vehicleInformation,
+            listener = object : ClinkListener {
+                override fun state(state: ClinkState) {
+                    sessionDiagnostics.state(state)
+                    carlinkState = state.name
+                    if (state == ClinkState.NEGOTIATING) carlinkPins.paired()
+                    // A reconnected session clears the previous failure shown on the status screens.
+                    if (state == ClinkState.PLAYING) {
+                        carlinkBackoff.succeeded()
+                        carlinkFailed = carlinkVideoFailed
+                        carlinkDetail = carlinkVideoDetail
+                    }
+                    if (state == ClinkState.ENDED) {
+                        carlinkEnded = true
+                        try { setup.execute {
+                            carlinkRetiring = false
+                            if (carlinkRestartPending) configureCarlink(true) else scheduleCarlinkReconnect()
+                        } } catch (_: java.util.concurrent.RejectedExecutionException) { }
+                    }
+                }
+                override fun error(error: Throwable) {
+                    carlinkFailed = true
+                    // Code locations only (no messages, which may carry platform details), except protocol codes.
+                    val root = generateSequence(error) { it.cause }.last()
+                    val code = root.message?.takeIf { it.matches(Regex("[a-z0-9_]{3,64}")) }?.let { " ($it)" }.orEmpty()
+                    android.util.Log.w("DiRelayCarlink", "session error ${root.javaClass.simpleName}$code at " +
+                        root.stackTrace.take(8).joinToString(" < ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" })
+                    sessionDiagnostics.error(error)
+                    val rejected = generateSequence(error) { it.cause }.any { it.message in setOf("auth_rejected", "auth_pin_proof_failed") }
+                    if (rejected) carlinkPins.reject(::reconnectCarlink)
+                    else carlinkPins.cancel()
+                    // User-facing failure text is selected by RelayActivity; detail retains the safe code.
+                }
+                // Output-side video diagnostics only (queue resets); session diagnostics stay in the diagnostics port.
+                override fun diagnostic(message: String) { if (message.startsWith("video ") || message.startsWith("audio ") || message.startsWith("frame ")) android.util.Log.i("DiRelayCarlink", message) }
+                override fun profileMismatch(inputCodec: String, decoders: List<String>) {
+                    carlinkFailed = true
+                    carlinkDetail = "Head unit cannot decode this video"
+                    Log.w("DiRelayCarlink", "video encoder mismatch input=$inputCodec decoders=${decoders.joinToString()}")
+                }
+            })
+        carlinkEnded = false
+        carlinkPins.resumeRequests()
+        carlinkState = "CONNECTING"
+        carlinkLink = link
+        carlink = output
+        hub.addOutput(TranscodingOutput(output, MediaCodecPipeline.factory, report = { format, decision, failed ->
+            val source = when {
+                format.codec == org.openxplay.stream.core.VideoCodec.H265 -> "H.265"
+                format.codecString.substringAfter("avc1.").startsWith("64") -> "H.264 High"
+                format.codecString.substringAfter("avc1.").startsWith("4D", true) -> "H.264 Main"
+                else -> "H.264 Baseline"
+            }
+            val target = when (decision.target?.profile) { 66 -> "Baseline"; 77 -> "Main"; 100 -> "High"; else -> "H.265" }
+            carlinkVideoFailed = failed || decision.mode == VideoCompatibility.Mode.UNSUPPORTED
+            carlinkVideoDetail = when {
+                carlinkVideoFailed -> "Head unit cannot decode this video"
+                decision.mode == VideoCompatibility.Mode.TRANSCODE -> "Transcoding $source → $target for the head unit"
+                else -> "Video passthrough"
+            }
+            carlinkFailed = carlinkVideoFailed
+            carlinkDetail = carlinkVideoDetail
+            val reason = VideoCompatibility.reportKey(format, decision, failed).reason
+            Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
+        }, observeCapabilities = { caps ->
+            Log.i("DiRelayCarlink", "video decoders=${caps?.decoders?.joinToString { it.codecString }.orEmpty()}")
+        }, deliveryCodecs = setOf(org.openxplay.stream.core.VideoCodec.H264)))
+    }
+
+    @Volatile private var carlinkVideoFailed = false
+    @Volatile private var carlinkVideoDetail = ""
+    private val carlinkBackoff = AndroidClinkLink.retryBackoff
+
+    /** Reconnects an ended Carlink session with backoff when the user enabled automatic reconnection. */
+    private fun scheduleCarlinkReconnect() {
+        val settings = settingsStore.snapshot.value ?: return
+        if (closed || !settings.carlinkAutoReconnect || !(settings.carlinkOutput || settings.bothOutputs)) return
+        val delay = carlinkBackoff.next()
+        clinkDiagnostics.emit(ClinkDiagnostic.Retry(delay))
+        try { setup.schedule({ if (carlinkEnded && !closed) configureCarlink(true) }, delay, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
+    private fun hasNetworkPermission(): Boolean = Build.VERSION.SDK_INT < 37 ||
+        context.checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") == PackageManager.PERMISSION_GRANTED
+
+    fun reportInvalidVideo(type: Int, failure: Exception) {
+        try { setup.execute { Log.w("OpenXPlay Relay", "Invalid video stream $type", failure) } }
+        catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
+    private fun startWeb(bindAttempt: Int = 0) {
+        bindRetry = null
+        try {
+            tlsStore.ensureDefault(ipv4Addresses(), adminHosts())
+            if (!webEnabled) { serverState = "Web receiver disabled"; return }
+            val ssl = tlsStore.webContext(ipv4Addresses(), adminHosts())
+            val root = installReceiver()
+            val token = pairingCode
+            val port = configuredWebPort ?: TlsStore.port(true)
+            val requireCode = requirePairingCode
+            val verifier = webTokenVerifier(requireCode, token)
+            val settings = settingsStore.awaitSnapshot()
+            val plugins = if (!settings.plugins) null else runCatching {
+                org.openxplay.direlay.plugins.RelayPlugins.configuration(settings, bundledPlugins.root(), context.filesDir)
+            }.onFailure { Log.w("OpenXPlay Relay", "Plugin packages unavailable", it) }.getOrNull()
+            val output = WebOutput(WebOutputConfig(
+                bindAddress = "0.0.0.0", port = port, sslContext = ssl,
+                staticAssetRoot = root.toPath(), tokenVerifier = verifier, plugins = plugins,
+                sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-DiRelay",
+            ))
+            synchronized(lifecycle) {
+                if (closed) return
+                web = output
+                val destination = if (plugins == null) output else org.openxplay.direlay.plugins.AndroidPluginOutput(output)
+                hub.addOutput(TranscodingOutput(destination, MediaCodecPipeline.factory))
+            }
+            output.awaitListening()
+            pluginContext.configure(plugins != null, status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
+            val assetsState = if (File(root, "receiver/index.html").isFile) "" else "\nReceiver assets missing; build Stream web/dist and rebuild the APK."
+            serverState = "TLS enabled · HTTPS/WSS :$port" + assetsState
+            urlRefresh = setup.scheduleWithFixedDelay({
+                try {
+                    val addresses = ipv4Addresses()
+                    receiverUrls = (listOf("localhost") + addresses).map { receiverUrl("https://$it:$port/", requireCode, token) }
+                }
+                catch (_: Exception) { /* Retain the last network snapshot. */ }
+            }, 0, 5, TimeUnit.SECONDS)
+        } catch (failure: Exception) {
+            pluginContext.configure(false)
+            serverState = "Web receiver unavailable: ${failure.message ?: failure.javaClass.simpleName}"
+            web?.let { hub.removeOutput(it.id) }
+            web = null
+            // Stream closes sockets asynchronously; give the previous listener time to release its port.
+            val portBusy = generateSequence<Throwable>(failure) { it.cause }.any { it is java.net.BindException }
+            if (!closed && portBusy && bindAttempt < 5) {
+                bindRetry = setup.schedule({ startWeb(bindAttempt + 1) }, 200, TimeUnit.MILLISECONDS)
+            }
+        }
+    }
+
+    private fun installReceiver(): File {
+        val version = context.packageManager.getPackageInfo(context.packageName, 0).let {
+            "${it.versionCode}:${it.lastUpdateTime}"
+        }
+        val root = File(context.filesDir, "web")
+        if (preferences.getString("receiverVersion", null) == version && File(root, "receiver/index.html").isFile) return root
+        val staging = File(context.filesDir, "web-staging")
+        check(!staging.exists() || staging.deleteRecursively()) { "Could not clear receiver staging" }
+        check(staging.mkdirs()) { "Could not create receiver staging" }
+        fun copy(asset: String, target: File) {
+            val children = context.assets.list(asset).orEmpty()
+            if (children.isNotEmpty()) {
+                check(target.isDirectory || target.mkdirs())
+                children.forEach { copy("$asset/$it", File(target, it)) }
+            } else {
+                context.assets.open(asset).use { source -> target.outputStream().use { source.copyTo(it) } }
+            }
+        }
+        context.assets.list("web").orEmpty().forEach { copy("web/$it", File(staging, it)) }
+        check(!root.exists() || root.deleteRecursively()) { "Could not replace receiver assets" }
+        check(staging.renameTo(root)) { "Could not install receiver assets" }
+        check(preferences.edit().putString("receiverVersion", version).commit()) { "Could not persist receiver version" }
+        return root
+    }
+
+    private fun restartWeb() {
+        try {
+            setup.execute {
+                synchronized(lifecycle) {
+                    if (closed) return@execute
+                    bindRetry?.cancel(false)
+                    bindRetry = null
+                    urlRefresh?.cancel(false)
+                    urlRefresh = null
+                    receiverUrls = emptyList()
+                    pluginContext.configure(false)
+                    web?.let { hub.removeOutput(it.id) }
+                    web = null
+                    serverState = "Starting web receiver…"
+                }
+                startWeb()
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
+    private fun ipv4Addresses(includeIphoneLink: Boolean = true): Set<String> = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            .filter { it.isUp && !it.isLoopback && (includeIphoneLink || !it.name.startsWith("p2p")) }
+            .flatMap { it.inetAddresses.toList() }
+            .filterIsInstance<Inet4Address>().filter { !it.isLoopbackAddress && !it.isAnyLocalAddress }
+            .mapNotNull { it.hostAddress }.toSortedSet()
+
+    override fun close() {
+        synchronized(lifecycle) {
+            if (closed) return
+            closed = true
+            sharedWifiConnectivity.unregisterNetworkCallback(sharedWifiCallback)
+            adminService.close()
+            sessionController.close()
+            carlinkPins.cancel()
+            carlinkLink?.disconnect()
+            collectVehicle = false
+            vehicleRegistration?.close()
+            vehicleRegistration = null
+            setup.shutdownNow()
+            pluginContext.close()
+            settingsStore.close()
+            hub.stop()
+            input.close()
+        }
+    }
+}

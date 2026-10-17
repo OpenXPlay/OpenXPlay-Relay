@@ -1,0 +1,2 @@
+Device A0:B1:C2:D3:E4:F5 Riko's iPhone
+Device 10:20:30:40:50:60 Desk Speaker

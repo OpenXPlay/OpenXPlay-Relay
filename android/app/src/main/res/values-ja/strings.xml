@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-15 -->
+<resources>
+    <string name="direlay_app_name">OpenXPlay Relay</string>
+    <string name="direlay_car_hotspot">このスマートフォンのテザリング</string>
+    <string name="direlay_existing_wifi">共通の Wi-Fi</string>
+    <string name="option_direct_hint">iPhone はこのスマートフォンに直接接続します。車の画面は、車の Wi-Fi など、このスマートフォンの通常の Wi-Fi 接続を使います。</string>
+    <string name="option_hotspot_hint">このスマートフォンの Wi-Fi テザリングをオンにし、iPhone と車の画面を接続します。</string>
+    <string name="option_wifi_hint">iPhone、このスマートフォン、車の画面を、車の Wi-Fi やモバイルルーターなど、同じ Wi-Fi に接続します。</string>
+    <string name="direlay_car_hotspot_hint">Android のテザリング設定と同じ名前とパスワードを入力してください。</string>
+    <string name="direlay_existing_wifi_hint">このスマートフォンを先にこの Wi-Fi に接続してください。ルーターで端末同士の通信を許可する必要があります。</string>
+    <string name="direlay_network_ssid">Wi-Fi 名</string>
+    <string name="direlay_network_passphrase">Wi-Fi パスワード</string>
+    <string name="settings_hotspot_name">アクセスポイント名</string>
+    <string name="settings_hotspot_password">テザリングのパスワード</string>
+    <string name="settings_open_hotspot">テザリング設定を開く</string>
+    <string name="ui_open_wifi">Wi-Fi 設定を開く</string>
+    <string name="ui_automatic_paused">停止しました。「開始」をタップすると自動開始が再開します。</string>
+    <string name="settings_require_code">ペアリングコードを必須にする</string>
+    <string name="settings_require_code_hint">車のブラウザーで、このスマートフォンに表示されるコードの入力が必要になります。信頼できないネットワークでオンにしてください。</string>
+    <string name="network_iphone">iPhone</string>
+    <string name="network_this_phone">この端末</string>
+    <string name="network_car">車</string>
+    <string name="network_direct">Wi-Fi Direct</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_hotspot">テザリング</string>
+    <string name="network_direct_description">iPhone は Wi-Fi Direct でこのスマートフォンに接続し、車は Wi-Fi でこのスマートフォンに接続します。</string>
+    <string name="network_hotspot_description">iPhone と車は、このスマートフォンの Wi-Fi テザリングに接続します。</string>
+    <string name="network_wifi_description">iPhone、このスマートフォン、車は同じ Wi-Fi ルーターに接続します。</string>
+    <string name="settings_hotspot_name_error">アクセスポイント名を UTF-8 で 1～32 バイトで入力してください。</string>
+    <string name="settings_hotspot_password_error">パスワードなしのテザリングでは空欄に、それ以外は 8～63 文字で入力してください。</string>
+    <string name="ui_wifi_direct_recommended">Wi-Fi Direct（推奨）</string>
+
+    <!-- Paired iPhone selection. -->
+    <string name="iphone_title">iPhone</string>
+    <string name="iphone_automatic">自動</string>
+    <string name="iphone_automatic_name">自動 · %1$s</string>
+    <string name="iphone_automatic_recommended">自動（推奨）</string>
+    <string name="iphone_connected">接続済み</string>
+    <string name="iphone_likely">iPhone の可能性あり</string>
+    <string name="iphone_unnamed">名前のないデバイス</string>
+    <string name="iphone_pair_new">新しい iPhone をペアリング</string>
+    <string name="iphone_pair_hint">iPhone で「設定」→「Bluetooth」を開き、%1$s を選択してください。</string>
+    <string name="iphone_unpaired">選択した iPhone のペアリングが解除されています。選び直してください。</string>
+    <string name="iphone_multiple">iPhone の候補が複数あります。1 台選んでください。</string>
+    <string name="iphone_choose">iPhone を選択</string>
+    <string name="iphone_hint">CarPlay で使うペアリング済みのスマートフォンを選びます。</string>
+    <string name="dev_iphone_selection">iPhone の選択結果</string>
+    <string name="iphone_pair">iPhone をペアリング</string>
+    <string name="admin_page">管理ページ</string>
+    <string name="admin_page_hint">同じネットワーク上のパソコンやスマートフォンでこのアドレスを開いて中継を管理します。</string>
+    <string name="admin_reset_password">パスワードをリセット</string>
+    <string name="admin_password_reset">パスワードを openxplay に戻しました。</string>
+    <string name="admin_reset_confirm">パスワードを openxplay に戻し、すべての管理セッションからログアウトしますか？</string>
+    <string name="admin_copy_url">管理アドレスをコピー</string>
+    <string name="host_connecting">iPhone に接続しています…</string>
+    <string name="host_running">車の画面で CarPlay が動作しています</string>
+    <string name="host_keep_running">OpenXPlay Relay を起動したままにしてください。このスマートフォンをロックしたり、ほかのアプリに切り替えたりできますが、最近使ったアプリから OpenXPlay Relay をスワイプして終了しないでください。</string>
+    <string name="host_back">OpenXPlay Relay に戻る</string>
+    <string name="host_cancel">キャンセル</string>
+    <string name="host_stopped">CarPlay が停止しました</string>
+    <string name="carlink_auto_reconnect">Carlink 自動再接続</string>
+    <string name="carlink_auto_reconnect_hint">接続が切れたら自動的に車載機へ再接続します。</string>
+    <string name="shared_wifi_not_saved">この Wi-Fi は CarPlay 用に保存されていません</string>
+    <string name="shared_wifi_save_current">この Wi-Fi を保存</string>
+    <string name="shared_wifi_unreadable">現在の Wi-Fi 名を取得できません。保存済みネットワークを手動で選択してください。</string>
+    <string name="shared_wifi_use">このネットワークを使用</string>
+    <string name="shared_wifi_connected">現在接続中</string>
+    <string name="shared_wifi_add">ネットワークを追加</string>
+    <string name="shared_wifi_edit">ネットワークを編集</string>
+    <string name="shared_wifi_delete">ネットワークを削除</string>
+    <string name="shared_wifi_reveal">パスワードを表示</string>
+    <string name="shared_wifi_hide">パスワードを隠す</string>
+    <string name="shared_wifi_cancel">キャンセル</string>
+    <string name="shared_wifi_save">保存</string>
+    <string name="shared_wifi_empty">Wi-Fi ネットワークを1つ以上保存してください。</string>
+    <string name="app_name">OpenXPlay Relay</string>
+    <string name="relay_brand_first">OpenXPlay</string>
+    <string name="relay_brand_second">Relay</string>
+</resources>

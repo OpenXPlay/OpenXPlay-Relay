@@ -1,0 +1,8 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-14 -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="reports" path="diagnostic-reports/" />
+    <external-files-path name="external_reports" path="diagnostic-reports/" />
+    <external-path name="public_reports" path="Download/OpenXPlay Relay/" />
+</paths>

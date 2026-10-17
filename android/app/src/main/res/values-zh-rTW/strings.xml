@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-15 -->
+<resources>
+    <string name="direlay_app_name">OpenXPlay Relay</string>
+    <string name="direlay_car_hotspot">此手機的熱點</string>
+    <string name="direlay_existing_wifi">共用 Wi-Fi</string>
+    <string name="option_direct_hint">iPhone 直接連接此手機；車機螢幕透過此手機的一般 Wi-Fi 連線，例如車機熱點。</string>
+    <string name="option_hotspot_hint">開啟此手機的個人熱點，iPhone 和車機螢幕都連接到它。</string>
+    <string name="option_wifi_hint">iPhone、此手機和車機螢幕連接同一個 Wi-Fi，例如車機熱點或行動路由器。</string>
+    <string name="direlay_car_hotspot_hint">填寫與 Android 熱點設定中相同的名稱和密碼。</string>
+    <string name="direlay_existing_wifi_hint">此手機需要已連接到這個 Wi-Fi，且路由器允許裝置之間互相存取。</string>
+    <string name="direlay_network_ssid">Wi-Fi 名稱</string>
+    <string name="direlay_network_passphrase">Wi-Fi 密碼</string>
+    <string name="settings_hotspot_name">熱點名稱</string>
+    <string name="settings_hotspot_password">熱點密碼</string>
+    <string name="settings_open_hotspot">開啟熱點設定</string>
+    <string name="ui_open_wifi">開啟 Wi-Fi 設定</string>
+    <string name="ui_automatic_paused">已停止。點選「開始」後會恢復自動開始。</string>
+    <string name="settings_require_code">需要配對碼</string>
+    <string name="settings_require_code_hint">車機瀏覽器需要輸入此手機上顯示的配對碼。在不可信的網路中開啟。</string>
+    <string name="network_iphone">iPhone</string>
+    <string name="network_this_phone">此手機</string>
+    <string name="network_car">車機</string>
+    <string name="network_direct">直連</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_hotspot">熱點</string>
+    <string name="network_direct_description">iPhone 透過 Wi-Fi 直連連接此手機；車機透過 Wi-Fi 連接此手機。</string>
+    <string name="network_hotspot_description">iPhone 和車機都連接此手機的熱點。</string>
+    <string name="network_wifi_description">iPhone、此手機和車機都連接同一個 Wi-Fi 路由器。</string>
+    <string name="settings_hotspot_name_error">請輸入占 1–32 個 UTF-8 位元組的熱點名稱。</string>
+    <string name="settings_hotspot_password_error">開放熱點不需密碼，其他熱點請輸入 8–63 個字元。</string>
+    <string name="ui_wifi_direct_recommended">Wi-Fi 直連（推薦）</string>
+
+    <!-- Paired iPhone selection. -->
+    <string name="iphone_title">iPhone</string>
+    <string name="iphone_automatic">自動</string>
+    <string name="iphone_automatic_name">自動 · %1$s</string>
+    <string name="iphone_automatic_recommended">自動（建議）</string>
+    <string name="iphone_connected">已連線</string>
+    <string name="iphone_likely">可能是 iPhone</string>
+    <string name="iphone_unnamed">未命名裝置</string>
+    <string name="iphone_pair_new">配對新的 iPhone</string>
+    <string name="iphone_pair_hint">在 iPhone 上開啟「設定」→「藍牙」，然後選擇 %1$s。</string>
+    <string name="iphone_unpaired">所選的 iPhone 已取消配對，請重新選擇。</string>
+    <string name="iphone_multiple">有多支手機可能是你的 iPhone，請選擇一支。</string>
+    <string name="iphone_choose">選擇 iPhone</string>
+    <string name="iphone_hint">選擇 CarPlay 使用哪支已配對的手機。</string>
+    <string name="dev_iphone_selection">iPhone 選擇結果</string>
+    <string name="iphone_pair">配對你的 iPhone</string>
+    <string name="admin_page">管理頁面</string>
+    <string name="admin_page_hint">在同一網路的電腦或手機上開啟此位址管理中繼。</string>
+    <string name="admin_reset_password">重設密碼</string>
+    <string name="admin_password_reset">密碼已恢復為 openxplay。</string>
+    <string name="admin_reset_confirm">將密碼恢復為 openxplay 並登出所有管理工作階段？</string>
+    <string name="admin_copy_url">複製管理位址</string>
+    <string name="host_connecting">正在連接你的 iPhone…</string>
+    <string name="host_running">CarPlay 正在車機螢幕上執行</string>
+    <string name="host_keep_running">請保持 OpenXPlay Relay 執行。可以鎖定手機或切換到其他 App，但不要在最近使用的 App 中滑掉 OpenXPlay Relay。</string>
+    <string name="host_back">返回 OpenXPlay Relay</string>
+    <string name="host_cancel">取消</string>
+    <string name="host_stopped">CarPlay 已停止</string>
+    <string name="carlink_auto_reconnect">Carlink 自動重新連線</string>
+    <string name="carlink_auto_reconnect_hint">連線中斷後自動重新連接車機。</string>
+    <string name="shared_wifi_not_saved">此 Wi-Fi 尚未儲存用於 CarPlay</string>
+    <string name="shared_wifi_save_current">儲存此 Wi-Fi</string>
+    <string name="shared_wifi_unreadable">無法讀取目前 Wi-Fi 名稱。請手動選擇已儲存的網路。</string>
+    <string name="shared_wifi_use">使用此網路</string>
+    <string name="shared_wifi_connected">目前已連線</string>
+    <string name="shared_wifi_add">新增網路</string>
+    <string name="shared_wifi_edit">編輯網路</string>
+    <string name="shared_wifi_delete">刪除網路</string>
+    <string name="shared_wifi_reveal">顯示密碼</string>
+    <string name="shared_wifi_hide">隱藏密碼</string>
+    <string name="shared_wifi_cancel">取消</string>
+    <string name="shared_wifi_save">儲存</string>
+    <string name="shared_wifi_empty">請至少儲存一個 Wi-Fi 網路。</string>
+    <string name="app_name">OpenXPlay Relay</string>
+    <string name="relay_brand_first">OpenXPlay</string>
+    <string name="relay_brand_second">Relay</string>
+</resources>

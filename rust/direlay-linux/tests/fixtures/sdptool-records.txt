@@ -1,0 +1,17 @@
+Service Name: Hands-Free Audio Gateway
+Service RecHandle: 0x10002
+Service Class ID List:
+  "Handsfree Audio Gateway" (0x111f)
+Protocol Descriptor List:
+  "L2CAP" (0x0100)
+  "RFCOMM" (0x0003)
+    Channel: 7
+
+Service Name: iAP2
+Service RecHandle: 0x1000c
+Service Class ID List:
+  UUID 128: 00000000-deca-fade-deca-deafdecacafe
+Protocol Descriptor List:
+  "L2CAP" (0x0100)
+  "RFCOMM" (0x0003)
+    Channel: 12

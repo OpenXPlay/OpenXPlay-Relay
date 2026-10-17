@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2021-2022 Han Xu <keepsimple@gmail.com>
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+# Modified by OpenXPlay.org on 2026-10-16 (vendored from mdns-sd 0.13.11): dev-dependencies removed.
+
+[package]
+name = "mdns-sd"
+version = "0.13.11"
+authors = ["keepsimple <keepsimple@gmail.com>"]
+edition = "2018"
+rust-version = "1.70.0"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/keepsimple1/mdns-sd"
+documentation = "https://docs.rs/mdns-sd"
+keywords = ["mdns", "service-discovery", "zeroconf", "dns-sd"]
+categories = ["network-programming"]
+description = "mDNS Service Discovery library with no async runtime dependency"
+
+[features]
+async = ["flume/async"]
+logging = ["log"]
+default = ["async", "logging"]
+
+[dependencies]
+fastrand = "2.3"
+flume = { version = "0.11", default-features = false } # channel between threads
+if-addrs = { version = "0.13", features = ["link-local"] } # get local IP addresses
+log = { version = "0.4", optional = true }             # logging
+mio = { version = "1.0", features = ["os-poll", "net"] }  # select/poll sockets
+socket2 = { version = "0.5.8", features = ["all"] }      # socket APIs
+

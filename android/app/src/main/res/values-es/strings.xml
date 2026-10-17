@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-15 -->
+<resources>
+    <string name="direlay_app_name">OpenXPlay Relay</string>
+    <string name="direlay_car_hotspot">Punto de acceso de este teléfono</string>
+    <string name="direlay_existing_wifi">Wi-Fi compartido</string>
+    <string name="option_direct_hint">El iPhone se conecta directamente a este teléfono. La pantalla del coche usa la conexión Wi-Fi normal de este teléfono, por ejemplo, el punto de acceso del coche.</string>
+    <string name="option_hotspot_hint">Activa el punto de acceso de este teléfono. El iPhone y la pantalla del coche se conectan a él.</string>
+    <string name="option_wifi_hint">El iPhone, este teléfono y la pantalla del coche se conectan al mismo Wi-Fi, como el del coche o un router de viaje.</string>
+    <string name="direlay_car_hotspot_hint">Usa el mismo nombre y contraseña que en los ajustes del punto de acceso de Android.</string>
+    <string name="direlay_existing_wifi_hint">Este teléfono debe estar conectado a ese Wi-Fi. El router debe permitir la comunicación entre dispositivos.</string>
+    <string name="direlay_network_ssid">Nombre del Wi-Fi</string>
+    <string name="direlay_network_passphrase">Contraseña del Wi-Fi</string>
+    <string name="settings_hotspot_name">Nombre del punto de acceso</string>
+    <string name="settings_hotspot_password">Contraseña del punto de acceso</string>
+    <string name="settings_open_hotspot">Abrir ajustes del punto de acceso</string>
+    <string name="ui_open_wifi">Abrir ajustes de Wi-Fi</string>
+    <string name="ui_automatic_paused">Detenido. El inicio automático se reanuda al tocar Iniciar.</string>
+    <string name="settings_require_code">Exigir código de enlace</string>
+    <string name="settings_require_code_hint">El navegador del coche debe introducir el código que aparece en este teléfono. Actívalo en redes que no sean de confianza.</string>
+    <string name="network_iphone">iPhone</string>
+    <string name="network_this_phone">Este teléfono</string>
+    <string name="network_car">Coche</string>
+    <string name="network_direct">Wi-Fi Direct</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_hotspot">Punto de acceso</string>
+    <string name="network_direct_description">El iPhone se conecta a este teléfono por Wi-Fi Direct; el coche se conecta a este teléfono por Wi-Fi.</string>
+    <string name="network_hotspot_description">El iPhone y el coche se conectan al punto de acceso de este teléfono.</string>
+    <string name="network_wifi_description">El iPhone, este teléfono y el coche se conectan al mismo router Wi-Fi.</string>
+    <string name="settings_hotspot_name_error">Introduce un nombre de punto de acceso de 1 a 32 bytes UTF-8.</string>
+    <string name="settings_hotspot_password_error">Deja la contraseña vacía si el punto de acceso es abierto o usa de 8 a 63 caracteres.</string>
+    <string name="ui_wifi_direct_recommended">Wi-Fi Direct (recomendado)</string>
+
+    <!-- Paired iPhone selection. -->
+    <string name="iphone_title">iPhone</string>
+    <string name="iphone_automatic">Automático</string>
+    <string name="iphone_automatic_name">Automático · %1$s</string>
+    <string name="iphone_automatic_recommended">Automático (recomendado)</string>
+    <string name="iphone_connected">Conectado</string>
+    <string name="iphone_likely">Parece un iPhone</string>
+    <string name="iphone_unnamed">Dispositivo sin nombre</string>
+    <string name="iphone_pair_new">Emparejar un nuevo iPhone</string>
+    <string name="iphone_pair_hint">En el iPhone, abre Ajustes → Bluetooth y elige %1$s.</string>
+    <string name="iphone_unpaired">El iPhone elegido ya no está emparejado. Vuelve a elegirlo.</string>
+    <string name="iphone_multiple">Varios teléfonos podrían ser tu iPhone. Elige uno.</string>
+    <string name="iphone_choose">Elegir iPhone</string>
+    <string name="iphone_hint">Elige qué teléfono emparejado usa CarPlay.</string>
+    <string name="dev_iphone_selection">Selección de iPhone</string>
+    <string name="iphone_pair">Empareja tu iPhone</string>
+    <string name="admin_page">Página de administración</string>
+    <string name="admin_page_hint">Abre esta dirección en un ordenador o teléfono de la misma red para administrar el relé.</string>
+    <string name="admin_reset_password">Restablecer contraseña</string>
+    <string name="admin_password_reset">La contraseña se ha restablecido a openxplay.</string>
+    <string name="admin_reset_confirm">¿Restablecer la contraseña a openxplay y cerrar todas las sesiones de administración?</string>
+    <string name="admin_copy_url">Copiar dirección de administración</string>
+    <string name="host_connecting">Conectando con tu iPhone…</string>
+    <string name="host_running">CarPlay está funcionando en la pantalla del coche</string>
+    <string name="host_keep_running">Mantén OpenXPlay Relay en ejecución. Puedes bloquear este teléfono o cambiar de aplicación, pero no cierres OpenXPlay Relay deslizándolo desde las aplicaciones recientes.</string>
+    <string name="host_back">Volver a OpenXPlay Relay</string>
+    <string name="host_cancel">Cancelar</string>
+    <string name="host_stopped">CarPlay se ha detenido</string>
+    <string name="carlink_auto_reconnect">Reconexión automática de Carlink</string>
+    <string name="carlink_auto_reconnect_hint">Vuelve a conectar con la unidad principal automáticamente si se pierde la conexión.</string>
+    <string name="shared_wifi_not_saved">Esta Wi-Fi no está guardada para CarPlay</string>
+    <string name="shared_wifi_save_current">Guardar esta Wi-Fi</string>
+    <string name="shared_wifi_unreadable">El nombre de la Wi-Fi actual no está disponible. Elige una red guardada manualmente.</string>
+    <string name="shared_wifi_use">Usar esta red</string>
+    <string name="shared_wifi_connected">Conectada ahora</string>
+    <string name="shared_wifi_add">Añadir red</string>
+    <string name="shared_wifi_edit">Editar red</string>
+    <string name="shared_wifi_delete">Eliminar red</string>
+    <string name="shared_wifi_reveal">Mostrar contraseña</string>
+    <string name="shared_wifi_hide">Ocultar contraseña</string>
+    <string name="shared_wifi_cancel">Cancelar</string>
+    <string name="shared_wifi_save">Guardar</string>
+    <string name="shared_wifi_empty">Guarda al menos una red Wi-Fi.</string>
+    <string name="app_name">OpenXPlay Relay</string>
+    <string name="relay_brand_first">OpenXPlay</string>
+    <string name="relay_brand_second">Relay</string>
+</resources>

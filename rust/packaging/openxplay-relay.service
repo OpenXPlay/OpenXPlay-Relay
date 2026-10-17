@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-15
+[Unit]
+Description=OpenXPlay wireless CarPlay relay
+# Bluetooth is wanted but not waited for: the relay brings its access point and web pages up
+# first and follows BlueZ until the adapter is ready.
+After=NetworkManager.service
+Wants=bluetooth.service NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+StateDirectory=openxplay
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/opt/openxplay/bin/openxplay-relay --state-dir /var/lib/openxplay --identity-dir /var/lib/openxplay/mfi --oxp-relay /opt/openxplay/bin/oxp-relay --web-root /opt/openxplay/share/web --admin-root /opt/openxplay/share/admin
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

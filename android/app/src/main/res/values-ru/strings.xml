@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-15 -->
+<resources>
+    <string name="direlay_app_name">OpenXPlay Relay</string>
+    <string name="direlay_car_hotspot">Точка доступа этого телефона</string>
+    <string name="direlay_existing_wifi">Общая сеть Wi-Fi</string>
+    <string name="option_direct_hint">iPhone подключается напрямую к этому телефону. Экран автомобиля использует обычное Wi-Fi-подключение этого телефона, например точку доступа автомобиля.</string>
+    <string name="option_hotspot_hint">Включите точку доступа на этом телефоне. iPhone и экран автомобиля подключаются к ней.</string>
+    <string name="option_wifi_hint">iPhone, этот телефон и экран автомобиля подключаются к одной сети Wi-Fi, например к точке доступа автомобиля или дорожному роутеру.</string>
+    <string name="direlay_car_hotspot_hint">Укажите те же имя и пароль, что и в настройках точки доступа Android.</string>
+    <string name="direlay_existing_wifi_hint">Этот телефон уже должен быть подключён к этой сети Wi-Fi. Роутер должен разрешать связь между устройствами.</string>
+    <string name="direlay_network_ssid">Имя сети Wi-Fi</string>
+    <string name="direlay_network_passphrase">Пароль Wi-Fi</string>
+    <string name="settings_hotspot_name">Имя точки доступа</string>
+    <string name="settings_hotspot_password">Пароль точки доступа</string>
+    <string name="settings_open_hotspot">Открыть настройки точки доступа</string>
+    <string name="ui_open_wifi">Открыть настройки Wi-Fi</string>
+    <string name="ui_automatic_paused">Остановлено. Автозапуск возобновится после нажатия «Запустить».</string>
+    <string name="settings_require_code">Требовать код сопряжения</string>
+    <string name="settings_require_code_hint">В браузере автомобиля нужно ввести код с экрана этого телефона. Включайте в недоверенных сетях.</string>
+    <string name="network_iphone">iPhone</string>
+    <string name="network_this_phone">Этот телефон</string>
+    <string name="network_car">Авто</string>
+    <string name="network_direct">Wi-Fi Direct</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_hotspot">Точка доступа</string>
+    <string name="network_direct_description">iPhone подключается к этому телефону через Wi-Fi Direct; автомобиль подключается к этому телефону через Wi-Fi.</string>
+    <string name="network_hotspot_description">iPhone и автомобиль подключаются к точке доступа этого телефона.</string>
+    <string name="network_wifi_description">iPhone, этот телефон и автомобиль подключаются к одному Wi-Fi-роутеру.</string>
+    <string name="settings_hotspot_name_error">Введите имя точки доступа размером 1–32 байта UTF-8.</string>
+    <string name="settings_hotspot_password_error">Для открытой точки доступа оставьте пароль пустым, иначе введите 8–63 символа.</string>
+    <string name="ui_wifi_direct_recommended">Wi-Fi Direct (рекомендуется)</string>
+
+    <!-- Paired iPhone selection. -->
+    <string name="iphone_title">iPhone</string>
+    <string name="iphone_automatic">Автоматически</string>
+    <string name="iphone_automatic_name">Автоматически · %1$s</string>
+    <string name="iphone_automatic_recommended">Автоматически (рекомендуется)</string>
+    <string name="iphone_connected">Подключено</string>
+    <string name="iphone_likely">Похоже на iPhone</string>
+    <string name="iphone_unnamed">Устройство без имени</string>
+    <string name="iphone_pair_new">Создать пару с новым iPhone</string>
+    <string name="iphone_pair_hint">На iPhone откройте «Настройки» → Bluetooth и выберите %1$s.</string>
+    <string name="iphone_unpaired">Пара с выбранным iPhone удалена. Выберите iPhone заново.</string>
+    <string name="iphone_multiple">Несколько телефонов могут быть вашим iPhone. Выберите один.</string>
+    <string name="iphone_choose">Выбрать iPhone</string>
+    <string name="iphone_hint">Выберите сопряжённый телефон для CarPlay.</string>
+    <string name="dev_iphone_selection">Выбор iPhone</string>
+    <string name="iphone_pair">Создайте пару с iPhone</string>
+    <string name="admin_page">Страница управления</string>
+    <string name="admin_page_hint">Откройте этот адрес на компьютере или телефоне в той же сети для управления ретранслятором.</string>
+    <string name="admin_reset_password">Сбросить пароль</string>
+    <string name="admin_password_reset">Пароль сброшен на openxplay.</string>
+    <string name="admin_reset_confirm">Сбросить пароль на openxplay и завершить все сеансы управления?</string>
+    <string name="admin_copy_url">Скопировать адрес управления</string>
+    <string name="host_connecting">Подключение к iPhone…</string>
+    <string name="host_running">CarPlay работает на экране автомобиля</string>
+    <string name="host_keep_running">Не закрывайте OpenXPlay Relay. Можно заблокировать этот телефон или переключиться на другое приложение, но не смахивайте OpenXPlay Relay из списка недавних приложений.</string>
+    <string name="host_back">Вернуться в OpenXPlay Relay</string>
+    <string name="host_cancel">Отмена</string>
+    <string name="host_stopped">CarPlay остановлен</string>
+    <string name="carlink_auto_reconnect">Автоподключение Carlink</string>
+    <string name="carlink_auto_reconnect_hint">Автоматически переподключаться к головному устройству после обрыва связи.</string>
+    <string name="shared_wifi_not_saved">Эта сеть Wi-Fi не сохранена для CarPlay</string>
+    <string name="shared_wifi_save_current">Сохранить эту сеть Wi-Fi</string>
+    <string name="shared_wifi_unreadable">Имя текущей сети Wi-Fi недоступно. Выберите сохранённую сеть вручную.</string>
+    <string name="shared_wifi_use">Использовать эту сеть</string>
+    <string name="shared_wifi_connected">Подключено сейчас</string>
+    <string name="shared_wifi_add">Добавить сеть</string>
+    <string name="shared_wifi_edit">Изменить сеть</string>
+    <string name="shared_wifi_delete">Удалить сеть</string>
+    <string name="shared_wifi_reveal">Показать пароль</string>
+    <string name="shared_wifi_hide">Скрыть пароль</string>
+    <string name="shared_wifi_cancel">Отмена</string>
+    <string name="shared_wifi_save">Сохранить</string>
+    <string name="shared_wifi_empty">Сохраните хотя бы одну сеть Wi-Fi.</string>
+    <string name="app_name">OpenXPlay Relay</string>
+    <string name="relay_brand_first">OpenXPlay</string>
+    <string name="relay_brand_second">Relay</string>
+</resources>

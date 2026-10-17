@@ -1,0 +1,95 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-14
+package org.openxplay.direlay.bridge
+
+import com.shilapi.xcertplay.airplay.AudioCodecKind
+import com.shilapi.xcertplay.airplay.AudioStreamId
+import com.shilapi.xcertplay.airplay.AudioFormat as CarPlayAudioFormat
+import org.openxplay.stream.core.AudioRole
+import org.openxplay.stream.core.AudioCodec
+import org.openxplay.stream.core.AudioFormat
+
+internal object AudioPolicy {
+    fun stream(id: AudioStreamId): Int? = when (id.type) { 102 -> 0; 100 -> 1; 101 -> 2; else -> null }
+    fun role(type: String): AudioRole = when (type) {
+        "media" -> AudioRole.MEDIA
+        "alert" -> AudioRole.ALERT
+        "speechrecognition" -> AudioRole.VOICE
+        "telephony" -> AudioRole.TELEPHONY
+        else -> AudioRole.OTHER
+    }
+    fun passthrough(id: AudioStreamId, source: CarPlayAudioFormat): Boolean =
+        role(id.audioType) == AudioRole.MEDIA && source.codec == AudioCodecKind.AAC_LC &&
+            source.sampleRate == 48_000 && source.channels == 2
+    fun format(id: AudioStreamId, source: CarPlayAudioFormat): AudioFormat {
+        val role = role(id.audioType)
+        return if (role == AudioRole.MEDIA) AudioFormat(requireNotNull(stream(id)), role,
+            AudioCodec.AAC_LC, 48_000, 2, byteArrayOf(0x11, 0x90.toByte()))
+        else AudioFormat(requireNotNull(stream(id)), role, AudioCodec.PCM_S16LE, source.sampleRate, source.channels)
+    }
+    fun swap(pcm: ByteArray): ByteArray {
+        require(pcm.size % 2 == 0)
+        return pcm.copyOf().also { result ->
+            for (i in result.indices step 2) { result[i] = pcm[i + 1]; result[i + 1] = pcm[i] }
+        }
+    }
+}
+
+/** RTP wraps at 32 bits; anchors use the same System.nanoTime clock as relay video. */
+internal class AudioClock(private val rate: Int) {
+    private var sample: Int? = null
+    private var anchorUs = 0L
+    private var elapsed = 0L
+    fun pts(sample: Int, arrivalUs: Long): Long {
+        val previous = this.sample
+        if (previous == null) { anchorUs = arrivalUs; elapsed = 0 }
+        else elapsed += (sample - previous).toLong()
+        this.sample = sample
+        var pts = anchorUs + elapsed * 1_000_000L / rate
+        if (kotlin.math.abs(pts - arrivalUs) > 100_000) {
+            anchorUs = arrivalUs; elapsed = 0; pts = arrivalUs
+        }
+        return pts
+    }
+}
+
+/** Streaming linear interpolation retains phase and the boundary sample across packets. */
+internal class StereoResampler(private val rate: Int, private val channels: Int) {
+    private var pending = ShortArray(0)
+    private var position = 0L
+    fun convert(pcm: ByteArray): ByteArray {
+        require(channels in 1..2 && pcm.size % (channels * 2) == 0)
+        if (rate == 48_000) {
+            if (channels == 2) return pcm.copyOf()
+            return ByteArray(pcm.size * 2).also { output ->
+                for (i in pcm.indices step 2) {
+                    output[i * 2] = pcm[i]; output[i * 2 + 1] = pcm[i + 1]
+                    output[i * 2 + 2] = pcm[i]; output[i * 2 + 3] = pcm[i + 1]
+                }
+            }
+        }
+        val samples = ShortArray(pending.size + pcm.size / 2)
+        pending.copyInto(samples)
+        for (i in 0 until pcm.size / 2) samples[pending.size + i] =
+            ((pcm[i * 2].toInt() and 255) or (pcm[i * 2 + 1].toInt() shl 8)).toShort()
+        val frames = samples.size / channels
+        val output = java.io.ByteArrayOutputStream()
+        while (position / 48_000 + 1 < frames) {
+            val frame = (position / 48_000).toInt()
+            val fraction = position % 48_000
+            for (channel in 0..1) {
+                val c = minOf(channel, channels - 1)
+                val a = samples[frame * channels + c].toInt()
+                val b = samples[(frame + 1) * channels + c].toInt()
+                val value = a + ((b - a) * fraction / 48_000).toInt()
+                output.write(value and 255); output.write((value ushr 8) and 255)
+            }
+            position += rate
+        }
+        val consumed = minOf((position / 48_000).toInt(), frames)
+        pending = samples.copyOfRange(consumed * channels, samples.size)
+        position -= consumed * 48_000L
+        return output.toByteArray()
+    }
+}

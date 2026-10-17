@@ -1,0 +1,8 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-14 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M6.2,2L12,7.8L17.8,2L22,6.2L16.2,12L22,17.8L17.8,22L12,16.2L6.2,22L2,17.8L7.8,12L2,6.2Z" />
+</vector>

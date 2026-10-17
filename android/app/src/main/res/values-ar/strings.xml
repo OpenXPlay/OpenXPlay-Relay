@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-15 -->
+<resources>
+    <string name="direlay_app_name">OpenXPlay Relay</string>
+    <string name="direlay_car_hotspot">نقطة اتصال هذا الهاتف</string>
+    <string name="direlay_existing_wifi">شبكة Wi-Fi مشتركة</string>
+    <string name="option_direct_hint">يتصل iPhone بهذا الهاتف مباشرة. تستخدم شاشة السيارة اتصال Wi-Fi العادي لهذا الهاتف، مثل نقطة اتصال السيارة.</string>
+    <string name="option_hotspot_hint">شغّل نقطة الاتصال في هذا الهاتف. يتصل بها كل من iPhone وشاشة السيارة.</string>
+    <string name="option_wifi_hint">يتصل iPhone وهذا الهاتف وشاشة السيارة بشبكة Wi-Fi واحدة، مثل نقطة اتصال السيارة أو موجّه محمول.</string>
+    <string name="direlay_car_hotspot_hint">استخدم الاسم وكلمة المرور نفسيهما الموجودين في إعدادات نقطة الاتصال في Android.</string>
+    <string name="direlay_existing_wifi_hint">يجب أن يكون هذا الهاتف متصلاً بهذه الشبكة بالفعل. يجب أن يسمح الموجّه للأجهزة بالتواصل فيما بينها.</string>
+    <string name="direlay_network_ssid">اسم شبكة Wi-Fi</string>
+    <string name="direlay_network_passphrase">كلمة مرور Wi-Fi</string>
+    <string name="settings_hotspot_name">اسم نقطة الاتصال</string>
+    <string name="settings_hotspot_password">كلمة مرور نقطة الاتصال</string>
+    <string name="settings_open_hotspot">فتح إعدادات نقطة الاتصال</string>
+    <string name="ui_open_wifi">فتح إعدادات Wi-Fi</string>
+    <string name="ui_automatic_paused">تم الإيقاف. يُستأنف التشغيل التلقائي بعد الضغط على «بدء».</string>
+    <string name="settings_require_code">طلب رمز الاقتران</string>
+    <string name="settings_require_code_hint">يجب إدخال الرمز الظاهر على هذا الهاتف في متصفح السيارة. فعّل هذا الخيار على الشبكات غير الموثوقة.</string>
+    <string name="network_iphone">iPhone</string>
+    <string name="network_this_phone">هذا الهاتف</string>
+    <string name="network_car">السيارة</string>
+    <string name="network_direct">Wi-Fi Direct</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_hotspot">نقطة اتصال</string>
+    <string name="network_direct_description">يتصل iPhone بهذا الهاتف عبر Wi-Fi Direct؛ وتتصل السيارة بهذا الهاتف عبر Wi-Fi.</string>
+    <string name="network_hotspot_description">يتصل iPhone والسيارة بنقطة اتصال هذا الهاتف.</string>
+    <string name="network_wifi_description">يتصل iPhone وهذا الهاتف والسيارة بموجّه Wi-Fi واحد.</string>
+    <string name="settings_hotspot_name_error">أدخل اسم نقطة اتصال بحجم 1–32 بايت بترميز UTF-8.</string>
+    <string name="settings_hotspot_password_error">اترك كلمة المرور فارغة لنقطة اتصال مفتوحة، أو أدخل 8–63 حرفًا.</string>
+    <string name="ui_wifi_direct_recommended">Wi-Fi Direct (موصى به)</string>
+
+    <!-- Paired iPhone selection. -->
+    <string name="iphone_title">iPhone</string>
+    <string name="iphone_automatic">تلقائي</string>
+    <string name="iphone_automatic_name">تلقائي · %1$s</string>
+    <string name="iphone_automatic_recommended">تلقائي (موصى به)</string>
+    <string name="iphone_connected">متصل</string>
+    <string name="iphone_likely">يبدو أنه iPhone</string>
+    <string name="iphone_unnamed">جهاز بلا اسم</string>
+    <string name="iphone_pair_new">إقران iPhone جديد</string>
+    <string name="iphone_pair_hint">على iPhone، افتح الإعدادات → Bluetooth واختر %1$s.</string>
+    <string name="iphone_unpaired">لم يعد iPhone المختار مقترنًا. اختر iPhone مجددًا.</string>
+    <string name="iphone_multiple">قد تكون عدة هواتف هي iPhone المطلوب. اختر واحدًا.</string>
+    <string name="iphone_choose">اختيار iPhone</string>
+    <string name="iphone_hint">اختر الهاتف المقترن الذي يستخدمه CarPlay.</string>
+    <string name="dev_iphone_selection">اختيار iPhone</string>
+    <string name="iphone_pair">إقران iPhone</string>
+    <string name="admin_page">صفحة الإدارة</string>
+    <string name="admin_page_hint">افتح هذا العنوان على كمبيوتر أو هاتف على الشبكة نفسها لإدارة المرحّل.</string>
+    <string name="admin_reset_password">إعادة تعيين كلمة المرور</string>
+    <string name="admin_password_reset">تمت إعادة تعيين كلمة المرور إلى openxplay.</string>
+    <string name="admin_reset_confirm">هل تريد إعادة تعيين كلمة المرور إلى openxplay وتسجيل الخروج من جميع جلسات الإدارة؟</string>
+    <string name="admin_copy_url">نسخ عنوان الإدارة</string>
+    <string name="host_connecting">جارٍ الاتصال بـ iPhone…</string>
+    <string name="host_running">يعمل CarPlay على شاشة السيارة</string>
+    <string name="host_keep_running">أبقِ OpenXPlay Relay قيد التشغيل. يمكنك قفل هذا الهاتف أو التبديل إلى تطبيق آخر، لكن لا تُزل OpenXPlay Relay بالسحب من قائمة التطبيقات الأخيرة.</string>
+    <string name="host_back">العودة إلى OpenXPlay Relay</string>
+    <string name="host_cancel">إلغاء</string>
+    <string name="host_stopped">تم إيقاف CarPlay</string>
+    <string name="carlink_auto_reconnect">إعادة اتصال Carlink تلقائيًا</string>
+    <string name="carlink_auto_reconnect_hint">إعادة الاتصال بوحدة السيارة تلقائيًا بعد انقطاع الاتصال.</string>
+    <string name="shared_wifi_not_saved">لم تُحفظ شبكة Wi-Fi هذه لـ CarPlay</string>
+    <string name="shared_wifi_save_current">حفظ شبكة Wi-Fi هذه</string>
+    <string name="shared_wifi_unreadable">اسم شبكة Wi-Fi الحالية غير متاح. اختر شبكة محفوظة يدويًا.</string>
+    <string name="shared_wifi_use">استخدام هذه الشبكة</string>
+    <string name="shared_wifi_connected">متصل الآن</string>
+    <string name="shared_wifi_add">إضافة شبكة</string>
+    <string name="shared_wifi_edit">تعديل الشبكة</string>
+    <string name="shared_wifi_delete">حذف الشبكة</string>
+    <string name="shared_wifi_reveal">إظهار كلمة المرور</string>
+    <string name="shared_wifi_hide">إخفاء كلمة المرور</string>
+    <string name="shared_wifi_cancel">إلغاء</string>
+    <string name="shared_wifi_save">حفظ</string>
+    <string name="shared_wifi_empty">احفظ شبكة Wi-Fi واحدة على الأقل.</string>
+    <string name="app_name">OpenXPlay Relay</string>
+    <string name="relay_brand_first">OpenXPlay</string>
+    <string name="relay_brand_second">Relay</string>
+</resources>

@@ -1,0 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-14 -->
+<resources>
+    <string name="receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay">OpenXPlay Relay 的 CarPlay 接收器以 DiPlay 和 xcertplay 為基礎，兩者均採用 GPL-3.0 授權。感謝它們的作者和貢獻者。\n\n專案包含 AndroidX、Bouncy Castle、JmDNS 和 SLF4J。本版本附有原始碼和授權聲明。\n\nCarPlay 是 Apple Inc. 的商標。OpenXPlay Relay 與 Apple、DiPlay 或 xcertplay 無關聯，也未獲得它們的認可。</string>
+</resources>

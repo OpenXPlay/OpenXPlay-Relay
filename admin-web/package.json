@@ -1,0 +1,25 @@
+{
+  "name": "@openxplay/relay-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "link:tools": "test -d node_modules || ln -s ../../OpenXPlay-Stream/web/node_modules node_modules",
+    "predev": "npm run link:tools",
+    "dev": "node dev.mjs",
+    "prebuild": "npm run link:tools",
+    "build": "tsc --noEmit && vite build --configLoader runner",
+    "pretest": "npm run link:tools",
+    "test": "vitest run --configLoader runner",
+    "pretypecheck": "npm run link:tools",
+    "typecheck": "tsc --noEmit",
+    "preview:states": "npm run link:tools && node dev.mjs --states"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "7.1.12",
+    "vitest": "3.2.4"
+  },
+  "description": "Relay admin UI. npm run dev starts the in-memory Android mock; add -- --linux for Wi-Fi provisioning. Admin password: openxplay. Secured mock Wi-Fi password: openxplay; the named failure networks simulate not-found and timeout. Restarting resets all state. link:tools reuses ../../OpenXPlay-Stream/web/node_modules without downloads."
+}

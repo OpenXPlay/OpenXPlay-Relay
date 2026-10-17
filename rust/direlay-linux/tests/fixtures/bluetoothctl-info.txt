@@ -1,0 +1,12 @@
+Device A0:B1:C2:D3:E4:F5 (public)
+	Name: Riko's iPhone
+	Alias: Riko's iPhone
+	Class: 0x007a020c
+	Icon: phone
+	Paired: yes
+	Bonded: yes
+	Trusted: yes
+	Blocked: no
+	Connected: yes
+	LegacyPairing: no
+	UUID: Vendor specific           (00000000-deca-fade-deca-deafdecacafe)

@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-16
+
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# The Rust and Android builds reference OpenXPlay-Stream and OpenXPlay-DiPlay by relative path,
+# so those jobs check the repositories out side by side.
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: OpenXPlay-Relay/rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: OpenXPlay-Relay
+      - uses: actions/checkout@v4
+        with:
+          repository: OpenXPlay/OpenXPlay-Stream
+          path: OpenXPlay-Stream
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+      - name: Test
+        run: cargo test --workspace --locked --offline
+      - name: Test vendored mdns-sd
+        run: cargo test -p mdns-sd --locked --offline
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+
+  admin-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin-web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: OpenXPlay-Relay
+      - uses: actions/checkout@v4
+        with:
+          repository: OpenXPlay/OpenXPlay-Stream
+          path: OpenXPlay-Stream
+      - uses: actions/checkout@v4
+        with:
+          repository: OpenXPlay/OpenXPlay-DiPlay
+          path: OpenXPlay-DiPlay
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: OpenXPlay-Relay/admin-web/package-lock.json
+      - name: Build admin page
+        working-directory: OpenXPlay-Relay/admin-web
+        run: npm ci && npm run build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37.0
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests
+        working-directory: OpenXPlay-Relay/android
+        run: ./gradlew testDebugUnitTest

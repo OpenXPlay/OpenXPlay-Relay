@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-15
+
+# Static aarch64 musl builds link with the Rust toolchain's lld (see scripts/build-aarch64.sh).
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"

@@ -1,0 +1,9 @@
+Searching for 00000000-deca-fade-deca-deafdecacafe on A0:B1:C2:D3:E4:F5 ...
+Service Name: iAP2
+Service RecHandle: 0x1000c
+Service Class ID List:
+  UUID 128: 00000000-deca-fade-deca-deafdecacafe
+Protocol Descriptor List:
+  "L2CAP" (0x0100)
+  "RFCOMM" (0x0003)
+    Channel: 12
