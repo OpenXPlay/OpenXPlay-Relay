@@ -1,6 +1,0 @@
-<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
-     SPDX-License-Identifier: AGPL-3.0-only
-     Created by riko chen on 2026-10-14 -->
-<resources>
-    <string name="receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay">يعتمد مستقبل CarPlay في OpenXPlay Relay على DiPlay وxcertplay، وكلاهما مرخّص بموجب GPL-3.0. شكرًا لمؤلفيهما والمساهمين فيهما.\n\nيتضمن AndroidX وBouncy Castle وJmDNS وSLF4J. يرافق هذا الإصدار الشفرة المصدر وإشعارات الترخيص.\n\nCarPlay علامة تجارية لشركة Apple Inc. لا يرتبط OpenXPlay Relay بشركة Apple أو DiPlay أو xcertplay ولا يحظى بتأييدها.</string>
-</resources>

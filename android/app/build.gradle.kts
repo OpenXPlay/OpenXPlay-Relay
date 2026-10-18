@@ -29,7 +29,11 @@ android {
     }
 
     // Exclude identity assets from every merged dependency. Users provision their own files.
-    androidResources { ignoreAssetsPattern = "offline-mfi:identity.pk8:certificate.p7b:*.p12:*.pfx:tls.password" }
+    androidResources {
+        ignoreAssetsPattern = "offline-mfi:identity.pk8:certificate.p7b:*.p12:*.pfx:tls.password"
+        // The app ships English and Simplified Chinese only, libraries included.
+        localeFilters += listOf("en", "zh-rCN")
+    }
 
     buildTypes {
         // Test builds install next to the release (different signing key) as org.openxplay.relay.debug.

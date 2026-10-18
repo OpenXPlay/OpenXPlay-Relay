@@ -20,11 +20,9 @@ data class CarBrand(val id: String, val names: Map<String, String>, val models: 
     fun name(locale: Locale) = localizedCarName(names, locale)
 }
 fun localizedCarName(names: Map<String, String>, locale: Locale): String {
-    val key = if (locale.language == "zh") when {
-        locale.script == "Hant" || locale.country in listOf("TW", "HK", "MO") -> "zh-TW"
-        else -> "zh-CN"
-    } else locale.language
-    return names[key] ?: names.getValue("en")
+    // The app ships English and Simplified Chinese; Traditional Chinese falls back to English like the UI.
+    val simplified = locale.language == "zh" && locale.script != "Hant" && locale.country !in listOf("TW", "HK", "MO")
+    return names[if (simplified) "zh-CN" else "en"] ?: names.getValue("en")
 }
 class CarModels(val brands: List<CarBrand>) {
     fun brand(car: CarSelection) = brands.firstOrNull { it.id == car.brand }

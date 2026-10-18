@@ -4,15 +4,10 @@
      Created by riko chen on 2026-10-14 -->
 <resources>
     <string name="direlay_app_name">OpenXPlay Relay</string>
-    <string name="direlay_start_carplay">Start CarPlay</string>
-    <string name="direlay_no_frames">Video frames: none received</string>
-    <string name="direlay_frame_counts">Video frames:\n%1$s</string>
-    <string name="direlay_screen_count">Screen type %1$d: %2$d</string>
     <string name="direlay_attribution">Powered by OpenXPlay.</string>
     <string name="direlay_project_url" translatable="false">https://github.com/OpenXPlay/OpenXPlay-Relay</string>
     <string name="direlay_identity">CarPlay identity</string>
     <string name="direlay_identity_hint">Select identity.pk8, then certificate.p7b. Restart OpenXPlay Relay after replacing an identity that was already in use.</string>
-    <string name="direlay_tls_hint">Import a .p12 file and its password. Changes restart the web receiver.</string>
     <string name="direlay_tls">TLS certificate</string>
     <string name="direlay_import">Import</string>
     <string name="direlay_remove">Remove</string>
@@ -28,12 +23,9 @@
     <string name="direlay_operation_failed">File operation failed</string>
     <string name="direlay_file_unreadable">Could not read the selected file</string>
     <string name="direlay_file_too_large">File exceeds the %1$d byte limit</string>
-    <string name="direlay_settings_invalid">Settings need attention: %1$s Open Settings to fix it.</string>
     <string name="direlay_identity_required">Import a valid CarPlay identity before starting CarPlay.</string>
     <string name="direlay_local_preview">Local preview</string>
     <string name="direlay_settings">Settings</string>
-    <string name="direlay_settings_apply_hint">Connection and display changes apply on the next CarPlay start. End the current session before starting with new settings. Local preview and audio playback changes apply immediately; microphone source changes apply to the next microphone request; web-port changes restart the web receiver.</string>
-    <string name="direlay_connection">Connection and start-up</string>
     <string name="direlay_connection_mode">Connection mode</string>
     <string name="direlay_usb">USB</string>
     <string name="direlay_wireless">Wireless</string>
@@ -46,8 +38,6 @@
     <string name="direlay_auto_boot">Auto start on boot</string>
     <string name="direlay_boot_hint">Some phones block automatic startup. If OpenXPlay Relay does not open, open it manually.</string>
     <string name="direlay_auto_ready">Connect automatically</string>
-    <string name="direlay_display">CarPlay display</string>
-    <string name="direlay_display_hint">Device display uses the relay screen. A head-unit profile runs CarPlay on a separate display; operate CarPlay from the web receiver. Leaving the profile screen ends that display. Density sets Android dpi and the approximate physical CarPlay width (rounded to OpenXPlay Relay’s supported 25 mm steps, 100–400 mm). Profiles require Android support for activities on virtual displays.</string>
     <string name="direlay_display_profile">Display profile</string>
     <string name="direlay_device_display">Device display</string>
     <string name="direlay_custom">Custom</string>
@@ -55,9 +45,6 @@
     <string name="direlay_height">Height (pixels)</string>
     <string name="direlay_density">Density (dpi)</string>
     <string name="direlay_fps">Frames per second</string>
-    <string name="direlay_web_receiver">Web receiver</string>
-    <string name="direlay_web_port">Web port</string>
-    <string name="direlay_web_port_hint">Leave empty for automatic: 8080 without TLS or 8443 with TLS. Custom ports must be 1024–65535. TLS import is on the relay screen.</string>
     <string name="direlay_save_settings">Save settings</string>
     <string name="direlay_settings_error">Check settings</string>
     <string name="direlay_integer_required">Enter a whole number for %1$s.</string>
@@ -68,7 +55,6 @@
     <string name="direlay_permissions_missing">Allow before starting: %1$s</string>
     <string name="direlay_vpn_required">Allow Android VPN access for the USB connection.</string>
     <string name="direlay_checking_identity">Checking CarPlay identity…</string>
-    <string name="direlay_ready">Ready to start CarPlay.</string>
     <string name="direlay_continue">Continue</string>
     <string name="direlay_permission_microphone">Microphone</string>
     <string name="direlay_permission_notifications">Notifications</string>
@@ -79,20 +65,16 @@
     <string name="direlay_permission_network">Local network</string>
     <string name="direlay_profile_running">CarPlay head-unit display. Use the web receiver for touch controls.</string>
     <string name="direlay_return_to_relay">Close display and return to relay</string>
-    <string name="direlay_carlink_output">Carlink output</string>
     <string name="direlay_carlink_name">Carlink device name</string>
     <string name="direlay_carlink_model">Carlink device model</string>
-    <string name="direlay_carlink_hint">Requires Android 10+. Open Carlink on the head unit. Wi-Fi joining may need system approval. A single Wi-Fi radio may not support wireless CarPlay and Carlink together; USB CarPlay is more reliable.</string>
     <string name="direlay_carlink_reconnect">Reconnect Carlink</string>
     <string name="direlay_carlink_pin">Carlink PIN</string>
     <string name="direlay_carlink_pin_hint">Enter the current six-digit PIN shown on the head unit. It rotates every 120 seconds.</string>
     <string name="direlay_carlink_confirm">Approve Carlink pairing</string>
     <string name="direlay_carlink_confirm_hint">The head unit requests confirmation to replace its saved peer. Approve pairing with %1$s?</string>
-    <string name="direlay_network_mode">Wireless network mode</string>
     <string name="direlay_wifi_direct">Wi-Fi Direct</string>
     <string name="direlay_car_hotspot">This phone\'s hotspot</string>
     <string name="direlay_existing_wifi">Shared Wi-Fi</string>
-    <string name="direlay_network_status">Selected wireless network: %1$s</string>
     <string name="direlay_car_hotspot_hint">Use the same name and password as in Android\'s hotspot settings.</string>
     <string name="hotspot_5ghz_hint">Use the 5 GHz band: change it in Android\'s hotspot settings, because the picture often stutters on 2.4 GHz. If the head unit cannot join a 5 GHz hotspot, switch back to 2.4 GHz. Some phones offer only 2.4 GHz while connected to Wi-Fi; disconnect Wi-Fi first.</string>
     <string name="direlay_existing_wifi_hint">This phone must already be connected to this Wi-Fi. The router must allow devices to reach each other.</string>
@@ -103,11 +85,6 @@
     <string name="direlay_band_24">2.4 GHz</string>
     <string name="direlay_band_5">5 GHz</string>
     <string name="direlay_hotspot_channel">Car-hotspot channel (0 for automatic)</string>
-    <string name="direlay_hotspot_security">Car-hotspot security</string>
-    <string name="direlay_security_open">Open</string>
-    <string name="direlay_security_wpa2">WPA2-Personal</string>
-    <string name="direlay_security_mixed">WPA2/WPA3 mixed</string>
-    <string name="direlay_security_wpa3">WPA3</string>
     <string name="direlay_play_audio">Play CarPlay audio on this device</string>
     <string name="direlay_microphone_source">Microphone source</string>
     <string name="direlay_head_unit">Head unit</string>

@@ -18,7 +18,7 @@ class AboutResourcesTest {
     @Test fun installedPackageAndAllLocaleNamesUseRelayBrand() {
         val context = RuntimeEnvironment.getApplication()
         assertEquals("org.openxplay.relay", context.packageName.removeSuffix(".debug"))
-        for (tag in listOf("en", "ar", "es", "ja", "ru", "uk", "zh-CN", "zh-TW")) {
+        for (tag in listOf("en", "zh-CN")) {
             val configuration = android.content.res.Configuration(context.resources.configuration).apply {
                 setLocale(Locale.forLanguageTag(tag))
             }
@@ -49,7 +49,7 @@ class AboutResourcesTest {
 
     @Test fun allLocalesDescribeTheProjectAndDerivedLicences() {
         val context = RuntimeEnvironment.getApplication()
-        for (tag in listOf("en", "ar", "es", "ja", "ru", "uk", "zh-CN", "zh-TW")) {
+        for (tag in listOf("en", "zh-CN")) {
             val configuration = android.content.res.Configuration(context.resources.configuration).apply {
                 setLocale(Locale.forLanguageTag(tag))
             }
@@ -62,7 +62,7 @@ class AboutResourcesTest {
 
     @Test fun allReceiverLocalesKeepTheAcknowledgementAndDependencyList() {
         val context = RuntimeEnvironment.getApplication()
-        for (tag in listOf("en", "ar", "es", "ja", "ru", "uk", "zh-CN", "zh-TW")) {
+        for (tag in listOf("en", "zh-CN")) {
             val configuration = android.content.res.Configuration(context.resources.configuration)
             configuration.setLocale(Locale.forLanguageTag(tag))
             val localized = context.createConfigurationContext(configuration)
@@ -94,7 +94,7 @@ class AboutResourcesTest {
         assertEquals("已关闭", localized.getString(R.string.dev_disabled))
     }
 
-    @Test fun networkCopyExistsInAllEightLocales() {
+    @Test fun networkCopyExistsInBothLocales() {
         val context = RuntimeEnvironment.getApplication()
         val keys = listOf(R.string.direlay_car_hotspot, R.string.direlay_existing_wifi,
             R.string.ui_wifi_direct_recommended, R.string.option_direct_hint, R.string.option_hotspot_hint,
@@ -106,7 +106,7 @@ class AboutResourcesTest {
             R.string.network_wifi, R.string.network_hotspot, R.string.network_direct_description,
             R.string.network_hotspot_description, R.string.network_wifi_description,
             R.string.settings_hotspot_name_error, R.string.settings_hotspot_password_error)
-        for (tag in listOf("en", "ar", "es", "ja", "ru", "uk", "zh-CN", "zh-TW")) {
+        for (tag in listOf("en", "zh-CN")) {
             val configuration = android.content.res.Configuration(context.resources.configuration).apply {
                 setLocale(Locale.forLanguageTag(tag))
             }

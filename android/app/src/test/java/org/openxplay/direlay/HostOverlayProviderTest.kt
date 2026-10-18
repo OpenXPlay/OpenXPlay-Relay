@@ -34,11 +34,11 @@ class HostOverlayProviderTest {
         } finally { runtime.close() }
     }
 
-    @Test fun overlayCopyIsAvailableInAllEightLocales() {
+    @Test fun overlayCopyIsAvailableInBothLocales() {
         val context = RuntimeEnvironment.getApplication()
         val keys = listOf(R.string.host_connecting, R.string.host_running, R.string.host_keep_running,
             R.string.host_back, R.string.host_cancel, R.string.host_stopped)
-        for (tag in listOf("en", "ar", "es", "ja", "ru", "uk", "zh-CN", "zh-TW")) {
+        for (tag in listOf("en", "zh-CN")) {
             val configuration = android.content.res.Configuration(context.resources.configuration).apply {
                 setLocale(Locale.forLanguageTag(tag))
             }

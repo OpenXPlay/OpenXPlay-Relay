@@ -2,10 +2,10 @@
   "format": 1,
   "brands": [{
     "id": "xpeng",
-    "names": {"en": "XPeng", "zh-CN": "小鹏", "zh-TW": "小鵬"},
+    "names": {"en": "XPeng", "zh-CN": "小鹏"},
     "models": [{
       "id": "g6-2023",
-      "names": {"en": "G6 2023", "zh-CN": "G6 2023 款", "zh-TW": "G6 2023 款"},
+      "names": {"en": "G6 2023", "zh-CN": "G6 2023 款"},
       "screens": [{
         "screen": {"width": 2401, "height": 1201, "densityDpi": 280},
         "fullscreen": [{"width": 1533, "height": 1014, "count": 16}, {"width": 2401, "height": 1201, "count": 12}, {"width": 856, "height": 1014, "count": 4}],

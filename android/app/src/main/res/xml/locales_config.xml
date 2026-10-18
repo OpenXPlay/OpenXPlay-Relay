@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-18 -->
+<!-- The app's languages; replaces the CarPlay receiver library's list. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="zh-CN" />
+</locale-config>
