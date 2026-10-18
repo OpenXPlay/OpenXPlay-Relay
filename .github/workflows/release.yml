@@ -303,7 +303,8 @@ jobs:
           changelog=""
           read -r type sha < <(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')
           if [ "$type" = tag ]; then
-            changelog="$(gh api "repos/$GH_REPO/git/tags/$sha" --jq .message)"
+            # A signed tag's message ends with its signature block, which is not part of the changelog.
+            changelog="$(gh api "repos/$GH_REPO/git/tags/$sha" --jq .message | sed '/^-----BEGIN [A-Z]* SIGNATURE-----$/,$d')"
           fi
           # The rest of the notes record the exact sources of every file in the release.
           server="$GITHUB_SERVER_URL/OpenXPlay"
