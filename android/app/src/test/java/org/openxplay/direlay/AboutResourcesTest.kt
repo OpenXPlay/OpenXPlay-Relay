@@ -17,7 +17,7 @@ import java.util.Locale
 class AboutResourcesTest {
     @Test fun installedPackageAndAllLocaleNamesUseRelayBrand() {
         val context = RuntimeEnvironment.getApplication()
-        assertEquals("org.openxplay.relay", context.packageName)
+        assertEquals("org.openxplay.relay", context.packageName.removeSuffix(".debug"))
         for (tag in listOf("en", "ar", "es", "ja", "ru", "uk", "zh-CN", "zh-TW")) {
             val configuration = android.content.res.Configuration(context.resources.configuration).apply {
                 setLocale(Locale.forLanguageTag(tag))

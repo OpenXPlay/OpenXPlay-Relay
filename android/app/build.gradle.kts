@@ -32,6 +32,8 @@ android {
     androidResources { ignoreAssetsPattern = "offline-mfi:identity.pk8:certificate.p7b:*.p12:*.pfx:tls.password" }
 
     buildTypes {
+        // Test builds install next to the release (different signing key) as org.openxplay.relay.debug.
+        debug { applicationIdSuffix = ".debug" }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
