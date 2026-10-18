@@ -18,6 +18,7 @@ data class HeadUnitDisplay(val screen: ScreenDataKey, val visible: ViewAreaSize?
         fun builtIn(data: CarScreenData) = HeadUnitDisplay(data.screen, null, true, true)
     }
 }
+// The saved canvas is the unscaled fit, so changing icon size never compounds the pixel scale.
 data class SavedHeadUnit(val canvas: DisplayProfile, val display: HeadUnitDisplay?, val resolution: CarPlayResolution? = null,
     val wholeScreen: Boolean = false, val maxMacroblocks: Int? = null)
 
@@ -53,14 +54,14 @@ class SavedHeadUnitStore(private val preferences: SharedPreferences) {
 fun planningDisplay(live: HeadUnitDisplay?, saved: SavedHeadUnit?, model: CarModel?): HeadUnitDisplay? =
     live ?: saved?.display ?: model?.screens?.firstOrNull()?.let(HeadUnitDisplay::builtIn)
 
-fun startupCarPlayScreen(settings: RelaySettings, live: DisplayProfile?, saved: SavedHeadUnit?, model: CarModel?): CarPlayScreen? {
+fun startupCarPlayScreen(settings: RelaySettings, live: DisplayProfile?, saved: SavedHeadUnit?, model: CarModel?, maxMacroblocks: Int? = null): CarPlayScreen? {
     val whole = settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC
     val builtIn = model?.screens?.firstOrNull()?.let { fitDisplay(HeadUnitDisplay.builtIn(it).display(), settings.carplayResolution, wholeScreen = true) }
     val remembered = saved?.takeIf { it.display != null || builtIn == null }?.let {
         if (it.display != null && (it.resolution != null || settings.carplayResolution == CarPlayResolution.NATIVE) && (it.resolution != settings.carplayResolution || it.wholeScreen != whole))
             fitDisplay(it.display.display(), settings.carplayResolution, it.maxMacroblocks, whole) else it.canvas
     }
-    return resolveCarPlayScreen(settings.displayMode, settings.display, live, remembered, builtIn)
+    return resolveCarPlayScreen(settings.displayMode, settings.display, live, remembered, builtIn)?.forIcons(settings.carplayIconSize, maxMacroblocks ?: saved?.maxMacroblocks)
 }
 
 fun planHeadUnitAreas(width: Int, height: Int, display: HeadUnitDisplay?, local: List<WindowSizeRecord>, model: CarModel?): List<ViewAreaSize> {

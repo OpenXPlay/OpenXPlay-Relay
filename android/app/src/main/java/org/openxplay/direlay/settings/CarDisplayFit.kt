@@ -25,6 +25,38 @@ object CarDisplayFit {
             .also { it.validate() }
     }
 
+    /** Scale pixels before DiPlay sees the canvas; the physical width is taken from the original profile. */
+    fun iconCanvas(profile: DisplayProfile, size: CarPlayIconSize, maxMacroblocks: Int?): DisplayProfile {
+        if (size == CarPlayIconSize.STANDARD) return profile
+        if (size == CarPlayIconSize.SMALL) {
+            val upper = minOf(1.15, 3840.0 / profile.width, 2160.0 / profile.height, 640.0 / profile.density)
+            fun scaled(scale: Double) = DisplayProfile(
+                (profile.width * scale / 2 + 1e-9).toInt() * 2,
+                (profile.height * scale / 2 + 1e-9).toInt() * 2,
+                (profile.density * scale).roundToInt().coerceIn(120, 640))
+            // Without a reported decoder limit, never enlarge past what 1920x1080 needs (level 4.x).
+            val budget = maxMacroblocks ?: macroblocks(1920, 1080)
+            fun fits(candidate: DisplayProfile) = macroblocks(candidate.width, candidate.height) <= budget
+            if (upper <= 1.0 || !fits(profile)) return profile
+            val full = scaled(upper)
+            if (fits(full)) return full.also { it.validate() }
+            // MaxFS is a staircase (ceil(width/16) * ceil(height/16)), so search the
+            // actual even dimensions rather than approximating the budget with pixel area.
+            var low = 1.0
+            var high = upper
+            repeat(48) {
+                val middle = (low + high) / 2
+                if (fits(scaled(middle))) low = middle else high = middle
+            }
+            return scaled(low).takeIf { it.width > profile.width || it.height > profile.height }
+                ?.also { it.validate() } ?: profile
+        }
+        fun even(value: Int, minimum: Int) = ((value / 1.15 / 2).roundToInt() * 2).coerceAtLeast(minimum)
+        // Shrinking cannot exceed the fitted decoder budget; clamp only to DisplayProfile's lower bounds.
+        return DisplayProfile(even(profile.width, 320), even(profile.height, 240),
+            (profile.density / 1.15).roundToInt().coerceIn(120, 640)).also { it.validate() }
+    }
+
     private fun fitDecoder(fitted: DisplayProfile, maxMacroblocks: Int?): DisplayProfile {
         if (maxMacroblocks == null || macroblocks(fitted.width, fitted.height) <= maxMacroblocks) return fitted
         var scale = kotlin.math.sqrt(maxMacroblocks * 256.0 / (fitted.width.toDouble() * fitted.height))
@@ -77,7 +109,10 @@ fun migratedDisplayMode(stored: String?, profile: DisplayProfile?): DisplayMode 
     DisplayMode.entries.firstOrNull { it.name == stored && (it != DisplayMode.FIXED || profile != null) }
         ?: if (profile != null) DisplayMode.FIXED else DisplayMode.AUTOMATIC
 
-data class CarPlayScreen(val profile: DisplayProfile, val source: String)
+data class CarPlayScreen(val profile: DisplayProfile, val source: String,
+    val physicalWidthMm: Int = physicalWidth(profile)) {
+    fun forIcons(size: CarPlayIconSize, maxMacroblocks: Int?) = copy(profile = CarDisplayFit.iconCanvas(profile, size, maxMacroblocks))
+}
 fun resolveCarPlayScreen(mode: DisplayMode, fixed: DisplayProfile?, car: DisplayProfile?, remembered: DisplayProfile?, builtIn: DisplayProfile? = null): CarPlayScreen? =
     when (mode) {
         DisplayMode.RELAY_SCREEN -> null

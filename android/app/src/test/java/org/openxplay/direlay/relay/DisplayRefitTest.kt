@@ -9,6 +9,34 @@ import org.openxplay.direlay.settings.*
 import org.openxplay.stream.core.*
 
 class DisplayRefitTest {
+    @Test fun everyResolutionFitsLargeAfterDecoderLimitsIncludingNative() {
+        for (resolution in CarPlayResolution.entries) for (whole in listOf(false, true)) for (limit in listOf(null, 3600, 36864)) {
+            val standard = checkNotNull(fitDisplay(display, resolution, limit, whole))
+            val large = checkNotNull(fitDisplay(display, resolution, limit, whole, CarPlayIconSize.LARGE))
+            assertEquals(CarDisplayFit.iconCanvas(standard, CarPlayIconSize.LARGE, limit), large)
+            val small = checkNotNull(fitDisplay(display, resolution, limit, whole, CarPlayIconSize.SMALL))
+            assertEquals(CarDisplayFit.iconCanvas(standard, CarPlayIconSize.SMALL, limit), small)
+            small.validate()
+            if (limit != null) assertTrue(CarDisplayFit.macroblocks(small.width, small.height) <= limit)
+            large.validate()
+            if (limit != null) assertTrue(CarDisplayFit.macroblocks(large.width, large.height) <= limit)
+        }
+        assertEquals(DisplayProfile(2086, 1044, 261), fitDisplay(display, CarPlayResolution.NATIVE, iconSize = CarPlayIconSize.LARGE))
+    }
+    @Test fun iconChangesRestartOnceInBothDirectionsWithAndWithoutViewAreas() {
+        val large = running.copy(profile = DisplayProfile(1670, 834, 209), iconSize = CarPlayIconSize.LARGE)
+        for (mode in listOf(DisplayMode.AUTOMATIC, DisplayMode.FIXED)) for (areas in listOf(false, true)) {
+            for ((from, to) in listOf(running to large, large to running)) {
+                val gate = DisplayRefit()
+                assertFalse(gate.due(0, true, mode, from, to, false, areas))
+                assertFalse(gate.due(999, true, mode, from, to, false, areas))
+                assertTrue(gate.due(1000, true, mode, from, to, false, areas))
+                gate.restarted(1000)
+                assertFalse(gate.due(11000, true, mode, to, to, false, areas))
+            }
+        }
+    }
+
     @Test fun nativeAlwaysUsesWholeScreenAndExplicitChangesRestartBothWays() {
         val native = checkNotNull(fitDisplay(display, CarPlayResolution.NATIVE))
         assertEquals(DisplayProfile(2400, 1200, 300), native)
@@ -114,11 +142,9 @@ class DisplayRefitTest {
             }
         }
     }
-    @Test fun iconFactorsAreAppliedBeforeThePhysicalSizeClampAndSnap() {
+    @Test fun physicalWidthUsesOnlyTheUnscaledProfile() {
         val profile = DisplayProfile(1920, 960, 240)
-        assertEquals(284, physicalWidth(profile, CarPlayIconSize.SMALL))
-        assertEquals(203, physicalWidth(profile, CarPlayIconSize.STANDARD))
-        assertEquals(152, physicalWidth(profile, CarPlayIconSize.LARGE))
+        assertEquals(203, physicalWidth(profile))
     }
     @Test fun thresholdsAreStrictlyGreaterThanThreePercentAspectOrTenPercentSide() {
         val base = DisplayProfile(1000, 1000, 160)
@@ -148,15 +174,13 @@ class DisplayRefitTest {
         assertFalse(due(gate, 1000))
         assertFalse(due(gate, 1999)); assertTrue(due(gate, 2000))
     }
-    @Test fun settingChangesRestartWithUnchangedPixelsButOverridesAndStoppedSessionsDisableRefit() {
+    @Test fun settingChangesRestartWithUnchangedPixelsButRelayScreenAndStoppedSessionsDisableRefit() {
         val small = running.copy(iconSize = CarPlayIconSize.SMALL)
         val gate = DisplayRefit()
         assertFalse(due(gate, 0, next = small, viewport = false))
         assertTrue(due(gate, 1000, next = small, viewport = false))
-        for (mode in listOf(DisplayMode.FIXED, DisplayMode.RELAY_SCREEN)) {
-            assertFalse(due(gate, 2000, next = small, mode = mode))
-            assertFalse(due(gate, 4000, next = small, mode = mode))
-        }
+        assertFalse(due(gate, 2000, next = small, mode = DisplayMode.RELAY_SCREEN))
+        assertFalse(due(gate, 4000, next = small, mode = DisplayMode.RELAY_SCREEN))
         assertFalse(due(gate, 5000, active = false)); assertFalse(due(gate, 7000, active = false))
         assertFalse(due(gate, 8000, viewport = false)); assertFalse(due(gate, 10000, viewport = false))
         val screen = running.copy(resolution = CarPlayResolution.SCREEN)

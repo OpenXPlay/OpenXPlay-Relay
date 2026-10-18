@@ -233,7 +233,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         if (settings.display != previousDisplay || settings.displayMode != current.displayMode) {
             AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
         }
-        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let { applyDisplayProfile(it, settings.carplayIconSize) }
+        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let { applyDisplayProfile(it) }
         AirPlayPersistence.saveFps(context, settings.fps)
         AirPlayPersistence.saveAutoStartOnBoot(context, settings.autoStartOnBoot)
         val edit = relay.edit().putBoolean("localPreview", settings.localPreview)
@@ -263,16 +263,17 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         publish(load())
     }
 
-    fun prepareDisplay(profile: DisplayProfile?, iconSize: CarPlayIconSize = CarPlayIconSize.STANDARD) {
+    // widthPhysicalMm carries the unscaled selection's physical width when the canvas was scaled for icons.
+    fun prepareDisplay(profile: DisplayProfile?, widthPhysicalMm: Int? = null) {
         profile?.validate()
         AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
-        profile?.let { applyDisplayProfile(it, iconSize) }
+        profile?.let { applyDisplayProfile(it, widthPhysicalMm) }
     }
 
-    private fun applyDisplayProfile(profile: DisplayProfile, iconSize: CarPlayIconSize) {
+    private fun applyDisplayProfile(profile: DisplayProfile, widthPhysicalMm: Int? = null) {
         AirPlayPersistence.saveDisplayScalePercent(context, 100)
         // DiPlay reports physical millimeters, with its existing 100–400 mm / 25 mm steps.
-        AirPlayPersistence.saveWidthPhysicalMm(context, physicalWidth(profile, iconSize))
+        AirPlayPersistence.saveWidthPhysicalMm(context, widthPhysicalMm ?: physicalWidth(profile))
         AirPlayPersistence.savePhysicalSizeBasis(context, com.shilapi.xcertplay.airplay.AirPlayPhysicalSizeBasis.WIDTH)
     }
 

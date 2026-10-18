@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.relay
 
+import org.openxplay.direlay.settings.CarPlayIconSize
 import org.openxplay.direlay.settings.CarPlayResolution
 import org.openxplay.direlay.settings.CarDisplayFit
 import org.openxplay.direlay.settings.DisplayProfile
@@ -10,6 +11,7 @@ import org.openxplay.stream.core.*
 
 /** Observes Stream's negotiation without doing preference I/O on hub callbacks. */
 class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private val wholeScreen: () -> Boolean = { false }, private val resolution: () -> CarPlayResolution = { CarPlayResolution.AUTO }) : SessionPolicy {
+    // Keep the unscaled fit for persistence and physical-size calculation; startup applies iconCanvas once.
     @Volatile var carDisplay: DisplayProfile? = null
         private set
 
@@ -45,12 +47,12 @@ class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private
     }
 }
 
-fun fitDisplay(display: DisplayInfo, resolution: CarPlayResolution, limit: Int? = null, wholeScreen: Boolean = false): DisplayProfile? {
+fun fitDisplay(display: DisplayInfo, resolution: CarPlayResolution, limit: Int? = null, wholeScreen: Boolean = false, iconSize: CarPlayIconSize = CarPlayIconSize.STANDARD): DisplayProfile? {
     val viewport = display.viewport.takeUnless { wholeScreen || resolution == CarPlayResolution.SCREEN || resolution == CarPlayResolution.NATIVE }
     val width = viewport?.width ?: display.widthPx
     val height = viewport?.height ?: display.heightPx
     val cap = when (resolution) { CarPlayResolution.P1080 -> 1080; CarPlayResolution.P720 -> 720; else -> Int.MAX_VALUE }
     val scale = minOf(1.0, cap.toDouble() / minOf(width, height))
     return runCatching { CarDisplayFit.fit((width * scale).toInt().coerceAtLeast(1),
-        (height * scale).toInt().coerceAtLeast(1), limit, native = resolution == CarPlayResolution.NATIVE) }.getOrNull()
+        (height * scale).toInt().coerceAtLeast(1), limit, native = resolution == CarPlayResolution.NATIVE).let { CarDisplayFit.iconCanvas(it, iconSize, limit) } }.getOrNull()
 }

@@ -7,12 +7,65 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
 class CarDisplayFitTest {
+    @Test fun largeShrinksPixelsAndDensityWhileStandardKeepsItsCanvas() {
+        val original = DisplayProfile(1920, 960, 240)
+        val screen = CarPlayScreen(original, "car screen")
+        val large = screen.forIcons(CarPlayIconSize.LARGE, null)
+        assertEquals(DisplayProfile(1670, 834, 209), large.profile)
+        assertEquals(physicalWidth(original), large.physicalWidthMm)
+        assertEquals(203, large.physicalWidthMm)
+        assertEquals(original, screen.forIcons(CarPlayIconSize.STANDARD, null).profile)
+        assertEquals(physicalWidth(original), screen.forIcons(CarPlayIconSize.STANDARD, null).physicalWidthMm)
+        // Density and dimension clamps must not change the original physical-width declaration.
+        val minimum = CarPlayScreen(DisplayProfile(320, 240, 120), "fixed").forIcons(CarPlayIconSize.LARGE, null)
+        assertEquals(DisplayProfile(320, 240, 120), minimum.profile)
+        assertEquals(68, minimum.physicalWidthMm)
+    }
+    @Test fun smallGrowsPixelsAndDensityWithStandardPhysicalWidth() {
+        val base = DisplayProfile(1920, 960, 240)
+        val small = CarPlayScreen(base, "car screen").forIcons(CarPlayIconSize.SMALL, 36864)
+        assertEquals(DisplayProfile(2208, 1104, 276), small.profile)
+        assertEquals(physicalWidth(base), small.physicalWidthMm)
+        assertEquals(base, CarDisplayFit.iconCanvas(base, CarPlayIconSize.STANDARD, 36864))
+    }
+    @Test fun smallUsesLargestEvenCanvasThatFitsDecoderOrReturnsUnscaled() {
+        val base = DisplayProfile(1920, 960, 240)
+        val limited = CarDisplayFit.iconCanvas(base, CarPlayIconSize.SMALL, 8192)
+        assertEquals(DisplayProfile(2048, 1024, 256), limited)
+        assertEquals(8192, CarDisplayFit.macroblocks(limited.width, limited.height))
+        assertTrue(CarDisplayFit.macroblocks(limited.width + 2, limited.height) > 8192)
+        assertEquals(base, CarDisplayFit.iconCanvas(base, CarPlayIconSize.SMALL, 7200))
+        assertEquals(base, CarDisplayFit.iconCanvas(base, CarPlayIconSize.SMALL, 3600))
+    }
+    @Test fun smallAtNativeBoundsStaysUnscaledAndPartialGrowthRespectsProfileBounds() {
+        val bound = CarDisplayFit.fit(7680, 4320, 36864, native = true)
+        assertEquals(DisplayProfile(3840, 2160, 480), bound)
+        assertEquals(bound, CarDisplayFit.iconCanvas(bound, CarPlayIconSize.SMALL, 36864))
+        val partial = CarDisplayFit.iconCanvas(DisplayProfile(3600, 1800, 450), CarPlayIconSize.SMALL, 36864)
+        assertEquals(DisplayProfile(3840, 1920, 480), partial)
+        assertEquals(DisplayProfile(1920, 960, 640),
+            CarDisplayFit.iconCanvas(DisplayProfile(1920, 960, 640), CarPlayIconSize.SMALL, null))        // Without a reported decoder limit Small grows only within what 1920x1080 needs.
+        assertEquals(DisplayProfile(2032, 1016, 254), CarDisplayFit.iconCanvas(DisplayProfile(1920, 960, 240), CarPlayIconSize.SMALL, null))
+    }
+    @Test fun largeKeepsValidatedBoundsAndDecoderBudgetAfterNativeAndCappedFits() {
+        for ((w, h) in listOf(2401 to 1201, 7680 to 4320, 4320 to 7680, 640 to 360)) {
+            for (native in listOf(false, true)) for (limit in listOf(null, 3600, 8192, 36864)) {
+                val base = CarDisplayFit.fit(w, h, limit, native)
+                val large = CarPlayScreen(base, "car screen").forIcons(CarPlayIconSize.LARGE, limit)
+                large.profile.validate()
+                assertEquals(physicalWidth(base), large.physicalWidthMm)
+                assertTrue(large.profile.width <= base.width && large.profile.height <= base.height)
+                if (limit != null) assertTrue(CarDisplayFit.macroblocks(large.profile.width, large.profile.height) <= limit)
+            }
+        }
+    }
+
     @Test fun nativeUsesEvenDevicePixelsAndPreservesPhysicalIconSize() {
         val capped = CarDisplayFit.fit(2401, 1201, 36864)
         val native = CarDisplayFit.fit(2401, 1201, 36864, native = true)
         assertEquals(DisplayProfile(1920, 960, 240), capped)
         assertEquals(DisplayProfile(2400, 1200, 300), native)
-        for (size in CarPlayIconSize.entries) assertEquals(physicalWidth(capped, size), physicalWidth(native, size))
+        assertEquals(physicalWidth(capped), physicalWidth(native))
     }
     @Test fun nativeRespectsDecoderAndAbsoluteBoundsAndScalesDensityAfterFitting() {
         for ((width, height) in listOf(2401 to 1201, 7680 to 4320, 4320 to 7680)) {
@@ -24,7 +77,7 @@ class CarDisplayFitTest {
                 assertEquals(width.toDouble() / height, native.width.toDouble() / native.height, .01)
                 if (limit != null) assertTrue(CarDisplayFit.macroblocks(native.width, native.height) <= limit)
                 val capped = CarDisplayFit.fit(width, height, limit)
-                assertTrue(kotlin.math.abs(physicalWidth(capped, CarPlayIconSize.STANDARD) - physicalWidth(native, CarPlayIconSize.STANDARD)) <= 1)
+                assertTrue(kotlin.math.abs(physicalWidth(capped) - physicalWidth(native)) <= 1)
             }
         }
         assertEquals(DisplayProfile(3840, 2160, 480), CarDisplayFit.fit(7680, 4320, native = true))
