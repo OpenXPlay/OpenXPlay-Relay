@@ -11,6 +11,13 @@ The relay runs on two platforms:
 
 Both platforms serve the same web admin page on port 6975, for Wi-Fi setup, iPhone pairing, outputs and Carlink pairing.
 
+## Download
+
+- **Android app:** [openxplay-relay.apk](https://github.com/OpenXPlay/OpenXPlay-Relay/releases/latest/download/openxplay-relay.apk) (latest release)
+- **Linux relay** for aarch64 devices, and every version: [Releases](https://github.com/OpenXPlay/OpenXPlay-Relay/releases)
+
+Setup: [openxplay.org/en/quick-start](https://openxplay.org/en/quick-start).
+
 ## Layout
 
 | Directory | Language | Contents |
