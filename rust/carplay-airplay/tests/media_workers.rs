@@ -719,17 +719,28 @@ fn buffered_byte_budget_applies_tcp_backpressure_and_flush_releases_receiver() {
     for chunk in bytes.chunks(4096) {
         socket.push(chunk.to_vec());
     }
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while socket.consumed.load(Ordering::SeqCst) < (capacity + 1) * frame_size
-        && Instant::now() < deadline
-    {
+    // Decrypting 8 MB takes seconds in a debug build and longer on a loaded runner, so wait as
+    // long as the receiver makes progress rather than for a fixed time. A receiver that stops
+    // early stalls below the cap; one without backpressure reads past it.
+    let mut progress = (0, Instant::now());
+    loop {
+        let consumed = socket.consumed.load(Ordering::SeqCst);
+        if consumed >= (capacity + 1) * frame_size {
+            break;
+        }
+        if consumed != progress.0 {
+            progress = (consumed, Instant::now());
+        } else if progress.1.elapsed() > Duration::from_secs(5) {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(
         socket.consumed.load(Ordering::SeqCst),
         (capacity + 1) * frame_size
     );
-    std::thread::sleep(Duration::from_millis(25));
+    // Long enough for a receiver without backpressure to read on, even on a loaded runner.
+    std::thread::sleep(Duration::from_millis(100));
     assert_eq!(
         socket.consumed.load(Ordering::SeqCst),
         (capacity + 1) * frame_size
