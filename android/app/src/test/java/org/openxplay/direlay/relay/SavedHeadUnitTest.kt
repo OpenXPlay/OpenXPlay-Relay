@@ -27,48 +27,6 @@ class SavedHeadUnitTest {
         .model(CarSelection("xpeng", model = "g6-2023")))
     private fun store() = SavedHeadUnitStore(preferences)
 
-    @Test fun largeAtStartupUsesSavedUnscaledCanvasAndPlansInScaledPixels() {
-        store().save(saved)
-        val largeSettings = settings().copy(carplayIconSize = CarPlayIconSize.LARGE)
-        val selected = checkNotNull(startupCarPlayScreen(largeSettings, null, store().load(), null))
-        assertEquals(DisplayProfile(1670, 834, 209), selected.profile)
-        assertEquals(physicalWidth(canvas), selected.physicalWidthMm)
-        assertEquals(selected, startupCarPlayScreen(largeSettings, null, store().load(), null))
-        assertEquals(canvas, startupCarPlayScreen(largeSettings.copy(carplayIconSize = CarPlayIconSize.STANDARD), null, store().load(), null)?.profile)
-        val display = planningDisplay(null, store().load(), null)
-        val areas = planHeadUnitAreas(selected.profile.width, selected.profile.height, display, emptyList(), null)
-        assertEquals(ViewAreaSize(1670, 834), areas[0])
-        assertTrue(areas.size > 1)
-        assertTrue(areas.all { it.width <= 1670 && it.height <= 834 && it.width % 2 == 0 && it.height % 2 == 0 })
-        val nativeSettings = largeSettings.copy(carplayResolution = CarPlayResolution.NATIVE)
-        val native = checkNotNull(startupCarPlayScreen(nativeSettings, null, store().load(), null))
-        assertEquals(DisplayProfile(2086, 1044, 261), native.profile)
-        assertEquals(selected.physicalWidthMm, native.physicalWidthMm)
-        assertEquals(native.profile, startupCarPlayScreen(nativeSettings, null, null, model())?.profile)
-        assertEquals(selected.profile, startupCarPlayScreen(largeSettings, canvas, null, null)?.profile)
-        assertEquals(selected.profile, startupCarPlayScreen(largeSettings.copy(displayMode = DisplayMode.FIXED, display = canvas), null, null, null)?.profile)
-        val legacy = SavedHeadUnit(canvas, null)
-        assertEquals(selected.profile, startupCarPlayScreen(largeSettings, null, legacy, null)?.profile)
-    }
-
-    @Test fun smallAtStartupUsesSavedAndLiveDecoderLimitsWithoutCompoundingScale() {
-        val settings = settings().copy(carplayIconSize = CarPlayIconSize.SMALL)
-        store().save(saved.copy(maxMacroblocks = 8192))
-        val limited = checkNotNull(startupCarPlayScreen(settings, null, store().load(), null))
-        assertEquals(DisplayProfile(2048, 1024, 256), limited.profile)
-        assertEquals(physicalWidth(canvas), limited.physicalWidthMm)
-        assertEquals(limited, startupCarPlayScreen(settings, null, store().load(), null))
-        assertEquals(canvas, store().load()?.canvas)
-        assertEquals(DisplayProfile(2208, 1104, 276), startupCarPlayScreen(settings, null, saved, null)?.profile)
-        assertEquals(limited.profile, startupCarPlayScreen(settings, canvas, saved, null, 8192)?.profile)
-        assertEquals(limited.profile, startupCarPlayScreen(settings.copy(displayMode = DisplayMode.FIXED, display = canvas),
-            null, null, null, 8192)?.profile)
-        assertEquals(DisplayProfile(2032, 1016, 254), startupCarPlayScreen(settings, null, null, model())?.profile)
-        assertEquals(DisplayProfile(2208, 1104, 276), startupCarPlayScreen(settings, null, saved.copy(maxMacroblocks = 36864), null)?.profile)
-        assertEquals(DisplayProfile(2760, 1380, 345), startupCarPlayScreen(settings.copy(carplayResolution = CarPlayResolution.NATIVE),
-            null, saved.copy(maxMacroblocks = 36864), null)?.profile)
-    }
-
     @Test fun nativeReFitsSavedScreenKeepsDecoderBudgetAndPlansInCanvasPixels() {
         val settings = settings().copy(carplayResolution = CarPlayResolution.NATIVE, viewAreas = false)
         val native = DisplayProfile(2400, 1200, 300)

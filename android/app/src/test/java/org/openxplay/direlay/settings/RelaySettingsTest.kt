@@ -58,36 +58,6 @@ class RelaySettingsTest {
         }
     }
 
-    @Test fun largeSavesStandardPhysicalWidthOfOriginalCanvasAndKeepsDiPlayScaleAt100() {
-        RelaySettingsStore(context).use { store ->
-            val base = DisplayProfile(1920, 960, 240)
-            val canvas = CarPlayScreen(base, "remembered").forIcons(CarPlayIconSize.LARGE, null)
-            assertEquals(DisplayProfile(1670, 834, 209), canvas.profile)
-            store.prepareDisplay(canvas.profile, canvas.physicalWidthMm)
-            assertEquals(200, AirPlayPersistence.loadWidthPhysicalMm(context))
-            assertEquals(100, AirPlayPersistence.loadDisplayScalePercent(context))
-            // At a density clamp, deriving physical width from the scaled profile would be incorrect.
-            val clamped = CarPlayScreen(DisplayProfile(1920, 960, 120), "fixed").forIcons(CarPlayIconSize.LARGE, null)
-            store.prepareDisplay(clamped.profile, clamped.physicalWidthMm)
-            assertEquals(400, AirPlayPersistence.loadWidthPhysicalMm(context))
-            store.save(store.load().copy(displayMode = DisplayMode.FIXED, display = base, carplayIconSize = CarPlayIconSize.LARGE))
-            assertEquals(200, AirPlayPersistence.loadWidthPhysicalMm(context))
-            assertEquals(100, AirPlayPersistence.loadDisplayScalePercent(context))
-        }
-    }
-
-    @Test fun smallSavesStandardPhysicalWidthForFullAndDecoderLimitedGrowth() {
-        RelaySettingsStore(context).use { store ->
-            for (limit in listOf(null, 8192, 7200)) {
-                val screen = CarPlayScreen(DisplayProfile(1920, 960, 240), "remembered")
-                    .forIcons(CarPlayIconSize.SMALL, limit)
-                store.prepareDisplay(screen.profile, screen.physicalWidthMm)
-                assertEquals(200, AirPlayPersistence.loadWidthPhysicalMm(context))
-                assertEquals(100, AirPlayPersistence.loadDisplayScalePercent(context))
-            }
-        }
-    }
-
     @Test fun pictureSettingsPersistAndTheWebPortPublishesTheSameValues() {
         RelaySettingsStore(context).use { store ->
             val original = store.awaitSnapshot()
@@ -101,8 +71,8 @@ class RelaySettingsTest {
                 assertEquals(value, store.load())
                 assertEquals(value.displaySettings(), store.current())
                 val profile = DisplayProfile(1920, 960, 240)
-                store.prepareDisplay(profile)
-                val expected = com.shilapi.xcertplay.airplay.AirPlayDisplaySettings.sanitizeWidthPhysicalMm(physicalWidth(profile))
+                store.prepareDisplay(profile, size)
+                val expected = com.shilapi.xcertplay.airplay.AirPlayDisplaySettings.sanitizeWidthPhysicalMm(physicalWidth(profile, size))
                 assertEquals(expected, AirPlayPersistence.loadWidthPhysicalMm(context))
             }
             store.set(org.openxplay.stream.web.DisplaySettings("720p", "small"), org.openxplay.stream.core.Origin("web", "test"))
