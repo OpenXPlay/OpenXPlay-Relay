@@ -93,22 +93,30 @@ jobs:
           cache: npm
           cache-dependency-path: |
             OpenXPlay-Relay/admin-web/package-lock.json
-            OpenXPlay-Stream/web/package-lock.json
+            OpenXPlay-Stream/kotlin/web-receiver/package-lock.json
+            OpenXPlay-Stream/rust/web-receiver/package-lock.json
       - name: Build admin page
         working-directory: OpenXPlay-Relay/admin-web
         run: npm ci && npm run build
-      - name: Build web receiver
-        working-directory: OpenXPlay-Stream/web
+      # The two relays ship separate web receivers: Android the Kotlin stack's, Linux the Rust stack's.
+      - name: Build web receiver (Android)
+        working-directory: OpenXPlay-Stream/kotlin/web-receiver
         env:
           OXP_APP_VERSION: ${{ steps.version.outputs.version }}
         run: npm ci && npm run build
-      # Both packages bundle the same admin page and web receiver.
+      - name: Build web receiver (Linux)
+        working-directory: OpenXPlay-Stream/rust/web-receiver
+        env:
+          OXP_APP_VERSION: ${{ steps.version.outputs.version }}
+        run: npm ci && npm run build
+      # Both packages bundle the same admin page and their own web receiver.
       - uses: actions/upload-artifact@v4
         with:
           name: web-assets
           path: |
             OpenXPlay-Relay/admin-web/dist
-            OpenXPlay-Stream/web/dist
+            OpenXPlay-Stream/kotlin/web-receiver/dist
+            OpenXPlay-Stream/rust/web-receiver/dist
           if-no-files-found: error
           retention-days: 1
 
@@ -242,7 +250,7 @@ jobs:
             file -b "$binary" | grep -E 'ARM aarch64.*(statically|static-pie) linked' ||
               { echo "::error::$binary is not a static aarch64 executable."; exit 1; }
           done
-          cp -R OpenXPlay-Stream/web/dist "$pkg/web"
+          cp -R OpenXPlay-Stream/rust/web-receiver/dist "$pkg/web"
           cp -R OpenXPlay-Relay/admin-web/dist "$pkg/admin"
           install -m 0644 OpenXPlay-Relay/LICENSE OpenXPlay-Relay/LICENSE-GPL-3.0 OpenXPlay-Relay/NOTICE "$pkg/"
           install -m 0644 OpenXPlay-Stream/NOTICE OpenXPlay-Stream/THIRD-PARTY-LICENSES.md "$pkg/licenses/OpenXPlay-Stream/"

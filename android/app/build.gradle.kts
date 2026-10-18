@@ -84,7 +84,7 @@ val streamDir = providers.gradleProperty("stream.dir").orNull
     } else {
         "../../OpenXPlay-Stream/kotlin"
     }
-val receiverDistDir = rootProject.file(streamDir).resolve("../web/dist")
+val receiverDistDir = rootProject.file(streamDir).resolve("web-receiver/dist")
 /** Copies the built browser receiver into generated assets under web/. */
 abstract class CopyReceiverAssets : DefaultTask() {
     @get:InputDirectory
@@ -109,7 +109,7 @@ abstract class CopyReceiverAssets : DefaultTask() {
 
 val copyReceiverAssets = tasks.register<CopyReceiverAssets>("copyReceiverAssets") {
     if (receiverDistDir.isDirectory) receiverDist.set(receiverDistDir)
-    else logger.warn("Stream web/dist is missing at $receiverDistDir; browser receiver will be unavailable.")
+    else logger.warn("Stream kotlin/web-receiver/dist is missing at $receiverDistDir; browser receiver will be unavailable.")
 }
 androidComponents {
     onVariants { variant ->

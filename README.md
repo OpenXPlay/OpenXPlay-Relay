@@ -33,7 +33,7 @@ The Android build includes DiPlay and Stream as Gradle composite builds. By defa
 | Part | Requirements | Commands |
 | --- | --- | --- |
 | Admin page | Node.js 20.19+ or 22.12+ | `cd admin-web && npm ci && npm test && npm run build` |
-| Android app | JDK 17, Android SDK; the admin page and Stream's `web/dist` built first | `cd android && ./gradlew testDebugUnitTest assembleDebug` |
+| Android app | JDK 17, Android SDK; the admin page and Stream's `kotlin/web-receiver/dist` built first | `cd android && ./gradlew testDebugUnitTest assembleDebug` |
 | Linux relay | Rust stable | `cd rust && cargo test` |
 | Linux relay for aarch64 | `rustup target add aarch64-unknown-linux-musl`, `llvm-tools`, clang | `rust/scripts/build-aarch64.sh` |
 

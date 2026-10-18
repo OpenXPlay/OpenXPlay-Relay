@@ -33,7 +33,7 @@ Android 构建以 Gradle 复合构建（composite build）的方式引入 DiPlay
 | 部分 | 要求 | 命令 |
 | --- | --- | --- |
 | 管理页面 | Node.js 20.19+ 或 22.12+ | `cd admin-web && npm ci && npm test && npm run build` |
-| Android 应用 | JDK 17、Android SDK；需先构建管理页面和 Stream 的 `web/dist` | `cd android && ./gradlew testDebugUnitTest assembleDebug` |
+| Android 应用 | JDK 17、Android SDK；需先构建管理页面和 Stream 的 `kotlin/web-receiver/dist` | `cd android && ./gradlew testDebugUnitTest assembleDebug` |
 | Linux 中继 | Rust 稳定版 | `cd rust && cargo test` |
 | 面向 aarch64 的 Linux 中继 | `rustup target add aarch64-unknown-linux-musl`、`llvm-tools`、clang | `rust/scripts/build-aarch64.sh` |
 
