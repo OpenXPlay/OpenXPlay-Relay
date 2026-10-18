@@ -22,6 +22,8 @@ pub struct AdminStatus {
     pub admin_port: u16,
     #[serde(default)]
     pub pairing_available: bool,
+    /// When the pairing window closes, on the relay's wall clock: for display only, since that
+    /// clock may be wrong.
     #[serde(default)]
     pub pairing_deadline: Option<u64>,
     /// Seconds left at response time, so browsers with a wrong clock still count down correctly.
@@ -131,6 +133,8 @@ pub struct AdminCarlink {
     pub detail: String,
     pub last_lost_reason: Option<String>,
     pub last_error: Option<String>,
+    /// When the band backoff ends, on the relay's wall clock (`nextAttempt` of the
+    /// `carlink-backoff` event): for display only, since that clock may be wrong.
     pub next_attempt: Option<u64>,
     pub head_unit: Option<CarlinkHeadUnit>,
     pub network: Option<CarlinkNetwork>,
@@ -138,7 +142,14 @@ pub struct AdminCarlink {
     #[serde(skip)]
     pub attempt_requested_pin: bool,
     pub pin_requested: bool,
+    /// When the PIN request lapses, in seconds on the monotonic clock of `apply_event`'s `now`.
+    #[serde(skip)]
+    pub pin_expiry: Option<u64>,
+    /// `pin_expiry` on the relay's wall clock, set by [`Self::at`] for display only, since that
+    /// clock may be wrong.
     pub pin_deadline: Option<u64>,
+    /// Seconds left at response time, so browsers with a wrong clock still count down correctly.
+    pub pin_remaining: Option<u64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CarlinkHeadUnit {
@@ -153,8 +164,31 @@ pub struct CarlinkNetwork {
 impl AdminCarlink {
     pub fn clear_pin(&mut self) {
         self.pin_requested = false;
+        self.pin_expiry = None;
         self.pin_deadline = None;
+        self.pin_remaining = None;
     }
+    /// This status as a response at `now` on the monotonic clock and `wall_now` on the wall
+    /// clock, both in seconds: a lapsed PIN request reads as timed out, a pending one carries the
+    /// seconds left.
+    pub fn at(mut self, now: u64, wall_now: u64) -> Self {
+        match self.pin_expiry {
+            Some(expiry) if expiry > now => {
+                self.pin_remaining = Some(expiry - now);
+                self.pin_deadline = Some(wall_now.saturating_add(expiry - now));
+            }
+            Some(_) => {
+                self.clear_pin();
+                self.detail = "carlink.pinTimeout".into();
+            }
+            None => {
+                self.pin_deadline = None;
+                self.pin_remaining = None;
+            }
+        }
+        self
+    }
+    /// Applies a receiver event at `now`, in seconds on the monotonic clock.
     pub fn apply_event(&mut self, event: &Value, now: u64) {
         // Teardown events from the failed child must not hide the retry deadline.
         if self.next_attempt.is_some()
@@ -231,7 +265,7 @@ impl AdminCarlink {
             "pin-request" => {
                 self.attempt_requested_pin = true;
                 self.pin_requested = true;
-                self.pin_deadline = Some(now.saturating_add(120));
+                self.pin_expiry = Some(now.saturating_add(120));
                 self.detail.clear();
             }
             "pin-timeout" => {

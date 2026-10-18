@@ -117,6 +117,13 @@ pub fn monotonic_millis() -> u64 {
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
     now.tv_sec as u64 * 1000 + now.tv_nsec as u64 / 1_000_000
 }
+/// This boot's id, empty when unreadable. Every process of one boot shares the monotonic clock,
+/// so a saved monotonic time is comparable only when it carries the current boot id.
+pub fn boot_id() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .map(|id| id.trim().to_owned())
+        .unwrap_or_default()
+}
 
 #[cfg(test)]
 mod tests {

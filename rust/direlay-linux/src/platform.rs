@@ -175,22 +175,44 @@ impl JsonEvents {
         self.log(message.lines().next().unwrap_or(""));
     }
 }
-fn timestamp() -> String {
-    let now = std::time::SystemTime::now()
+/// Time since the Unix epoch on the wall clock. The relay may run without an RTC or network time,
+/// so the wall clock can be hours off and can step: it labels logs and display values only. Every
+/// deadline, expiry and rate limit uses the monotonic clock instead.
+pub fn wall_clock() -> Duration {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let t = now.as_secs() as libc::time_t;
-    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
-    unsafe { libc::gmtime_r(&t, &mut tm) };
+        .unwrap_or_default()
+}
+fn timestamp() -> String {
+    utc_timestamp(wall_clock())
+}
+/// `since_epoch` as an ISO 8601 UTC timestamp with milliseconds. The date is computed here rather
+/// than by libc, so it needs no time zone and none of libc's time types.
+fn utc_timestamp(since_epoch: Duration) -> String {
+    let seconds = since_epoch.as_secs();
+    let (days, time) = (seconds / 86_400, seconds % 86_400);
+    // Count days from 0000-03-01 in 400-year eras of 146,097 days; with March as the first month
+    // the leap day ends the year, so each month's start follows from the day of the year alone.
+    let shifted = days + 719_468;
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_from_march = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_from_march + 2) / 5 + 1;
+    let month = if month_from_march < 10 {
+        month_from_march + 3
+    } else {
+        month_from_march - 9
+    };
+    let year = era * 400 + year_of_era + u64::from(month <= 2);
     format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec,
-        now.subsec_millis()
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        time / 3_600,
+        time / 60 % 60,
+        time % 60,
+        since_epoch.subsec_millis()
     )
 }
 pub fn private_state_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
@@ -257,5 +279,53 @@ mod follow_timeline_tests {
             assert!(entry["sincePreviousMillis"].as_u64().unwrap() <= elapsed);
             previous = elapsed;
         }
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+    #[test]
+    fn utc_timestamps_match_known_dates() {
+        for (seconds, millis, expected) in [
+            (0, 0, "1970-01-01T00:00:00.000Z"),
+            (68_169_600, 0, "1972-02-29T00:00:00.000Z"),
+            (951_782_400, 0, "2000-02-29T00:00:00.000Z"),
+            (951_868_799, 999, "2000-02-29T23:59:59.999Z"),
+            (1_792_207_872, 345, "2026-10-17T03:31:12.345Z"),
+            (4_107_456_000, 0, "2100-02-28T00:00:00.000Z"),
+            (4_107_542_400, 0, "2100-03-01T00:00:00.000Z"),
+            (253_402_300_799, 999, "9999-12-31T23:59:59.999Z"),
+        ] {
+            let since_epoch = Duration::from_secs(seconds) + Duration::from_millis(millis);
+            assert_eq!(utc_timestamp(since_epoch), expected);
+        }
+    }
+    #[test]
+    fn utc_dates_follow_the_gregorian_calendar_day_by_day() {
+        let (mut year, mut month, mut day) = (1970, 1, 1);
+        // Through 2400, so the 100- and 400-year leap rules both apply.
+        for days in 0..(431 * 365 + 105) {
+            let expected = format!("{year:04}-{month:02}-{day:02}T23:59:59.000Z");
+            assert_eq!(
+                utc_timestamp(Duration::from_secs(days * 86_400 + 86_399)),
+                expected
+            );
+            let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+            let length = match month {
+                2 if leap => 29,
+                2 => 28,
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            day += 1;
+            if day > length {
+                (day, month) = (1, month + 1);
+                if month > 12 {
+                    (month, year) = (1, year + 1);
+                }
+            }
+        }
+        assert_eq!((year, month, day), (2401, 1, 1));
     }
 }

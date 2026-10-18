@@ -59,7 +59,7 @@ fn apply_carlink_event(
     event: &serde_json::Value,
 ) {
     expire_pin(armed);
-    status.apply_event(event, crate::admin::auth::now_seconds());
+    status.apply_event(event, crate::admin::auth::monotonic_seconds());
     if event["type"] == "pin-request" {
         if let Some(pin) = armed.take() {
             if crate::platform::private_state_file(&carlink_pin_path(state), pin.pin.as_bytes())
@@ -150,6 +150,7 @@ impl CarlinkFollow {
     }
 }
 pub struct LinuxRelayAdmin {
+    /// The open pairing window and when it closes, in `auth::monotonic_seconds`.
     pairing: Mutex<Option<(crate::linux_bluetooth::PairingMode, u64)>>,
     /// BlueZ for the admin pairing window; a fake in tests.
     pairing_backend: Arc<dyn crate::linux_bluetooth::PairingBackend>,
@@ -837,7 +838,7 @@ impl LinuxRelayAdmin {
             .lock()
             .unwrap()
             .as_ref()
-            .is_some_and(|(_, d)| *d > crate::admin::auth::now_seconds())
+            .is_some_and(|(_, d)| *d > crate::admin::auth::monotonic_seconds())
         {
             options.pair_seconds = None;
         }
@@ -1180,14 +1181,16 @@ impl RelayAdmin for LinuxRelayAdmin {
         let devices = LinuxBluetooth::new(Arc::new(ProcessCommandRunner::new()), None, None)
             .devices()
             .unwrap_or_default();
-        let now = crate::admin::auth::now_seconds();
-        let pairing_deadline = self
+        let now = crate::admin::auth::monotonic_seconds();
+        let wall_now = crate::platform::wall_clock().as_secs();
+        let pairing_remaining = self
             .pairing
             .lock()
             .unwrap()
             .as_ref()
             .map(|(_, deadline)| *deadline)
-            .filter(|deadline| *deadline > now);
+            .filter(|deadline| *deadline > now)
+            .map(|deadline| deadline - now);
         let selection =
             crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
         let following_carlink = self.network_override.lock().unwrap().is_some();
@@ -1250,8 +1253,8 @@ impl RelayAdmin for LinuxRelayAdmin {
             receiver_port: options.settings.receiver_port,
             admin_port: 6975,
             pairing_available: true,
-            pairing_deadline,
-            pairing_remaining: pairing_deadline.map(|deadline| deadline - now),
+            pairing_deadline: pairing_remaining.map(|remaining| wall_now.saturating_add(remaining)),
+            pairing_remaining,
             pairing_cancelable: true,
             paired_devices: devices
                 .iter()
@@ -1285,15 +1288,8 @@ impl RelayAdmin for LinuxRelayAdmin {
             },
             output: options.settings.output.clone(),
             carlink: if options.settings.output != "web" {
-                let mut status = self.carlink.lock().unwrap().clone();
+                let mut status = self.carlink.lock().unwrap().clone().at(now, wall_now);
                 status.trusted = has_trusted_carlink(&self.options.state_dir);
-                if status
-                    .pin_deadline
-                    .is_some_and(|deadline| deadline <= crate::admin::auth::now_seconds())
-                {
-                    status.clear_pin();
-                    status.detail = "carlink.pinTimeout".into();
-                }
                 Some(status)
             } else {
                 None
@@ -1436,7 +1432,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         match name {
             "pair-iphone" => {
                 let mut pairing = self.pairing.lock().unwrap();
-                let now = crate::admin::auth::now_seconds();
+                let now = crate::admin::auth::monotonic_seconds();
                 if pairing
                     .as_ref()
                     .is_some_and(|(_, deadline)| *deadline > now)
@@ -1453,7 +1449,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 mode.start().map_err(|_| "error.pairing".to_string())?;
                 *pairing = Some((
                     mode,
-                    crate::admin::auth::now_seconds() + u64::from(PAIRING_SECONDS),
+                    crate::admin::auth::monotonic_seconds() + u64::from(PAIRING_SECONDS),
                 ));
                 Ok(())
             }
@@ -1496,8 +1492,8 @@ impl RelayAdmin for LinuxRelayAdmin {
         let mut status = self.carlink.lock().unwrap();
         if !status.pin_requested
             || status
-                .pin_deadline
-                .is_none_or(|d| d <= crate::admin::auth::now_seconds())
+                .pin_expiry
+                .is_none_or(|d| d <= crate::admin::auth::monotonic_seconds())
         {
             return Err("error.carlinkPinNotRequested".into());
         }
@@ -2425,7 +2421,7 @@ esac
     fn pin_request(a: &LinuxRelayAdmin) {
         a.carlink.lock().unwrap().apply_event(
             &serde_json::json!({"type":"pin-request","client":"unit"}),
-            crate::admin::auth::now_seconds(),
+            crate::admin::auth::monotonic_seconds(),
         );
     }
     #[test]
@@ -2693,7 +2689,7 @@ esac
         assert!(!a.carlink.lock().unwrap().pin_requested);
         assert_eq!(server.route(&request, 114).status, 409);
         pin_request(&a);
-        a.carlink.lock().unwrap().pin_deadline = Some(1);
+        a.carlink.lock().unwrap().pin_expiry = Some(1);
         assert_eq!(server.route(&request, 116).status, 409);
         pin_request(&a);
         a.busy.store(true, Ordering::Release);
@@ -2952,6 +2948,35 @@ esac
         assert!(json["video"]["codec"].is_string());
         a.action("cancel-pairing").unwrap();
         assert!(a.pairing.lock().unwrap().is_none());
+        drop(a);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn pairing_window_runs_on_the_monotonic_clock_and_shows_a_wall_clock_deadline() {
+        let (mut a, dir) = fake();
+        {
+            let admin = Arc::get_mut(&mut a).unwrap();
+            admin.pairing_backend = Arc::new(Discoverable);
+            admin.secure_connections = Arc::new(crate::secure_connections::SecureConnections::new(
+                Arc::new(Btmgmt::default()),
+                admin.events.clone(),
+            ));
+        }
+        a.action("pair-iphone").unwrap();
+        let json = serde_json::to_value(a.status()).unwrap();
+        let remaining = json["pairingRemaining"].as_u64().unwrap();
+        assert!((u64::from(PAIRING_SECONDS) - 1..=u64::from(PAIRING_SECONDS)).contains(&remaining));
+        // The display deadline is the same moment on the wall clock, however wrong that clock is.
+        let wall = crate::platform::wall_clock().as_secs();
+        let deadline = json["pairingDeadline"].as_u64().unwrap();
+        assert!(deadline.abs_diff(wall + remaining) <= 1);
+        // The window closes when the monotonic clock reaches its end, and a new one may open.
+        a.pairing.lock().unwrap().as_mut().unwrap().1 = crate::admin::auth::monotonic_seconds();
+        let json = serde_json::to_value(a.status()).unwrap();
+        assert!(json["pairingDeadline"].is_null() && json["pairingRemaining"].is_null());
+        a.action("pair-iphone").unwrap();
+        assert!(serde_json::to_value(a.status()).unwrap()["pairingRemaining"].is_u64());
+        a.action("cancel-pairing").unwrap();
         drop(a);
         std::fs::remove_dir_all(dir).unwrap();
     }
