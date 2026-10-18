@@ -86,4 +86,6 @@
     <string name="picture_standard">Estándar</string>
     <string name="picture_large">Grande</string>
     <string name="picture_window">Ventana</string>
+    <string name="ui_browser_landing">O introduce http://%1$s:8080 y toca el botón</string>
+    <string name="ui_iphone_name">iPhone: %1$s</string>
 </resources>

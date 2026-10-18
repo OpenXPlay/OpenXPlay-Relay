@@ -109,4 +109,20 @@ class SetupPresentationTest {
             network = WirelessNetworkChoice.WIFI_DIRECT)
         assertEquals(SetupCheckState.CHECKING, checks.single { it.title == R.string.setup_check_identity }.state)
     }
+    @Test fun hotspotFieldsAreRevealedForMissingCredentialsOrValidationErrors() {
+        val hotspot = WirelessNetworkSettings(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
+            manualSsid = "Car", manualPassphrase = "password")
+        assertFalse(revealHotspotFields(hotspot, emptyMap()))
+        assertTrue(revealHotspotFields(hotspot.copy(manualSsid = ""), emptyMap()))
+        assertTrue(revealHotspotFields(hotspot.copy(manualPassphrase = ""), emptyMap()))
+        for (field in listOf("ssid", "password")) assertTrue(revealHotspotFields(hotspot, mapOf(field to 1)))
+        for (choice in listOf(WirelessNetworkChoice.WIFI_DIRECT, WirelessNetworkChoice.EXISTING_WIFI))
+            assertFalse(revealHotspotFields(hotspot.copy(choice = choice, manualSsid = ""), mapOf("ssid" to 1)))
+    }
+
+    @Test fun compactButtonsApplyOnlyBelow480Dp() {
+        assertTrue(compactSetup(320)); assertTrue(compactSetup(479))
+        assertFalse(compactSetup(480)); assertFalse(compactSetup(800))
+    }
+
 }

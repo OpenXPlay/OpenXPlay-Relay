@@ -9,6 +9,8 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -22,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -61,13 +64,16 @@ import org.openxplay.direlay.settings.*
     val step = setupStep(stepKey)?.takeIf { it in steps } ?: SetupStep.CONNECTION
     val index = steps.indexOf(step)
     var attempted by rememberSaveable(stepKey) { mutableStateOf(false) }
+    var nextRequests by remember { mutableIntStateOf(0) }
+    val compact = compactSetup(LocalConfiguration.current.screenHeightDp)
+    val buttonHeight = if (compact) 48.dp else 56.dp
     val errors = settingsErrors(draft, isWireless)
     val running = home.presentation.running
     val changed = settingsNotice(setupDraft(entry, wireless(entry)), draft, carlinkConnected = false) != SettingsNotice.SILENT
     fun go(target: SetupStep) { stepKey = target.key }
     fun previous() { if (index > 0) go(steps[index - 1]) else close() }
     fun next() {
-        attempted = true
+        attempted = true; nextRequests++
         when (step) {
             SetupStep.START -> finish(changed)
             SetupStep.PREPARE -> go(SetupStep.START)
@@ -100,15 +106,15 @@ import org.openxplay.direlay.settings.*
         }
     }, bottomBar = {
         Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
-            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = if (compact) 8.dp else 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 Column(Modifier.widthIn(max = 640.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (step == SetupStep.PREPARE && !ready) Hint(stringResource(R.string.setup_prepare_blocked))
+                    if (!compact && step == SetupStep.PREPARE && !ready) Hint(stringResource(R.string.setup_prepare_blocked))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (index > 0) OutlinedButton(onClick = ::previous, Modifier.heightIn(min = 56.dp)) {
+                        if (index > 0) OutlinedButton(onClick = ::previous, Modifier.heightIn(min = buttonHeight)) {
                             Text(stringResource(R.string.ui_back))
                         }
-                        Button(onClick = ::next, enabled = nextEnabled, modifier = Modifier.weight(1f).heightIn(min = 56.dp),
+                        Button(onClick = ::next, enabled = nextEnabled, modifier = Modifier.weight(1f).heightIn(min = buttonHeight),
                             colors = ButtonDefaults.buttonColors(containerColor = RelayGreen)) {
                             if (step == SetupStep.START && !running) {
                                 Symbol(R.drawable.symbol_play, null, Modifier.size(24.dp))
@@ -138,7 +144,7 @@ import org.openxplay.direlay.settings.*
                     when (current) {
                         SetupStep.OUTPUT -> OutputStep(draft) { draft = chooseOutput(draft, it, isWireless) }
                         SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) { draft = chooseConnection(draft, it) }
-                        SetupStep.NETWORK -> NetworkStep(draft, if (attempted) errors else emptyMap(), home.currentWifi, useSharedWifi) { draft = it }
+                        SetupStep.NETWORK -> NetworkStep(draft, if (attempted) errors else emptyMap(), home.currentWifi, useSharedWifi, nextRequests) { draft = it }
                         SetupStep.PREPARE -> PrepareStep(draft, isWireless, home, bondedDevices, { draft = draft.copy(iphoneAddress = it) }) { action ->
                             when (action) {
                                 SetupAction.SHARED_WIFI, SetupAction.SETTINGS -> go(if (isWireless) SetupStep.NETWORK else SetupStep.OUTPUT)
@@ -155,6 +161,7 @@ import org.openxplay.direlay.settings.*
                             Text(stringResource(it), color = MaterialTheme.colorScheme.error)
                         }
                     }
+                    if (compact && current == SetupStep.PREPARE && !ready) Hint(stringResource(R.string.setup_prepare_blocked))
                     if (saveFailed) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
                 }
             }
@@ -235,10 +242,18 @@ import org.openxplay.direlay.settings.*
 }
 
 @Composable private fun NetworkStep(draft: RelaySettings, errors: Map<String, Int>, currentWifi: String?,
-    useSharedWifi: (String) -> Unit, change: (RelaySettings) -> Unit) {
+    useSharedWifi: (String) -> Unit, nextRequests: Int, change: (RelaySettings) -> Unit) {
+    val fields = remember { BringIntoViewRequester() }
+    var revealRequests by remember { mutableIntStateOf(0) }
     StepHeader(R.string.setup_network_title, R.string.setup_network_hint)
     val recommended = recommendedNetwork(draft)
     val selected = draft.wirelessNetwork.choice
+    LaunchedEffect(selected, revealRequests, nextRequests) {
+        if (revealHotspotFields(draft.wirelessNetwork, errors)) {
+            withFrameNanos { }
+            fields.bringIntoView()
+        }
+    }
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         WirelessNetworkChoice.entries.forEach { choice ->
             val allowed = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)
@@ -250,11 +265,12 @@ import org.openxplay.direlay.settings.*
                 allowed, if (allowed) null else stringResource(R.string.carlink_wifi_direct_constraint),
                 extra = { NetworkDiagram(choice, selected == choice) }) {
                 change(draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice)))
+                if (choice == WirelessNetworkChoice.PHONE_HOTSPOT) revealRequests++
             }
         }
     }
     if (selected != WirelessNetworkChoice.WIFI_DIRECT) RelayCard {
-        NetworkFields(draft.wirelessNetwork, selected, errors, currentWifi, false, useSharedWifi) {
+        NetworkFields(draft.wirelessNetwork, selected, errors, currentWifi, false, useSharedWifi, credentialsModifier = Modifier.bringIntoViewRequester(fields)) {
             change(draft.copy(wirelessNetwork = it))
         }
     }

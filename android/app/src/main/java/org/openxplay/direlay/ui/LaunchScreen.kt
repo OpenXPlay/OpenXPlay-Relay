@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -27,6 +28,8 @@ const val LAUNCH_COUNTDOWN = 5
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun LaunchScreen(value: HomeContent, onContinue: () -> Unit, onNewSetup: () -> Unit, onLater: () -> Unit) {
+    val compact = compactSetup(LocalConfiguration.current.screenHeightDp)
+    val buttonHeight = if (compact) 48.dp else 56.dp
     val state = value.presentation
     val countdown = value.automatic && state.canStart && !value.busy
     var remaining by remember { mutableIntStateOf(LAUNCH_COUNTDOWN) }
@@ -52,7 +55,7 @@ const val LAUNCH_COUNTDOWN = 5
                     Text(stringResource(R.string.launch_last_title), style = MaterialTheme.typography.titleMedium)
                     Column { ModeSummary(state.mode) }
                     if (!state.canStart) Hint(stringResource(R.string.launch_last_unready))
-                    Button(onClick = onContinue, enabled = !value.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                    Button(onClick = onContinue, enabled = !value.busy, modifier = Modifier.fillMaxWidth().heightIn(min = buttonHeight),
                         colors = ButtonDefaults.buttonColors(containerColor = RelayGreen)) {
                         if (state.canStart) {
                             Symbol(R.drawable.symbol_play, null, Modifier.size(24.dp))
@@ -65,7 +68,7 @@ const val LAUNCH_COUNTDOWN = 5
                 RelayCard {
                     Text(stringResource(R.string.launch_new_title), style = MaterialTheme.typography.titleMedium)
                     Hint(stringResource(R.string.launch_new_hint))
-                    OutlinedButton(onClick = onNewSetup, Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                    OutlinedButton(onClick = onNewSetup, Modifier.fillMaxWidth().heightIn(min = buttonHeight)) {
                         Text(stringResource(R.string.setup_home_action))
                     }
                 }

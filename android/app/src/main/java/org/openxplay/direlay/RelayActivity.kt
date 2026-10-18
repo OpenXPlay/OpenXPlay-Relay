@@ -217,7 +217,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 else -> R.string.ui_searching
             }, runtime.carlinkPins.pending.takeIf { resumed }, starting || requestingPermissions, onWifi = onWifi, vehicle = runtime.vehicleView,
             pinRejected = runtime.pinRejected, pairingSuccess = runtime.pairingSuccess,
-            displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi)
+            displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi,
+            iphoneName = runtime.iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name)
         if (!importOnly && !guideOpen && presentation.canStart && resumed && !requestingPermissions && !networkRefreshPending && !restartPending && !starting && !presentation.running && runtime.status.failure == null && !runtime.autoStartGate.paused &&
             runtime.autoStartSessions.tracker.observed && !runtime.autoStartSessions.tracker.running &&
             phase !in setOf(SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.RECONNECTING) &&

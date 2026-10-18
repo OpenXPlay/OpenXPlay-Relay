@@ -90,3 +90,8 @@ fun setupChecks(home: HomePresentation, wireless: Boolean, network: WirelessNetw
         }
     }
 }
+
+fun compactSetup(heightDp: Int): Boolean = heightDp < 480
+fun revealHotspotFields(network: WirelessNetworkSettings, errors: Map<String, Int>): Boolean =
+    network.choice == WirelessNetworkChoice.PHONE_HOTSPOT &&
+        (network.manualSsid.isBlank() || network.manualPassphrase.isBlank() || errors.keys.any { it in networkFields })

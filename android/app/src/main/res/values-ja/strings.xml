@@ -86,4 +86,6 @@
     <string name="picture_standard">標準</string>
     <string name="picture_large">大</string>
     <string name="picture_window">ウィンドウ</string>
+    <string name="ui_browser_landing">http://%1$s:8080 を入力してボタンをタップする方法もあります</string>
+    <string name="ui_iphone_name">iPhone：%1$s</string>
 </resources>

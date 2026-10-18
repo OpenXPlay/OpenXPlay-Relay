@@ -99,13 +99,14 @@ private fun RelayRuntime.overlaySnapshot(): HostOverlaySnapshot? {
                 else -> Symbol(R.drawable.symbol_stop, description, Modifier.size(48.dp))
             }
             Heading(description)
-            value.iphoneName?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
+            value.iphoneName?.let { Text(stringResource(R.string.ui_iphone_name, it), style = MaterialTheme.typography.titleMedium) }
             RelayCard {
                 value.outputs.forEach { output ->
                     Text(stringResource(output), style = MaterialTheme.typography.titleMedium)
                     if (output == R.string.ui_browser) {
                         if (value.receiverUrls.isEmpty()) Hint(stringResource(R.string.ui_no_network))
                         else value.receiverUrls.forEach { Text(it) }
+                        landingHost(value.receiverUrls)?.let { Hint(stringResource(R.string.ui_browser_landing, it)) }
                     }
                 }
             }

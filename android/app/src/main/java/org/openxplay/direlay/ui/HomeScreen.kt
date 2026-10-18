@@ -38,7 +38,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val ip: String, val wifi: String, val deviceName: String, val automatic: Boolean,
     val carlink: Boolean, val both: Boolean, val carlinkState: Int, val pending: DialogPinProvider.Request?,
     val busy: Boolean = false, val onWifi: Boolean = false, val vehicle: VehicleView = VehicleView(),
-    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null)
+    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null)
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -193,6 +193,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
             }, label = "status") { (headline, subline) ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Heading(stringResource(headline))
+                    value.iphoneName?.takeIf { it.isNotBlank() }?.let { Text(stringResource(R.string.ui_iphone_name, it)) }
                     Hint(if (subline == R.string.ui_iphone_pairing) stringResource(subline, value.deviceName) else stringResource(subline))
                 }
             }
@@ -236,6 +237,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 IconButton(onClick = { onCopy(address) }) { Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy)) }
             }
         }
+        landingHost(value.addresses)?.let { Hint(stringResource(R.string.ui_browser_landing, it)) }
         Hint(stringResource(R.string.ui_tls_hint))
     }
 }

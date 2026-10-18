@@ -181,7 +181,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     })
 }
 @Composable fun NetworkFields(network: WirelessNetworkSettings, choice: WirelessNetworkChoice,
-    errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit, change: (WirelessNetworkSettings) -> Unit) {
+    errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit, credentialsModifier: Modifier = Modifier, change: (WirelessNetworkSettings) -> Unit) {
     val hotspot = choice == WirelessNetworkChoice.PHONE_HOTSPOT
     val context = LocalContext.current
     val opener: NetworkSettingsOpener = remember(context) { NetworkSettingsLauncher(context) }
@@ -196,13 +196,15 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         TextButton(onClick = { opener.open(hotspot) }) {
             Text(stringResource(if (hotspot) R.string.settings_open_hotspot else R.string.ui_open_wifi))
         }
-        SettingField(stringResource(if (hotspot) R.string.settings_hotspot_name else R.string.direlay_network_ssid), network.manualSsid, errors["ssid"]) {
-            change(network.copy(manualSsid = it))
-        }
-        SettingField(stringResource(if (hotspot) R.string.settings_hotspot_password else R.string.direlay_network_passphrase), network.manualPassphrase,
-            errors["password"], secret = true) {
-            change(network.copy(manualPassphrase = it,
-                security = if (it.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2))
+        Column(credentialsModifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SettingField(stringResource(if (hotspot) R.string.settings_hotspot_name else R.string.direlay_network_ssid), network.manualSsid, errors["ssid"]) {
+                change(network.copy(manualSsid = it))
+            }
+            SettingField(stringResource(if (hotspot) R.string.settings_hotspot_password else R.string.direlay_network_passphrase), network.manualPassphrase,
+                errors["password"], secret = true) {
+                change(network.copy(manualPassphrase = it,
+                    security = if (it.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2))
+            }
         }
         if (hotspot) {
             SmallHeading(stringResource(R.string.direlay_hotspot_band))
