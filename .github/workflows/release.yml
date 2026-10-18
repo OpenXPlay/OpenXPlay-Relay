@@ -278,9 +278,12 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      # An unversioned copy keeps .../releases/latest/download/openxplay-relay.apk pointing at the newest app.
       - name: Write checksums
         working-directory: dist
-        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: cp "openxplay-relay-$VERSION.apk" openxplay-relay.apk && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -311,6 +314,7 @@ jobs:
           }Built from [OpenXPlay-Relay@${GITHUB_SHA::12}]($server/OpenXPlay-Relay/commit/$GITHUB_SHA), [OpenXPlay-Stream@${STREAM_SHA::12}]($server/OpenXPlay-Stream/commit/$STREAM_SHA) and [OpenXPlay-DiPlay@${DIPLAY_SHA::12}]($server/OpenXPlay-DiPlay/commit/$DIPLAY_SHA).
 
           - \`openxplay-relay-$VERSION.apk\`: the Android app. Signing certificate SHA-256: \`$CERTIFICATE\`
+          - \`openxplay-relay.apk\`: the same app under a fixed name, for the latest-download link.
           - \`openxplay-relay-$VERSION-linux-aarch64.tar.gz\`: the Linux relay for aarch64 (static musl binaries, web pages and \`rust/packaging/install.sh\`).
           - \`SHA256SUMS\`: SHA-256 checksums of these files.
 
