@@ -23,8 +23,9 @@ android {
         applicationId = providers.gradleProperty("relay.applicationId").orNull ?: "org.openxplay.relay"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        // Release builds derive both from the tag: -Prelay.versionCode=… -Prelay.versionName=…
+        versionCode = providers.gradleProperty("relay.versionCode").orNull?.toInt() ?: 1001
+        versionName = providers.gradleProperty("relay.versionName").orNull ?: "0.1.1"
     }
 
     // Exclude identity assets from every merged dependency. Users provision their own files.
