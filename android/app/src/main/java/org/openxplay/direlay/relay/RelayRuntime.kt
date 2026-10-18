@@ -675,11 +675,24 @@ class RelayRuntime(private val context: Context,
         } catch (_: java.util.concurrent.RejectedExecutionException) { }
     }
 
-    private fun ipv4Addresses(includeIphoneLink: Boolean = true): Set<String> = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-            .filter { it.isUp && !it.isLoopback && (includeIphoneLink || !it.name.startsWith("p2p")) }
+    /** Without the iPhone link it is the car-facing set: mobile data sits behind the carrier's NAT and is left out too. */
+    private fun ipv4Addresses(includeIphoneLink: Boolean = true): Set<String> {
+        val cellular = if (includeIphoneLink) emptySet() else cellularInterfaces()
+        return NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            .filter { it.isUp && !it.isLoopback && (includeIphoneLink || !it.name.startsWith("p2p") && it.name !in cellular && !isCellularName(it.name)) }
             .flatMap { it.inetAddresses.toList() }
             .filterIsInstance<Inet4Address>().filter { !it.isLoopbackAddress && !it.isAnyLocalAddress }
             .mapNotNull { it.hostAddress }.toSortedSet()
+    }
+    private fun isCellularName(name: String) = listOf("rmnet", "ccmni", "v4-rmnet", "pdp", "wwan").any(name::startsWith)
+    @Suppress("DEPRECATION")
+    private fun cellularInterfaces(): Set<String> = runCatching {
+        sharedWifiConnectivity.allNetworks.mapNotNull { network ->
+            val cellular = sharedWifiConnectivity.getNetworkCapabilities(network)
+                ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true
+            if (cellular) sharedWifiConnectivity.getLinkProperties(network)?.interfaceName else null
+        }.toSet()
+    }.getOrDefault(emptySet())
 
     override fun close() {
         synchronized(lifecycle) {
