@@ -121,6 +121,10 @@ class RelayRuntime(private val context: Context,
 
     private val displayRefit = DisplayRefit()
     @Volatile private var appliedDisplay: DisplayTarget? = null
+    /** Shown on the head-unit page next to the page's own version, e.g. "0.1.3 (1003)". */
+    private fun appVersion(): String = context.packageManager.getPackageInfo(context.packageName, 0).let {
+        @Suppress("DEPRECATION") "${it.versionName} (${if (android.os.Build.VERSION.SDK_INT >= 28) it.longVersionCode else it.versionCode.toLong()})"
+    }
     fun displayRestarted() { displayRefit.restarted(android.os.SystemClock.elapsedRealtime()) }
 
     /** Called on the start worker; freeze the canvas for this CarPlay session. */
@@ -607,7 +611,8 @@ class RelayRuntime(private val context: Context,
             val output = WebOutput(WebOutputConfig(
                 bindAddress = "0.0.0.0", port = port, sslContext = ssl,
                 staticAssetRoot = root.toPath(), tokenVerifier = verifier, plugins = plugins, displaySettings = settingsStore,
-                sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-DiRelay",
+                sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay",
+                relay = org.openxplay.stream.web.RelayInfo("Android", appVersion()),
             ))
             synchronized(lifecycle) {
                 if (closed) return

@@ -9,7 +9,7 @@
     <string name="direlay_frame_counts">Video frames:\n%1$s</string>
     <string name="direlay_screen_count">Screen type %1$d: %2$d</string>
     <string name="direlay_attribution">Powered by OpenXPlay.</string>
-    <string name="direlay_project_url" translatable="false">https://github.com/OpenXPlay/OpenXPlay-DiRelay</string>
+    <string name="direlay_project_url" translatable="false">https://github.com/OpenXPlay/OpenXPlay-Relay</string>
     <string name="direlay_identity">CarPlay identity</string>
     <string name="direlay_identity_hint">Select identity.pk8, then certificate.p7b. Restart OpenXPlay Relay after replacing an identity that was already in use.</string>
     <string name="direlay_tls_hint">Import a .p12 file and its password. Changes restart the web receiver.</string>

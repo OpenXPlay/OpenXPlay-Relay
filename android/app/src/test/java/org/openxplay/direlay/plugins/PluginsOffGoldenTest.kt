@@ -62,13 +62,13 @@ class PluginsOffGoldenTest {
                 val config = RelayPlugins.configuration(value, missing, root.resolve("state"))
                 assertNull(config)
                 val web = WebOutput(WebOutputConfig(bindAddress = "127.0.0.1", port = 0, staticAssetRoot = root.toPath(),
-                    tokenVerifier = TokenVerifier { true }, sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-DiRelay", plugins = config))
+                    tokenVerifier = TokenVerifier { true }, sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay", plugins = config))
                 assertFalse(web.wantsContext())
                 web.open(host)
                 try {
                     web.onSession(SessionState(SessionId(42), SessionPhase.ACTIVE), SessionConfig(emptyMap()))
                     val port = web.awaitListening()
-                    val expected = """{"type":"welcome","version":0,"clientId":"browser-1","session":{"id":"42","phase":"ACTIVE"},"sourceUrl":"https://github.com/OpenXPlay/OpenXPlay-DiRelay","attribution":"Powered by OpenXPlay.","projectUrl":"https://github.com/OpenXPlay/OpenXPlay-Stream"}"""
+                    val expected = """{"type":"welcome","version":0,"clientId":"browser-1","session":{"id":"42","phase":"ACTIVE"},"sourceUrl":"https://github.com/OpenXPlay/OpenXPlay-Relay","attribution":"Powered by OpenXPlay.","projectUrl":"https://github.com/OpenXPlay/OpenXPlay-Stream"}"""
                     assertArrayEquals(expected.toByteArray(), welcome(port).toByteArray())
                     assertTrue(String(request(port, "GET", "/index.html")).endsWith("\r\n\r\nreceiver-golden"))
                     for (method in listOf("GET", "HEAD", "POST")) for (tail in listOf(
