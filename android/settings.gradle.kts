@@ -42,6 +42,19 @@ val streamDir = providers.gradleProperty("stream.dir").orNull
         "../../OpenXPlay-Stream/kotlin"
     }
 
+// Releases build the OpenXPlay-Stream commit in stream.lock; say when this checkout builds something else.
+run {
+    val pinned = file("../stream.lock").takeIf { it.isFile }?.readText()?.trim().orEmpty()
+    val root = file(streamDir).resolve("..").canonicalFile
+    fun git(vararg args: String): String? = runCatching {
+        providers.exec { commandLine("git", "-C", root.path, *args); isIgnoreExitValue = true }.standardOutput.asText.get().trim()
+    }.getOrNull()
+    val head = git("rev-parse", "HEAD")
+    if (pinned.isNotEmpty() && !head.isNullOrEmpty() && head != pinned)
+        logger.warn("OpenXPlay-Stream at ${root.path} is ${head.take(12)}, not ${pinned.take(12)} from stream.lock.")
+    if (!git("status", "--porcelain").isNullOrEmpty()) logger.warn("OpenXPlay-Stream at ${root.path} has uncommitted changes.")
+}
+
 includeBuild(streamDir) {
     dependencySubstitution {
         substitute(module("org.openxplay.stream:core")).using(project(":core"))

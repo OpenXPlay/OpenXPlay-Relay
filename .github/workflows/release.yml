@@ -77,16 +77,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: OpenXPlay-Relay
+      # Every build of a Relay commit uses the same OpenXPlay-Stream commit, the one in stream.lock.
+      - name: Read the pinned Stream commit
+        id: pin
+        run: |
+          stream=$(tr -d '[:space:]' < OpenXPlay-Relay/stream.lock)
+          [[ $stream =~ ^[0-9a-f]{40}$ ]] || { echo "::error::stream.lock must hold one full OpenXPlay-Stream commit hash."; exit 1; }
+          echo "stream=$stream" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: OpenXPlay/OpenXPlay-Stream
+          ref: ${{ steps.pin.outputs.stream }}
           path: OpenXPlay-Stream
       - name: Resolve sibling commits
         id: sources
         run: |
+          stream=$(git -C OpenXPlay-Stream rev-parse HEAD)
+          [ "$stream" = "${{ steps.pin.outputs.stream }}" ] || { echo "::error::Checked out OpenXPlay-Stream $stream, not the pinned commit."; exit 1; }
           diplay=$(git ls-remote https://github.com/OpenXPlay/OpenXPlay-DiPlay.git HEAD | cut -f1)
           [[ $diplay =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Cannot resolve the OpenXPlay-DiPlay default branch."; exit 1; }
-          { echo "stream=$(git -C OpenXPlay-Stream rev-parse HEAD)"; echo "diplay=$diplay"; } >> "$GITHUB_OUTPUT"
+          { echo "stream=$stream"; echo "diplay=$diplay"; } >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

@@ -37,6 +37,8 @@ The Android build includes DiPlay and Stream as Gradle composite builds. By defa
 | Linux relay | Rust stable | `cd rust && cargo test` |
 | Linux relay for aarch64 | `rustup target add aarch64-unknown-linux-musl`, `llvm-tools`, clang | `rust/scripts/build-aarch64.sh` |
 
+Releases build the Stream commit in `stream.lock`; the Android build warns when your Stream checkout is another commit or has uncommitted changes. To move to a newer Stream, commit `git -C ../OpenXPlay-Stream rev-parse HEAD > stream.lock` after that Stream commit is pushed.
+
 ## Contributing
 
 Contributions are accepted under the [Contributor License Agreement](./CLA.md). The CLA Assistant
