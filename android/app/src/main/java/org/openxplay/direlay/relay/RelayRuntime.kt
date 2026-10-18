@@ -89,25 +89,45 @@ class RelayRuntime(private val context: Context,
     private val preferences = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     // This separate private file must not invalidate the user-settings snapshot cache.
     private val displayPreferences = context.getSharedPreferences("direlay-car-display", Context.MODE_PRIVATE)
-    @Volatile private var rememberedDisplay: DisplayProfile? = null
+    private val savedHeadUnitStore = SavedHeadUnitStore(displayPreferences)
+    @Volatile private var savedHeadUnit: SavedHeadUnit? = null
+    @Volatile private var preparedPlanningDisplay: HeadUnitDisplay? = null
+    private var clearedReport: HeadUnitDisplay? = null
     @Volatile private var screenPrepared = false
     @Volatile var carPlayScreen: CarPlayScreen? = null
         private set
 
     @Synchronized private fun loadRememberedDisplay() {
-        if (rememberedDisplay == null) rememberedDisplay = runCatching {
-            DisplayProfile(displayPreferences.getInt("width", 0), displayPreferences.getInt("height", 0),
-                displayPreferences.getInt("density", 0)).also { it.validate() }
-        }.getOrNull()
+        if (savedHeadUnit == null) savedHeadUnit = savedHeadUnitStore.load()
     }
 
     @Synchronized private fun rememberCarDisplay() {
-        val car = displayPolicy.lastCarDisplay ?: return
-        if (car == rememberedDisplay) return
-        displayPreferences.edit().putInt("width", car.width).putInt("height", car.height)
-            .putInt("density", car.density).apply()
-        rememberedDisplay = car
+        val report = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from) ?: run { clearedReport = null; return }
+        // Clearing while connected must survive periodic refreshes of the same report.
+        if (report == clearedReport) return
+        clearedReport = null
+        val canvas = displayPolicy.carDisplay ?: return
+        val settings = settingsStore.snapshot.value ?: return
+        val saved = SavedHeadUnit(canvas, report, settings.carplayResolution,
+            settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC, displayPolicy.decoderLimit)
+        if (saved == savedHeadUnit) return
+        savedHeadUnitStore.save(saved); savedHeadUnit = saved
     }
+
+    fun clearSavedHeadUnit() { setup.execute { synchronized(this) {
+        clearedReport = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)
+        savedHeadUnitStore.clear(); savedHeadUnit = null
+    } } }
+
+    val savedCanvas: CarPlayScreen get() = synchronized(this) {
+        loadRememberedDisplay()
+        val settings = settingsStore.snapshot.value ?: return@synchronized CarPlayScreen(CarDisplayFit.default, "default")
+        checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null,
+            savedHeadUnit, carModels.model(settings.car)))
+    }
+
+    private fun planningDisplay(settings: RelaySettings) = planningDisplay(
+        displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from), savedHeadUnit, carModels.model(settings.car))
 
     val sharedWifiSelection = org.openxplay.direlay.settings.SharedWifiSelection()
     private val sharedWifiConnectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
@@ -164,7 +184,8 @@ class RelayRuntime(private val context: Context,
     }
     private var lastWindow: List<Int>? = null
     private fun observeWindow(display: org.openxplay.stream.core.DisplayInfo?) {
-        viewAreaPreference = display?.fullscreenPreferred
+        if (display == null) synchronized(this) { clearedReport = null }
+        viewAreaPreference = if (display == null) preparedPlanningDisplay?.preferred else display.fullscreenPreferred
         val viewport = display?.viewport
         val areas = declaredViewAreas
         val candidate = if (viewport != null && settingsStore.snapshot.value?.viewAreas == true &&
@@ -197,11 +218,10 @@ class RelayRuntime(private val context: Context,
             activeArea = area; areaListeners.forEach { it(area) }
             return null
         }
-        val display = displayPolicy.primaryDisplay
-        val records = if (display == null) emptyList() else ViewAreaPlanner.mergeRecords(windowRecords.snapshot(),
-            carModels.model(settings.car)?.screens.orEmpty(), ScreenDataKey(display.widthPx, display.heightPx, display.densityDpi))
-        val current = display?.viewport?.let { ViewAreaSize(it.width, it.height) }
-        val areas = ViewAreaPlanner.plan(width, height, records, current, display?.fullscreen)
+        loadRememberedDisplay()
+        val display = if (screenPrepared) preparedPlanningDisplay else planningDisplay(settings)
+        viewAreaPreference = display?.preferred
+        val areas = planHeadUnitAreas(width, height, display, windowRecords.snapshot(), carModels.model(settings.car))
         return areas.also { declaredViewAreas = it; publishArea(0) }
     }
     private val displayRefit = DisplayRefit()
@@ -217,22 +237,28 @@ class RelayRuntime(private val context: Context,
         loadRememberedDisplay()
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
-        return resolveCarPlayScreen(settings.displayMode, settings.display, displayPolicy.carDisplay, rememberedDisplay).also {
+        preparedPlanningDisplay = planningDisplay(settings)
+        return startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car)).also {
             settingsStore.prepareDisplay(it?.profile, settings.carplayIconSize)
-            appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayIconSize) }
+            appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayIconSize, preparedPlanningDisplay?.screen) }
             carPlayScreen = it
             screenPrepared = true
         }
     }
 
-    fun displayMismatch(running: Boolean, settings: RelaySettings): Boolean = (settings.carplayResolution == CarPlayResolution.SCREEN || displayPolicy.primaryDisplay?.viewport == null) && carDisplayMismatch(
-        running, settings.displayMode, carPlayScreen?.profile, displayPolicy.lastCarDisplay ?: rememberedDisplay)
+    fun displayMismatch(running: Boolean, settings: RelaySettings): Boolean {
+        val live = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)
+        if (settings.viewAreas || declaredViewAreas.isNotEmpty()) return running && settings.displayMode == DisplayMode.AUTOMATIC &&
+            live != null && appliedDisplay != null && live.screen != appliedDisplay?.screen
+        return (settings.carplayResolution == CarPlayResolution.SCREEN || live?.visible == null) && carDisplayMismatch(
+            running, settings.displayMode, carPlayScreen?.profile, displayPolicy.carDisplay ?: savedHeadUnit?.canvas)
+    }
 
     /** The CarPlay canvas as "W × H · D dpi" plus where it came from ("car screen", …, "relay screen"). */
     val carPlayScreenSummary: Pair<String, String> get() {
         val settings = settingsStore.snapshot.value
         val selected = if (screenPrepared) carPlayScreen else settings?.let {
-            resolveCarPlayScreen(it.displayMode, it.display, displayPolicy.carDisplay, rememberedDisplay)
+            startupCarPlayScreen(it, displayPolicy.carDisplay, savedHeadUnit, carModels.model(it.car))
         }
         if (selected != null) return "${selected.profile.width} × ${selected.profile.height} · ${selected.profile.density} dpi" to selected.source
         val metrics = context.resources.displayMetrics
@@ -439,7 +465,9 @@ class RelayRuntime(private val context: Context,
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
         val settings = settingsStore.snapshot.value ?: return
-        val desired = (displayPolicy.carDisplay ?: carPlayScreen?.profile)?.let { DisplayTarget(it, settings.carplayResolution, settings.carplayIconSize) }
+        val desiredScreen = startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car))
+        val desired = desiredScreen?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayIconSize,
+            displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)?.screen ?: appliedDisplay?.screen) }
         if (displayRefit.due(android.os.SystemClock.elapsedRealtime(), autoStartSessions.tracker.running,
                 settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null, settings.viewAreas || declaredViewAreas.isNotEmpty()) &&
             !sessionActions.restarting && !startRequest.pending) sessionActions.action("restart")

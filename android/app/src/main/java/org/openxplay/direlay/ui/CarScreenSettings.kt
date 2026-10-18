@@ -25,6 +25,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
     val locale = LocalConfiguration.current.locales[0]
     var models by remember { mutableStateOf<CarModels?>(null) }
     var detected by remember { mutableStateOf<DetectedCarScreen?>(null) }
+    var savedCanvas by remember { mutableStateOf<CarPlayScreen?>(null) }
     var version by remember { mutableStateOf("") }
     LaunchedEffect(runtime) {
         val loaded = withContext(Dispatchers.IO) {
@@ -32,6 +33,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         }
         models = loaded.first; version = loaded.second
         while (true) {
+            savedCanvas = withContext(Dispatchers.IO) { runtime.savedCanvas }
             detected = withContext(Dispatchers.IO) {
                 val rows = runtime.windowRecords.snapshot()
                 rows.firstOrNull()?.let { latest ->
@@ -68,6 +70,18 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         if (car.brand == "other" || car.model == "other") SettingField(stringResource(R.string.car_model), car.modelText) {
             change(draft.copy(car = car.copy(modelText = CarSelection.cleanText(it))))
         }
+    }
+    SmallHeading(stringResource(R.string.car_saved_canvas))
+    savedCanvas?.let { saved ->
+        Text(stringResource(R.string.car_canvas_size, saved.profile.width, saved.profile.height, saved.profile.density))
+        Hint(stringResource(when (saved.source) {
+            "remembered" -> R.string.car_canvas_last
+            "built-in model" -> R.string.car_canvas_model
+            else -> R.string.car_canvas_default
+        }))
+    }
+    OutlinedButton(onClick = { runtime.clearSavedHeadUnit() }, modifier = Modifier.heightIn(min = 48.dp)) {
+        Text(stringResource(R.string.car_clear_screen))
     }
     SmallHeading(stringResource(R.string.car_detected))
     if (models?.model(car)?.screens?.isNotEmpty() == true) Hint(stringResource(R.string.car_built_in))

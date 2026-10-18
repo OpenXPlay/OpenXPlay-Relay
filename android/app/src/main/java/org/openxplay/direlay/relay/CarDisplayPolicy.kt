@@ -29,6 +29,9 @@ class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private
     val primaryDisplay: DisplayInfo? get() = activeOutputs.firstOrNull { it.latency == LatencyClass.INTERACTIVE }?.displays?.get(ScreenId.MAIN)
         ?: activeOutputs.firstOrNull()?.displays?.get(ScreenId.MAIN)
 
+    @Volatile var decoderLimit: Int? = null
+        private set
+
     @Synchronized fun refreshDisplay() {
         // Every receiver of the main screen must decode the canvas: use the smallest H.264 frame-size
         // limit among them (each output counts its most capable H.264 decoder).
@@ -36,6 +39,7 @@ class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private
         val limit = outputs.mapNotNull { output ->
             output.decoders.mapNotNull { CarDisplayFit.h264MaxMacroblocks(it.codecString) }.maxOrNull()
         }.minOrNull()
+        decoderLimit = limit
         carDisplay = primaryDisplay?.let { fitDisplay(it, resolution(), limit, wholeScreen()) }
         carDisplay?.let { lastCarDisplay = it }
     }

@@ -33,6 +33,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         add(DeveloperRow(R.string.dev_carplay_screen, "", valueKey = when (source) {
             "car screen" -> R.string.dev_screen_car
             "remembered" -> R.string.dev_screen_remembered
+            "built-in model" -> R.string.dev_screen_model
             "default" -> R.string.dev_screen_default
             "fixed" -> R.string.dev_screen_fixed
             else -> R.string.dev_screen_relay

@@ -526,4 +526,11 @@
     <string name="identity_error_size">Each identity file must be at most 16 KiB.</string>
     <string name="identity_error_limit">The ZIP exceeds the scan limit (20,000 entries or 512 MiB).</string>
     <string name="identity_error_zip">The ZIP could not be read. Check that the archive is complete and valid.</string>
+    <string name="car_saved_canvas">Saved canvas for the next start</string>
+    <string name="car_canvas_size">%1$d × %2$d · %3$d dpi</string>
+    <string name="car_canvas_last">Source: last head unit</string>
+    <string name="car_canvas_model">Source: built-in car model</string>
+    <string name="car_canvas_default">Source: default</string>
+    <string name="car_clear_screen">Clear saved screen and canvas</string>
+    <string name="dev_screen_model">%1$s · built-in car model</string>
 </resources>

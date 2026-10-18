@@ -520,4 +520,11 @@
     <string name="identity_error_size">每个身份文件不能超过 16 KiB。</string>
     <string name="identity_error_limit">ZIP 超出扫描限制（20,000 个条目或 512 MiB）。</string>
     <string name="identity_error_zip">无法读取 ZIP。请检查压缩包是否完整有效。</string>
+    <string name="car_saved_canvas">下次启动使用的已保存画布</string>
+    <string name="car_canvas_size">%1$d × %2$d · %3$d dpi</string>
+    <string name="car_canvas_last">来源：上次连接的车机</string>
+    <string name="car_canvas_model">来源：内置车型</string>
+    <string name="car_canvas_default">来源：默认值</string>
+    <string name="car_clear_screen">清除已保存的屏幕与画布</string>
+    <string name="dev_screen_model">%1$s · 内置车型</string>
 </resources>

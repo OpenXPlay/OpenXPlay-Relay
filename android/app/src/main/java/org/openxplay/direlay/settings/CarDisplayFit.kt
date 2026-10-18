@@ -68,13 +68,14 @@ fun migratedDisplayMode(stored: String?, profile: DisplayProfile?): DisplayMode 
         ?: if (profile != null) DisplayMode.FIXED else DisplayMode.AUTOMATIC
 
 data class CarPlayScreen(val profile: DisplayProfile, val source: String)
-fun resolveCarPlayScreen(mode: DisplayMode, fixed: DisplayProfile?, car: DisplayProfile?, remembered: DisplayProfile?): CarPlayScreen? =
+fun resolveCarPlayScreen(mode: DisplayMode, fixed: DisplayProfile?, car: DisplayProfile?, remembered: DisplayProfile?, builtIn: DisplayProfile? = null): CarPlayScreen? =
     when (mode) {
         DisplayMode.RELAY_SCREEN -> null
         DisplayMode.FIXED -> CarPlayScreen(checkNotNull(fixed), "fixed")
         DisplayMode.AUTOMATIC -> when {
             car != null -> CarPlayScreen(car, "car screen")
             remembered != null -> CarPlayScreen(remembered, "remembered")
+            builtIn != null -> CarPlayScreen(builtIn, "built-in model")
             else -> CarPlayScreen(CarDisplayFit.default, "default")
         }
     }

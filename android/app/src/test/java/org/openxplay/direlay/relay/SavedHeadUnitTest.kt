@@ -1,0 +1,112 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-18
+package org.openxplay.direlay.relay
+
+import android.app.Application
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import org.openxplay.direlay.settings.*
+import org.openxplay.stream.core.*
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33], application = Application::class)
+class SavedHeadUnitTest {
+    private val context get() = RuntimeEnvironment.getApplication()
+    private val preferences get() = context.getSharedPreferences("direlay-car-display", 0)
+    private val screen = ScreenDataKey(2401, 1201, 280)
+    private val report = HeadUnitDisplay(screen, ViewAreaSize(1533, 907), false, true)
+    private val canvas = DisplayProfile(1920, 960, 240)
+    private val saved get() = SavedHeadUnit(canvas, report, CarPlayResolution.AUTO, true, 36864)
+    private fun settings() = RelaySettingsStore(context).load()
+    private fun model() = checkNotNull(CarModels.parse(context.assets.open("car-models.json").bufferedReader().use { it.readText() })
+        .model(CarSelection("xpeng", model = "g6-2023")))
+    private fun store() = SavedHeadUnitStore(preferences)
+
+    @Test fun persistsCanvasReportNullableFlagsAndDecoderBudgetTogether() {
+        for (full in listOf(null, false, true)) for (preferred in listOf(null, false, true)) {
+            val original = saved.copy(display = report.copy(fullscreen = full, preferred = preferred))
+            store().save(original)
+            val loaded = checkNotNull(store().load())
+            assertEquals(original, loaded)
+            assertEquals(original.display, HeadUnitDisplay.from(checkNotNull(loaded.display).display()))
+        }
+        val noViewport = saved.copy(display = report.copy(visible = null))
+        store().save(noViewport); assertEquals(noViewport, store().load())
+    }
+    @Test fun acceptsLegacyCanvasAndRejectsCorruptReportWithoutLosingCanvas() {
+        preferences.edit().clear().putInt("width", 800).putInt("height", 480).putInt("density", 160).apply()
+        assertEquals(SavedHeadUnit(DisplayProfile(800, 480, 160), null), store().load())
+        store().save(saved)
+        for (key in listOf("screenWidth", "screenHeight", "screenDensity", "visibleWidth", "visibleHeight")) {
+            store().save(saved); preferences.edit().putInt(key, 0).apply()
+            assertEquals(canvas, store().load()?.canvas); assertNull(store().load()?.display)
+        }
+        preferences.edit().putInt("width", 0).apply(); assertNull(store().load())
+    }
+    @Test fun savedDisplayPlansBeforeAnyPageConnectsUsingOnlyItsRecords() {
+        store().save(saved)
+        val loaded = store().load()
+        val display = planningDisplay(null, loaded, null)
+        assertEquals(report, display)
+        val local = listOf(WindowSizeRecord(2401, 1201, 280, 1533, 1014, true, 9, 1),
+            WindowSizeRecord(2401, 1201, 280, 1533, 907, false, 5, 2),
+            WindowSizeRecord(1920, 1080, 160, 800, 600, false, 99, 3))
+        val areas = planHeadUnitAreas(1920, 960, display, local, null)
+        assertEquals(3, areas.size)
+        assertEquals(setOf(ViewAreaLibrary.FULLSCREEN), areas[1].libraries)
+        assertEquals(setOf(ViewAreaLibrary.WINDOWED), areas[2].libraries)
+        assertEquals(1533.0 / 907, areas[2].width.toDouble() / areas[2].height, .005)
+        assertEquals(CarPlayScreen(canvas, "remembered"), startupCarPlayScreen(settings(), null, loaded, null))
+        val currentOnly = planHeadUnitAreas(1920, 960, display, emptyList(), null)
+        assertEquals(2, currentOnly.size)
+        assertEquals(setOf(ViewAreaLibrary.WINDOWED), currentOnly[1].libraries)
+        assertNull(ViewAreaPlanner.match(areas, 1533, 907, display?.fullscreen, display?.preferred))
+    }
+    @Test fun modelFallbackSuppliesScreenAndBothLibrariesWithResolutionCaps() {
+        val model = model()
+        val display = planningDisplay(null, null, model)
+        assertEquals(screen, display?.screen)
+        assertEquals(true, display?.preferred)
+        for (resolution in CarPlayResolution.entries) {
+            val settings = settings().copy(carplayResolution = resolution)
+            val selected = checkNotNull(startupCarPlayScreen(settings, null, null, model))
+            assertEquals("built-in model", selected.source)
+            assertEquals(fitDisplay(checkNotNull(display).display(), resolution, wholeScreen = true), selected.profile)
+            val areas = planHeadUnitAreas(selected.profile.width, selected.profile.height, display, emptyList(), model)
+            assertTrue(areas.size > 1)
+            assertTrue(areas.any { ViewAreaLibrary.FULLSCREEN in it.libraries })
+            assertTrue(areas.any { ViewAreaLibrary.WINDOWED in it.libraries })
+        }
+        // A legacy canvas has no screen identity and must not override a selected model.
+        assertEquals("built-in model", startupCarPlayScreen(settings(), null, SavedHeadUnit(CarDisplayFit.default, null), model)?.source)
+        assertEquals(report, planningDisplay(null, saved, model))
+        assertEquals(report.copy(screen = screen.copy(width = 2400)), planningDisplay(report.copy(screen = screen.copy(width = 2400)), saved, model))
+    }
+    @Test fun savedPlanningMergesBuiltInOnlyForExactScreenAndReFitsChangedSettingsWithinDecoderBudget() {
+        val areas = planHeadUnitAreas(1920, 960, report, emptyList(), model())
+        assertTrue(areas.size > 2)
+        assertEquals(2, planHeadUnitAreas(1920, 960, report.copy(screen = screen.copy(densityDpi = 281)), emptyList(), model()).size)
+        val limited = saved.copy(maxMacroblocks = 3600)
+        val settings = settings().copy(carplayResolution = CarPlayResolution.P720)
+        val selected = checkNotNull(startupCarPlayScreen(settings, null, limited, model()))
+        assertEquals(fitDisplay(report.display(), CarPlayResolution.P720, 3600, true), selected.profile)
+        assertTrue(CarDisplayFit.macroblocks(selected.profile.width, selected.profile.height) <= 3600)
+        val live = DisplayProfile(800, 480, 160)
+        assertEquals(CarPlayScreen(live, "car screen"), startupCarPlayScreen(settings, live, saved, model()))
+        assertEquals(CarPlayScreen(live, "fixed"), startupCarPlayScreen(settings.copy(displayMode = DisplayMode.FIXED, display = live), null, saved, model()))
+        assertNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.RELAY_SCREEN), null, saved, model()))
+    }
+    @Test fun clearingRemovesBothScreenAndCanvasAndFallsBackToModelOrDefault() {
+        store().save(saved); store().clear()
+        assertTrue(preferences.all.isEmpty()); assertNull(store().load())
+        assertNull(planningDisplay(null, store().load(), null))
+        assertEquals(CarPlayScreen(CarDisplayFit.default, "default"), startupCarPlayScreen(settings(), null, store().load(), null))
+        assertEquals("built-in model", startupCarPlayScreen(settings(), null, store().load(), model())?.source)
+        store().save(saved); assertEquals(saved, store().load())
+    }
+}

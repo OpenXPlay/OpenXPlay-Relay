@@ -16,6 +16,46 @@ class DisplayRefitTest {
         mode: DisplayMode = DisplayMode.AUTOMATIC, active: Boolean = true, viewport: Boolean = true) =
         gate.due(now, active, mode, applied, next, viewport)
 
+    @Test fun differentScreenRestartsOnceEvenWithIdenticalCanvasAndViewAreas() {
+        val screen = ScreenDataKey(2401, 1201, 280)
+        val applied = running.copy(screen = screen)
+        for (other in listOf(screen.copy(width = 2400), screen.copy(height = 1200), screen.copy(densityDpi = 281))) {
+            val gate = DisplayRefit()
+            val next = applied.copy(screen = other)
+            assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, applied, next, false, true))
+            assertFalse(gate.due(999, true, DisplayMode.AUTOMATIC, applied, next, false, true))
+            assertTrue(gate.due(1000, true, DisplayMode.AUTOMATIC, applied, next, false, true))
+            gate.restarted(1000)
+            // Preparing the restarted session freezes the new screen identity, removing the mismatch.
+            assertFalse(gate.due(11000, true, DisplayMode.AUTOMATIC, next, next, false, true))
+            assertFalse(gate.due(21000, true, DisplayMode.AUTOMATIC, next, next, false, true))
+        }
+        val gate = DisplayRefit()
+        assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, running, applied, false, true))
+        assertTrue(gate.due(1000, true, DisplayMode.AUTOMATIC, running, applied, false, true))
+    }
+    @Test fun sameScreenWindowAndFullscreenPreferenceChangesNeverRestartWithAreas() {
+        val report = display.copy(fullscreen = true, fullscreenPreferred = true)
+        val screen = HeadUnitDisplay.from(report).screen
+        val applied = running.copy(screen = screen)
+        for (window in listOf(report.copy(viewport = Viewport(856, 1014), fullscreen = false),
+            report.copy(viewport = Viewport(1533, 907), fullscreen = false, fullscreenPreferred = false))) {
+            val next = desired.copy(screen = HeadUnitDisplay.from(window).screen)
+            val gate = DisplayRefit()
+            assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, applied, next, true, true))
+            assertFalse(gate.due(20000, true, DisplayMode.AUTOMATIC, applied, next, true, true))
+        }
+        // A transient different screen that disappears before the debounce must not restart later.
+        val gate = DisplayRefit()
+        val other = applied.copy(screen = screen.copy(densityDpi = 281))
+        assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, applied, other, true, true))
+        assertFalse(gate.due(999, true, DisplayMode.AUTOMATIC, applied, applied, true, true))
+        assertFalse(gate.due(20000, true, DisplayMode.AUTOMATIC, applied, applied, true, true))
+        for (mode in listOf(DisplayMode.FIXED, DisplayMode.RELAY_SCREEN)) {
+            assertFalse(gate.due(21000, true, mode, applied, other, true, true))
+            assertFalse(gate.due(23000, true, mode, applied, other, true, true))
+        }
+    }
     @Test fun viewAreasSuppressGeometryButExplicitSettingsStillRestart() {
         val gate = DisplayRefit()
         assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, running, desired, true, viewAreas = true))
