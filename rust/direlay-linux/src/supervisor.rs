@@ -508,9 +508,8 @@ impl RelaySupervisor {
                     .map(str::to_owned);
                 events(event);
                 if let Some(delay) = delay {
-                    let next = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
+                    // For display only: the backoff itself runs on the monotonic clock.
+                    let next = crate::platform::wall_clock()
                         .as_secs()
                         .saturating_add(delay.as_secs());
                     events(json!({"type":"carlink-backoff", "reason":reason,

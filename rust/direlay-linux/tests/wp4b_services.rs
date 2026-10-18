@@ -11,7 +11,7 @@ mod branding;
 mod mdns_host;
 #[path = "../src/provision.rs"]
 mod provision;
-use openxplay_relay::{plugins, settings};
+use openxplay_relay::{boot_timing, platform, plugins, settings};
 #[path = "../src/supervisor.rs"]
 mod supervisor;
 use admin::auth::*;
@@ -47,8 +47,13 @@ impl Drop for Temp {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+/// Admin auth in one fixed boot, also where `/proc` has no boot id.
 fn auth(dir: &Path) -> AdminAuth {
-    AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap()
+    AdminAuth::for_boot(
+        Box::new(FileAuthStore(dir.join("auth.json"))),
+        "test-boot".into(),
+    )
+    .unwrap()
 }
 #[test]
 fn pbkdf2_vectors() {
@@ -96,6 +101,59 @@ fn sessions_are_hashed_persistent_and_expire() {
             & 0o777,
         0o600
     );
+}
+#[test]
+fn sessions_survive_a_restart_but_not_a_reboot_or_an_older_wall_clock_file() {
+    let dir = Temp::new();
+    let path = dir.0.join("auth.json");
+    let load = |boot: &str| {
+        AdminAuth::for_boot(Box::new(FileAuthStore(path.clone())), boot.into()).unwrap()
+    };
+    let ip: IpAddr = "10.78.0.2".parse().unwrap();
+    let mut a = load("boot-a");
+    let token = a.login(ip, "openxplay", 100).ok().unwrap();
+    // A restart in the same boot keeps the expiry, which is on that boot's monotonic clock.
+    assert!(load("boot-a").ready(&token, 101));
+    assert!(!load("boot-a").ready(&token, 100 + SESSION_SECONDS));
+    // After a reboot the monotonic clock starts again and nobody knows how long the relay was off.
+    assert!(!load("boot-b").ready(&token, 101));
+    assert!(!load("").ready(&token, 101));
+    // A new boot's login replaces the old boot's sessions.
+    let mut b = load("boot-b");
+    let next = b.login(ip, "openxplay", 5).ok().unwrap();
+    assert!(load("boot-b").ready(&next, 6));
+    assert!(!load("boot-b").ready(&token, 6));
+    assert!(!load("boot-a").ready(&next, 6));
+    // Earlier releases saved wall-clock expiries: they end, the password stays.
+    b.change_password("openxplay", "longer-password")
+        .ok()
+        .unwrap();
+    let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let hash = saved["bootSessions"]["expiries"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let legacy = json!({"password": saved["password"].take(), "sessions": {hash: u64::MAX}});
+    fs::write(&path, legacy.to_string()).unwrap();
+    let mut c = load("boot-b");
+    assert!(!c.ready(&next, 6));
+    assert!(!c.default_password());
+    assert!(c.login(ip, "longer-password", 7).is_ok());
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn admin_auth_keeps_sessions_of_the_current_boot() {
+    let dir = Temp::new();
+    let store = || Box::new(FileAuthStore(dir.0.join("auth.json")));
+    let token = AdminAuth::new(store())
+        .unwrap()
+        .login("10.78.0.2".parse().unwrap(), "openxplay", 100)
+        .ok()
+        .unwrap();
+    assert!(AdminAuth::new(store()).unwrap().ready(&token, 101));
 }
 #[test]
 fn password_change_validation_and_reset() {
@@ -1163,12 +1221,22 @@ fn carlink_events_update_link_pin_deadline_and_receiver_state() {
     assert_eq!(status.state, "authenticating");
     status.apply_event(&json!({"type":"pin-request","client":"unit"}), 5);
     assert!(status.pin_requested);
-    assert_eq!(status.pin_deadline, Some(125));
+    assert_eq!(status.pin_expiry, Some(125));
+    // Responses carry the seconds left and a display deadline on the wall clock, which may be
+    // hours off; the expiry itself is on the monotonic clock.
+    let shown = serde_json::to_value(status.clone().at(65, 1_000)).unwrap();
+    assert_eq!(shown["pinRemaining"], 60);
+    assert_eq!(shown["pinDeadline"], 1_060);
+    assert!(shown.get("pinExpiry").is_none());
+    let lapsed = status.clone().at(125, 1_000);
+    assert!(!lapsed.pin_requested);
+    assert_eq!((lapsed.pin_deadline, lapsed.pin_remaining), (None, None));
+    assert_eq!(lapsed.detail, "carlink.pinTimeout");
     status.apply_event(&json!({"type":"receiver-started"}), 6);
     assert!(status.pin_requested);
     status.apply_event(&json!({"type":"pin-timeout","client":"unit"}), 125);
     assert!(!status.pin_requested);
-    assert_eq!(status.pin_deadline, None);
+    assert_eq!(status.pin_expiry, None);
     assert_eq!(status.detail, "carlink.pinTimeout");
     status.apply_event(&json!({"type":"pin-request","client":"unit"}), 130);
     status.apply_event(&json!({"type":"state","state":"Playing"}), 131);

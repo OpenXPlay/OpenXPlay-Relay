@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 // Modified by OpenXPlay.org on 2026-10-16 (vendored from mdns-sd 0.13.11): NSEC records use the
-// RFC 4034 wire format, and known-answer matching ignores the cache-flush bit.
+// RFC 4034 wire format, and known-answer matching ignores the cache-flush bit. Modified on
+// 2026-10-17: record times come from the cache's clock, which a wall-clock step does not move.
 
 //! DNS parsing utility.
 //!
@@ -13,7 +14,10 @@
 #[cfg(feature = "logging")]
 use crate::log::trace;
 
-use crate::error::{e_fmt, Error, Result};
+use crate::{
+    dns_cache::current_time_millis,
+    error::{e_fmt, Error, Result},
+};
 
 use if_addrs::Interface;
 
@@ -25,7 +29,6 @@ use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     str,
-    time::SystemTime,
 };
 
 /// InterfaceId is used to represent the interface identifier
@@ -2303,14 +2306,6 @@ impl DnsIncoming {
 
         Ok(name)
     }
-}
-
-/// Returns UNIX time in millis
-fn current_time_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("failed to get current UNIX time")
-        .as_millis() as u64
 }
 
 const fn u16_from_be_slice(bytes: &[u8]) -> u16 {

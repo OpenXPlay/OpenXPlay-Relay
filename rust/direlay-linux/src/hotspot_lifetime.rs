@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-16
 
-use crate::{Result, WirelessHotspotInfo, WirelessHotspotManager};
+use crate::{
+    boot_timing::{boot_id, monotonic_millis},
+    Result, WirelessHotspotInfo, WirelessHotspotManager,
+};
 use std::{
     path::PathBuf,
     sync::{
@@ -234,20 +237,6 @@ fn remaining_gap(saved: &str, boot: &str, now_millis: u64, gap: Duration) -> Dur
         return Duration::ZERO;
     }
     gap.saturating_sub(Duration::from_millis(now_millis - down))
-}
-/// Milliseconds on the system's monotonic clock, which every process of one boot shares.
-fn monotonic_millis() -> u64 {
-    let mut now = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
-    now.tv_sec as u64 * 1000 + now.tv_nsec as u64 / 1_000_000
-}
-fn boot_id() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
-        .map(|id| id.trim().to_owned())
-        .unwrap_or_default()
 }
 #[derive(Default)]
 struct LeaseState {

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2021-2022 Han Xu <keepsimple@gmail.com>
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-// Vendored unchanged from mdns-sd 0.13.11.
+// Modified by OpenXPlay.org on 2026-10-17 (vendored from mdns-sd 0.13.11): timers and record
+// lifetimes advance with the monotonic clock, so a wall-clock step cannot stall or expire them.
 
 //! A cache for DNS records.
 //!
@@ -16,7 +18,8 @@ use if_addrs::Interface;
 use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
-    time::SystemTime,
+    sync::OnceLock,
+    time::{Instant, SystemTime},
 };
 
 /// A cache for all types of DNS records.
@@ -681,10 +684,17 @@ impl DnsCache {
     }
 }
 
-/// Returns UNIX time in millis
+/// Returns UNIX time in millis as read once, then advanced by the monotonic clock. The daemon
+/// schedules every timer and record expiry with this, so a wall-clock step (no RTC, late network
+/// time) neither stalls timers for the size of the step nor expires every record at once.
 pub(crate) fn current_time_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("failed to get current UNIX time")
-        .as_millis() as u64
+    static ORIGIN: OnceLock<(u64, Instant)> = OnceLock::new();
+    let (wall, start) = ORIGIN.get_or_init(|| {
+        let wall = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        (wall, Instant::now())
+    });
+    wall + start.elapsed().as_millis() as u64
 }

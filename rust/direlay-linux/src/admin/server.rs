@@ -129,6 +129,7 @@ impl AdminServer {
             pin_attempt: Mutex::new(None),
         }
     }
+    /// Answers `request` at `now`, in `auth::monotonic_seconds`.
     pub fn route(&self, request: &Request, now: u64) -> Response {
         if !auth::private_address(request.peer) {
             return Response::error(403, "error.request");
@@ -413,7 +414,7 @@ impl AdminServer {
                         };
                         let mut stream = rustls::StreamOwned::new(connection, socket);
                         let response = match read_request(&mut stream, peer.ip()) {
-                            Ok(r) => server.route(&r, auth::now_seconds()),
+                            Ok(r) => server.route(&r, auth::monotonic_seconds()),
                             Err(status) => Response::error(status, "error.request"),
                         };
                         let sent = response.write(&mut stream).is_ok();

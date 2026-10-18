@@ -12,9 +12,9 @@ use std::{
     net::IpAddr,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 pub const ITERATIONS: u32 = 120_000;
+/// Session lifetime on the monotonic clock; a reboot ends a session sooner (see [`BootSessions`]).
 pub const SESSION_SECONDS: u64 = 30 * 24 * 3600;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PasswordHash {
@@ -24,7 +24,21 @@ pub struct PasswordHash {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AuthState {
     pub password: Option<PasswordHash>,
-    pub sessions: BTreeMap<String, u64>,
+    /// Earlier releases saved wall-clock expiries under `sessions`. Loading ignores that key, so
+    /// those sessions end and the password stays.
+    #[serde(default, rename = "bootSessions")]
+    pub sessions: BootSessions,
+}
+/// Session expiries in seconds on one boot's monotonic clock, keyed by token hash. The relay may
+/// run without an RTC or network time, so its wall clock can be hours off and can step: a
+/// wall-clock expiry could end every session at once or keep one for years. The monotonic clock
+/// never steps, and the boot id tells whether a saved expiry is on the current clock. A relay
+/// restart keeps the sessions; a reboot ends them, because how long the relay was off is unknown.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct BootSessions {
+    /// The boot whose monotonic clock the expiries use.
+    pub boot: String,
+    pub expiries: BTreeMap<String, u64>,
 }
 pub trait AuthStore: Send {
     fn load(&self) -> io::Result<AuthState>;
@@ -103,11 +117,11 @@ pub fn pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
 fn equal(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |v, (a, b)| v | (a ^ b)) == 0
 }
-pub fn now_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+/// Seconds on the system's monotonic clock, which counts from boot, never steps and is shared by
+/// every process of one boot. Admin expiries, deadlines and rate limits compare against it, never
+/// against the wall clock.
+pub fn monotonic_seconds() -> u64 {
+    crate::boot_timing::monotonic_millis() / 1000
 }
 pub enum LoginError {
     Password,
@@ -125,8 +139,20 @@ pub struct AdminAuth {
     failures: BTreeMap<IpAddr, (u8, u64)>,
 }
 impl AdminAuth {
+    /// Every `now` this takes is in [`monotonic_seconds`].
     pub fn new(store: Box<dyn AuthStore>) -> io::Result<Self> {
-        let state = store.load()?;
+        Self::for_boot(store, crate::boot_timing::boot_id())
+    }
+    /// Loads the state, keeping only sessions saved during `boot`. An unknown (empty) boot keeps
+    /// none.
+    pub fn for_boot(store: Box<dyn AuthStore>, boot: String) -> io::Result<Self> {
+        let mut state = store.load()?;
+        if boot.is_empty() || state.sessions.boot != boot {
+            state.sessions = BootSessions {
+                boot,
+                expiries: BTreeMap::new(),
+            };
+        }
         Ok(Self {
             store,
             state,
@@ -145,6 +171,7 @@ impl AdminAuth {
     pub fn ready(&self, token: &str, now: u64) -> bool {
         self.state
             .sessions
+            .expiries
             .get(&hex(&Sha256::digest(token.as_bytes())))
             .is_some_and(|expiry| *expiry > now)
     }
@@ -155,7 +182,10 @@ impl AdminAuth {
         now: u64,
     ) -> Result<String, LoginError> {
         self.failures.retain(|_, (_, until)| *until > now);
-        let failure = self.failures.entry(address).or_insert((0, now + 60));
+        let failure = self
+            .failures
+            .entry(address)
+            .or_insert((0, now.saturating_add(60)));
         if failure.0 >= 5 {
             return Err(LoginError::RateLimit(failure.1 - now));
         }
@@ -166,10 +196,10 @@ impl AdminAuth {
         self.failures.remove(&address);
         let token = random_hex(32).map_err(LoginError::Storage)?;
         let mut next = self.state.clone();
-        next.sessions.retain(|_, expiry| *expiry > now);
-        next.sessions.insert(
+        next.sessions.expiries.retain(|_, expiry| *expiry > now);
+        next.sessions.expiries.insert(
             hex(&Sha256::digest(token.as_bytes())),
-            now + SESSION_SECONDS,
+            now.saturating_add(SESSION_SECONDS),
         );
         self.store.save(&next).map_err(LoginError::Storage)?;
         self.state = next;
@@ -178,6 +208,7 @@ impl AdminAuth {
     pub fn logout(&mut self, token: &str) -> io::Result<()> {
         let mut next = self.state.clone();
         next.sessions
+            .expiries
             .remove(&hex(&Sha256::digest(token.as_bytes())));
         self.store.save(&next)?;
         self.state = next;
@@ -205,7 +236,13 @@ impl AdminAuth {
         Ok(())
     }
     pub fn reset(&mut self) -> io::Result<()> {
-        let next = AuthState::default();
+        let next = AuthState {
+            password: None,
+            sessions: BootSessions {
+                boot: self.state.sessions.boot.clone(),
+                expiries: BTreeMap::new(),
+            },
+        };
         self.store.save(&next)?;
         self.state = next;
         self.failures.clear();
