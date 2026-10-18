@@ -64,7 +64,8 @@ data class RelaySettings(
     val carlinkTrace: Boolean = false,
     val carplayResolution: CarPlayResolution = CarPlayResolution.AUTO,
     val carplayIconSize: CarPlayIconSize = CarPlayIconSize.STANDARD,
-    val viewAreas: Boolean = false,
+    val viewAreas: Boolean = true,
+    val car: CarSelection = CarSelection(),
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -196,7 +197,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             mode,
             relay.getString("iphoneAddress", null),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
-            viewAreas = relay.getBoolean("viewAreas", false),
+            viewAreas = relay.getBoolean("carPlayViewAreas", true),
+            car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
+                relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
             carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
             carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == relay.getString("carplayIconSize", null) } ?: CarPlayIconSize.STANDARD,
             plugins = relay.getBoolean("plugins", false),
@@ -207,7 +210,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         )
     }
 
-    @Synchronized fun save(settings: RelaySettings) {
+    @Synchronized fun save(value: RelaySettings) {
+        val settings = value.copy(car = value.car.normalized())
         val current = if (initialRead == null) load() else cached.value ?: load()
         // Validate wireless fields when they change or wireless is newly selected; untouched defaults
         // must not block unrelated settings.
@@ -240,7 +244,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
             .putBoolean("carlinkTrace", settings.carlinkTrace)
-            .putBoolean("viewAreas", settings.viewAreas)
+            .putBoolean("carPlayViewAreas", settings.viewAreas)
+            .putString("carBrand", settings.car.brand).putString("carBrandText", settings.car.brandText)
+            .putString("carModel", settings.car.model).putString("carModelText", settings.car.modelText)
             .putString("carplayResolution", settings.carplayResolution.name)
             .putString("carplayIconSize", settings.carplayIconSize.name)
             .putBoolean("plugins", settings.plugins)

@@ -82,9 +82,9 @@ class RelayRuntime(private val context: Context,
     }
     internal val displayPolicy = CarDisplayPolicy(observe = { display ->
         setup.execute { observeWindow(display) }
-    }) { settingsStore.snapshot.value?.let {
-        if (it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC) CarPlayResolution.SCREEN else it.carplayResolution
-    } ?: CarPlayResolution.AUTO }
+    }, wholeScreen = { settingsStore.snapshot.value?.let { it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC } == true }) {
+        settingsStore.snapshot.value?.carplayResolution ?: CarPlayResolution.AUTO
+    }
     private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
     private val preferences = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     // This separate private file must not invalidate the user-settings snapshot cache.
@@ -123,6 +123,7 @@ class RelayRuntime(private val context: Context,
         sharedWifiSelection.resolve(currentSsid, settings.wirelessNetwork.sharedWifiNetworks)
 
     private val windowPreferences by lazy { context.getSharedPreferences("direlay-window-sizes", Context.MODE_PRIVATE) }
+    val carModels by lazy { CarModels.parse(context.assets.open("car-models.json").bufferedReader().use { it.readText() }) }
     val windowRecords by lazy { WindowSizeRecords({ windowPreferences.getString("records", "").orEmpty() },
         { windowPreferences.edit().putString("records", it).apply() }) }
     @Volatile var declaredViewAreas: List<ViewAreaSize> = emptyList()
@@ -197,8 +198,8 @@ class RelayRuntime(private val context: Context,
             return null
         }
         val display = displayPolicy.primaryDisplay
-        val records = if (display == null) emptyList() else windowRecords.snapshot().filter { it.screenWidth == display.widthPx &&
-            it.screenHeight == display.heightPx && it.densityDpi == display.densityDpi }
+        val records = if (display == null) emptyList() else ViewAreaPlanner.mergeRecords(windowRecords.snapshot(),
+            carModels.model(settings.car)?.screens.orEmpty(), ScreenDataKey(display.widthPx, display.heightPx, display.densityDpi))
         val current = display?.viewport?.let { ViewAreaSize(it.width, it.height) }
         val areas = ViewAreaPlanner.plan(width, height, records, current, display?.fullscreen)
         return areas.also { declaredViewAreas = it; publishArea(0) }

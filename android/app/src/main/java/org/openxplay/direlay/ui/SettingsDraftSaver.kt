@@ -23,7 +23,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putIntArray("numbers", intArrayOf(value.fps, value.webPort ?: 0, value.wirelessNetwork.channel))
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkTrace", value.carlinkTrace)
-        putBoolean("viewAreas", value.viewAreas)
+        putBoolean("carPlayViewAreas", value.viewAreas)
+        putStringArrayList("car", arrayListOf(value.car.brand, value.car.brandText, value.car.model, value.car.modelText))
         putString("iphoneAddress", value.iphoneAddress)
         putString("displayMode", value.displayMode.name)
         putString("carplayResolution", value.carplayResolution.name)
@@ -42,7 +43,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,
         carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == bundle.getString("carplayIconSize") } ?: base.carplayIconSize,
         carlinkTrace = bundle.getBoolean("carlinkTrace", false),
-        viewAreas = bundle.getBoolean("viewAreas", base.viewAreas),
+        viewAreas = bundle.getBoolean("carPlayViewAreas", base.viewAreas),
+        car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 }?.let { CarSelection(it[0], it[1], it[2], it[3]) } ?: base.car,
         iphoneAddress = bundle.getString("iphoneAddress"),
         displayMode = migratedDisplayMode(bundle.getString("displayMode"), bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) }),
         display = bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) },

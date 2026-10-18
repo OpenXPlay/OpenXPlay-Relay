@@ -516,4 +516,23 @@
     <string name="view_areas_exit_restored">Restored</string>
     <string name="view_areas_exit_denied">Denied by browser</string>
     <string name="view_areas_exit_off">Off</string>
+    <string name="car_and_screen">Car and screen</string>
+    <string name="car_view_areas">CarPlay view areas</string>
+    <string name="car_view_areas_hint">Fit CarPlay to the head-unit browser window without reconnecting.</string>
+    <string name="car_none">None</string>
+    <string name="car_other">Other</string>
+    <string name="car_brand">Brand</string>
+    <string name="car_model">Model</string>
+    <string name="car_detected">Detected screen data</string>
+    <string name="car_built_in">This model includes built-in screen data.</string>
+    <string name="car_no_screen">No head-unit screen recorded yet.</string>
+    <string name="car_no_sizes">No sizes recorded yet.</string>
+    <string name="car_screen_size">%1$d × %2$d · pixel ratio %3$s</string>
+    <string name="car_window_size">%1$d × %2$d · %3$d observations</string>
+    <string name="car_next_start">These data will help optimize the screen display at the next start.</string>
+    <string name="car_share_hint">If your car model is missing from the supported list above, copy these data and send them to the developers in the group. A future version can include your model’s data, giving owners of the same car a better-fitting CarPlay experience.</string>
+    <string name="car_copy">Copy my head-unit screen data</string>
+    <string name="car_share_title">My head-unit screen data</string>
+    <string name="car_share_identity">Brand: %1$s · Model: %2$s</string>
+    <string name="car_copied">Screen data copied</string>
 </resources>

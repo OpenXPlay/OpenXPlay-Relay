@@ -14,6 +14,13 @@ data class WindowSizeRecord(val screenWidth: Int, val screenHeight: Int, val den
 
 /** Pure geometry; declarations are frozen for a session, while observations keep accumulating. */
 object ViewAreaPlanner {
+    fun mergeRecords(local: List<WindowSizeRecord>, builtIn: List<CarScreenData>, screen: ScreenDataKey): List<WindowSizeRecord> =
+        (local.filter(screen::matches) + builtIn.filter { it.screen == screen }.flatMap { it.records })
+            .groupBy { Triple(it.width, it.height, it.fullscreen) }.values.map { rows ->
+                rows.first().copy(count = rows.fold(0L) { count, row -> count + row.count.coerceAtMost(Long.MAX_VALUE - count) },
+                    lastSeen = rows.maxOf { it.lastSeen })
+            }
+
     fun plan(width: Int, height: Int, records: List<WindowSizeRecord>, current: ViewAreaSize? = null,
         fullscreen: Boolean? = null): List<ViewAreaSize> {
         require(width >= 2 && height >= 2 && width % 2 == 0 && height % 2 == 0)
@@ -41,8 +48,6 @@ object ViewAreaPlanner {
                 if (++count == 3) break
             }
         }
-        if (records.isEmpty() && areas.size == 1) areas.add(ViewAreaSize((width * 3 / 8).coerceAtLeast(1) * 2, height,
-            ViewAreaLibrary.entries.toSet()))
         return areas.toList()
     }
     fun match(areas: List<ViewAreaSize>, width: Int, height: Int, fullscreen: Boolean?, preferred: Boolean?): Int? {

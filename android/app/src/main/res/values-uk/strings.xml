@@ -113,4 +113,23 @@
     <string name="view_areas_exit_restored">Відновлено</string>
     <string name="view_areas_exit_denied">Браузер відхилив запит</string>
     <string name="view_areas_exit_off">Вимкнено</string>
+    <string name="car_and_screen">Автомобіль і екран</string>
+    <string name="car_view_areas">Області відображення CarPlay</string>
+    <string name="car_view_areas_hint">Пристосовує CarPlay до вікна браузера автомобіля без повторного підключення.</string>
+    <string name="car_none">Немає</string>
+    <string name="car_other">Інше</string>
+    <string name="car_brand">Марка</string>
+    <string name="car_model">Модель</string>
+    <string name="car_detected">Виявлені дані екрана</string>
+    <string name="car_built_in">Для цієї моделі є вбудовані дані екрана.</string>
+    <string name="car_no_screen">Екран автомобіля ще не записано.</string>
+    <string name="car_no_sizes">Розміри ще не записано.</string>
+    <string name="car_screen_size">%1$d × %2$d · співвідношення пікселів %3$s</string>
+    <string name="car_window_size">%1$d × %2$d · спостережень: %3$d</string>
+    <string name="car_next_start">Ці дані допоможуть оптимізувати зображення під час наступного запуску.</string>
+    <string name="car_share_hint">Якщо вашої моделі немає у списку підтримуваних вище, скопіюйте дані кнопкою нижче та надішліть розробникам у групі. У наступну версію можна буде додати дані вашої моделі, щоб власники таких самих автомобілів отримали краще пристосоване зображення CarPlay.</string>
+    <string name="car_copy">Скопіювати дані екрана мого автомобіля</string>
+    <string name="car_share_title">Дані екрана мого автомобіля</string>
+    <string name="car_share_identity">Марка: %1$s · Модель: %2$s</string>
+    <string name="car_copied">Дані екрана скопійовано</string>
 </resources>

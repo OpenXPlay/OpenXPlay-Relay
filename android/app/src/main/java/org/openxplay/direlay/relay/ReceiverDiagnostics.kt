@@ -14,6 +14,22 @@ class ReceiverDiagnostics(private val clock: () -> Long = System::nanoTime) {
     private val exits = ArrayDeque<FullscreenExit>()
     @Synchronized fun fullscreenExits(): List<FullscreenExit> = exits.toList()
     private val clients = ArrayList<Client>()
+    private val screenInfo = LinkedHashMap<ScreenDataKey, String>()
+    /** Retain the last info for each recorded screen after the browser disconnects; never export client IDs. */
+    @Synchronized fun latestInfo(screen: ScreenDataKey): org.json.JSONObject? = screenInfo[screen]?.let { org.json.JSONObject(it) }
+    private fun rememberInfo(json: String) {
+        runCatching {
+            val info = org.json.JSONObject(json)
+            val screen = info.getJSONObject("screen")
+            val ratio = info.getDouble("devicePixelRatio")
+            require(ratio.isFinite() && ratio > 0)
+            val key = ScreenDataKey(Math.round(screen.getDouble("width") * ratio).toInt(),
+                Math.round(screen.getDouble("height") * ratio).toInt(), Math.round(ratio * 160).toInt())
+            require(listOf(key.width, key.height, key.densityDpi).all { it in 1..32768 })
+            screenInfo.remove(key); screenInfo[key] = json
+            if (screenInfo.size > 10) screenInfo.remove(screenInfo.keys.first())
+        }
+    }
 
     /** Keeps bounded web receiver reports and a separate recent history of involuntary fullscreen exits. */
     @Synchronized fun report(client: String, type: String, json: String) {
@@ -32,7 +48,7 @@ class ReceiverDiagnostics(private val clock: () -> Long = System::nanoTime) {
             clients.add(added)
         }
         entry.seen = now
-        if (type == "receiver-info") entry.info = json
+        if (type == "receiver-info") { entry.info = json; rememberInfo(json) }
         else {
             if (entry.stats.size == MAX_SAMPLES) entry.stats.removeAt(0)
             entry.stats.addLast(json)
@@ -44,7 +60,7 @@ class ReceiverDiagnostics(private val clock: () -> Long = System::nanoTime) {
         expire(now)
         return clients.map { Report(it.id, Math.round((now - it.seen) / 100_000_000.0) / 10.0, it.info, it.stats.toList()) }
     }
-    @Synchronized fun clear() { clients.clear(); exits.clear() }
+    @Synchronized fun clear() { clients.clear(); exits.clear(); screenInfo.clear() }
     // The web output reports no disconnects; a browser silent this long has gone.
     private fun expire(now: Long) { clients.removeAll { now - it.seen >= EXPIRY_NANOS } }
 

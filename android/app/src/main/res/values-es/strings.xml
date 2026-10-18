@@ -113,4 +113,23 @@
     <string name="view_areas_exit_restored">Restaurada</string>
     <string name="view_areas_exit_denied">Denegada por el navegador</string>
     <string name="view_areas_exit_off">Desactivada</string>
+    <string name="car_and_screen">Coche y pantalla</string>
+    <string name="car_view_areas">Áreas de visualización de CarPlay</string>
+    <string name="car_view_areas_hint">Adapta CarPlay a la ventana del navegador del coche sin reconectar.</string>
+    <string name="car_none">Ninguno</string>
+    <string name="car_other">Otro</string>
+    <string name="car_brand">Marca</string>
+    <string name="car_model">Modelo</string>
+    <string name="car_detected">Datos de pantalla detectados</string>
+    <string name="car_built_in">Este modelo incluye datos de pantalla integrados.</string>
+    <string name="car_no_screen">Aún no se ha registrado ninguna pantalla del coche.</string>
+    <string name="car_no_sizes">Aún no se han registrado tamaños.</string>
+    <string name="car_screen_size">%1$d × %2$d · relación de píxeles %3$s</string>
+    <string name="car_window_size">%1$d × %2$d · %3$d observaciones</string>
+    <string name="car_next_start">Estos datos ayudarán a optimizar la imagen en el próximo inicio.</string>
+    <string name="car_share_hint">Si tu modelo no figura en la lista de modelos compatibles, copia estos datos y envíalos a los desarrolladores en el grupo. Una próxima versión podrá incluir los datos de tu modelo para ofrecer una experiencia de CarPlay más ajustada a quienes tengan el mismo coche.</string>
+    <string name="car_copy">Copiar los datos de pantalla de mi coche</string>
+    <string name="car_share_title">Datos de pantalla de mi coche</string>
+    <string name="car_share_identity">Marca: %1$s · Modelo: %2$s</string>
+    <string name="car_copied">Datos de pantalla copiados</string>
 </resources>

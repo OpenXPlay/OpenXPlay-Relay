@@ -113,4 +113,23 @@
     <string name="view_areas_exit_restored">تمت الاستعادة</string>
     <string name="view_areas_exit_denied">رفض المتصفح الطلب</string>
     <string name="view_areas_exit_off">متوقفة</string>
+    <string name="car_and_screen">السيارة والشاشة</string>
+    <string name="car_view_areas">مناطق عرض CarPlay</string>
+    <string name="car_view_areas_hint">يضبط عرض CarPlay ليلائم نافذة متصفح السيارة دون إعادة الاتصال.</string>
+    <string name="car_none">بلا</string>
+    <string name="car_other">أخرى</string>
+    <string name="car_brand">العلامة التجارية</string>
+    <string name="car_model">الطراز</string>
+    <string name="car_detected">بيانات الشاشة المكتشفة</string>
+    <string name="car_built_in">يتضمن هذا الطراز بيانات شاشة مدمجة.</string>
+    <string name="car_no_screen">لم تُسجَّل شاشة سيارة بعد.</string>
+    <string name="car_no_sizes">لم تُسجَّل أحجام بعد.</string>
+    <string name="car_screen_size">%1$d × %2$d · نسبة البكسل %3$s</string>
+    <string name="car_window_size">%1$d × %2$d · عدد مرات الرصد: %3$d</string>
+    <string name="car_next_start">ستُستخدم هذه البيانات لتحسين عرض الشاشة عند التشغيل التالي.</string>
+    <string name="car_share_hint">إذا لم يكن طراز سيارتك ضمن قائمة الطرازات المدعومة أعلاه، فانسخ هذه البيانات بالزر أدناه وأرسلها إلى المطورين في المجموعة. يمكن تضمين بيانات طرازك في إصدار قادم ليحصل أصحاب السيارة نفسها على تجربة CarPlay أكثر ملاءمة لشاشاتهم.</string>
+    <string name="car_copy">نسخ بيانات شاشة سيارتي</string>
+    <string name="car_share_title">بيانات شاشة سيارتي</string>
+    <string name="car_share_identity">العلامة التجارية: %1$s · الطراز: %2$s</string>
+    <string name="car_copied">نُسخت بيانات الشاشة</string>
 </resources>

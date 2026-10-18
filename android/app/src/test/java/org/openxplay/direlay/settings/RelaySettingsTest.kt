@@ -27,11 +27,29 @@ class RelaySettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
-    @Test fun viewAreasDefaultOffAndPersist() {
+    @Test fun viewAreasDefaultOnIgnoreExperimentalKeyAndPersist() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        for (old in listOf(false, true)) {
+            preferences.edit().putBoolean("viewAreas", old).commit()
+            assertTrue(store.load().viewAreas)
+        }
         val original = store.load()
-        assertFalse(original.viewAreas)
-        store.save(original.copy(viewAreas = true)); assertTrue(store.load().viewAreas)
-        store.save(original); assertFalse(store.load().viewAreas)
+        store.save(original.copy(viewAreas = false)); assertFalse(store.load().viewAreas)
+        preferences.edit().putBoolean("viewAreas", true).commit()
+        assertFalse(store.load().viewAreas)
+        store.save(original); assertTrue(store.load().viewAreas)
+    }
+    @Test fun carSelectionPersistsAndNormalizesOnlyOtherTexts() {
+        assertEquals(CarSelection(), store.load().car)
+        val original = store.load()
+        for (car in listOf(CarSelection("xpeng", model = "g6-2023"), CarSelection("xpeng", model = "other", modelText = " Custom "),
+            CarSelection("other", " My brand\n", "other", " My car\t "), CarSelection())) {
+            store.save(original.copy(car = car))
+            assertEquals(original.copy(car = car.normalized()), store.load())
+        }
+        store.save(original.copy(car = CarSelection("other", "x".repeat(60), modelText = "y".repeat(60))))
+        assertEquals(CarSelection("other", "x".repeat(40), "other", "y".repeat(40)), store.load().car)
+        assertEquals(CarSelection(), CarSelection("unknown", "ignored", "other", "ignored").normalized())
     }
 
     @Before fun clear() {

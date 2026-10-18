@@ -16,15 +16,32 @@ class DisplayRefitTest {
         mode: DisplayMode = DisplayMode.AUTOMATIC, active: Boolean = true, viewport: Boolean = true) =
         gate.due(now, active, mode, applied, next, viewport)
 
-    @Test fun viewAreasCancelGeometryAndSettingRestartsUntilDisabled() {
+    @Test fun viewAreasSuppressGeometryButExplicitSettingsStillRestart() {
         val gate = DisplayRefit()
-        assertFalse(due(gate, 0)); assertTrue(due(gate, 1000))
-        for (next in listOf(desired, running.copy(iconSize = CarPlayIconSize.SMALL),
-            desired.copy(resolution = CarPlayResolution.SCREEN))) {
-            assertFalse(gate.due(2000, true, DisplayMode.AUTOMATIC, running, next, true, viewAreas = true))
-            assertFalse(gate.due(20000, true, DisplayMode.AUTOMATIC, running, next, true, viewAreas = true))
+        assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, running, desired, true, viewAreas = true))
+        assertFalse(gate.due(20000, true, DisplayMode.AUTOMATIC, running, desired, true, viewAreas = true))
+        for (next in listOf(running.copy(iconSize = CarPlayIconSize.SMALL),
+            running.copy(resolution = CarPlayResolution.P720), running.copy(resolution = CarPlayResolution.SCREEN))) {
+            val settings = DisplayRefit()
+            assertFalse(settings.due(0, true, DisplayMode.AUTOMATIC, running, next, false, viewAreas = true))
+            assertTrue(settings.due(1000, true, DisplayMode.AUTOMATIC, running, next, false, viewAreas = true))
+            settings.restarted(1000)
+            assertFalse(settings.due(10000, true, DisplayMode.AUTOMATIC, running, next, false, viewAreas = true))
+            assertTrue(settings.due(11000, true, DisplayMode.AUTOMATIC, running, next, false, viewAreas = true))
+            assertFalse(settings.due(12000, true, DisplayMode.AUTOMATIC, next, next, false, viewAreas = true))
         }
-        assertFalse(due(gate, 21000)); assertTrue(due(gate, 22000))
+    }
+    @Test fun viewAreasKeepWholeScreenAspectResolutionCapAndDecoderBudget() {
+        val screen = display.copy(densityDpi = 280)
+        for ((resolution, cap) in listOf(CarPlayResolution.P1080 to 1080, CarPlayResolution.P720 to 720,
+            CarPlayResolution.AUTO to 2160, CarPlayResolution.SCREEN to 2160)) {
+            val fitted = checkNotNull(fitDisplay(screen, resolution, wholeScreen = true))
+            assertTrue(minOf(fitted.width, fitted.height) <= cap)
+            assertEquals(2401.0 / 1201, fitted.width.toDouble() / fitted.height, .01)
+            assertEquals(fitted, fitDisplay(screen.copy(viewport = Viewport(856, 1014)), resolution, wholeScreen = true))
+            val budget = checkNotNull(fitDisplay(screen, resolution, 3600, wholeScreen = true))
+            assertTrue(CarDisplayFit.macroblocks(budget.width, budget.height) <= 3600)
+        }
     }
     @Test fun automaticUsesViewportWithScreenFallbackAndScreenIgnoresViewport() {
         assertEquals(CarDisplayFit.fit(1533, 906), fitDisplay(display, CarPlayResolution.AUTO))

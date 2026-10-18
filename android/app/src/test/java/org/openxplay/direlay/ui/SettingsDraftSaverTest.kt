@@ -21,6 +21,16 @@ class SettingsDraftSaverTest {
         30, false, true, false, null)
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
+    @Test fun carAndViewAreasDraftRoundTripAndOldExperimentalKeyIsIgnored() {
+        for (areas in listOf(false, true)) for (car in listOf(CarSelection(), CarSelection("xpeng", model = "g6-2023"),
+            CarSelection("other", "My brand ", "other", "My model "))) {
+            val value = base.copy(viewAreas = areas, car = car)
+            assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
+        }
+        val old = bundle(base)
+        old.remove("carPlayViewAreas"); old.remove("car"); old.putBoolean("viewAreas", false)
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
     @Test fun everyNetworkChoiceAndPhoneSelectionRoundTripWithCredentials() {
         for (choice in WirelessNetworkChoice.entries) for (selected in listOf(false, true)) {
             val value = base.copy(carlinkAutoReconnect = selected, iphoneAddress = if (selected) "00:11:22:33:A9:30" else null, wirelessNetwork = WirelessNetworkSettings(

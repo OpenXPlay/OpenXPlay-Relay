@@ -167,7 +167,7 @@ import org.openxplay.direlay.settings.*
                                 if (!value.presentation.running) onStartStop() else if (changed) onRestart()
                             }
                             route.startsWith("settings") -> SettingsScreen(initial, store::wireless, developer,
-                                route.substringAfter(':', "output"), ::back, ::open, save, value.currentWifi, runtime.bondedDevices, useSharedWifi = { runtime.sharedWifiSelection.use(it) }, adminPage = {
+                                route.substringAfter(':', "output"), ::back, ::open, save, value.currentWifi, runtime.bondedDevices, runtime = runtime, useSharedWifi = { runtime.sharedWifiSelection.use(it) }, adminPage = {
                                     AdminPageSettings(adminEnabled, adminUrls, { enabled ->
                                         runtime.adminService.setEnabled(enabled); adminEnabled = enabled
                                     }, ::copy, { withContext(Dispatchers.IO) { runtime.adminService.resetPassword() } })

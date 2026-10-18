@@ -487,4 +487,23 @@
     <string name="view_areas_exit_restored">已恢复</string>
     <string name="view_areas_exit_denied">浏览器已拒绝</string>
     <string name="view_areas_exit_off">已关闭</string>
+    <string name="car_and_screen">车型与屏幕</string>
+    <string name="car_view_areas">CarPlay 显示区域</string>
+    <string name="car_view_areas_hint">CarPlay 画面随车机浏览器窗口调整，无需重新连接。</string>
+    <string name="car_none">无</string>
+    <string name="car_other">其他</string>
+    <string name="car_brand">品牌</string>
+    <string name="car_model">型号</string>
+    <string name="car_detected">检测到的屏幕数据</string>
+    <string name="car_built_in">此车型自带内置屏幕数据。</string>
+    <string name="car_no_screen">尚未记录车机屏幕。</string>
+    <string name="car_no_sizes">尚未记录尺寸。</string>
+    <string name="car_screen_size">%1$d × %2$d · 像素比 %3$s</string>
+    <string name="car_window_size">%1$d × %2$d · %3$d 次</string>
+    <string name="car_next_start">这些数据会在下一次启动时用来优化屏幕的显示。</string>
+    <string name="car_share_hint">如果你的车型没有在上面已经支持的列表里，欢迎点击下面的按钮复制，然后到群里发送给开发者，这样下个版本将会自带你的车型数据，可以让你同款的车友享受更贴合的CarPlay体验。</string>
+    <string name="car_copy">点击该按钮复制我的车机屏幕数据</string>
+    <string name="car_share_title">我的车机屏幕数据</string>
+    <string name="car_share_identity">品牌：%1$s · 型号：%2$s</string>
+    <string name="car_copied">已复制屏幕数据</string>
 </resources>

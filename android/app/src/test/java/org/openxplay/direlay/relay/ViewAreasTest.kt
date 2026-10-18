@@ -30,10 +30,11 @@ class ViewAreasTest {
             sizes(ViewAreaPlanner.plan(1280, 720, emptyList(), ViewAreaSize(400, 400))))
         assertEquals(listOf(ViewAreaSize(1280, 720)),
             ViewAreaPlanner.plan(1280, 720, listOf(row(1920, 1080, full = true)), ViewAreaSize(400, 400)))
-        // With nothing else to declare, a three-quarter-width test area keeps a second area to switch to.
-        assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(960, 720)), sizes(ViewAreaPlanner.plan(1280, 720, emptyList())))
+        assertEquals(listOf(ViewAreaSize(1280, 720)), sizes(ViewAreaPlanner.plan(1280, 720, emptyList())))
+        assertEquals(listOf(ViewAreaSize(1280, 720)), sizes(ViewAreaPlanner.plan(1280, 720, emptyList(), ViewAreaSize(1280, 720))))
+        assertEquals(listOf(ViewAreaSize(1280, 720)), sizes(ViewAreaPlanner.plan(1280, 720, emptyList(), ViewAreaSize(1290, 720))))
         assertEquals(listOf(ViewAreaSize(1280, 720)), ViewAreaPlanner.plan(1280, 720, listOf(row(640, 360))))
-        assertEquals(ViewAreaSize(1440, 960), sizes(ViewAreaPlanner.plan(1920, 960, emptyList()))[1])
+        assertEquals(listOf(ViewAreaSize(1920, 960)), sizes(ViewAreaPlanner.plan(1920, 960, emptyList())))
         assertEquals(ViewAreaSize(720, 720), sizes(ViewAreaPlanner.plan(1280, 720,
             listOf(row(500, 500)), ViewAreaSize(300, 600)))[1])
     }
@@ -81,7 +82,7 @@ class ViewAreasTest {
         val areas = ViewAreaPlanner.plan(1920, 960, emptyList(), ViewAreaSize(1000, 1000), false)
         assertEquals(setOf(ViewAreaLibrary.WINDOWED), areas[1].libraries)
         assertEquals(1, ViewAreaPlanner.plan(1920, 960, listOf(row(2000, 1000))).size)
-        assertEquals(ViewAreaLibrary.entries.toSet(), ViewAreaPlanner.plan(1920, 960, emptyList())[1].libraries)
+        assertEquals(1, ViewAreaPlanner.plan(1920, 960, emptyList()).size)
     }
     @Test fun switchingDebouncesStableTargetsAndCancelsUnmatchedOrDisabledObservations() {
         val debounce = ViewAreaSwitchDebounce()

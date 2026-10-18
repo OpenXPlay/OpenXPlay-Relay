@@ -113,4 +113,23 @@
     <string name="view_areas_exit_restored">復元済み</string>
     <string name="view_areas_exit_denied">ブラウザが拒否</string>
     <string name="view_areas_exit_off">オフ</string>
+    <string name="car_and_screen">車種と画面</string>
+    <string name="car_view_areas">CarPlay 表示領域</string>
+    <string name="car_view_areas_hint">再接続せずに、車載ブラウザーのウィンドウに CarPlay の表示を合わせます。</string>
+    <string name="car_none">なし</string>
+    <string name="car_other">その他</string>
+    <string name="car_brand">メーカー</string>
+    <string name="car_model">モデル</string>
+    <string name="car_detected">検出した画面データ</string>
+    <string name="car_built_in">このモデルには画面データが組み込まれています。</string>
+    <string name="car_no_screen">車載画面はまだ記録されていません。</string>
+    <string name="car_no_sizes">サイズはまだ記録されていません。</string>
+    <string name="car_screen_size">%1$d × %2$d · ピクセル比 %3$s</string>
+    <string name="car_window_size">%1$d × %2$d · %3$d 回</string>
+    <string name="car_next_start">このデータは次回起動時の画面表示の最適化に使われます。</string>
+    <string name="car_share_hint">お使いの車種が上の対応リストにない場合は、下のボタンでデータをコピーしてグループで開発者に送ってください。次のバージョンに車種のデータを組み込むことで、同じ車に乗る方も画面により合った CarPlay を利用できるようになります。</string>
+    <string name="car_copy">車載画面のデータをコピー</string>
+    <string name="car_share_title">車載画面のデータ</string>
+    <string name="car_share_identity">メーカー：%1$s · モデル：%2$s</string>
+    <string name="car_copied">画面データをコピーしました</string>
 </resources>

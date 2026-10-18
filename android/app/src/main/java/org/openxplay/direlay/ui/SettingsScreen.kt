@@ -68,13 +68,17 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
 @Composable fun SettingsScreen(initial: RelaySettings, wireless: (RelaySettings) -> Boolean,
     developer: Boolean, section: String, back: () -> Unit, open: (String) -> Unit,
     save: suspend (RelaySettings, RelaySettings) -> Boolean, currentWifi: String? = null,
-    bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {}, adminPage: @Composable () -> Unit = {}, setDeveloper: (Boolean) -> Unit) {
+    bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {}, adminPage: @Composable () -> Unit = {}, runtime: org.openxplay.direlay.relay.RelayRuntime? = null, setDeveloper: (Boolean) -> Unit) {
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var lastSaved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var confirmCarlink by remember { mutableStateOf(false) }
     var savingError by remember { mutableStateOf(false) }
     LaunchedEffect(initial) {
-        if (draft == lastSaved) { draft = initial; lastSaved = initial }
+        if (draft == lastSaved) {
+            // Preserve editing spaces while persistence trims the Other fields.
+            val car = draft.car.takeIf { it.normalized() == initial.car } ?: initial.car
+            draft = initial.copy(car = car); lastSaved = draft
+        }
     }
     val errors = settingsErrors(draft, wireless(draft))
     LaunchedEffect(draft) {
@@ -119,6 +123,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         trailing = { LabeledSwitch(stringResource(R.string.carlink_auto_reconnect), draft.carlinkAutoReconnect, { draft = draft.copy(carlinkAutoReconnect = it) }) })
                 }
             }
+            Box(sectionModifier("car")) { SmallHeading(stringResource(R.string.car_and_screen)) }
+            if (runtime != null) CarScreenSettings(draft, runtime) { draft = it }
             Box(sectionModifier("picture")) { SmallHeading(stringResource(R.string.picture_title)) }
             SmallHeading(stringResource(R.string.picture_resolution))
             Options(listOf(stringResource(R.string.display_automatic), "1080p", "720p", stringResource(R.string.picture_screen)),

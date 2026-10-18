@@ -9,7 +9,7 @@ import org.openxplay.direlay.settings.DisplayProfile
 import org.openxplay.stream.core.*
 
 /** Observes Stream's negotiation without doing preference I/O on hub callbacks. */
-class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private val resolution: () -> CarPlayResolution = { CarPlayResolution.AUTO }) : SessionPolicy {
+class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private val wholeScreen: () -> Boolean = { false }, private val resolution: () -> CarPlayResolution = { CarPlayResolution.AUTO }) : SessionPolicy {
     @Volatile var carDisplay: DisplayProfile? = null
         private set
 
@@ -36,13 +36,13 @@ class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private
         val limit = outputs.mapNotNull { output ->
             output.decoders.mapNotNull { CarDisplayFit.h264MaxMacroblocks(it.codecString) }.maxOrNull()
         }.minOrNull()
-        carDisplay = primaryDisplay?.let { fitDisplay(it, resolution(), limit) }
+        carDisplay = primaryDisplay?.let { fitDisplay(it, resolution(), limit, wholeScreen()) }
         carDisplay?.let { lastCarDisplay = it }
     }
 }
 
-fun fitDisplay(display: DisplayInfo, resolution: CarPlayResolution, limit: Int? = null): DisplayProfile? {
-    val viewport = display.viewport.takeUnless { resolution == CarPlayResolution.SCREEN }
+fun fitDisplay(display: DisplayInfo, resolution: CarPlayResolution, limit: Int? = null, wholeScreen: Boolean = false): DisplayProfile? {
+    val viewport = display.viewport.takeUnless { wholeScreen || resolution == CarPlayResolution.SCREEN }
     val width = viewport?.width ?: display.widthPx
     val height = viewport?.height ?: display.heightPx
     val cap = when (resolution) { CarPlayResolution.P1080 -> 1080; CarPlayResolution.P720 -> 720; else -> Int.MAX_VALUE }
