@@ -477,4 +477,8 @@
     <string name="view_areas_window">窗口</string>
     <string name="view_areas_fullscreen_exits">最近被动退出全屏记录</string>
     <string name="view_areas_no_exits">尚无退出全屏记录</string>
+    <string name="view_areas_library_in_use">当前使用的尺寸库：%1$s</string>
+    <string name="view_areas_library">尺寸库：%1$s</string>
+    <string name="view_areas_all">全部尺寸（未报告偏好）</string>
+    <string name="view_areas_canvas">画布</string>
 </resources>

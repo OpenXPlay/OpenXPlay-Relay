@@ -103,4 +103,8 @@
     <string name="view_areas_window">ウィンドウ</string>
     <string name="view_areas_fullscreen_exits">意図せず全画面表示が解除された履歴</string>
     <string name="view_areas_no_exits">全画面表示の解除履歴はありません</string>
+    <string name="view_areas_library_in_use">使用中のサイズ一覧：%1$s</string>
+    <string name="view_areas_library">サイズ一覧：%1$s</string>
+    <string name="view_areas_all">すべてのサイズ（設定の報告なし）</string>
+    <string name="view_areas_canvas">キャンバス</string>
 </resources>

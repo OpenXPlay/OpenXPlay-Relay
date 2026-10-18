@@ -103,4 +103,8 @@
     <string name="view_areas_window">視窗</string>
     <string name="view_areas_fullscreen_exits">最近非主動退出全螢幕紀錄</string>
     <string name="view_areas_no_exits">尚無退出全螢幕紀錄</string>
+    <string name="view_areas_library_in_use">目前使用的尺寸庫：%1$s</string>
+    <string name="view_areas_library">尺寸庫：%1$s</string>
+    <string name="view_areas_all">全部尺寸（未回報偏好）</string>
+    <string name="view_areas_canvas">畫布</string>
 </resources>

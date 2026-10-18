@@ -103,4 +103,8 @@
     <string name="view_areas_window">Ventana</string>
     <string name="view_areas_fullscreen_exits">Salidas involuntarias recientes de pantalla completa</string>
     <string name="view_areas_no_exits">No se han registrado salidas de pantalla completa</string>
+    <string name="view_areas_library_in_use">Biblioteca en uso: %1$s</string>
+    <string name="view_areas_library">Biblioteca: %1$s</string>
+    <string name="view_areas_all">Todos los tamaños (sin preferencia)</string>
+    <string name="view_areas_canvas">Lienzo</string>
 </resources>

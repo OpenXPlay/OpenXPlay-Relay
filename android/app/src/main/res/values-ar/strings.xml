@@ -103,4 +103,8 @@
     <string name="view_areas_window">نافذة</string>
     <string name="view_areas_fullscreen_exits">مرات الخروج التلقائي الأخيرة من ملء الشاشة</string>
     <string name="view_areas_no_exits">لم يتم تسجيل خروج من ملء الشاشة</string>
+    <string name="view_areas_library_in_use">المكتبة المستخدمة: %1$s</string>
+    <string name="view_areas_library">المكتبة: %1$s</string>
+    <string name="view_areas_all">جميع الأحجام (لم يُحدَّد تفضيل)</string>
+    <string name="view_areas_canvas">مساحة الرسم</string>
 </resources>

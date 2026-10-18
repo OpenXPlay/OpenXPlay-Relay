@@ -506,4 +506,8 @@
     <string name="view_areas_window">Windowed</string>
     <string name="view_areas_fullscreen_exits">Recent involuntary fullscreen exits</string>
     <string name="view_areas_no_exits">No fullscreen exits recorded</string>
+    <string name="view_areas_library_in_use">Library in use: %1$s</string>
+    <string name="view_areas_library">Library: %1$s</string>
+    <string name="view_areas_all">All sizes (no preference)</string>
+    <string name="view_areas_canvas">Canvas</string>
 </resources>

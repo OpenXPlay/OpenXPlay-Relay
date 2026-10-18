@@ -103,4 +103,8 @@
     <string name="view_areas_window">Оконный режим</string>
     <string name="view_areas_fullscreen_exits">Недавние непроизвольные выходы из полноэкранного режима</string>
     <string name="view_areas_no_exits">Выходы из полноэкранного режима не зарегистрированы</string>
+    <string name="view_areas_library_in_use">Используемая библиотека: %1$s</string>
+    <string name="view_areas_library">Библиотека: %1$s</string>
+    <string name="view_areas_all">Все размеры (предпочтение не указано)</string>
+    <string name="view_areas_canvas">Полотно</string>
 </resources>

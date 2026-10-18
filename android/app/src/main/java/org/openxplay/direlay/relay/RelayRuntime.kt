@@ -127,6 +127,8 @@ class RelayRuntime(private val context: Context,
         { windowPreferences.edit().putString("records", it).apply() }) }
     @Volatile var declaredViewAreas: List<ViewAreaSize> = emptyList()
         private set
+    @Volatile var viewAreaPreference: Boolean? = null
+        private set
     @Volatile private var activeAreaIndex = 0
     @Volatile private var activeArea: org.openxplay.stream.web.ViewArea? = null
     private val areaListeners = java.util.concurrent.CopyOnWriteArrayList<(org.openxplay.stream.web.ViewArea) -> Unit>()
@@ -161,11 +163,12 @@ class RelayRuntime(private val context: Context,
     }
     private var lastWindow: List<Int>? = null
     private fun observeWindow(display: org.openxplay.stream.core.DisplayInfo?) {
+        viewAreaPreference = display?.fullscreenPreferred
         val viewport = display?.viewport
         val areas = declaredViewAreas
         val candidate = if (viewport != null && settingsStore.snapshot.value?.viewAreas == true &&
             status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
-            ViewAreaPlanner.closest(areas, viewport.width, viewport.height)?.takeIf { it != activeAreaIndex } else null
+            ViewAreaPlanner.match(areas, viewport.width, viewport.height, display.fullscreen, display.fullscreenPreferred)?.takeIf { it != activeAreaIndex } else null
         if (areaDebounce.observe(candidate, android.os.SystemClock.elapsedRealtime())) {
             pendingAreaSwitch?.cancel(false); pendingAreaSwitch = null
             if (candidate != null) pendingAreaSwitch = setup.schedule({
@@ -197,7 +200,8 @@ class RelayRuntime(private val context: Context,
         val records = if (display == null) emptyList() else windowRecords.snapshot().filter { it.screenWidth == display.widthPx &&
             it.screenHeight == display.heightPx && it.densityDpi == display.densityDpi }
         val current = display?.viewport?.let { ViewAreaSize(it.width, it.height) }
-        return ViewAreaPlanner.plan(width, height, records, current).also { declaredViewAreas = it; publishArea(0) }
+        val areas = ViewAreaPlanner.plan(width, height, records, current, display?.fullscreen)
+        return areas.also { declaredViewAreas = it; publishArea(0) }
     }
     private val displayRefit = DisplayRefit()
     @Volatile private var appliedDisplay: DisplayTarget? = null

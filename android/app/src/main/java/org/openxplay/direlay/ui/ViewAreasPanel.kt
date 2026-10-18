@@ -17,23 +17,34 @@ import org.openxplay.direlay.relay.*
 
 @Composable fun ViewAreasPanel(runtime: RelayRuntime) {
     var areas by remember { mutableStateOf(emptyList<ViewAreaSize>()) }
+    var preference by remember { mutableStateOf<Boolean?>(null) }
     var records by remember { mutableStateOf(emptyList<WindowSizeRecord>()) }
     var exits by remember { mutableStateOf(emptyList<ReceiverDiagnostics.FullscreenExit>()) }
     var log by remember { mutableStateOf(emptyList<RelayRuntime.AreaSwitch>()) }
     LaunchedEffect(runtime) {
         while (true) {
             areas = runtime.declaredViewAreas
+            preference = runtime.viewAreaPreference
             records = withContext(Dispatchers.IO) { runtime.windowRecords.snapshot() }
             log = runtime.areaSwitchLog()
             exits = runtime.status.receivers.fullscreenExits()
             delay(500)
         }
     }
+    Text(stringResource(R.string.view_areas_library_in_use, stringResource(when (preference) {
+        true -> R.string.view_areas_fullscreen
+        false -> R.string.view_areas_window
+        null -> R.string.view_areas_all
+    })))
     Text(stringResource(R.string.view_areas_declared))
     if (areas.isEmpty()) Text(stringResource(R.string.view_areas_empty))
     areas.forEachIndexed { index, area ->
         Text(stringResource(R.string.view_areas_area, index, area.width, area.height,
             "%.3f".format(java.util.Locale.ROOT, area.width.toDouble() / area.height)))
+        val libraries = area.libraries.map { stringResource(if (it == ViewAreaLibrary.FULLSCREEN)
+            R.string.view_areas_fullscreen else R.string.view_areas_window) }
+        Text(stringResource(R.string.view_areas_library, if (index == 0) stringResource(R.string.view_areas_canvas)
+            else if (libraries.isEmpty()) stringResource(R.string.view_areas_all) else libraries.joinToString(" / ")))
         OutlinedButton(onClick = { runtime.showViewArea(index) }) { Text(stringResource(R.string.view_areas_show, index)) }
     }
     log.asReversed().forEach {
@@ -48,11 +59,14 @@ import org.openxplay.direlay.relay.*
     SmallHeading(stringResource(R.string.view_areas_records))
     TextButton(onClick = runtime::clearWindowRecords) { Text(stringResource(R.string.view_areas_clear)) }
     LazyColumn(Modifier.fillMaxWidth().height(280.dp)) {
-        items(records) { record ->
-            Text(stringResource(R.string.view_areas_record, record.screenWidth, record.screenHeight,
-                "%.2f".format(java.util.Locale.ROOT, record.densityDpi / 160.0), record.width, record.height,
-                stringResource(if (record.fullscreen) R.string.view_areas_fullscreen else R.string.view_areas_window),
-                record.count, snapshotTime(record.lastSeen)), style = MaterialTheme.typography.bodySmall)
+        for (full in listOf(true, false)) {
+            item { SmallHeading(stringResource(if (full) R.string.view_areas_fullscreen else R.string.view_areas_window)) }
+            items(records.filter { it.fullscreen == full }) { record ->
+                Text(stringResource(R.string.view_areas_record, record.screenWidth, record.screenHeight,
+                    "%.2f".format(java.util.Locale.ROOT, record.densityDpi / 160.0), record.width, record.height,
+                    stringResource(if (record.fullscreen) R.string.view_areas_fullscreen else R.string.view_areas_window),
+                    record.count, snapshotTime(record.lastSeen)), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

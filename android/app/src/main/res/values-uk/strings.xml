@@ -103,4 +103,8 @@
     <string name="view_areas_window">Віконний режим</string>
     <string name="view_areas_fullscreen_exits">Нещодавні мимовільні виходи з повноекранного режиму</string>
     <string name="view_areas_no_exits">Виходів із повноекранного режиму не зареєстровано</string>
+    <string name="view_areas_library_in_use">Бібліотека у використанні: %1$s</string>
+    <string name="view_areas_library">Бібліотека: %1$s</string>
+    <string name="view_areas_all">Усі розміри (налаштування не вказано)</string>
+    <string name="view_areas_canvas">Полотно</string>
 </resources>

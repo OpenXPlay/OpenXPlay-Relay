@@ -5,7 +5,8 @@ package org.openxplay.direlay.relay
 
 import kotlin.math.abs
 
-data class ViewAreaSize(val width: Int, val height: Int)
+enum class ViewAreaLibrary { FULLSCREEN, WINDOWED }
+data class ViewAreaSize(val width: Int, val height: Int, val libraries: Set<ViewAreaLibrary> = emptySet())
 data class WindowSizeRecord(val screenWidth: Int, val screenHeight: Int, val densityDpi: Int,
     val width: Int, val height: Int, val fullscreen: Boolean, val count: Long, val lastSeen: Long) {
     val headUnit get() = "$screenWidth×$screenHeight@$densityDpi"
@@ -13,24 +14,43 @@ data class WindowSizeRecord(val screenWidth: Int, val screenHeight: Int, val den
 
 /** Pure geometry; declarations are frozen for a session, while observations keep accumulating. */
 object ViewAreaPlanner {
-    fun plan(width: Int, height: Int, records: List<WindowSizeRecord>, current: ViewAreaSize? = null): List<ViewAreaSize> {
+    fun plan(width: Int, height: Int, records: List<WindowSizeRecord>, current: ViewAreaSize? = null,
+        fullscreen: Boolean? = null): List<ViewAreaSize> {
         require(width >= 2 && height >= 2 && width % 2 == 0 && height % 2 == 0)
         val areas = mutableListOf(ViewAreaSize(width, height))
-        val candidates = records.groupBy { it.width to it.height }.values.map { rows ->
-            rows.maxBy { it.lastSeen }.copy(count = rows.sumOf { it.count }) }.sortedWith(
-            compareByDescending<WindowSizeRecord> { it.count }.thenByDescending { it.lastSeen })
-            .map { ViewAreaSize(it.width, it.height) }.ifEmpty { listOfNotNull(current) }
-        for (size in candidates) {
-            if (size.width <= 0 || size.height <= 0 || aspectDistance(size.width, size.height, width, height) <= .02) continue
-            val scale = minOf(width.toDouble() / size.width, height.toDouble() / size.height)
-            val area = ViewAreaSize((size.width * scale / 2).toInt().coerceAtLeast(1) * 2,
-                (size.height * scale / 2).toInt().coerceAtLeast(1) * 2)
-            if (areas.none { aspectDistance(it.width, it.height, area.width, area.height) <= .02 }) areas.add(area)
-            if (areas.size == 4) break
+        for (library in ViewAreaLibrary.entries) {
+            val full = library == ViewAreaLibrary.FULLSCREEN
+            val rows = records.filter { it.fullscreen == full }
+            val candidates = rows.sortedWith(compareByDescending<WindowSizeRecord> { it.count }.thenByDescending { it.lastSeen })
+                .map { ViewAreaSize(it.width, it.height) }.ifEmpty {
+                    if (records.isEmpty() && (fullscreen == null || fullscreen == full)) listOfNotNull(current) else emptyList()
+                }
+            var count = 0
+            for (size in candidates) {
+                if (size.width <= 0 || size.height <= 0 || aspectDistance(size.width, size.height, width, height) <= .02) continue
+                val scale = minOf(width.toDouble() / size.width, height.toDouble() / size.height)
+                val area = ViewAreaSize((size.width * scale / 2).toInt().coerceAtLeast(1) * 2,
+                    (size.height * scale / 2).toInt().coerceAtLeast(1) * 2, setOf(library))
+                val duplicate = areas.indexOfFirst { aspectDistance(it.width, it.height, area.width, area.height) <= .02 }
+                if (duplicate >= 0) {
+                    val previous = areas[duplicate]
+                    if (duplicate == 0 || library in previous.libraries) continue
+                    // Reuse one rectangle in both libraries when their aspects coincide.
+                    areas[duplicate] = previous.copy(libraries = previous.libraries + library)
+                } else areas.add(area)
+                if (++count == 3) break
+            }
         }
-        // Keep the test area only until real observations exist.
-        if (records.isEmpty() && areas.size == 1) areas.add(ViewAreaSize((width * 3 / 8).coerceAtLeast(1) * 2, height))
+        if (records.isEmpty() && areas.size == 1) areas.add(ViewAreaSize((width * 3 / 8).coerceAtLeast(1) * 2, height,
+            ViewAreaLibrary.entries.toSet()))
         return areas.toList()
+    }
+    fun match(areas: List<ViewAreaSize>, width: Int, height: Int, fullscreen: Boolean?, preferred: Boolean?): Int? {
+        if (preferred == null) return closest(areas, width, height)
+        if (fullscreen != preferred) return null
+        val library = if (preferred) ViewAreaLibrary.FULLSCREEN else ViewAreaLibrary.WINDOWED
+        val indices = areas.indices.filter { it == 0 || library in areas[it].libraries }
+        return closest(indices.map { areas[it] }, width, height)?.let { indices[it] }
     }
     private fun aspectDistance(w: Int, h: Int, targetW: Int, targetH: Int) = abs((w.toDouble() / h) / (targetW.toDouble() / targetH) - 1)
     fun closest(areas: List<ViewAreaSize>, width: Int, height: Int): Int? {
