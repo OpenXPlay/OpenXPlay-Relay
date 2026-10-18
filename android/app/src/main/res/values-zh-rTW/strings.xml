@@ -107,4 +107,10 @@
     <string name="view_areas_library">尺寸庫：%1$s</string>
     <string name="view_areas_all">全部尺寸（未回報偏好）</string>
     <string name="view_areas_canvas">畫布</string>
+    <string name="view_areas_exit_unknown">未知</string>
+    <string name="view_areas_exit_hidden_ms">%1$s 毫秒</string>
+    <string name="view_areas_exit_details">隱藏時間：%1$s · 結束全螢幕後可見區域：%2$s · 自動恢復：%3$s</string>
+    <string name="view_areas_exit_restored">已恢復</string>
+    <string name="view_areas_exit_denied">瀏覽器已拒絕</string>
+    <string name="view_areas_exit_off">已關閉</string>
 </resources>

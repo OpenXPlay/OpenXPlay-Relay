@@ -107,4 +107,10 @@
     <string name="view_areas_library">المكتبة: %1$s</string>
     <string name="view_areas_all">جميع الأحجام (لم يُحدَّد تفضيل)</string>
     <string name="view_areas_canvas">مساحة الرسم</string>
+    <string name="view_areas_exit_unknown">غير معروف</string>
+    <string name="view_areas_exit_hidden_ms">%1$s مللي ثانية</string>
+    <string name="view_areas_exit_details">مدة الإخفاء: %1$s · المساحة المرئية بعد الخروج: %2$s · الاستعادة التلقائية: %3$s</string>
+    <string name="view_areas_exit_restored">تمت الاستعادة</string>
+    <string name="view_areas_exit_denied">رفض المتصفح الطلب</string>
+    <string name="view_areas_exit_off">متوقفة</string>
 </resources>

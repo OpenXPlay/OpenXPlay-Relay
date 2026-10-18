@@ -481,4 +481,10 @@
     <string name="view_areas_library">尺寸库：%1$s</string>
     <string name="view_areas_all">全部尺寸（未报告偏好）</string>
     <string name="view_areas_canvas">画布</string>
+    <string name="view_areas_exit_unknown">未知</string>
+    <string name="view_areas_exit_hidden_ms">%1$s 毫秒</string>
+    <string name="view_areas_exit_details">隐藏时长：%1$s · 退出后可见区域：%2$s · 自动恢复：%3$s</string>
+    <string name="view_areas_exit_restored">已恢复</string>
+    <string name="view_areas_exit_denied">浏览器已拒绝</string>
+    <string name="view_areas_exit_off">已关闭</string>
 </resources>

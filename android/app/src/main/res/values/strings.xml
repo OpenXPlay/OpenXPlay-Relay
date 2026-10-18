@@ -510,4 +510,10 @@
     <string name="view_areas_library">Library: %1$s</string>
     <string name="view_areas_all">All sizes (no preference)</string>
     <string name="view_areas_canvas">Canvas</string>
+    <string name="view_areas_exit_unknown">Unknown</string>
+    <string name="view_areas_exit_hidden_ms">%1$s ms</string>
+    <string name="view_areas_exit_details">Hidden: %1$s · Visible area after exit: %2$s · Auto restore: %3$s</string>
+    <string name="view_areas_exit_restored">Restored</string>
+    <string name="view_areas_exit_denied">Denied by browser</string>
+    <string name="view_areas_exit_off">Off</string>
 </resources>

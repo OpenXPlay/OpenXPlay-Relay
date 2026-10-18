@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
+import org.json.JSONObject
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.*
 
@@ -54,7 +55,21 @@ import org.openxplay.direlay.relay.*
     SmallHeading(stringResource(R.string.view_areas_fullscreen_exits))
     if (exits.isEmpty()) Text(stringResource(R.string.view_areas_no_exits))
     exits.asReversed().forEach {
-        Text("${snapshotTime(it.time)} · ${it.client} · ${it.json}", style = MaterialTheme.typography.bodySmall)
+        val json = remember(it.json) { runCatching { JSONObject(it.json) }.getOrNull() }
+        val display = json?.optJSONObject("display")
+        val visible = display?.optJSONObject("viewport") ?: display
+        val unknown = stringResource(R.string.view_areas_exit_unknown)
+        val hidden = if (json == null || json.isNull("hiddenMs")) unknown
+            else stringResource(R.string.view_areas_exit_hidden_ms, json.optDouble("hiddenMs").toString())
+        val size = if (visible == null) unknown else "${visible.optInt("width")} × ${visible.optInt("height")}"
+        val result = stringResource(when (json?.optString("autoRestore")) {
+            "restored" -> R.string.view_areas_exit_restored
+            "denied" -> R.string.view_areas_exit_denied
+            "off" -> R.string.view_areas_exit_off
+            else -> R.string.view_areas_exit_unknown
+        })
+        Text("${snapshotTime(it.time)} · ${it.client}", style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.view_areas_exit_details, hidden, size, result), style = MaterialTheme.typography.bodySmall)
     }
     SmallHeading(stringResource(R.string.view_areas_records))
     TextButton(onClick = runtime::clearWindowRecords) { Text(stringResource(R.string.view_areas_clear)) }

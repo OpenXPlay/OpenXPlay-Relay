@@ -107,4 +107,10 @@
     <string name="view_areas_library">Бібліотека: %1$s</string>
     <string name="view_areas_all">Усі розміри (налаштування не вказано)</string>
     <string name="view_areas_canvas">Полотно</string>
+    <string name="view_areas_exit_unknown">Невідомо</string>
+    <string name="view_areas_exit_hidden_ms">%1$s мс</string>
+    <string name="view_areas_exit_details">Час приховування: %1$s · Видима область після виходу: %2$s · Автовідновлення: %3$s</string>
+    <string name="view_areas_exit_restored">Відновлено</string>
+    <string name="view_areas_exit_denied">Браузер відхилив запит</string>
+    <string name="view_areas_exit_off">Вимкнено</string>
 </resources>

@@ -107,4 +107,10 @@
     <string name="view_areas_library">Biblioteca: %1$s</string>
     <string name="view_areas_all">Todos los tamaños (sin preferencia)</string>
     <string name="view_areas_canvas">Lienzo</string>
+    <string name="view_areas_exit_unknown">Desconocido</string>
+    <string name="view_areas_exit_hidden_ms">%1$s ms</string>
+    <string name="view_areas_exit_details">Tiempo oculto: %1$s · Área visible tras salir: %2$s · Restauración automática: %3$s</string>
+    <string name="view_areas_exit_restored">Restaurada</string>
+    <string name="view_areas_exit_denied">Denegada por el navegador</string>
+    <string name="view_areas_exit_off">Desactivada</string>
 </resources>

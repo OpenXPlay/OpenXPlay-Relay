@@ -107,4 +107,10 @@
     <string name="view_areas_library">サイズ一覧：%1$s</string>
     <string name="view_areas_all">すべてのサイズ（設定の報告なし）</string>
     <string name="view_areas_canvas">キャンバス</string>
+    <string name="view_areas_exit_unknown">不明</string>
+    <string name="view_areas_exit_hidden_ms">%1$s ミリ秒</string>
+    <string name="view_areas_exit_details">非表示時間：%1$s · 全画面終了後の表示領域：%2$s · 自動復元：%3$s</string>
+    <string name="view_areas_exit_restored">復元済み</string>
+    <string name="view_areas_exit_denied">ブラウザが拒否</string>
+    <string name="view_areas_exit_off">オフ</string>
 </resources>
