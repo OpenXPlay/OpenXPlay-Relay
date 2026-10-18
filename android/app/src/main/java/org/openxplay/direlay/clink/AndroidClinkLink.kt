@@ -103,6 +103,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                 }
             }
             val (carId, reply) = checkNotNull(handoff)
+            diagnostics.handoff(reply.ssid, reply.psk.length)
             // No PIN/UI pause here; return immediately after DHCP so clink can start AUTH.
             val endpoints = diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) { join(run, reply) }
             diagnostics.emit(ClinkDiagnostic.Joined(endpoints.first, endpoints.second))

@@ -470,4 +470,18 @@
     <string name="launch_new_title">New setup</string>
     <string name="launch_new_hint">Choose how the car shows CarPlay and how the iPhone connects again, step by step.</string>
     <string name="launch_later">Not now, go to Home</string>
+    <string name="carlink_debug">Carlink debug</string>
+    <string name="carlink_trace_enabled">Record Carlink trace</string>
+    <string name="carlink_trace_all">All</string>
+    <string name="carlink_trace_rtsp">RTSP</string>
+    <string name="carlink_trace_frames">Frames</string>
+    <string name="carlink_trace_media">Media</string>
+    <string name="carlink_trace_link">Link</string>
+    <string name="carlink_trace_errors">Errors</string>
+    <string name="carlink_trace_counters">Events: %1$d · dropped: %2$d · TS bytes: %3$d</string>
+    <string name="carlink_trace_share">Share current trace</string>
+    <string name="carlink_trace_clear">Clear traces</string>
+    <string name="carlink_capture_start">Start TS capture (60 s / 64 MB)</string>
+    <string name="carlink_capture_stop">Stop TS capture</string>
+    <string name="carlink_trace_failure">Trace write failed: %1$s</string>
 </resources>

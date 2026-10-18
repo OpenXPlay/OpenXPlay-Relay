@@ -5,6 +5,7 @@ package org.openxplay.direlay.relay
 
 import android.Manifest
 import org.openxplay.direlay.settings.*
+import org.openxplay.direlay.carlinkdebug.*
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -50,6 +51,11 @@ class RelayRuntime(private val context: Context,
     fun refreshIphoneBonds() { iphoneBonds = bondedDevices.read() }
     fun iphoneSelection(choice: String? = settingsStore.snapshot.value?.iphoneAddress) =
         IphoneSelection.select(choice, iphoneBonds)
+    private val traceRecorder = lazy { CarlinkTraceRecorder(checkNotNull(context.getExternalFilesDir("carlink-trace")),
+        { line -> Log.i("OXP-CarlinkTrace", line) }) }
+    val carlinkTraceRecorder get() = traceRecorder.value
+    private val traceCapture = lazy { CarlinkMediaCapture(checkNotNull(context.getExternalFilesDir("carlink-trace"))) }
+    val carlinkMediaCapture get() = traceCapture.value
     val settingsStore = RelaySettingsStore(context.applicationContext).also { it.startObserving() }
     private val autoStartBoot = AndroidBootIdentity(context)
     private val autoStartStorage = AndroidAutoStartStorage(context)
@@ -170,7 +176,7 @@ class RelayRuntime(private val context: Context,
     @Volatile var carlinkFailed = false
         private set
     // Sensor opt-in belongs to a socket generation and waits for the explicit reconnect action.
-    private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean)
+    private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean)
     private var carlinkConfig: CarlinkConfig? = null
     private val carlinkBlock = CarlinkWifiDirectBlock()
     @Volatile private var carlink: ClinkOutput? = null
@@ -427,13 +433,14 @@ class RelayRuntime(private val context: Context,
         if (closed) return
         configureVehicle()
         val settings = settingsStore.awaitSnapshot()
+        if (!settings.carlinkTrace && traceCapture.isInitialized()) carlinkMediaCapture.stop()
         val permitted = StartupPermissions.carlink(Build.VERSION.SDK_INT, true).all {
             context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
         }
         val requested = CarlinkConfig(settings.carlinkOutput || settings.bothOutputs, permitted,
             settings.carlinkDeviceName, settings.carlinkDeviceModel,
             carlinkBlock.blocked(CarlinkConnectionPolicy.enabled(settings),
-                settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running))
+                settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running), settings.carlinkTrace)
         if (!force && requested == carlinkConfig && !carlinkRestartPending) return
         carlinkConfig = requested
         if (carlinkRetiring) { carlinkRestartPending = true; return }
@@ -465,16 +472,18 @@ class RelayRuntime(private val context: Context,
         val id = preferences.getString("clinkDeviceId", null) ?: java.util.UUID.randomUUID().toString().also {
             check(preferences.edit().putString("clinkDeviceId", it).commit())
         }
-        val diagnostics = ClinkDiagnostics { event ->
+        val trace = CarlinkTraceRecorder.select(settings.carlinkTrace) { carlinkTraceRecorder }
+        val diagnostics = TracingClinkDiagnostics(ClinkDiagnostics { event ->
             if (event is ClinkDiagnostic.Failure) carlinkDetail = event.code
             clinkDiagnostics.emit(event)
-        }
+        }, trace, { if (traceRecorder.isInitialized()) carlinkTraceRecorder.session else 0 })
         val reservation = AirPlayP2pReservation(context)
         val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation)
         val sessionDiagnostics = ClinkSessionDiagnostics(carlinkPins, carlinkTrust, diagnostics)
         val output = ClinkOutput(link, sessionDiagnostics.pinProvider, sessionDiagnostics.trustStore,
             deviceId = id, deviceName = requested.name,
             vehicleData = settings.vehicleInformation,
+            trace = trace, mediaTap = if (settings.carlinkTrace) carlinkMediaCapture else null,
             listener = object : ClinkListener {
                 override fun state(state: ClinkState) {
                     sessionDiagnostics.state(state)
@@ -680,6 +689,8 @@ class RelayRuntime(private val context: Context,
             vehicleRegistration = null
             setup.shutdownNow()
             pluginContext.close()
+            if (traceCapture.isInitialized()) carlinkMediaCapture.close()
+            if (traceRecorder.isInitialized()) carlinkTraceRecorder.close()
             settingsStore.close()
             hub.stop()
             input.close()

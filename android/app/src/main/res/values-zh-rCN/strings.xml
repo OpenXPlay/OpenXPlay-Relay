@@ -441,4 +441,18 @@
     <string name="launch_new_title">开始新配置</string>
     <string name="launch_new_hint">一步步重新选择车机的显示方式和 iPhone 的连接方式。</string>
     <string name="launch_later">暂不开启，进入首页</string>
+    <string name="carlink_debug">Carlink 调试</string>
+    <string name="carlink_trace_enabled">记录 Carlink 跟踪</string>
+    <string name="carlink_trace_all">全部</string>
+    <string name="carlink_trace_rtsp">RTSP</string>
+    <string name="carlink_trace_frames">帧</string>
+    <string name="carlink_trace_media">媒体</string>
+    <string name="carlink_trace_link">连接</string>
+    <string name="carlink_trace_errors">错误</string>
+    <string name="carlink_trace_counters">事件：%1$d · 丢弃：%2$d · TS 字节：%3$d</string>
+    <string name="carlink_trace_share">分享当前跟踪</string>
+    <string name="carlink_trace_clear">清除跟踪</string>
+    <string name="carlink_capture_start">开始 TS 录制（60 秒 / 64 MB）</string>
+    <string name="carlink_capture_stop">停止 TS 录制</string>
+    <string name="carlink_trace_failure">跟踪写入失败：%1$s</string>
 </resources>

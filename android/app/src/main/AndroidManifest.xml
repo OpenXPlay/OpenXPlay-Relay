@@ -40,6 +40,11 @@
         android:theme="@style/Theme.Xcertplay">
         <!-- Lets developers capture heap dumps and traces from release builds (no debugging). -->
         <profileable android:shell="true" />
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.carlink-trace" android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/carlink_trace_paths" />
+        </provider>
 
         <meta-data
             android:name="android.allow_multiple_resumed_activities"

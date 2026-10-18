@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutionException
 /** Only structured, credential-free values cross the diagnostics boundary. */
 fun interface ClinkDiagnostics {
     fun emit(event: ClinkDiagnostic)
+    fun handoff(ssid: String, passphraseLength: Int) { }
 
     companion object {
         val NONE = ClinkDiagnostics { }
@@ -35,6 +36,9 @@ sealed interface ClinkDiagnostic {
     fun line(): String
     data class Retry(val delayMs: Long) : ClinkDiagnostic {
         override fun line() = "link_retry delayMs=$delayMs"
+    }
+    data class Handoff(val ssid: String, val passphraseLength: Int) : ClinkDiagnostic {
+        override fun line() = "wifi_handoff ssid=$ssid passphraseLength=$passphraseLength"
     }
     data class Exchange(val frequency: Int) : ClinkDiagnostic {
         override fun line() = "ble_exchange_done frequency=$frequency"

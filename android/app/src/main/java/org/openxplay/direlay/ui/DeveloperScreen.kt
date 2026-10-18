@@ -80,7 +80,8 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
 @Composable fun DeveloperScreen(initial: RelaySettings, view: DeveloperView, back: () -> Unit,
     save: suspend (RelaySettings, RelaySettings) -> Boolean, copy: (String) -> Unit,
     reconnect: () -> Unit, regenerate: () -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit,
-    sample: Boolean, setSample: (Boolean) -> Unit, openVehicle: () -> Unit, wireless: (RelaySettings) -> Boolean) {
+    sample: Boolean, setSample: (Boolean) -> Unit, openVehicle: () -> Unit, wireless: (RelaySettings) -> Boolean,
+    debug: RelayRuntime? = null) {
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var saved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var port by rememberSaveable { mutableStateOf(draft.webPort?.toString().orEmpty()) }
@@ -116,6 +117,9 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         Toggle(stringResource(R.string.dev_sample_vehicle), sample, setSample)
         Hint(stringResource(R.string.dev_sample_hint))
         SettingsRow(stringResource(R.string.vehicle_title), stringResource(R.string.dev_sample_open), R.drawable.symbol_car, openVehicle)
+        SmallHeading(stringResource(R.string.carlink_debug))
+        Toggle(stringResource(R.string.carlink_trace_enabled), draft.carlinkTrace, { draft = draft.copy(carlinkTrace = it) })
+        if (debug != null) CarlinkDebugPanel(debug, draft.carlinkTrace)
         SmallHeading(stringResource(R.string.dev_runtime))
         KeyValue(stringResource(R.string.dev_connected_clients), stringResource(R.string.dev_unavailable))
         view.rows.forEach { row -> KeyValue(stringResource(row.label, row.argument), if (row.valueKey == 0) row.value else stringResource(row.valueKey, *row.valueArguments.toTypedArray())) }

@@ -62,6 +62,7 @@ data class RelaySettings(
     val iphoneAddress: String? = null,
     val plugins: Boolean = false,
     val pluginsEnabled: List<String> = emptyList(),
+    val carlinkTrace: Boolean = false,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -174,6 +175,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
             mode,
             relay.getBoolean("requirePairingCode", false),
             relay.getString("iphoneAddress", null),
+            carlinkTrace = relay.getBoolean("carlinkTrace", false),
             plugins = relay.getBoolean("plugins", false),
             pluginsEnabled = runCatching {
                 val ids = org.json.JSONArray(relay.getString("pluginsEnabled", "[]"))
@@ -214,6 +216,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
             .putBoolean("bothOutputs", settings.bothOutputs)
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
+            .putBoolean("carlinkTrace", settings.carlinkTrace)
             .putBoolean("plugins", settings.plugins)
             .putString("pluginsEnabled", org.json.JSONArray(settings.pluginsEnabled).toString())
             .putBoolean("requirePairingCode", settings.requirePairingCode)

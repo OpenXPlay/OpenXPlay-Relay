@@ -33,6 +33,16 @@ class RelaySettingsTest {
         }
     }
 
+    @Test fun carlinkTraceDefaultsOffAndPersists() {
+        val store = RelaySettingsStore(context)
+        val original = store.load()
+        assertFalse(original.carlinkTrace)
+        store.save(original.copy(carlinkTrace = true))
+        assertTrue(store.load().carlinkTrace)
+        store.save(original)
+        assertFalse(store.load().carlinkTrace)
+    }
+
     @Test fun iphoneChoiceDefaultsToAutomaticAndCanBeClearedWithoutChangingOtherSettings() {
         val store = RelaySettingsStore(context)
         val original = store.load()

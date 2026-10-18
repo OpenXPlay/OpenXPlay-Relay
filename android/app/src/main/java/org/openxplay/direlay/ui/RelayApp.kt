@@ -179,7 +179,7 @@ import org.openxplay.direlay.settings.*
                             route == "about" -> AboutScreen(::back)
                             route == "developer" -> if (developer) DeveloperScreen(initial, diagnostics, ::back, save, ::copy,
                                 onReconnect, runtime::regeneratePairingCode, importMaterial, removeMaterial,
-                                runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless)
+                                runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless, runtime)
                                 else LaunchedEffect(Unit) { back() }
                             route == "vehicle" || route.startsWith("snapshot:") -> {
                                 val time = route.substringAfter(':', "").toLongOrNull()
