@@ -18,8 +18,7 @@ object AdminSettingsMapping {
     private fun visible(key: String, vararg values: String) = AdminVisibility(key, values.toList())
     private val fixed = visible("displayMode", "custom")
     val schema = listOf(
-        AdminSection("output", listOf(choice("output", "web", "carlink", "both"),
-            AdminField("requirePairingCode", "bool", hintKey = "hint.field.requirePairingCode"))),
+        AdminSection("output", listOf(choice("output", "web", "carlink", "both"))),
         AdminSection("plugins", listOf(AdminField("plugins", "bool", hintKey = "hint.plugins"),
             AdminField("pluginsEnabled", "plugins"))),
         AdminSection("connection", listOf(choice("transport", "wireless", "usb"),
@@ -46,7 +45,7 @@ object AdminSettingsMapping {
     }
     fun values(s: RelaySettings, wireless: Boolean = s.connectionMode != ConnectionMode.USB, currentSsid: String? = null): Map<String, JsonElement> {
         val profile = s.display ?: CarDisplayFit.default
-        return linkedMapOf("plugins" to s.plugins, "pluginsEnabled" to s.pluginsEnabled, "output" to output(s), "requirePairingCode" to s.requirePairingCode,
+        return linkedMapOf("plugins" to s.plugins, "pluginsEnabled" to s.pluginsEnabled, "output" to output(s),
             "transport" to if (wireless) "wireless" else "usb", "networkMode" to network(s),
             "hotspotSsid" to s.wirelessNetwork.manualSsid, "hotspotPassword" to s.wirelessNetwork.manualPassphrase,
             "hotspotBand" to when (s.wirelessNetwork.band) { ManualHotspotBand.AUTO -> "auto"; ManualHotspotBand.GHZ_2_4 -> "2.4"; ManualHotspotBand.GHZ_5 -> "5" },
@@ -111,7 +110,6 @@ object AdminSettingsMapping {
         val pluginIds = v["pluginsEnabled"] as List<String>
         val candidate = before.copy(plugins = bool("plugins"), pluginsEnabled = pluginIds, carlinkOutput = if (outputChanged) string("output") != "web" else before.carlinkOutput,
             bothOutputs = if (outputChanged) string("output") == "both" else before.bothOutputs,
-            requirePairingCode = bool("requirePairingCode"),
             connectionMode = if (!transportChanged) before.connectionMode else if (string("transport") == "wireless") ConnectionMode.WIRELESS else ConnectionMode.USB,
             wirelessNetwork = network, iphoneAddress = string("iphone").takeUnless { it == "auto" },
             displayMode = displayMode, display = if (!profileChanged) before.display else if (displayMode == DisplayMode.FIXED || before.display != null)

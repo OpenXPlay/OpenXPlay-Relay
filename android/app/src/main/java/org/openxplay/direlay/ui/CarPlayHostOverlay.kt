@@ -20,7 +20,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.RelayRuntime
-import org.openxplay.direlay.relay.receiverUrl
 
 fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime): ComposeView? =
     hostOverlayUnlessPreview(runtime.settingsStore.snapshot.value?.localPreview ?: runtime.localPreview) {
@@ -36,7 +35,6 @@ private fun RelayRuntime.overlaySnapshot(): HostOverlaySnapshot? {
     val name = iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name
     val urls = receiverUrls.filterNot { it.contains("://localhost:") }
         .filter { url -> carIpv4.any { url.contains("://$it:") } }
-        .map { receiverUrl(it, settings.requirePairingCode, pairingCode) }
     return HostOverlaySnapshot(HomeSnapshot(settings, settingsStore.wireless(settings),
         permissionsReady = true, identityReady = true, phase = status.session?.phase, started = true,
         failure = status.failure != null || (settings.carlinkOutput && carlinkFailed) ||

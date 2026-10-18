@@ -19,8 +19,6 @@
     <string name="settings_open_hotspot">فتح إعدادات نقطة الاتصال</string>
     <string name="ui_open_wifi">فتح إعدادات Wi-Fi</string>
     <string name="ui_automatic_paused">تم الإيقاف. يُستأنف التشغيل التلقائي بعد الضغط على «بدء».</string>
-    <string name="settings_require_code">طلب رمز الاقتران</string>
-    <string name="settings_require_code_hint">يجب إدخال الرمز الظاهر على هذا الهاتف في متصفح السيارة. فعّل هذا الخيار على الشبكات غير الموثوقة.</string>
     <string name="network_iphone">iPhone</string>
     <string name="network_this_phone">هذا الهاتف</string>
     <string name="network_car">السيارة</string>

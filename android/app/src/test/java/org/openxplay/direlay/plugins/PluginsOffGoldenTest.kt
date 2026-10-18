@@ -62,7 +62,7 @@ class PluginsOffGoldenTest {
                 val config = RelayPlugins.configuration(value, missing, root.resolve("state"))
                 assertNull(config)
                 val web = WebOutput(WebOutputConfig(bindAddress = "127.0.0.1", port = 0, staticAssetRoot = root.toPath(),
-                    tokenVerifier = TokenVerifier { true }, sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay", plugins = config))
+                    sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay", plugins = config))
                 assertFalse(web.wantsContext())
                 web.open(host)
                 try {

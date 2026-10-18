@@ -339,12 +339,9 @@ class RelaySettingsTest {
         } finally { observed.close() }
     }
 
-    @Test fun browserPairingCodeDefaultsOffAndRoundTripsWithoutChangingCarlink() {
-        assertFalse(store.load().requirePairingCode)
-        for (required in listOf(true, false)) {
-            val value = store.load().copy(requirePairingCode = required, carlinkOutput = true)
-            store.save(value)
-            assertEquals(value, RelaySettingsStore(context).load())
-        }
+    @Test fun storedBrowserPairingPreferenceIsIgnored() {
+        val before = store.load()
+        context.getSharedPreferences("direlay", android.content.Context.MODE_PRIVATE).edit().putBoolean("requirePairingCode", true).commit()
+        assertEquals(before, RelaySettingsStore(context).load())
     }
 }

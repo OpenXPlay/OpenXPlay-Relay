@@ -19,8 +19,6 @@
     <string name="settings_open_hotspot">テザリング設定を開く</string>
     <string name="ui_open_wifi">Wi-Fi 設定を開く</string>
     <string name="ui_automatic_paused">停止しました。「開始」をタップすると自動開始が再開します。</string>
-    <string name="settings_require_code">ペアリングコードを必須にする</string>
-    <string name="settings_require_code_hint">車のブラウザーで、このスマートフォンに表示されるコードの入力が必要になります。信頼できないネットワークでオンにしてください。</string>
     <string name="network_iphone">iPhone</string>
     <string name="network_this_phone">この端末</string>
     <string name="network_car">車</string>

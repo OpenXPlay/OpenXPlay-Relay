@@ -19,8 +19,6 @@
     <string name="settings_open_hotspot">開啟熱點設定</string>
     <string name="ui_open_wifi">開啟 Wi-Fi 設定</string>
     <string name="ui_automatic_paused">已停止。點選「開始」後會恢復自動開始。</string>
-    <string name="settings_require_code">需要配對碼</string>
-    <string name="settings_require_code_hint">車機瀏覽器需要輸入此手機上顯示的配對碼。在不可信的網路中開啟。</string>
     <string name="network_iphone">iPhone</string>
     <string name="network_this_phone">此手機</string>
     <string name="network_car">車機</string>

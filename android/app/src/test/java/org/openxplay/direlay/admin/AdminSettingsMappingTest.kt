@@ -26,7 +26,7 @@ class AdminSettingsMappingTest {
         val original = initial()
         for (network in WirelessNetworkChoice.entries) for (mode in DisplayMode.entries) for (output in listOf("web", "carlink", "both")) {
             val value = original.copy(connectionMode = ConnectionMode.WIRELESS,
-                carlinkOutput = output != "web", bothOutputs = output == "both", requirePairingCode = true,
+                carlinkOutput = output != "web", bothOutputs = output == "both",
                 iphoneAddress = "01:23:45:67:89:AB", autoStartOnBoot = true, autoStartWhenReady = false,
                 carlinkDeviceName = "My car", vehicleInformation = true, displayMode = mode,
                 display = if (mode == DisplayMode.FIXED) DisplayProfile(1920, 1080, 240) else null,

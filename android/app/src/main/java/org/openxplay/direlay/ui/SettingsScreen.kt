@@ -110,10 +110,6 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 else draft = candidate
             }
             if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
-            if (!draft.carlinkOutput || draft.bothOutputs) SettingsRow(stringResource(R.string.settings_require_code),
-                stringResource(R.string.settings_require_code_hint), R.drawable.symbol_link,
-                trailing = { LabeledSwitch(stringResource(R.string.settings_require_code), draft.requirePairingCode,
-                    { draft = draft.copy(requirePairingCode = it) }) })
             AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SettingField(stringResource(R.string.direlay_carlink_name), draft.carlinkDeviceName, errors["name"]) { draft = draft.copy(carlinkDeviceName = it) }

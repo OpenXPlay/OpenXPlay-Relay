@@ -26,9 +26,8 @@ import org.openxplay.direlay.storage.MaterialStatus
 data class DeveloperRow(val label: Int, val value: String, val argument: String = "", val valueKey: Int = 0,
     val valueArguments: List<String> = emptyList())
 data class DeveloperView(val rows: List<DeveloperRow> = emptyList(), val urls: List<String> = emptyList(),
-    val code: String = "", val fingerprint: String = "", val identity: Int = R.string.direlay_missing)
+    val fingerprint: String = "", val identity: Int = R.string.direlay_missing)
 fun developerView(runtime: RelayRuntime): DeveloperView {
-    val requireCode = runtime.settingsStore.awaitSnapshot().requirePairingCode
     return DeveloperView(buildList {
     runtime.carPlayScreenSummary.let { (size, source) ->
         add(DeveloperRow(R.string.dev_carplay_screen, "", valueKey = when (source) {
@@ -72,7 +71,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
             if (parts == null) emptyList() else listOf(snapshotTime(parts[1].toLong()), parts[2])))
     }
     runtime.status.failure?.let { add(DeveloperRow(R.string.dev_failure, "", valueKey = R.string.ui_error)) }
-}, runtime.receiverUrls.map { org.openxplay.direlay.relay.receiverUrl(it, requireCode, runtime.pairingCode) }, org.openxplay.direlay.relay.visiblePairingCode(requireCode, runtime.pairingCode), runCatching { runtime.tlsStore.fingerprint() }.getOrNull() ?: "—",
+}, runtime.receiverUrls, runCatching { runtime.tlsStore.fingerprint() }.getOrNull() ?: "—",
     when (runtime.identityStore.status()) {
         MaterialStatus.Installed -> R.string.direlay_installed
         MaterialStatus.Missing -> R.string.direlay_missing
@@ -82,7 +81,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
 
 @Composable fun DeveloperScreen(initial: RelaySettings, view: DeveloperView, back: () -> Unit,
     save: suspend (RelaySettings, RelaySettings) -> Boolean, copy: (String) -> Unit,
-    reconnect: () -> Unit, regenerate: () -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit,
+    reconnect: () -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit,
     sample: Boolean, setSample: (Boolean) -> Unit, openVehicle: () -> Unit, wireless: (RelaySettings) -> Boolean,
     debug: RelayRuntime? = null) {
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
@@ -129,10 +128,6 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         OutlinedButton(onClick = reconnect, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.direlay_carlink_reconnect)) }
         SmallHeading(stringResource(R.string.dev_urls))
         view.urls.forEach { KeyValue(stringResource(R.string.dev_url), it, copy) }
-        if (initial.requirePairingCode && view.code.isNotEmpty()) {
-            KeyValue(stringResource(R.string.ui_pairing_code), view.code.chunked(4).joinToString(" "), copy)
-            OutlinedButton(onClick = regenerate) { Text(stringResource(R.string.dev_regenerate)) }
-        }
         SmallHeading(stringResource(R.string.direlay_tls))
         KeyValue(stringResource(R.string.dev_fingerprint), view.fingerprint, copy)
         Hint(stringResource(R.string.dev_tls_hint))

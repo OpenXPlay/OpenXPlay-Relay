@@ -19,8 +19,9 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
             value.wirelessNetwork.manualPassphrase, value.wirelessNetwork.band.name, value.wirelessNetwork.security.name,
             SharedWifiNetworks.encode(value.wirelessNetwork.sharedWifiNetworks)))
         putBooleanArray("flags", booleanArrayOf(value.autoStartOnBoot, value.autoStartWhenReady,
-            value.localPreview, value.carlinkOutput, value.playCarPlayAudio, value.bothOutputs, value.vehicleInformation, value.requirePairingCode, value.carlinkAutoReconnect))
+            value.localPreview, value.carlinkOutput, value.playCarPlayAudio, value.bothOutputs, value.vehicleInformation))
         putIntArray("numbers", intArrayOf(value.fps, value.webPort ?: 0, value.wirelessNetwork.channel))
+        putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkTrace", value.carlinkTrace)
         putString("iphoneAddress", value.iphoneAddress)
         putString("displayMode", value.displayMode.name)
@@ -36,8 +37,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         i2cPath = text[2], remoteServer = text[3], remoteToken = text[4], carlinkDeviceName = text[5], carlinkDeviceModel = text[6],
         microphoneSource = MicrophoneSource.valueOf(text[7]),
         autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],
-        playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = flags.getOrElse(8) { true }, fps = numbers[0], webPort = numbers[1].takeIf { it != 0 },
-        requirePairingCode = flags.getOrElse(7) { false },
+        playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), fps = numbers[0], webPort = numbers[1].takeIf { it != 0 },
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,
         carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == bundle.getString("carplayIconSize") } ?: base.carplayIconSize,
         carlinkTrace = bundle.getBoolean("carlinkTrace", false),

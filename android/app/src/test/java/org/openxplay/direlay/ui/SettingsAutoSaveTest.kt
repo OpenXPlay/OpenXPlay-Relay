@@ -89,6 +89,5 @@ class SettingsAutoSaveTest {
             manualSsid = "Valid phone", manualPassphrase = "password", sharedWifiNetworks = emptyList()))
         assertEquals(mapOf("ssid" to R.string.shared_wifi_empty), settingsErrors(wifi, true))
         assertTrue(settingsErrors(wifi.copy(wirelessNetwork = wifi.wirelessNetwork.copy(choice = WirelessNetworkChoice.WIFI_DIRECT)), true).isEmpty())
-        assertNull(settingsFeedback(initial, initial.copy(requirePairingCode = true), false, true))
     }
 }

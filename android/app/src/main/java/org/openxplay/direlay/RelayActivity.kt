@@ -202,13 +202,12 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val carAddresses = runtime.carIpv4
         val urls = runtime.receiverUrls.filterNot { it.contains("://localhost:") }
             .filter { url -> carAddresses.any { url.contains("://$it:") } }
-            .map { org.openxplay.direlay.relay.receiverUrl(it, settings.requirePairingCode, runtime.pairingCode) }
         val ip = carAddresses.joinToString("\n")
             .ifEmpty { getString(R.string.ui_no_network) }
         // Without location access Android hides the network name, but the connection itself is known.
         val wifi = cachedWifi ?: getString(if (onWifi) R.string.ui_wifi_connected else R.string.ui_wifi_not_connected)
         val deviceName = cachedDeviceName ?: settings.carlinkDeviceName
-        content = org.openxplay.direlay.ui.HomeContent(presentation, urls, org.openxplay.direlay.relay.visiblePairingCode(settings.requirePairingCode, runtime.pairingCode),
+        content = org.openxplay.direlay.ui.HomeContent(presentation, urls,
             ip, wifi, deviceName, settings.autoStartWhenReady, settings.carlinkOutput, settings.bothOutputs,
             when {
                 runtime.carlinkPins.pending != null -> R.string.ui_waiting_code

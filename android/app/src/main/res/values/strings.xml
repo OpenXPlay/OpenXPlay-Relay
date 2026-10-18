@@ -141,7 +141,6 @@
     <string name="ui_usb">USB cable</string>
     <string name="ui_car_screen">Car screen</string>
     <string name="ui_browser_instruction">Open this address in the car’s browser</string>
-    <string name="ui_pairing_code">Pairing code</string>
     <string name="ui_tls_hint">The first time, accept the security warning.</string>
     <string name="ui_copy">Copy address</string>
     <string name="ui_address_waiting">Waiting for a network address. Connect this relay to the car network.</string>
@@ -265,7 +264,6 @@
     <string name="dev_runtime">Runtime</string>
     <string name="dev_urls">Receiver URLs (include secret)</string>
     <string name="dev_url">URL</string>
-    <string name="dev_regenerate">Regenerate pairing code</string>
     <string name="dev_fingerprint">SHA-256 fingerprint</string>
     <string name="dev_tls_hint">Removing an imported certificate restores automatic TLS.</string>
     <string name="dev_import_tls">Import .p12</string>
@@ -343,8 +341,6 @@
     <string name="settings_hotspot_password">Hotspot password</string>
     <string name="settings_open_hotspot">Open hotspot settings</string>
     <string name="ui_automatic_paused">Stopped. Automatic start resumes after you tap Start.</string>
-    <string name="settings_require_code">Require pairing code</string>
-    <string name="settings_require_code_hint">The car browser must enter the code shown on this phone. Turn on for untrusted networks.</string>
     <string name="network_iphone">iPhone</string>
     <string name="network_this_phone">This phone</string>
     <string name="network_car">Car</string>

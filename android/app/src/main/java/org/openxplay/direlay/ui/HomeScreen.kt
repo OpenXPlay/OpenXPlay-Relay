@@ -34,7 +34,7 @@ import org.openxplay.direlay.clink.DialogPinProvider
 import org.openxplay.direlay.clink.PinSheetState
 import org.openxplay.direlay.vehicle.*
 
-data class HomeContent(val presentation: HomePresentation, val addresses: List<String>, val code: String,
+data class HomeContent(val presentation: HomePresentation, val addresses: List<String>,
     val ip: String, val wifi: String, val deviceName: String, val automatic: Boolean,
     val carlink: Boolean, val both: Boolean, val carlinkState: Int, val pending: DialogPinProvider.Request?,
     val busy: Boolean = false, val onWifi: Boolean = false, val vehicle: VehicleView = VehicleView(),
@@ -235,10 +235,6 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 FittingAddress(address.substringAfter("://"), Modifier.weight(1f))
                 IconButton(onClick = { onCopy(address) }) { Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy)) }
             }
-        }
-        if (value.code.isNotEmpty()) {
-            Hint(stringResource(R.string.ui_pairing_code))
-            FittingAddress(formatPairingCode(value.code), Modifier.fillMaxWidth())
         }
         Hint(stringResource(R.string.ui_tls_hint))
     }

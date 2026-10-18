@@ -58,7 +58,6 @@ data class RelaySettings(
     val vehicleInformation: Boolean = false,
     val carlinkAutoReconnect: Boolean = true,
     val displayMode: DisplayMode = if (display == null) DisplayMode.AUTOMATIC else DisplayMode.FIXED,
-    val requirePairingCode: Boolean = false,
     val iphoneAddress: String? = null,
     val plugins: Boolean = false,
     val pluginsEnabled: List<String> = emptyList(),
@@ -194,7 +193,6 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             relay.getBoolean("vehicleInformation", false),
             carlinkAutoReconnect = relay.getBoolean("carlinkAutoReconnect", true),
             mode,
-            relay.getBoolean("requirePairingCode", false),
             relay.getString("iphoneAddress", null),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
@@ -244,7 +242,6 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("carplayIconSize", settings.carplayIconSize.name)
             .putBoolean("plugins", settings.plugins)
             .putString("pluginsEnabled", org.json.JSONArray(settings.pluginsEnabled).toString())
-            .putBoolean("requirePairingCode", settings.requirePairingCode)
             .putString("iphoneAddress", settings.iphoneAddress)
             .putString("displayMode", settings.displayMode.name)
             .putString("carlinkDeviceName", settings.carlinkDeviceName)

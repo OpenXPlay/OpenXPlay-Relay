@@ -94,14 +94,14 @@ class AboutResourcesTest {
         assertEquals("已关闭", localized.getString(R.string.dev_disabled))
     }
 
-    @Test fun networkAndPairingCopyExistsInAllEightLocales() {
+    @Test fun networkCopyExistsInAllEightLocales() {
         val context = RuntimeEnvironment.getApplication()
         val keys = listOf(R.string.direlay_car_hotspot, R.string.direlay_existing_wifi,
             R.string.ui_wifi_direct_recommended, R.string.option_direct_hint, R.string.option_hotspot_hint,
             R.string.option_wifi_hint, R.string.direlay_car_hotspot_hint, R.string.direlay_existing_wifi_hint,
             R.string.direlay_network_ssid, R.string.direlay_network_passphrase, R.string.settings_hotspot_name,
             R.string.settings_hotspot_password, R.string.settings_open_hotspot, R.string.ui_open_wifi,
-            R.string.ui_automatic_paused, R.string.settings_require_code, R.string.settings_require_code_hint,
+            R.string.ui_automatic_paused,
             R.string.network_iphone, R.string.network_this_phone, R.string.network_car, R.string.network_direct,
             R.string.network_wifi, R.string.network_hotspot, R.string.network_direct_description,
             R.string.network_hotspot_description, R.string.network_wifi_description,
@@ -112,7 +112,7 @@ class AboutResourcesTest {
             }
             val localized = context.createConfigurationContext(configuration)
             keys.forEach { assertTrue("$tag has empty copy for $it", localized.getString(it).isNotBlank()) }
-            if (tag != "en") for (key in listOf(R.string.ui_automatic_paused, R.string.settings_require_code,
+            if (tag != "en") for (key in listOf(R.string.ui_automatic_paused,
                 R.string.option_hotspot_hint, R.string.option_wifi_hint, R.string.network_this_phone))
                 assertNotEquals("$tag falls back to English", context.getString(key), localized.getString(key))
         }

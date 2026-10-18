@@ -16,4 +16,3 @@ fun windowLayout(widthDp: Int) = when { widthDp < 600 -> WindowLayout.COMPACT; w
 /** Height is measured from this window, never the physical display or its orientation. */
 data class HomeWindow(val layout: WindowLayout, val inlineActions: Boolean)
 fun homeWindow(widthDp: Int, heightDp: Int) = HomeWindow(windowLayout(widthDp), heightDp < 480)
-fun formatPairingCode(code: String) = code.chunked(4).joinToString(" ")

@@ -23,10 +23,10 @@ class AdminRouterTest {
     private val fake = object : RelayAdmin {
         override fun status() = AdminStatus("android", "OpenXPlay Relay", "test", "openxplay-android.local", "https://openxplay-android.local:6975/",
             emptyList(), "idle", false, false, AdminIphone(null, "none"), AdminNetwork("wifi-direct", null), "web", null, emptyList())
-        override fun settings() = AdminSettings(listOf(AdminSection("output", listOf(AdminField("requirePairingCode", "bool")))), mapOf("requirePairingCode" to false))
+        override fun settings() = AdminSettings(listOf(AdminSection("output", listOf(AdminField("autoStart", "bool")))), mapOf("autoStart" to false))
         override fun update(values: Map<String, JsonElement>): AdminUpdate {
             updated = values
-            return if (values["requirePairingCode"] is Boolean) AdminUpdate("next-start") else AdminUpdate(errors = mapOf("requirePairingCode" to "error.invalid"))
+            return if (values["autoStart"] is Boolean) AdminUpdate("next-start") else AdminUpdate(errors = mapOf("autoStart" to "error.invalid"))
         }
         override fun action(name: String): AdminResult { action = name; return AdminResult(if (name == "start") null else "error.conflict") }
         override fun phones() = listOf(AdminPhone("id", "iPhone", "phone", true, true, false))
@@ -55,13 +55,13 @@ class AdminRouterTest {
         assertEquals("android", data(call("/api/v0/status")).getString("platform"))
         assertTrue(data(call("/api/v0/settings")).has("schema"))
         assertTrue(String(call("/api/v0/phones").body).contains("iPhone"))
-        val saved = call("/api/v0/settings", "PUT", "{\"requirePairingCode\":true}")
+        val saved = call("/api/v0/settings", "PUT", "{\"autoStart\":true}")
         assertEquals(200, saved.status)
         assertEquals("next-start", data(saved).getString("applied"))
-        assertEquals(true, updated!!["requirePairingCode"])
-        val invalid = call("/api/v0/settings", "PUT", "{\"requirePairingCode\":3}")
+        assertEquals(true, updated!!["autoStart"])
+        val invalid = call("/api/v0/settings", "PUT", "{\"autoStart\":3}")
         assertEquals(422, invalid.status)
-        assertEquals("error.invalid", data(invalid).getJSONObject("errors").getString("requirePairingCode"))
+        assertEquals("error.invalid", data(invalid).getJSONObject("errors").getString("autoStart"))
     }
     @Test fun actionsAndAuthenticationGuards() {
         assertEquals(200, call("/api/v0/actions/start", "POST", "{}").status)

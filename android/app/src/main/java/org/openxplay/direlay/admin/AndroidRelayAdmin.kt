@@ -6,7 +6,6 @@ package org.openxplay.direlay.admin
 import android.content.Context
 import org.openxplay.direlay.bluetooth.IphoneSelection
 import org.openxplay.direlay.relay.RelayRuntime
-import org.openxplay.direlay.relay.receiverUrl
 import org.openxplay.direlay.ui.SettingsNotice
 import org.openxplay.direlay.ui.settingsNotice
 import org.openxplay.stream.core.VideoCodecDecision
@@ -53,7 +52,7 @@ class AndroidRelayAdmin(private val context: Context, private val runtime: Relay
         val port = settings.webPort ?: 8443
         val receivers = if (!settings.carlinkOutput || settings.bothOutputs)
             (listOf(host) + runtime.carIpv4.sorted()).map {
-                receiverUrl("https://$it:$port/", settings.requirePairingCode, runtime.pairingCode)
+                "https://$it:$port/"
             } else emptyList()
         return AdminStatus("android", "OpenXPlay Relay", context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
             host, "https://$host:6975/", receivers, state, running, runtime.autoStartGate.paused,
@@ -107,7 +106,6 @@ class AndroidRelayAdmin(private val context: Context, private val runtime: Relay
         } catch (_: IllegalArgumentException) { AdminUpdate(errors = values.keys.associateWith { "error.invalid" }) }
     }
     override fun action(name: String): AdminResult = when (name) {
-        "regenerate-pairing-code" -> { runtime.regeneratePairingCode(); AdminResult() }
         "pair-iphone" -> pairing.open()
         // Android has no public API to end Bluetooth visibility early.
         "cancel-pairing" -> AdminResult("error.action")

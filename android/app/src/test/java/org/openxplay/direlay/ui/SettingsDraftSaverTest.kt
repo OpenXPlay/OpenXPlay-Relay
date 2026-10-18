@@ -21,15 +21,15 @@ class SettingsDraftSaverTest {
         30, false, true, false, null)
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
-    @Test fun everyNetworkChoiceAndPairingFlagRoundTripWithCredentials() {
-        for (choice in WirelessNetworkChoice.entries) for (required in listOf(false, true)) {
-            val value = base.copy(iphoneAddress = if (required) "00:11:22:33:A9:30" else null, requirePairingCode = required, wirelessNetwork = WirelessNetworkSettings(
+    @Test fun everyNetworkChoiceAndPhoneSelectionRoundTripWithCredentials() {
+        for (choice in WirelessNetworkChoice.entries) for (selected in listOf(false, true)) {
+            val value = base.copy(carlinkAutoReconnect = selected, iphoneAddress = if (selected) "00:11:22:33:A9:30" else null, wirelessNetwork = WirelessNetworkSettings(
                 choice = choice, manualSsid = "Phone", manualPassphrase = "12345678",
                 sharedWifiNetworks = listOf(SharedWifiNetwork("Router", "abcdefgh"), SharedWifiNetwork("Car", ""))))
             assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
         }
     }
-    @Test fun oldCarHotspotNameAndBundlesWithoutPairingFlagMigrate() {
+    @Test fun oldCarHotspotNameAndShortBundlesMigrate() {
         val bundle = bundle(base)
         val text = requireNotNull(bundle.getStringArrayList("text"))
         text[8] = "CAR_HOTSPOT"
@@ -37,7 +37,15 @@ class SettingsDraftSaverTest {
         bundle.putBooleanArray("flags", requireNotNull(bundle.getBooleanArray("flags")).copyOf(7))
         val restored = requireNotNull(relaySettingsSaver(base).restore(bundle))
         assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, restored.wirelessNetwork.choice)
-        assertFalse(restored.requirePairingCode)
+        assertTrue(restored.carlinkAutoReconnect)
+    }
+    @Test fun oldDraftFlagsKeepCarlinkReconnectAndIgnoreRemovedSlot() {
+        for (removed in listOf(false, true)) for (reconnect in listOf(false, true)) {
+            val bundle = bundle(base)
+            bundle.remove("carlinkAutoReconnect")
+            bundle.putBooleanArray("flags", requireNotNull(bundle.getBooleanArray("flags")) + booleanArrayOf(removed, reconnect))
+            assertEquals(base.copy(carlinkAutoReconnect = reconnect), relaySettingsSaver(base).restore(bundle))
+        }
     }
     @Test fun oldSingleNetworkDraftMigrates() {
         val bundle = bundle(base)

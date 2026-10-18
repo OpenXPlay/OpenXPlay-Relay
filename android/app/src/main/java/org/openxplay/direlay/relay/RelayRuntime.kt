@@ -30,7 +30,6 @@ import org.openxplay.stream.web.WebOutputConfig
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import org.openxplay.direlay.pairing.PairingCodeStore
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.openxplay.direlay.bluetooth.AndroidBondedDevices
@@ -170,7 +169,6 @@ class RelayRuntime(private val context: Context,
     @Volatile var microphoneSource = MicrophoneSource.HEAD_UNIT
         private set
     @Volatile private var configuredWebPort: Int? = null
-    @Volatile private var requirePairingCode = false
     @Volatile private var automaticEnabled: Boolean? = null
     @Volatile private var webEnabled = true
     private var networkPermissionAvailable = hasNetworkPermission()
@@ -281,12 +279,6 @@ class RelayRuntime(private val context: Context,
     val identityStore = IdentityStore(context.noBackupFilesDir) {
         AirPlayPersistence.saveMfiTarget(context, MfiTarget.LOCAL)
     }
-    private val pairingStore = PairingCodeStore(context.noBackupFilesDir)
-    @Volatile var pairingCode: String = pairingStore.code()
-        private set
-    fun regeneratePairingCode() {
-        setup.execute { pairingCode = pairingStore.regenerate(); restartWeb() }
-    }
     val tlsStore = TlsStore(context.noBackupFilesDir) { restartWeb(); adminService.restartTls() }
     private val sessionController = RelaySessionActions(context.applicationContext, this)
     val sessionActions: RelayActions get() = sessionController
@@ -307,7 +299,6 @@ class RelayRuntime(private val context: Context,
             microphoneSource = initial.microphoneSource
             localPreview = initial.localPreview
             playCarPlayAudio = initial.playCarPlayAudio
-            requirePairingCode = initial.requirePairingCode
             automaticEnabled = initial.autoStartWhenReady
             configuredWebPort = initial.webPort
             webEnabled = !initial.carlinkOutput || initial.bothOutputs
@@ -417,9 +408,7 @@ class RelayRuntime(private val context: Context,
         val port = settings.webPort
         val networkGranted = hasNetworkPermission()
         val enabled = !settings.carlinkOutput || settings.bothOutputs
-        if (pluginsChanged || port != configuredWebPort || networkGranted != networkPermissionAvailable || enabled != webEnabled ||
-            settings.requirePairingCode != requirePairingCode) {
-            requirePairingCode = settings.requirePairingCode
+        if (pluginsChanged || port != configuredWebPort || networkGranted != networkPermissionAvailable || enabled != webEnabled) {
             webEnabled = enabled
             configuredWebPort = port
             networkPermissionAvailable = networkGranted
@@ -600,17 +589,14 @@ class RelayRuntime(private val context: Context,
             if (!webEnabled) { serverState = "Web receiver disabled"; return }
             val ssl = tlsStore.webContext(ipv4Addresses(), adminHosts())
             val root = installReceiver()
-            val token = pairingCode
             val port = configuredWebPort ?: TlsStore.port(true)
-            val requireCode = requirePairingCode
-            val verifier = webTokenVerifier(requireCode, token)
             val settings = settingsStore.awaitSnapshot()
             val plugins = if (!settings.plugins) null else runCatching {
                 org.openxplay.direlay.plugins.RelayPlugins.configuration(settings, bundledPlugins.root(), context.filesDir)
             }.onFailure { Log.w("OpenXPlay Relay", "Plugin packages unavailable", it) }.getOrNull()
             val output = WebOutput(WebOutputConfig(
                 bindAddress = "0.0.0.0", port = port, sslContext = ssl,
-                staticAssetRoot = root.toPath(), tokenVerifier = verifier, plugins = plugins, displaySettings = settingsStore,
+                staticAssetRoot = root.toPath(), plugins = plugins, displaySettings = settingsStore,
                 sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay",
                 relay = org.openxplay.stream.web.RelayInfo("Android", appVersion()),
             ))
@@ -627,7 +613,7 @@ class RelayRuntime(private val context: Context,
             urlRefresh = setup.scheduleWithFixedDelay({
                 try {
                     val addresses = ipv4Addresses()
-                    receiverUrls = (listOf("localhost") + addresses).map { receiverUrl("https://$it:$port/", requireCode, token) }
+                    receiverUrls = (listOf("localhost") + addresses).map { "https://$it:$port/" }
                 }
                 catch (_: Exception) { /* Retain the last network snapshot. */ }
             }, 0, 5, TimeUnit.SECONDS)

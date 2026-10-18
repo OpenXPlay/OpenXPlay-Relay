@@ -19,8 +19,6 @@
     <string name="settings_open_hotspot">Abrir ajustes del punto de acceso</string>
     <string name="ui_open_wifi">Abrir ajustes de Wi-Fi</string>
     <string name="ui_automatic_paused">Detenido. El inicio automático se reanuda al tocar Iniciar.</string>
-    <string name="settings_require_code">Exigir código de enlace</string>
-    <string name="settings_require_code_hint">El navegador del coche debe introducir el código que aparece en este teléfono. Actívalo en redes que no sean de confianza.</string>
     <string name="network_iphone">iPhone</string>
     <string name="network_this_phone">Este teléfono</string>
     <string name="network_car">Coche</string>

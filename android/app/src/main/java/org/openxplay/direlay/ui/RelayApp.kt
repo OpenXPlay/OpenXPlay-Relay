@@ -178,7 +178,7 @@ import org.openxplay.direlay.settings.*
                                 }
                             route == "about" -> AboutScreen(::back)
                             route == "developer" -> if (developer) DeveloperScreen(initial, diagnostics, ::back, save, ::copy,
-                                onReconnect, runtime::regeneratePairingCode, importMaterial, removeMaterial,
+                                onReconnect, importMaterial, removeMaterial,
                                 runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless, runtime)
                                 else LaunchedEffect(Unit) { back() }
                             route == "vehicle" || route.startsWith("snapshot:") -> {

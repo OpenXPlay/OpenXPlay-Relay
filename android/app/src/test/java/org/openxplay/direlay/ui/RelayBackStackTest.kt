@@ -35,8 +35,4 @@ class RelayBackStackTest {
         assertEquals(HomeWindow(WindowLayout.MEDIUM, true), homeWindow(820, 360))
         assertEquals(HomeWindow(WindowLayout.COMPACT, true), homeWindow(360, 360))
     }
-    @Test fun pairingCodeHasOneMonospaceCharacterBetweenGroupsAndKeepsLeadingZero() {
-        assertEquals("1234 5678", formatPairingCode("12345678"))
-        assertEquals(9, formatPairingCode("12345678").length)
-    }
 }
