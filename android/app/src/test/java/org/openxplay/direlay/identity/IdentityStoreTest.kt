@@ -38,6 +38,23 @@ class IdentityStoreTest {
         assertTrue(root.listFiles().orEmpty().isEmpty())
     }
 
+    @Test fun injectedValidatorRejectsBeforeReplacingInstalledIdentity() {
+        val root = temporary.newFolder()
+        val identity = SyntheticIdentity()
+        val key = identity.pair.private.encoded
+        val certificate = identity.pkcs7
+        var selected = 0
+        val store = IdentityStore(root, validator = { staging ->
+            require(File(staging, "identity.pk8").readBytes().contentEquals(key))
+            require(File(staging, "certificate.p7b").readBytes().contentEquals(certificate))
+        }) { selected++ }
+        store.importFrom(key, certificate)
+        assertThrows(IllegalArgumentException::class.java) { store.importFrom(key, byteArrayOf(1)) }
+        assertArrayEquals(certificate, File(root, "offline-mfi/certificate.p7b").readBytes())
+        assertEquals(MaterialStatus.Installed, store.status())
+        assertEquals(1, selected)
+    }
+
     @Test fun rejectedImportsPreserveExistingIdentity() {
         val root = temporary.newFolder()
         var selected = 0

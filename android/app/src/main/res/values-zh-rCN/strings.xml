@@ -4,13 +4,13 @@
 <resources>
     <string name="direlay_app_name">OpenXPlay Relay</string>
     <string name="direlay_identity">CarPlay 身份</string>
-    <string name="direlay_identity_hint">先选择 identity.pk8，再选择 certificate.p7b。如果替换了正在使用的身份，请重启 OpenXPlay Relay。</string>
+    <string name="direlay_identity_hint">选择 identity.pk8 和 certificate.p7b，可同时选择或先后选择，顺序不限；也可选择包含它们的 ZIP。</string>
     <string name="direlay_import">导入</string>
     <string name="direlay_remove">移除</string>
     <string name="direlay_installed">已安装</string>
     <string name="direlay_missing">缺失</string>
     <string name="direlay_invalid">无效：%1$s</string>
-    <string name="direlay_choose_key">选择 identity.pk8（PKCS8 私钥）</string>
+    <string name="direlay_choose_key">选择身份文件或 ZIP</string>
     <string name="direlay_choose_identity_certificate">选择 certificate.p7b（配件证书）</string>
     <string name="direlay_choose_tls">选择 PKCS12（.p12）文件</string>
     <string name="direlay_tls_password">PKCS12 密码</string>
@@ -401,7 +401,7 @@
     <string name="setup_check_permissions">允许所需权限</string>
     <string name="setup_check_permissions_hint">只申请当前模式需要的权限，例如蓝牙、附近设备和麦克风。</string>
     <string name="setup_check_identity">导入 CarPlay 身份</string>
-    <string name="setup_check_identity_hint">依次选择 identity.pk8 和 certificate.p7b。</string>
+    <string name="setup_check_identity_hint">选择 identity.pk8 和 certificate.p7b，可同时选择或先后选择，顺序不限；也可选择包含它们的 ZIP。</string>
     <string name="setup_check_settings">检查设置</string>
     <string name="setup_check_shared_wifi">保存共享 Wi-Fi</string>
     <string name="setup_check_iphone">配对 iPhone</string>
@@ -506,4 +506,18 @@
     <string name="car_share_title">我的车机屏幕数据</string>
     <string name="car_share_identity">品牌：%1$s · 型号：%2$s</string>
     <string name="car_copied">已复制屏幕数据</string>
+    <string name="identity_choose_other">选择另一个文件</string>
+    <string name="identity_follow_key">已识别私钥。请选择证书文件（certificate.p7b）以完成导入。</string>
+    <string name="identity_follow_certificate">已识别证书。请选择私钥文件（identity.pk8）以完成导入。</string>
+    <string name="identity_follow_unknown">已选择一个文件，但无法识别类型。请选择另一个身份文件以验证配对。</string>
+    <string name="identity_error_selection">请选择一个 ZIP，或一到两个普通文件。补充选择时，请只选择缺少的文件。</string>
+    <string name="identity_error_same_kind">两个文件类型相同。请选择一个私钥和一个证书。</string>
+    <string name="identity_error_pair">身份无效：需要匹配的 P-256 PKCS#8 私钥与配件证书。原有身份已保留。</string>
+    <string name="identity_error_missing">ZIP 中没有 identity.pk8 或 certificate.p7b，也没有唯一的 .pk8 或 .p7b 文件。</string>
+    <string name="identity_error_duplicate_key">ZIP 中有重复的私钥文件名或多个 .pk8 候选文件。</string>
+    <string name="identity_error_duplicate_certificate">ZIP 中有重复的证书文件名或多个 .p7b 候选文件。</string>
+    <string name="identity_error_encrypted">ZIP 包含加密条目。请使用未加密的 ZIP。</string>
+    <string name="identity_error_size">每个身份文件不能超过 16 KiB。</string>
+    <string name="identity_error_limit">ZIP 超出扫描限制（20,000 个条目或 512 MiB）。</string>
+    <string name="identity_error_zip">无法读取 ZIP。请检查压缩包是否完整有效。</string>
 </resources>

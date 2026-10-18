@@ -24,7 +24,10 @@ import android.net.Uri
 import android.text.InputType
 import android.widget.EditText
 import org.openxplay.direlay.storage.MaterialStatus
-import org.openxplay.direlay.identity.IdentityStore
+import org.openxplay.direlay.identity.IdentityFiles
+import org.openxplay.direlay.identity.IdentityKind
+import org.openxplay.direlay.identity.IdentityFileException
+import org.openxplay.direlay.identity.IdentityFileProblem
 import org.openxplay.direlay.tls.TlsStore
 import java.util.concurrent.Executors
 import android.content.Intent
@@ -36,7 +39,8 @@ import org.openxplay.stream.core.SessionPhase
 
 class RelayActivity : androidx.activity.ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
-    private var identityUri: Uri? = null
+    private val identityImport by lazy { androidx.lifecycle.ViewModelProvider(this)[IdentityImportState::class.java] }
+    private var identityDialog: AlertDialog? = null
     private val imports = Executors.newSingleThreadExecutor()
     private val runtime get() = (application as DiRelayApplication).runtime
     private val settingsStore get() = runtime.settingsStore
@@ -65,13 +69,18 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             refreshNetwork()
             updateReadiness()
             runPairingPrompt()
+            showIdentityFollowUp()
             handler.postDelayed(this, 500L)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        identityUri = savedInstanceState?.getString("identityUri")?.let(Uri::parse)
+        if (identityImport.uri == null) {
+            identityImport.uri = savedInstanceState?.getString("identityUri")?.let(Uri::parse)
+            identityImport.kind = savedInstanceState?.getString("identityKind")?.let(IdentityKind::valueOf) ?: IdentityKind.UNKNOWN
+            identityImport.awaitingPicker = savedInstanceState?.getBoolean("identityPicker") ?: false
+        }
         bootAutoStart = savedInstanceState?.getBoolean("bootAutoStart")
             ?: intent.getBooleanExtra(EXTRA_AUTO_START, false)
         requestingPermissions = savedInstanceState?.getBoolean("requestingPermissions") ?: false
@@ -321,27 +330,107 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     }
 
     private fun openDocument(request: Int, title: Int) {
+        if ((request == IDENTITY_KEY || request == IDENTITY_CERTIFICATE) &&
+            (identityImport.busy || identityImport.awaitingPicker)) return
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
             putExtra(Intent.EXTRA_TITLE, getString(title))
+            if (request == IDENTITY_KEY || request == IDENTITY_CERTIFICATE) {
+                if (request == IDENTITY_KEY) identityImport.uri = null
+                identityImport.awaitingPicker = true
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
         }, request)
     }
 
     private fun read(uri: Uri, limit: Int): ByteArray =
-        (contentResolver.openInputStream(uri) ?: error(getString(R.string.direlay_file_unreadable))).use {
-            val output = java.io.ByteArrayOutputStream()
-            val buffer = ByteArray(4096)
-            while (output.size() <= limit) {
-                val count = it.read(buffer, 0, minOf(buffer.size, limit + 1 - output.size()))
-                if (count < 0) break
-                output.write(buffer, 0, count)
-                if (output.size() > limit) break
-            }
-            val bytes = output.toByteArray()
-            require(bytes.size <= limit) { getString(R.string.direlay_file_too_large, limit) }
-            bytes
+        (contentResolver.openInputStream(uri) ?: error(getString(R.string.direlay_file_unreadable))).use { input ->
+            val buffer = ByteArray(limit + 1)
+            try {
+                var size = 0
+                while (size < buffer.size) {
+                    val count = input.read(buffer, size, buffer.size - size)
+                    if (count < 0) break
+                    size += count
+                }
+                require(size <= limit) { getString(R.string.direlay_file_too_large, limit) }
+                buffer.copyOf(size)
+            } finally { buffer.fill(0) }
         }
+
+    private fun importIdentity(uris: List<Uri>) {
+        val state = identityImport
+        val pending = state.uri
+        state.awaitingPicker = false
+        state.busy = true
+        // Only application-owned objects and the retained state are used by the worker after rotation.
+        val resolver = applicationContext.contentResolver
+        val store = runtime.identityStore
+        imports.execute {
+            val selected = mutableListOf<IdentityFiles>()
+            try {
+                if (uris.isEmpty() || uris.size + (if (pending != null) 1 else 0) > 2)
+                    throw IdentityFileException(IdentityFileProblem.SELECTION)
+                for (uri in listOfNotNull(pending) + uris) {
+                    selected.add(IdentityFiles.read(resolver.openInputStream(uri) ?: error("Unreadable identity file")))
+                }
+                val missing = IdentityFiles.select(selected, followUp = pending != null, store::importFrom)
+                if (missing != null) {
+                    state.uri = uris.single()
+                    state.kind = missing
+                } else {
+                    state.uri = null
+                    state.completed = true
+                }
+            } catch (failure: Exception) {
+                state.uri = null
+                state.problem = (failure as? IdentityFileException)?.problem ?: IdentityFileProblem.INVALID_PAIR
+            } finally { selected.forEach { it.close() }; state.busy = false }
+        }
+    }
+
+    private fun showIdentityFollowUp() {
+        val state = identityImport
+        if (state.busy || identityDialog != null || !resumed) return
+        if (state.completed) {
+            state.completed = false
+            refreshMaterialStatus()
+            if (importOnly) finish()
+            return
+        }
+        val problem = state.problem
+        if (problem != null) {
+            state.problem = null
+            val message = when (problem) {
+                IdentityFileProblem.SELECTION -> R.string.identity_error_selection
+                IdentityFileProblem.SAME_KIND -> R.string.identity_error_same_kind
+                IdentityFileProblem.INVALID_PAIR -> R.string.identity_error_pair
+                IdentityFileProblem.EMPTY_ARCHIVE -> R.string.identity_error_missing
+                IdentityFileProblem.DUPLICATE_KEY -> R.string.identity_error_duplicate_key
+                IdentityFileProblem.DUPLICATE_CERTIFICATE -> R.string.identity_error_duplicate_certificate
+                IdentityFileProblem.ENCRYPTED -> R.string.identity_error_encrypted
+                IdentityFileProblem.TOO_LARGE -> R.string.identity_error_size
+                IdentityFileProblem.ARCHIVE_LIMIT -> R.string.identity_error_limit
+                IdentityFileProblem.BAD_ARCHIVE -> R.string.identity_error_zip
+            }
+            identityDialog = AlertDialog.Builder(this).setTitle(R.string.direlay_import_error).setMessage(message)
+                .setPositiveButton(android.R.string.ok) { _, _ -> if (importOnly) finish() }
+                .setOnCancelListener { if (importOnly) finish() }.create()
+        } else if (state.uri != null && !state.awaitingPicker) {
+            val message = when (state.kind) {
+                IdentityKind.KEY -> R.string.identity_follow_key
+                IdentityKind.CERTIFICATE -> R.string.identity_follow_certificate
+                IdentityKind.UNKNOWN -> R.string.identity_follow_unknown
+            }
+            fun cancel() { state.uri = null; if (importOnly) finish() }
+            identityDialog = AlertDialog.Builder(this).setTitle(R.string.direlay_identity).setMessage(message)
+                .setPositiveButton(R.string.identity_choose_other) { _, _ -> openDocument(IDENTITY_CERTIFICATE, R.string.identity_choose_other) }
+                .setNegativeButton(android.R.string.cancel) { _, _ -> cancel() }
+                .setOnCancelListener { cancel() }.create()
+        }
+        identityDialog?.apply { setOnDismissListener { identityDialog = null }; show() }
+    }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -355,22 +444,15 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             updateReadiness()
             return
         }
-        if (resultCode != RESULT_OK) { identityUri = null; if (importOnly) finish(); return }
+        if (resultCode != RESULT_OK) { identityImport.uri = null; identityImport.awaitingPicker = false; if (importOnly) finish(); return }
+        if (requestCode == IDENTITY_KEY || requestCode == IDENTITY_CERTIFICATE) {
+            val uris = data?.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } }
+                ?: listOfNotNull(data?.data)
+            importIdentity(uris)
+            return
+        }
         val uri = data?.data ?: return
         when (requestCode) {
-            IDENTITY_KEY -> {
-                identityUri = uri
-                openDocument(IDENTITY_CERTIFICATE, R.string.direlay_choose_identity_certificate)
-            }
-            IDENTITY_CERTIFICATE -> {
-                val key = identityUri ?: return
-                identityUri = null
-                work(finishAfter = importOnly) {
-                    val bytes = read(key, IdentityStore.MAX_FILE_BYTES)
-                    try { runtime.identityStore.importFrom(bytes, read(uri, IdentityStore.MAX_FILE_BYTES)) }
-                    finally { bytes.fill(0) }
-                }
-            }
             TLS_FILE -> {
                 val password = EditText(this).apply {
                     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -430,7 +512,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        identityUri?.let { outState.putString("identityUri", it.toString()) }
+        identityImport.uri?.let { outState.putString("identityUri", it.toString()) }
+        outState.putString("identityKind", identityImport.kind.name)
+        outState.putBoolean("identityPicker", identityImport.awaitingPicker)
         outState.putBoolean("bootAutoStart", bootAutoStart)
         outState.putBoolean("requestingPermissions", requestingPermissions)
         outState.putBoolean("pairingInFlight", pairingInFlight)
@@ -474,4 +558,14 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         handler.removeCallbacks(refreshStatus)
         super.onPause()
     }
+}
+
+/** Retains URI references and worker outcomes, never secret bytes, across activity recreation. */
+class IdentityImportState : androidx.lifecycle.ViewModel() {
+    @Volatile var uri: Uri? = null
+    @Volatile var kind = IdentityKind.UNKNOWN
+    @Volatile var awaitingPicker = false
+    @Volatile var busy = false
+    @Volatile var completed = false
+    @Volatile var problem: IdentityFileProblem? = null
 }

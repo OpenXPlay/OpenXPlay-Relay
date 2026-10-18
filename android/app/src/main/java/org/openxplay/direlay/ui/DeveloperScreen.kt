@@ -136,6 +136,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         OutlinedButton(onClick = { import(false) }) { Text(stringResource(R.string.dev_import_tls)) }
         TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.dev_remove_tls)) }
         SmallHeading(stringResource(R.string.direlay_identity))
+        Hint(stringResource(R.string.direlay_identity_hint))
         KeyValue(stringResource(R.string.direlay_identity), stringResource(view.identity))
         OutlinedButton(onClick = { import(true) }) { Text(stringResource(R.string.direlay_manage_identity)) }
         TextButton(onClick = { confirm = true }) { Text(stringResource(R.string.dev_remove_identity)) }

@@ -8,10 +8,13 @@ import org.openxplay.direlay.storage.MaterialStatus
 import org.openxplay.direlay.storage.PrivateStore
 import java.io.File
 
-class IdentityStore(noBackupFilesDir: File, private val selectLocal: () -> Unit = {}) {
+class IdentityStore(noBackupFilesDir: File,
+    private val validator: (File) -> Unit = { LocalMfiAuthenticationClient.load(it); Unit },
+    private val selectLocal: () -> Unit = {},
+) {
     private val store = PrivateStore(noBackupFilesDir, LocalMfiAuthenticationClient.DIRECTORY)
 
-    @Synchronized fun status(): MaterialStatus = store.status { LocalMfiAuthenticationClient.load(it) }
+    @Synchronized fun status(): MaterialStatus = store.status(validator)
 
     @Synchronized fun importFrom(identity: ByteArray, certificate: ByteArray) {
         require(identity.size in 1..MAX_FILE_BYTES && certificate.size in 1..MAX_FILE_BYTES) {
@@ -20,7 +23,7 @@ class IdentityStore(noBackupFilesDir: File, private val selectLocal: () -> Unit 
         store.replace { staging ->
             PrivateStore.write(staging, "identity.pk8", identity)
             PrivateStore.write(staging, "certificate.p7b", certificate)
-            try { LocalMfiAuthenticationClient.load(staging) }
+            try { validator(staging) }
             catch (_: Exception) { throw IllegalArgumentException("Invalid identity: expected a matching P-256 PKCS8 key and accessory certificate") }
         }
         selectLocal()

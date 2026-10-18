@@ -216,6 +216,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 lastItem?.let {
                     Column {
                         Text(stringResource(it.text))
+                        if (it.action == SetupAction.IDENTITY) Hint(stringResource(R.string.direlay_identity_hint))
                         if (it.text == R.string.iphone_pair) Hint(stringResource(R.string.ui_iphone_pairing, value.deviceName))
                         TextButton(onClick = { onSetup(it.action) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(it.actionLabel)) }
                     }

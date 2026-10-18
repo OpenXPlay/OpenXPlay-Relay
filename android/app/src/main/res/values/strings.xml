@@ -7,14 +7,14 @@
     <string name="direlay_attribution">Powered by OpenXPlay.</string>
     <string name="direlay_project_url" translatable="false">https://github.com/OpenXPlay/OpenXPlay-Relay</string>
     <string name="direlay_identity">CarPlay identity</string>
-    <string name="direlay_identity_hint">Select identity.pk8, then certificate.p7b. Restart OpenXPlay Relay after replacing an identity that was already in use.</string>
+    <string name="direlay_identity_hint">Select identity.pk8 and certificate.p7b together or one after the other, in any order, or a ZIP containing them.</string>
     <string name="direlay_tls">TLS certificate</string>
     <string name="direlay_import">Import</string>
     <string name="direlay_remove">Remove</string>
     <string name="direlay_installed">Installed</string>
     <string name="direlay_missing">Missing</string>
     <string name="direlay_invalid">Invalid: %1$s</string>
-    <string name="direlay_choose_key">Select identity.pk8 (PKCS8 private key)</string>
+    <string name="direlay_choose_key">Select identity files or a ZIP</string>
     <string name="direlay_choose_identity_certificate">Select certificate.p7b (accessory certificate)</string>
     <string name="direlay_choose_tls">Select a PKCS12 (.p12) file</string>
     <string name="direlay_tls_password">PKCS12 password</string>
@@ -407,7 +407,7 @@
     <string name="setup_check_permissions">Allow permissions</string>
     <string name="setup_check_permissions_hint">Only what the chosen mode needs, such as Bluetooth, nearby devices and the microphone.</string>
     <string name="setup_check_identity">Import the CarPlay identity</string>
-    <string name="setup_check_identity_hint">Choose identity.pk8, then certificate.p7b.</string>
+    <string name="setup_check_identity_hint">Select identity.pk8 and certificate.p7b together or one after the other, in any order, or a ZIP containing them.</string>
     <string name="setup_check_settings">Check the settings</string>
     <string name="setup_check_shared_wifi">Save the shared Wi-Fi</string>
     <string name="setup_check_iphone">Pair the iPhone</string>
@@ -512,4 +512,18 @@
     <string name="car_share_title">My head-unit screen data</string>
     <string name="car_share_identity">Brand: %1$s · Model: %2$s</string>
     <string name="car_copied">Screen data copied</string>
+    <string name="identity_choose_other">Choose the other file</string>
+    <string name="identity_follow_key">Private key recognized. Choose the certificate file (certificate.p7b) to complete the import.</string>
+    <string name="identity_follow_certificate">Certificate recognized. Choose the private key file (identity.pk8) to complete the import.</string>
+    <string name="identity_follow_unknown">One file selected; its type could not be recognized. Choose the other identity file to validate the pair.</string>
+    <string name="identity_error_selection">Select one ZIP, or one or two plain files. For a follow-up, select just the missing file.</string>
+    <string name="identity_error_same_kind">Both files have the same type. Select one private key and one certificate.</string>
+    <string name="identity_error_pair">Invalid identity: a matching P-256 PKCS#8 private key and accessory certificate are required. The existing identity was kept.</string>
+    <string name="identity_error_missing">The ZIP contains neither identity.pk8 nor certificate.p7b, and no unique .pk8 or .p7b file.</string>
+    <string name="identity_error_duplicate_key">The ZIP contains duplicate private key names or multiple .pk8 candidates.</string>
+    <string name="identity_error_duplicate_certificate">The ZIP contains duplicate certificate names or multiple .p7b candidates.</string>
+    <string name="identity_error_encrypted">The ZIP contains an encrypted entry. Use an unencrypted ZIP.</string>
+    <string name="identity_error_size">Each identity file must be at most 16 KiB.</string>
+    <string name="identity_error_limit">The ZIP exceeds the scan limit (20,000 entries or 512 MiB).</string>
+    <string name="identity_error_zip">The ZIP could not be read. Check that the archive is complete and valid.</string>
 </resources>
