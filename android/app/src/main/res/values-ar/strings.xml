@@ -86,6 +86,6 @@
     <string name="picture_standard">قياسي</string>
     <string name="picture_large">كبير</string>
     <string name="picture_window">النافذة</string>
-    <string name="ui_browser_landing">أو أدخل http://%1$s:8080 واضغط على الزر</string>
+    <string name="ui_browser_https_hint">تنبيه: يبدأ العنوان بـ https:// وليس http://.</string>
     <string name="ui_iphone_name">iPhone: %1$s</string>
 </resources>

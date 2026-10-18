@@ -78,12 +78,5 @@ class HostOverlayPresentationTest {
         assertNull(hostOverlayUnlessPreview(true) { error("Preview must not create UI") })
         assertEquals("overlay", hostOverlayUnlessPreview(false) { "overlay" })
     }
-    @Test fun landingAddressUsesTheFirstReachableTlsHostWithoutItsPort() {
-        assertEquals("192.168.1.2", landingHost(listOf("https://192.168.1.2:8443/", "https://10.0.0.2:8443/")))
-        assertEquals("[2001:db8::1]", landingHost(listOf("https://[2001:db8::1]:8443/")))
-        assertNull(landingHost(emptyList()))
-        assertNull(landingHost(listOf("http://192.168.1.2:8080/")))
-        assertNull(landingHost(listOf("bad address")))
-    }
 
 }

@@ -231,13 +231,13 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
         Text(stringResource(R.string.ui_browser_instruction))
         if (value.addresses.isEmpty()) Hint(stringResource(R.string.ui_address_waiting))
         value.addresses.forEach { address ->
-            Hint("https://")
+            // The scheme stays in the large address: typed without it, browsers try http:// and fail.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                FittingAddress(address.substringAfter("://"), Modifier.weight(1f))
+                FittingAddress(address.removeSuffix("/"), Modifier.weight(1f))
                 IconButton(onClick = { onCopy(address) }) { Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy)) }
             }
         }
-        landingHost(value.addresses)?.let { Hint(stringResource(R.string.ui_browser_landing, it)) }
+        if (value.addresses.isNotEmpty()) Hint(stringResource(R.string.ui_browser_https_hint))
         Hint(stringResource(R.string.ui_tls_hint))
     }
 }

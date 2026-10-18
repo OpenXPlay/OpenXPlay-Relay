@@ -86,6 +86,6 @@
     <string name="picture_standard">Стандартний</string>
     <string name="picture_large">Великий</string>
     <string name="picture_window">Вікно</string>
-    <string name="ui_browser_landing">Або введіть http://%1$s:8080 і натисніть кнопку</string>
+    <string name="ui_browser_https_hint">Увага: адреса починається з https://, а не з http://.</string>
     <string name="ui_iphone_name">iPhone: %1$s</string>
 </resources>

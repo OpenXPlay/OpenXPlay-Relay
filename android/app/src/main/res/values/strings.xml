@@ -489,6 +489,6 @@
     <string name="picture_standard">Standard</string>
     <string name="picture_large">Large</string>
     <string name="picture_window">Window</string>
-    <string name="ui_browser_landing">Or enter http://%1$s:8080 and tap the button</string>
+    <string name="ui_browser_https_hint">Note: the address starts with https://, not http://.</string>
     <string name="ui_iphone_name">iPhone: %1$s</string>
 </resources>

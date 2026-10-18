@@ -595,7 +595,7 @@ class RelayRuntime(private val context: Context,
                 org.openxplay.direlay.plugins.RelayPlugins.configuration(settings, bundledPlugins.root(), context.filesDir)
             }.onFailure { Log.w("OpenXPlay Relay", "Plugin packages unavailable", it) }.getOrNull()
             val output = WebOutput(WebOutputConfig(
-                bindAddress = "0.0.0.0", port = port, sslContext = ssl, landingPort = if (ssl != null) 8080 else null,
+                bindAddress = "0.0.0.0", port = port, sslContext = ssl,
                 staticAssetRoot = root.toPath(), plugins = plugins, displaySettings = settingsStore,
                 sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay",
                 relay = org.openxplay.stream.web.RelayInfo("Android", appVersion()),

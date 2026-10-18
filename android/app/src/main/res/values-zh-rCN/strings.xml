@@ -460,6 +460,6 @@
     <string name="picture_standard">标准</string>
     <string name="picture_large">大</string>
     <string name="picture_window">窗口</string>
-    <string name="ui_browser_landing">也可以输入 http://%1$s:8080，再点按钮打开</string>
+    <string name="ui_browser_https_hint">注意：地址以 https:// 开头，不是 http://。</string>
     <string name="ui_iphone_name">iPhone：%1$s</string>
 </resources>

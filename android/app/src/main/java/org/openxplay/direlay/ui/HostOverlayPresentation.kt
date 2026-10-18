@@ -51,9 +51,3 @@ fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
 /** Keep the view factory lazy: preview must not create a covering view or start its polling. */
 internal fun <T> hostOverlayUnlessPreview(localPreview: Boolean, create: () -> T): T? =
     if (localPreview) null else create()
-
-/** The first reachable TLS receiver address also serves the plain HTTP landing page. */
-fun landingHost(urls: List<String>): String? = urls.firstOrNull()?.let { address ->
-    val uri = runCatching { java.net.URI(address) }.getOrNull() ?: return@let null
-    uri.host?.takeIf { uri.scheme == "https" }
-}

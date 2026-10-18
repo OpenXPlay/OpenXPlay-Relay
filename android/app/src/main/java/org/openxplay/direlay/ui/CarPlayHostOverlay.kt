@@ -106,7 +106,7 @@ private fun RelayRuntime.overlaySnapshot(): HostOverlaySnapshot? {
                     if (output == R.string.ui_browser) {
                         if (value.receiverUrls.isEmpty()) Hint(stringResource(R.string.ui_no_network))
                         else value.receiverUrls.forEach { Text(it) }
-                        landingHost(value.receiverUrls)?.let { Hint(stringResource(R.string.ui_browser_landing, it)) }
+                        if (value.receiverUrls.isNotEmpty()) Hint(stringResource(R.string.ui_browser_https_hint))
                     }
                 }
             }
