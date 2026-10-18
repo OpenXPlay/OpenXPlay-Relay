@@ -24,8 +24,8 @@ android {
         minSdk = 26
         targetSdk = 37
         // Release builds derive both from the tag: -Prelay.versionCode=… -Prelay.versionName=…
-        versionCode = providers.gradleProperty("relay.versionCode").orNull?.toInt() ?: 1001
-        versionName = providers.gradleProperty("relay.versionName").orNull ?: "0.1.1"
+        versionCode = providers.gradleProperty("relay.versionCode").orNull?.toInt() ?: 1002
+        versionName = providers.gradleProperty("relay.versionName").orNull ?: "0.1.2"
     }
 
     // Exclude identity assets from every merged dependency. Users provision their own files.
