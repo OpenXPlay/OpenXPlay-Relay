@@ -282,7 +282,7 @@
     <string name="dev_remote">Remote</string>
     <string name="dev_i2c">I2C</string>
     <string name="option_browser_hint">Show CarPlay in the car’s browser.</string>
-    <string name="option_carlink_hint">Show CarPlay in the car’s Carlink app.</string>
+    <string name="option_carlink_hint">Experimental: connecting may fail. Show CarPlay in the car’s Carlink app.</string>
     <string name="option_wireless_hint">Connect the iPhone over Bluetooth and Wi-Fi.</string>
     <string name="option_usb_hint">Connect the iPhone with a USB cable.</string>
     <string name="option_direct_hint">The iPhone connects straight to this phone. The car screen uses this phone\'s normal Wi-Fi, for example the car\'s hotspot.</string>
@@ -417,7 +417,7 @@
     <string name="setup_output_title">How should the car show CarPlay?</string>
     <string name="setup_output_hint">Choose what your car already has. You can change it later.</string>
     <string name="setup_browser_hint">Open an address in the car’s built-in browser. Works when the browser supports WebCodecs, as on most recent head units.</string>
-    <string name="setup_carlink_hint">Use a Carlink app that is already installed on the car.</string>
+    <string name="setup_carlink_hint">Experimental: connecting may fail. Use a Carlink app that is already installed on the car.</string>
     <string name="setup_carlink_android10">Needs Android 10 or later on this phone.</string>
     <string name="setup_browser_check_tip">Not sure about the browser? Open openxplay.org/en/check in the car’s browser to test it.</string>
     <string name="setup_connection_title">How does the iPhone connect to this phone?</string>

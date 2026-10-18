@@ -227,7 +227,7 @@
     <string name="dev_remote">远程</string>
     <string name="dev_i2c">I2C</string>
     <string name="option_browser_hint">在车载浏览器中显示 CarPlay。</string>
-    <string name="option_carlink_hint">在车机的 Carlink 应用中显示 CarPlay。</string>
+    <string name="option_carlink_hint">实验性功能，有可能连接失败。在车机的 Carlink 应用中显示 CarPlay。</string>
     <string name="option_wireless_hint">通过蓝牙和 Wi-Fi 连接 iPhone。</string>
     <string name="option_usb_hint">使用 USB 线缆连接 iPhone。</string>
     <string name="option_direct_hint">iPhone 直接连接此手机；车机屏幕通过此手机的普通 Wi-Fi 连接，例如车机热点。</string>
@@ -388,7 +388,7 @@
     <string name="setup_output_title">车机用什么显示 CarPlay？</string>
     <string name="setup_output_hint">选择你的车机上已有的方式，之后随时可以更改。</string>
     <string name="setup_browser_hint">在车机自带的浏览器里打开一个网址。浏览器需要支持 WebCodecs，近几年的车机大多支持。</string>
-    <string name="setup_carlink_hint">使用车机上已经装好的 Carlink 应用。</string>
+    <string name="setup_carlink_hint">实验性功能，有可能连接失败。使用车机上已经装好的 Carlink 应用。</string>
     <string name="setup_carlink_android10">这台手机需要 Android 10 或更高版本。</string>
     <string name="setup_browser_check_tip">不确定车机浏览器能不能用？在车机浏览器里打开 openxplay.org/check 检测一下。</string>
     <string name="setup_connection_title">iPhone 怎么连接这台手机？</string>
