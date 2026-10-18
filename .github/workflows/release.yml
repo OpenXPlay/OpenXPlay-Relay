@@ -99,6 +99,8 @@ jobs:
         run: npm ci && npm run build
       - name: Build web receiver
         working-directory: OpenXPlay-Stream/web
+        env:
+          OXP_APP_VERSION: ${{ steps.version.outputs.version }}
         run: npm ci && npm run build
       # Both packages bundle the same admin page and web receiver.
       - uses: actions/upload-artifact@v4
