@@ -127,11 +127,33 @@ class RelayRuntime(private val context: Context,
         { windowPreferences.edit().putString("records", it).apply() }) }
     @Volatile var declaredViewAreas: List<ViewAreaSize> = emptyList()
         private set
+    @Volatile private var activeAreaIndex = 0
+    @Volatile private var activeArea: org.openxplay.stream.web.ViewArea? = null
+    private val areaListeners = java.util.concurrent.CopyOnWriteArrayList<(org.openxplay.stream.web.ViewArea) -> Unit>()
+    private val viewAreaPort = object : org.openxplay.stream.web.ViewAreaPort {
+        override fun current() = activeArea
+        override fun listen(callback: (org.openxplay.stream.web.ViewArea) -> Unit): AutoCloseable {
+            areaListeners.add(callback); return AutoCloseable { areaListeners.remove(callback) }
+        }
+    }
+    private val areaDebounce = ViewAreaSwitchDebounce()
+    private var pendingAreaSwitch: java.util.concurrent.ScheduledFuture<*>? = null
+    private fun publishArea(index: Int) {
+        val areas = declaredViewAreas
+        val area = areas.getOrNull(index) ?: return
+        activeAreaIndex = index
+        val value = org.openxplay.stream.web.ViewArea(0, 0, area.width, area.height, areas[0].width, areas[0].height)
+        activeArea = value; areaListeners.forEach { it(value) }
+    }
     data class AreaSwitch(val time: Long, val index: Int, val accepted: Boolean)
     private val areaSwitches = ArrayDeque<AreaSwitch>()
     fun areaSwitchLog(): List<AreaSwitch> = synchronized(areaSwitches) { areaSwitches.toList() }
-    fun showViewArea(index: Int) {
+    fun showViewArea(index: Int) { setup.execute {
+        pendingAreaSwitch?.cancel(false); areaDebounce.clear(); switchViewArea(index)
+    } }
+    private fun switchViewArea(index: Int) {
         val accepted = index in declaredViewAreas.indices && input.showViewArea(index)
+        if (accepted) publishArea(index)
         synchronized(areaSwitches) {
             if (areaSwitches.size == 32) areaSwitches.removeFirst()
             areaSwitches.addLast(AreaSwitch(System.currentTimeMillis(), index, accepted))
@@ -140,6 +162,20 @@ class RelayRuntime(private val context: Context,
     private var lastWindow: List<Int>? = null
     private fun observeWindow(display: org.openxplay.stream.core.DisplayInfo?) {
         val viewport = display?.viewport
+        val areas = declaredViewAreas
+        val candidate = if (viewport != null && settingsStore.snapshot.value?.viewAreas == true &&
+            status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
+            ViewAreaPlanner.closest(areas, viewport.width, viewport.height)?.takeIf { it != activeAreaIndex } else null
+        if (areaDebounce.observe(candidate, android.os.SystemClock.elapsedRealtime())) {
+            pendingAreaSwitch?.cancel(false); pendingAreaSwitch = null
+            if (candidate != null) pendingAreaSwitch = setup.schedule({
+                val index = areaDebounce.ready(android.os.SystemClock.elapsedRealtime())
+                areaDebounce.clear()
+                if (index != null && settingsStore.snapshot.value?.viewAreas == true && declaredViewAreas === areas && index != activeAreaIndex &&
+                    status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
+                    switchViewArea(index)
+            }, 300, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }
         val fullscreen = display?.fullscreen
         if (display == null || viewport == null || fullscreen == null) { lastWindow = null; return }
         val key = listOf(display.widthPx, display.heightPx, display.densityDpi, viewport.width, viewport.height, if (fullscreen) 1 else 0)
@@ -151,13 +187,17 @@ class RelayRuntime(private val context: Context,
     fun planViewAreas(width: Int, height: Int): List<ViewAreaSize>? {
         val settings = settingsStore.snapshot.value
         if (settings?.viewAreas != true || settings.displayMode != DisplayMode.AUTOMATIC) {
-            declaredViewAreas = emptyList(); return null
+            declaredViewAreas = emptyList()
+            activeAreaIndex = 0
+            val area = org.openxplay.stream.web.ViewArea(0, 0, width, height, width, height)
+            activeArea = area; areaListeners.forEach { it(area) }
+            return null
         }
         val display = displayPolicy.primaryDisplay
         val records = if (display == null) emptyList() else windowRecords.snapshot().filter { it.screenWidth == display.widthPx &&
             it.screenHeight == display.heightPx && it.densityDpi == display.densityDpi }
-        val current = display?.takeIf { it.fullscreen == false }?.viewport?.let { ViewAreaSize(it.width, it.height) }
-        return ViewAreaPlanner.plan(width, height, records, current).also { declaredViewAreas = it }
+        val current = display?.viewport?.let { ViewAreaSize(it.width, it.height) }
+        return ViewAreaPlanner.plan(width, height, records, current).also { declaredViewAreas = it; publishArea(0) }
     }
     private val displayRefit = DisplayRefit()
     @Volatile private var appliedDisplay: DisplayTarget? = null
@@ -389,6 +429,8 @@ class RelayRuntime(private val context: Context,
         }
     }
     private fun refreshDisplay() {
+        // A page can connect before the phone declares its areas; reconsider its latest report once active.
+        observeWindow(displayPolicy.primaryDisplay)
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
         val settings = settingsStore.snapshot.value ?: return
@@ -637,7 +679,7 @@ class RelayRuntime(private val context: Context,
             }.onFailure { Log.w("OpenXPlay Relay", "Plugin packages unavailable", it) }.getOrNull()
             val output = WebOutput(WebOutputConfig(
                 bindAddress = "0.0.0.0", port = port, sslContext = ssl,
-                staticAssetRoot = root.toPath(), plugins = plugins, displaySettings = settingsStore,
+                staticAssetRoot = root.toPath(), plugins = plugins, displaySettings = settingsStore, viewArea = viewAreaPort,
                 sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay",
                 relay = org.openxplay.stream.web.RelayInfo("Android", appVersion()),
             ))

@@ -18,12 +18,14 @@ import org.openxplay.direlay.relay.*
 @Composable fun ViewAreasPanel(runtime: RelayRuntime) {
     var areas by remember { mutableStateOf(emptyList<ViewAreaSize>()) }
     var records by remember { mutableStateOf(emptyList<WindowSizeRecord>()) }
+    var exits by remember { mutableStateOf(emptyList<ReceiverDiagnostics.FullscreenExit>()) }
     var log by remember { mutableStateOf(emptyList<RelayRuntime.AreaSwitch>()) }
     LaunchedEffect(runtime) {
         while (true) {
             areas = runtime.declaredViewAreas
             records = withContext(Dispatchers.IO) { runtime.windowRecords.snapshot() }
             log = runtime.areaSwitchLog()
+            exits = runtime.status.receivers.fullscreenExits()
             delay(500)
         }
     }
@@ -37,6 +39,11 @@ import org.openxplay.direlay.relay.*
     log.asReversed().forEach {
         Text(stringResource(if (it.accepted) R.string.view_areas_queued else R.string.view_areas_rejected,
             snapshotTime(it.time), it.index), style = MaterialTheme.typography.bodySmall)
+    }
+    SmallHeading(stringResource(R.string.view_areas_fullscreen_exits))
+    if (exits.isEmpty()) Text(stringResource(R.string.view_areas_no_exits))
+    exits.asReversed().forEach {
+        Text("${snapshotTime(it.time)} · ${it.client} · ${it.json}", style = MaterialTheme.typography.bodySmall)
     }
     SmallHeading(stringResource(R.string.view_areas_records))
     TextButton(onClick = runtime::clearWindowRecords) { Text(stringResource(R.string.view_areas_clear)) }

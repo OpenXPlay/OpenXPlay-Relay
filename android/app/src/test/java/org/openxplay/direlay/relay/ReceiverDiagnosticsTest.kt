@@ -36,6 +36,14 @@ class ReceiverDiagnosticsTest {
         assertTrue(diagnostics.snapshot().isEmpty())
     }
 
+    @Test fun keepsBoundedExitHistorySeparateFromExpiringStats() {
+        repeat(ReceiverDiagnostics.MAX_SAMPLES + 2) { diagnostics.report("7", "fullscreen-exit", "exit-$it") }
+        assertTrue(diagnostics.snapshot().isEmpty())
+        assertEquals("exit-2", diagnostics.fullscreenExits().first().json)
+        now = 2 * ReceiverDiagnostics.EXPIRY_NANOS
+        assertEquals(ReceiverDiagnostics.MAX_SAMPLES, diagnostics.fullscreenExits().size)
+        diagnostics.clear(); assertTrue(diagnostics.fullscreenExits().isEmpty())
+    }
     @Test fun ignoresUnknownMalformedAndOversizedReports() {
         diagnostics.report("1", "pong", "{}")
         diagnostics.report("", "stats", stats(60))

@@ -40,6 +40,7 @@ class RelayStatus : HubListener, ProjectionOutput {
     }
     override fun receiverDiagnostics(outputId: String, origin: Origin, type: String, json: String) {
         receivers.report(origin.clientId, type, json)
+        if (type == "fullscreen-exit") android.util.Log.i("OpenXPlay Relay", "Fullscreen exit ${origin.clientId}: $json")
     }
     fun clearFailure() { failure = null }
     override fun outputFailed(outputId: String, failure: Throwable) {

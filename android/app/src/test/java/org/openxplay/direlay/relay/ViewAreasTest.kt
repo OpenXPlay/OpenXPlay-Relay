@@ -27,14 +27,33 @@ class ViewAreasTest {
     @Test fun fallbackOnlyWhenThereAreNoRecordedWindowsAndFullscreenDeduplicates() {
         assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(720, 720)),
             ViewAreaPlanner.plan(1280, 720, emptyList(), ViewAreaSize(400, 400)))
-        assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(720, 720)),
+        assertEquals(listOf(ViewAreaSize(1280, 720)),
             ViewAreaPlanner.plan(1280, 720, listOf(row(1920, 1080, full = true)), ViewAreaSize(400, 400)))
         // With nothing else to declare, a three-quarter-width test area keeps a second area to switch to.
         assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(960, 720)), ViewAreaPlanner.plan(1280, 720, emptyList()))
-        assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(960, 720)), ViewAreaPlanner.plan(1280, 720, listOf(row(640, 360))))
+        assertEquals(listOf(ViewAreaSize(1280, 720)), ViewAreaPlanner.plan(1280, 720, listOf(row(640, 360))))
         assertEquals(ViewAreaSize(1440, 960), ViewAreaPlanner.plan(1920, 960, emptyList())[1])
         assertEquals(ViewAreaSize(720, 720), ViewAreaPlanner.plan(1280, 720,
             listOf(row(500, 500)), ViewAreaSize(300, 600))[1])
+    }
+    @Test fun usesRealFullscreenSizesAggregatesVisitsAndMatchesOnlyCloseAspects() {
+        val areas = ViewAreaPlanner.plan(1920, 960, listOf(row(1533, 1014, 6, full = true),
+            row(1533, 1014, 6), row(856, 1014, 10, full = true), row(1900, 960, 50)))
+        assertEquals(3, areas.size)
+        assertEquals(1533.0 / 1014, areas[1].width.toDouble() / areas[1].height, .003)
+        assertEquals(1, ViewAreaPlanner.closest(areas, 1533, 1014))
+        assertEquals(0, ViewAreaPlanner.closest(areas, 2000, 1000))
+        assertNull(ViewAreaPlanner.closest(areas, 1200, 1000))
+        assertNull(ViewAreaPlanner.closest(areas, 0, 1000))
+        assertNull(ViewAreaPlanner.closest(emptyList(), 1000, 1000))
+    }
+    @Test fun switchingDebouncesStableTargetsAndCancelsUnmatchedOrDisabledObservations() {
+        val debounce = ViewAreaSwitchDebounce()
+        assertTrue(debounce.observe(1, 0)); assertNull(debounce.ready(299))
+        assertFalse(debounce.observe(1, 200)); assertEquals(1, debounce.ready(300))
+        assertTrue(debounce.observe(2, 310)); assertNull(debounce.ready(609)); assertEquals(2, debounce.ready(610))
+        assertTrue(debounce.observe(null, 620)); assertNull(debounce.ready(1000))
+        debounce.observe(1, 1100); debounce.clear(); assertNull(debounce.ready(1500))
     }
     @Test fun storeCountsFlagsAndDeviceRatiosSeparatelyAndPersistsClear() {
         var disk = ""

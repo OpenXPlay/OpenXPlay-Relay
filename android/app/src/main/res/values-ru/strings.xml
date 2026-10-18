@@ -89,7 +89,7 @@
     <string name="ui_browser_https_hint">Внимание: адрес начинается с https://, а не с http://.</string>
     <string name="ui_iphone_name">iPhone: %1$s</string>
     <string name="view_areas_title">Области просмотра (экспериментально)</string>
-    <string name="view_areas_hint">Только для автоматического режима экрана. Использует весь экран и отключает перезапуски CarPlay при автоматической подгонке. Вступает в силу при следующем подключении; переподключитесь вручную. Результат означает постановку в очередь, а не подтверждение iPhone. Страница по-прежнему показывает весь холст.</string>
+    <string name="view_areas_hint">Только для автоматического режима экрана. Использует полноэкранный холст и отключает перезапуски CarPlay при автоматической подгонке. Области применяются при следующем подключении; переподключитесь вручную. Ретранслятор автоматически выбирает область под видимое окно, а страница показывает только активную область. Результат означает постановку в очередь, а не подтверждение iPhone.</string>
     <string name="view_areas_declared">Объявленные области</string>
     <string name="view_areas_empty">Для этого сеанса области поставщика не объявлены</string>
     <string name="view_areas_area">Область %1$d · %2$d × %3$d · %4$s:1</string>
@@ -101,4 +101,6 @@
     <string name="view_areas_record">%1$d × %2$d @ %3$s · %4$d × %5$d · %6$s · посещений: %7$d · %8$s</string>
     <string name="view_areas_fullscreen">Полный экран</string>
     <string name="view_areas_window">Оконный режим</string>
+    <string name="view_areas_fullscreen_exits">Недавние непроизвольные выходы из полноэкранного режима</string>
+    <string name="view_areas_no_exits">Выходы из полноэкранного режима не зарегистрированы</string>
 </resources>

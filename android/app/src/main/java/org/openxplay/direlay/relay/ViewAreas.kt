@@ -16,23 +16,40 @@ object ViewAreaPlanner {
     fun plan(width: Int, height: Int, records: List<WindowSizeRecord>, current: ViewAreaSize? = null): List<ViewAreaSize> {
         require(width >= 2 && height >= 2 && width % 2 == 0 && height % 2 == 0)
         val areas = mutableListOf(ViewAreaSize(width, height))
-        val candidates = records.filter { !it.fullscreen }.sortedWith(
+        val candidates = records.groupBy { it.width to it.height }.values.map { rows ->
+            rows.maxBy { it.lastSeen }.copy(count = rows.sumOf { it.count }) }.sortedWith(
             compareByDescending<WindowSizeRecord> { it.count }.thenByDescending { it.lastSeen })
             .map { ViewAreaSize(it.width, it.height) }.ifEmpty { listOfNotNull(current) }
         for (size in candidates) {
-            if (size.width <= 0 || size.height <= 0) continue
+            if (size.width <= 0 || size.height <= 0 || aspectDistance(size.width, size.height, width, height) <= .02) continue
             val scale = minOf(width.toDouble() / size.width, height.toDouble() / size.height)
             val area = ViewAreaSize((size.width * scale / 2).toInt().coerceAtLeast(1) * 2,
                 (size.height * scale / 2).toInt().coerceAtLeast(1) * 2)
-            if (areas.none { near(it.width, area.width) && near(it.height, area.height) }) areas.add(area)
+            if (areas.none { aspectDistance(it.width, it.height, area.width, area.height) <= .02 }) areas.add(area)
             if (areas.size == 4) break
         }
-        // Without a recorded window (a page held in full screen reports none), a three-quarter-width area
-        // still gives the switch something to show.
-        if (areas.size == 1) areas.add(ViewAreaSize((width * 3 / 8).coerceAtLeast(1) * 2, height))
+        // Keep the test area only until real observations exist.
+        if (records.isEmpty() && areas.size == 1) areas.add(ViewAreaSize((width * 3 / 8).coerceAtLeast(1) * 2, height))
         return areas.toList()
     }
-    private fun near(a: Int, b: Int) = abs(a.toDouble() - b) / maxOf(a, b) <= .02
+    private fun aspectDistance(w: Int, h: Int, targetW: Int, targetH: Int) = abs((w.toDouble() / h) / (targetW.toDouble() / targetH) - 1)
+    fun closest(areas: List<ViewAreaSize>, width: Int, height: Int): Int? {
+        if (width <= 0 || height <= 0) return null
+        return areas.indices.minByOrNull { aspectDistance(width, height, areas[it].width, areas[it].height) }
+            ?.takeIf { aspectDistance(width, height, areas[it].width, areas[it].height) <= .05 }
+    }
+}
+
+/** Debounce the selected area, without allowing repeated identical reports to postpone it. */
+class ViewAreaSwitchDebounce {
+    private var candidate: Int? = null
+    private var since = 0L
+    fun observe(index: Int?, now: Long): Boolean {
+        if (index == candidate) return false
+        candidate = index; since = now; return true
+    }
+    fun ready(now: Long): Int? = candidate?.takeIf { now - since >= 300 }
+    fun clear() { candidate = null }
 }
 
 /** Numeric private persistence, bounded on both read and write. Counts represent observed visits. */
