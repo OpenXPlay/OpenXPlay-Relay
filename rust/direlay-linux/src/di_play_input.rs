@@ -665,7 +665,9 @@ impl DiPlayInput {
                 } else {
                     vec![]
                 };
-                self.set_video_decision(oxp_core::video_codec_policy::resolve(&outputs, false));
+                self.set_video_decision(oxp_core::video_codec_policy::resolve_with_preferences(
+                    &outputs, false, v["prefersH264"].as_bool().unwrap_or(false),
+                ));
                 Ok(true)
             }
             Message::Json(v) if v["type"] == "restart" => {
@@ -883,6 +885,30 @@ mod codec_tests {
         // No further change re-arms the limiter, yet the pending change applies after 120 s.
         assert!(limiter.allow(at(181)));
     }
+    #[test]
+    fn main_screen_codec_preference_reaches_policy_and_preserves_restart_cooldown() {
+        let input = DiPlayInput::new(Arc::new(JsonEvents::new(Arc::new(|_| {}))));
+        let mut caps: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../OpenXPlay-Stream/spec/vectors/wire/capabilities-h264.json"
+        )).unwrap();
+        caps["decoders"] = serde_json::json!([{"codecString":"hvc1.1.6.L120.B0","hardware":true}]);
+        caps.as_object_mut().unwrap().remove("prefersH264");
+        input.control(&Message::Json(caps.clone())).unwrap();
+        assert!(input.apply_requested_restart(|| {}));
+        assert!(input.configure_video_codec());
+        caps["prefersH264"] = serde_json::json!(true);
+        input.control(&Message::Json(caps.clone())).unwrap();
+        assert_eq!(input.video_status()["reason"], "main-screen-output-prefers-h264; codec-change-pending");
+        assert!(!input.apply_requested_restart(|| panic!("cooldown")));
+        input.state.lock().unwrap().codec_restarts.last_restart =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(30));
+        assert!(input.apply_requested_restart(|| {}));
+        assert!(!input.configure_video_codec());
+        caps["prefersH264"] = serde_json::json!(false);
+        input.control(&Message::Json(caps)).unwrap();
+        assert_eq!(input.video_status()["reason"], "all-main-screen-outputs-hardware-hevc; codec-change-pending");
+    }
+
     #[test]
     fn capabilities_drive_next_airplay_codec_and_controller_only_restart() {
         let input = DiPlayInput::new(Arc::new(JsonEvents::new(Arc::new(|_| {}))));

@@ -322,8 +322,10 @@ class RelayRuntime(private val context: Context,
     @Volatile var appliedVideoDecision = videoDecision
         private set
     @Volatile private var codecRestartPending = false
+    // The iPhone's H.265 through DiPlay on Android is not verified yet (OpenXPlay-15d), so this relay
+    // always asks for H.264; the receiver page shows the codec in use.
     private fun currentVideoCodecDecision(): VideoCodecDecision = VideoCodecPolicy.resolve(displayPolicy.activeOutputs,
-        carlinkConnected)
+        carlinkConnected).let { if (it.codec == VideoCodec.H265) VideoCodecDecision(VideoCodec.H264, "relay-h264-only") else it }
     private fun refreshVideoCodec() {
         val next = currentVideoCodecDecision()
         if (next != videoDecision) {

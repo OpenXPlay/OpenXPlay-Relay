@@ -58,6 +58,12 @@ it('says which codec is used and why in one user line', () => {
   expect(videoLine(status, zh)).toBe('视频：H.265（所有屏幕都能硬件解码）');
   status.video = { codec: 'H264', reason: 'all-main-screen-outputs-hardware-hevc; codec-change-pending' };
   expect(videoLine(status, en)).toBe('Video: H.264 (all screens decode it in hardware) · changes when CarPlay reconnects');
+  status.video = { codec: 'H264', reason: 'main-screen-output-prefers-h264' };
+  expect(videoLine(status, en)).toBe('Video: H.264 (a car screen asks for H.264)');
+  expect(videoLine(status, zh)).toBe('视频：H.264（车机屏幕要求使用 H.264）');
+  status.video = { codec: 'H264', reason: 'relay-h264-only' };
+  expect(videoLine(status, en)).toBe('Video: H.264 (this relay uses H.264 for now)');
+  expect(videoLine(status, zh)).toBe('视频：H.264（这台中继暂时只用 H.264）');
   status.video = { codec: 'H264', reason: 'something-new' };
   expect(videoLine(status, en)).toBe('Video: H.264');
   expect(videoLine({ video: undefined }, en)).toBe('');
