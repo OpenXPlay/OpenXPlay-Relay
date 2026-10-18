@@ -15,12 +15,12 @@ class DisplayRefit {
     private var lastRestart: Long? = null
     @Synchronized fun restarted(now: Long) { lastRestart = now }
     @Synchronized fun due(now: Long, running: Boolean, mode: DisplayMode, applied: DisplayTarget?,
-        desired: DisplayTarget?, viewport: Boolean): Boolean {
+        desired: DisplayTarget?, viewport: Boolean, viewAreas: Boolean = false): Boolean {
         val changedSetting = applied != null && desired != null &&
             (applied.resolution != desired.resolution || applied.iconSize != desired.iconSize)
         val geometry = applied != null && desired != null && viewport && desired.resolution != CarPlayResolution.SCREEN &&
             significant(applied.profile, desired.profile)
-        if (!running || mode != DisplayMode.AUTOMATIC || desired == null || (!changedSetting && !geometry)) {
+        if (viewAreas || !running || mode != DisplayMode.AUTOMATIC || desired == null || (!changedSetting && !geometry)) {
             pending = null; return false
         }
         if (pending != desired) { pending = desired; since = now }

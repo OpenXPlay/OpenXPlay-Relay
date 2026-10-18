@@ -19,7 +19,7 @@ import org.openxplay.direlay.admin.PairingWindow
 import org.openxplay.direlay.bridge.StreamBridgeSink
 import org.openxplay.direlay.relay.RelayRuntime
 
-class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider {
+class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider {
     lateinit var runtime: RelayRuntime
         private set
 
@@ -78,6 +78,9 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
 
     /** CarPlay draws at the car's size (Automatic or a fixed profile), not the relay phone's window. */
     override fun carPlayCanvas(): Pair<Int, Int>? = runtime.carPlayScreen?.profile?.let { it.width to it.height }
+
+    override fun carPlayViewAreas(canvasWidth: Int, canvasHeight: Int): List<com.shilapi.xcertplay.airplay.AirPlayViewArea>? =
+        runtime.planViewAreas(canvasWidth, canvasHeight)?.map { com.shilapi.xcertplay.airplay.AirPlayViewArea(it.width, it.height) }
 
     override val mediaSinkDecorator = MediaSinkDecorator { sink, control ->
         runtime.prepareCarPlay()

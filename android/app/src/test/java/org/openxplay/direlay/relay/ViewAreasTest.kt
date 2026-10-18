@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-18
+package org.openxplay.direlay.relay
+
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Test
+
+class ViewAreasTest {
+    private fun row(width: Int, height: Int, count: Long = 1, seen: Long = 1, full: Boolean = false) =
+        WindowSizeRecord(1920, 1080, 160, width, height, full, count, seen)
+    @Test fun fitsEvenSizesAtOriginWithoutChangingAspect() {
+        val areas = ViewAreaPlanner.plan(1920, 1080, listOf(row(701, 903), row(5001, 1201)))
+        assertEquals(ViewAreaSize(1920, 1080), areas.first())
+        for ((area, source) in areas.drop(1).zip(listOf(701.0 / 903, 5001.0 / 1201))) {
+            assertTrue(area.width in 2..1920 && area.height in 2..1080)
+            assertEquals(0, area.width % 2); assertEquals(0, area.height % 2)
+            assertEquals(source, area.width.toDouble() / area.height, .01)
+        }
+    }
+    @Test fun ranksByFrequencyThenRecencyDropsNearDuplicatesAndLimitsToThreeWindows() {
+        val areas = ViewAreaPlanner.plan(1920, 1080, listOf(row(1000, 500, 9), row(1001, 501, 8),
+            row(600, 600, 7, 2), row(400, 600, 7, 1), row(200, 600, 6), row(1920, 1080, 100, full = true)))
+        assertEquals(listOf(ViewAreaSize(1920, 1080), ViewAreaSize(1920, 960),
+            ViewAreaSize(1080, 1080), ViewAreaSize(720, 1080)), areas)
+    }
+    @Test fun fallbackOnlyWhenThereAreNoRecordedWindowsAndFullscreenDeduplicates() {
+        assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(720, 720)),
+            ViewAreaPlanner.plan(1280, 720, emptyList(), ViewAreaSize(400, 400)))
+        assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(720, 720)),
+            ViewAreaPlanner.plan(1280, 720, listOf(row(1920, 1080, full = true)), ViewAreaSize(400, 400)))
+        // With nothing else to declare, a three-quarter-width test area keeps a second area to switch to.
+        assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(960, 720)), ViewAreaPlanner.plan(1280, 720, emptyList()))
+        assertEquals(listOf(ViewAreaSize(1280, 720), ViewAreaSize(960, 720)), ViewAreaPlanner.plan(1280, 720, listOf(row(640, 360))))
+        assertEquals(ViewAreaSize(1440, 960), ViewAreaPlanner.plan(1920, 960, emptyList())[1])
+        assertEquals(ViewAreaSize(720, 720), ViewAreaPlanner.plan(1280, 720,
+            listOf(row(500, 500)), ViewAreaSize(300, 600))[1])
+    }
+    @Test fun storeCountsFlagsAndDeviceRatiosSeparatelyAndPersistsClear() {
+        var disk = ""
+        fun store() = WindowSizeRecords({ disk }, { disk = it })
+        val records = store()
+        records.record(1920, 1080, 160, 1000, 700, false, 1)
+        records.record(1920, 1080, 160, 1000, 700, false, 2)
+        records.record(1920, 1080, 160, 1000, 700, true, 3)
+        records.record(1920, 1080, 320, 1000, 700, false, 4)
+        val restored = store().snapshot()
+        assertEquals(records.snapshot(), restored)
+        assertEquals(3, restored.size)
+        assertEquals(2L, restored.last().count)
+        assertEquals(2L, restored.last().lastSeen)
+        records.clear(); assertTrue(store().snapshot().isEmpty())
+    }
+    @Test fun storeEvictsOldestSizesAndHeadUnitsAndRejectsInvalidReports() {
+        var disk = ""
+        val records = WindowSizeRecords({ disk }, { disk = it })
+        for (unit in 1..11) for (size in 1..21)
+            records.record(1000 + unit, 800, 160, 500 + size, 400, false, unit * 100L + size)
+        val rows = records.snapshot()
+        assertEquals(200, rows.size)
+        assertEquals(10, rows.map { it.headUnit }.distinct().size)
+        assertTrue(rows.none { it.screenWidth == 1001 || it.width == 501 })
+        records.record(0, 0, 0, 0, 0, false, 0)
+        assertEquals(rows, records.snapshot())
+        assertEquals(rows, WindowSizeRecords({ disk }, {}).snapshot())
+        assertTrue(WindowSizeRecords({ "bad data\n1,2,3" }, {}).snapshot().isEmpty())
+    }
+}

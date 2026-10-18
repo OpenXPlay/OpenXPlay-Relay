@@ -77,12 +77,16 @@ class RelayRuntime(private val context: Context,
 
     fun prepareCarPlayFrameRate() { AirPlayPersistence.saveFps(context, negotiatedFps) }
     val status = RelayStatus()
-    internal val displayPolicy = CarDisplayPolicy { settingsStore.snapshot.value?.carplayResolution ?: CarPlayResolution.AUTO }
-    private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
-    private val preferences = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }
+    internal val displayPolicy = CarDisplayPolicy(observe = { display ->
+        setup.execute { observeWindow(display) }
+    }) { settingsStore.snapshot.value?.let {
+        if (it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC) CarPlayResolution.SCREEN else it.carplayResolution
+    } ?: CarPlayResolution.AUTO }
+    private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
+    private val preferences = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     // This separate private file must not invalidate the user-settings snapshot cache.
     private val displayPreferences = context.getSharedPreferences("direlay-car-display", Context.MODE_PRIVATE)
     @Volatile private var rememberedDisplay: DisplayProfile? = null
@@ -118,6 +122,43 @@ class RelayRuntime(private val context: Context,
     fun currentSharedWifi(settings: RelaySettings, currentSsid: String? = currentWifiSsid(context)) =
         sharedWifiSelection.resolve(currentSsid, settings.wirelessNetwork.sharedWifiNetworks)
 
+    private val windowPreferences by lazy { context.getSharedPreferences("direlay-window-sizes", Context.MODE_PRIVATE) }
+    val windowRecords by lazy { WindowSizeRecords({ windowPreferences.getString("records", "").orEmpty() },
+        { windowPreferences.edit().putString("records", it).apply() }) }
+    @Volatile var declaredViewAreas: List<ViewAreaSize> = emptyList()
+        private set
+    data class AreaSwitch(val time: Long, val index: Int, val accepted: Boolean)
+    private val areaSwitches = ArrayDeque<AreaSwitch>()
+    fun areaSwitchLog(): List<AreaSwitch> = synchronized(areaSwitches) { areaSwitches.toList() }
+    fun showViewArea(index: Int) {
+        val accepted = index in declaredViewAreas.indices && input.showViewArea(index)
+        synchronized(areaSwitches) {
+            if (areaSwitches.size == 32) areaSwitches.removeFirst()
+            areaSwitches.addLast(AreaSwitch(System.currentTimeMillis(), index, accepted))
+        }
+    }
+    private var lastWindow: List<Int>? = null
+    private fun observeWindow(display: org.openxplay.stream.core.DisplayInfo?) {
+        val viewport = display?.viewport
+        val fullscreen = display?.fullscreen
+        if (display == null || viewport == null || fullscreen == null) { lastWindow = null; return }
+        val key = listOf(display.widthPx, display.heightPx, display.densityDpi, viewport.width, viewport.height, if (fullscreen) 1 else 0)
+        if (key == lastWindow) return
+        lastWindow = key
+        windowRecords.record(key[0], key[1], key[2], key[3], key[4], fullscreen, System.currentTimeMillis())
+    }
+    fun clearWindowRecords() { setup.execute { windowRecords.clear(); lastWindow = null } }
+    fun planViewAreas(width: Int, height: Int): List<ViewAreaSize>? {
+        val settings = settingsStore.snapshot.value
+        if (settings?.viewAreas != true || settings.displayMode != DisplayMode.AUTOMATIC) {
+            declaredViewAreas = emptyList(); return null
+        }
+        val display = displayPolicy.primaryDisplay
+        val records = if (display == null) emptyList() else windowRecords.snapshot().filter { it.screenWidth == display.widthPx &&
+            it.screenHeight == display.heightPx && it.densityDpi == display.densityDpi }
+        val current = display?.takeIf { it.fullscreen == false }?.viewport?.let { ViewAreaSize(it.width, it.height) }
+        return ViewAreaPlanner.plan(width, height, records, current).also { declaredViewAreas = it }
+    }
     private val displayRefit = DisplayRefit()
     @Volatile private var appliedDisplay: DisplayTarget? = null
     /** Shown on the head-unit page next to the page's own version, e.g. "0.1.3 (1003)". */
@@ -353,7 +394,7 @@ class RelayRuntime(private val context: Context,
         val settings = settingsStore.snapshot.value ?: return
         val desired = (displayPolicy.carDisplay ?: carPlayScreen?.profile)?.let { DisplayTarget(it, settings.carplayResolution, settings.carplayIconSize) }
         if (displayRefit.due(android.os.SystemClock.elapsedRealtime(), autoStartSessions.tracker.running,
-                settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null) &&
+                settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null, settings.viewAreas || declaredViewAreas.isNotEmpty()) &&
             !sessionActions.restarting && !startRequest.pending) sessionActions.action("restart")
     }
     private val displayTick = setup.scheduleWithFixedDelay({ refreshDisplay(); refreshVideoCodec() }, 0, 250, TimeUnit.MILLISECONDS)

@@ -9,7 +9,7 @@ import org.openxplay.direlay.settings.DisplayProfile
 import org.openxplay.stream.core.*
 
 /** Observes Stream's negotiation without doing preference I/O on hub callbacks. */
-class CarDisplayPolicy(private val resolution: () -> CarPlayResolution = { CarPlayResolution.AUTO }) : SessionPolicy {
+class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private val resolution: () -> CarPlayResolution = { CarPlayResolution.AUTO }) : SessionPolicy {
     @Volatile var carDisplay: DisplayProfile? = null
         private set
 
@@ -23,6 +23,7 @@ class CarDisplayPolicy(private val resolution: () -> CarPlayResolution = { CarPl
         activeOutputs = outputs.filter { ScreenId.MAIN in it.displays }
         val config = DefaultSessionPolicy.derive(input, outputs)
         refreshDisplay()
+        observe(primaryDisplay)
         return config
     }
     val primaryDisplay: DisplayInfo? get() = activeOutputs.firstOrNull { it.latency == LatencyClass.INTERACTIVE }?.displays?.get(ScreenId.MAIN)

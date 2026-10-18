@@ -462,4 +462,17 @@
     <string name="picture_window">窗口</string>
     <string name="ui_browser_https_hint">注意：地址以 https:// 开头，不是 http://。</string>
     <string name="ui_iphone_name">iPhone：%1$s</string>
+    <string name="view_areas_title">显示区域（实验性）</string>
+    <string name="view_areas_hint">仅适用于自动显示模式。使用整个屏幕并禁用 CarPlay 自动重新适配重启。下次连接时生效；请手动重新连接。切换结果表示已排队，并非 iPhone 确认。网页仍显示整个画布。</string>
+    <string name="view_areas_declared">已声明的区域</string>
+    <string name="view_areas_empty">此会话未声明提供程序区域</string>
+    <string name="view_areas_area">区域 %1$d · %2$d × %3$d · %4$s:1</string>
+    <string name="view_areas_show">显示区域 %1$d</string>
+    <string name="view_areas_queued">%1$s · 区域 %2$d：已排队</string>
+    <string name="view_areas_rejected">%1$s · 区域 %2$d：不可用</string>
+    <string name="view_areas_records">窗口尺寸记录</string>
+    <string name="view_areas_clear">清除窗口尺寸记录</string>
+    <string name="view_areas_record">%1$d × %2$d @ %3$s · %4$d × %5$d · %6$s · %7$d 次 · %8$s</string>
+    <string name="view_areas_fullscreen">全屏</string>
+    <string name="view_areas_window">窗口</string>
 </resources>

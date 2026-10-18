@@ -98,6 +98,10 @@ class DiPlayInput(private val applyFrameRate: (Int) -> Unit = {}, private val re
         recovery.queue.clear()
     }
 
+    fun showViewArea(index: Int): Boolean = synchronized(gate) {
+        index >= 0 && current?.control?.showViewArea(index) == true
+    }
+
     /**
      * DiPlay builds the media engine when CarPlay starts, before any iPhone connects, and drops an
      * engine that never saw a stream without further callbacks. The new session fences the previous

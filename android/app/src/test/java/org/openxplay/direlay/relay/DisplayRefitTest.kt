@@ -16,6 +16,16 @@ class DisplayRefitTest {
         mode: DisplayMode = DisplayMode.AUTOMATIC, active: Boolean = true, viewport: Boolean = true) =
         gate.due(now, active, mode, applied, next, viewport)
 
+    @Test fun viewAreasCancelGeometryAndSettingRestartsUntilDisabled() {
+        val gate = DisplayRefit()
+        assertFalse(due(gate, 0)); assertTrue(due(gate, 1000))
+        for (next in listOf(desired, running.copy(iconSize = CarPlayIconSize.SMALL),
+            desired.copy(resolution = CarPlayResolution.SCREEN))) {
+            assertFalse(gate.due(2000, true, DisplayMode.AUTOMATIC, running, next, true, viewAreas = true))
+            assertFalse(gate.due(20000, true, DisplayMode.AUTOMATIC, running, next, true, viewAreas = true))
+        }
+        assertFalse(due(gate, 21000)); assertTrue(due(gate, 22000))
+    }
     @Test fun automaticUsesViewportWithScreenFallbackAndScreenIgnoresViewport() {
         assertEquals(CarDisplayFit.fit(1533, 906), fitDisplay(display, CarPlayResolution.AUTO))
         assertEquals(CarDisplayFit.fit(2401, 1201), fitDisplay(display.copy(viewport = null), CarPlayResolution.AUTO))

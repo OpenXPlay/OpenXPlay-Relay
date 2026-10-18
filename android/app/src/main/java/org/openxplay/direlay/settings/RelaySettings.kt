@@ -64,6 +64,7 @@ data class RelaySettings(
     val carlinkTrace: Boolean = false,
     val carplayResolution: CarPlayResolution = CarPlayResolution.AUTO,
     val carplayIconSize: CarPlayIconSize = CarPlayIconSize.STANDARD,
+    val viewAreas: Boolean = false,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -195,6 +196,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             mode,
             relay.getString("iphoneAddress", null),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
+            viewAreas = relay.getBoolean("viewAreas", false),
             carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
             carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == relay.getString("carplayIconSize", null) } ?: CarPlayIconSize.STANDARD,
             plugins = relay.getBoolean("plugins", false),
@@ -238,6 +240,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
             .putBoolean("carlinkTrace", settings.carlinkTrace)
+            .putBoolean("viewAreas", settings.viewAreas)
             .putString("carplayResolution", settings.carplayResolution.name)
             .putString("carplayIconSize", settings.carplayIconSize.name)
             .putBoolean("plugins", settings.plugins)

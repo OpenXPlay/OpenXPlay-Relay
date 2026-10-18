@@ -122,6 +122,10 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         SmallHeading(stringResource(R.string.carlink_debug))
         Toggle(stringResource(R.string.carlink_trace_enabled), draft.carlinkTrace, { draft = draft.copy(carlinkTrace = it) })
         if (debug != null) CarlinkDebugPanel(debug, draft.carlinkTrace)
+        SmallHeading(stringResource(R.string.view_areas_title))
+        Toggle(stringResource(R.string.view_areas_title), draft.viewAreas, { draft = draft.copy(viewAreas = it) })
+        Hint(stringResource(R.string.view_areas_hint))
+        if (debug != null) ViewAreasPanel(debug)
         SmallHeading(stringResource(R.string.dev_runtime))
         KeyValue(stringResource(R.string.dev_connected_clients), stringResource(R.string.dev_unavailable))
         view.rows.forEach { row -> KeyValue(stringResource(row.label, row.argument), if (row.valueKey == 0) row.value else stringResource(row.valueKey, *row.valueArguments.toTypedArray())) }

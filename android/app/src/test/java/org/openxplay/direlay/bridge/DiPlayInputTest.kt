@@ -13,6 +13,23 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class DiPlayInputTest {
+    @Test fun viewAreaCommandsUseOnlyTheCurrentDecoratedSession() {
+        DiPlayInput().use { input ->
+            val calls = mutableListOf<Int>()
+            fun control(offset: Int) = object : SessionControl {
+                override fun sendTouch(contacts: List<AirPlayContact>) = false
+                override fun showViewArea(index: Int): Boolean { calls.add(offset + index); return true }
+            }
+            assertFalse(input.showViewArea(0))
+            input.begin(control(0))
+            assertFalse(input.showViewArea(-1)); assertTrue(input.showViewArea(2))
+            input.begin(control(10))
+            assertTrue(input.showViewArea(1))
+            input.stop(); assertFalse(input.showViewArea(0))
+            assertEquals(listOf(2, 11), calls)
+        }
+    }
+
     @Test fun negotiatedFrameRatesApplyBeforeAuthorizedRestart() {
         val calls = mutableListOf<String>()
         DiPlayInput({ calls.add("fps:$it") }, { calls.add("restart") }).use { input ->

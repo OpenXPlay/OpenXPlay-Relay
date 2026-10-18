@@ -88,4 +88,17 @@
     <string name="picture_window">Ventana</string>
     <string name="ui_browser_https_hint">Atención: la dirección empieza por https://, no por http://.</string>
     <string name="ui_iphone_name">iPhone: %1$s</string>
+    <string name="view_areas_title">Áreas de visualización (experimental)</string>
+    <string name="view_areas_hint">Solo en modo de pantalla automático. Usa toda la pantalla y desactiva los reinicios por reajuste automático de CarPlay. Se aplica en la próxima conexión; vuelve a conectar manualmente. El resultado indica que la solicitud está en cola, sin confirmación del iPhone. La página sigue mostrando todo el lienzo.</string>
+    <string name="view_areas_declared">Áreas declaradas</string>
+    <string name="view_areas_empty">No hay áreas del proveedor declaradas para esta sesión</string>
+    <string name="view_areas_area">Área %1$d · %2$d × %3$d · %4$s:1</string>
+    <string name="view_areas_show">Mostrar área %1$d</string>
+    <string name="view_areas_queued">%1$s · Área %2$d: en cola</string>
+    <string name="view_areas_rejected">%1$s · Área %2$d: no disponible</string>
+    <string name="view_areas_records">Registros de tamaños de ventana</string>
+    <string name="view_areas_clear">Borrar registros de tamaños de ventana</string>
+    <string name="view_areas_record">%1$d × %2$d @ %3$s · %4$d × %5$d · %6$s · %7$d visitas · %8$s</string>
+    <string name="view_areas_fullscreen">Pantalla completa</string>
+    <string name="view_areas_window">Ventana</string>
 </resources>

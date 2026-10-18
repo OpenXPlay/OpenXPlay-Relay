@@ -491,4 +491,17 @@
     <string name="picture_window">Window</string>
     <string name="ui_browser_https_hint">Note: the address starts with https://, not http://.</string>
     <string name="ui_iphone_name">iPhone: %1$s</string>
+    <string name="view_areas_title">View areas (experimental)</string>
+    <string name="view_areas_hint">Automatic display mode only. Uses the whole screen and disables automatic CarPlay re-fit restarts. Applies at the next connection; reconnect manually. Switch results mean queued, not confirmed by the iPhone. The page still shows the whole canvas.</string>
+    <string name="view_areas_declared">Declared areas</string>
+    <string name="view_areas_empty">No provider areas declared for this session</string>
+    <string name="view_areas_area">Area %1$d · %2$d × %3$d · %4$s:1</string>
+    <string name="view_areas_show">Show area %1$d</string>
+    <string name="view_areas_queued">%1$s · Area %2$d: queued</string>
+    <string name="view_areas_rejected">%1$s · Area %2$d: unavailable</string>
+    <string name="view_areas_records">Window-size records</string>
+    <string name="view_areas_clear">Clear window-size records</string>
+    <string name="view_areas_record">%1$d × %2$d @ %3$s · %4$d × %5$d · %6$s · %7$d visits · %8$s</string>
+    <string name="view_areas_fullscreen">Fullscreen</string>
+    <string name="view_areas_window">Windowed</string>
 </resources>

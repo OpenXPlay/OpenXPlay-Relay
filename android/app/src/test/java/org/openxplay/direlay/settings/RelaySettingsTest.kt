@@ -27,6 +27,13 @@ class RelaySettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
+    @Test fun viewAreasDefaultOffAndPersist() {
+        val original = store.load()
+        assertFalse(original.viewAreas)
+        store.save(original.copy(viewAreas = true)); assertTrue(store.load().viewAreas)
+        store.save(original); assertFalse(store.load().viewAreas)
+    }
+
     @Before fun clear() {
         for (name in listOf("direlay", "diplay", "xcertplay_airplay")) {
             context.getSharedPreferences(name, 0).edit().clear().commit()
