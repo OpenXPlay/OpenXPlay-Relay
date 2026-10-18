@@ -5,6 +5,6 @@
 package org.openxplay.direlay.settings
 
 enum class CarPlayResolution(val wire: String) { AUTO("auto"), NATIVE("native"), P1080("1080p"), P720("720p"), SCREEN("screen") }
-enum class CarPlayIconSize(val wire: String, val factor: Double) { SMALL("small", 1.4), STANDARD("standard", 1.0), LARGE("large", 0.75) }
-fun physicalWidth(profile: DisplayProfile, size: CarPlayIconSize): Int =
-    kotlin.math.round(profile.width * 25.4 / profile.density * size.factor).toInt()
+enum class CarPlayScreenWidth(val mm: Int) { MM125(125), MM200(200), MM250(250), MM300(300) }
+fun physicalWidth(profile: DisplayProfile, screenWidth: CarPlayScreenWidth): Int =
+    (kotlin.math.ceil(screenWidth.mm * maxOf(1.0, profile.width / 1920.0) / 25).toInt() * 25).coerceIn(100, 400)

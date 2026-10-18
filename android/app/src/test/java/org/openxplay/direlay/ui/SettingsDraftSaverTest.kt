@@ -21,6 +21,17 @@ class SettingsDraftSaverTest {
         30, false, true, false, null)
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
+    @Test fun everyScreenWidthDraftUsesTheNewNumericKey() {
+        for (width in CarPlayScreenWidth.entries) {
+            val value = base.copy(carplayScreenWidth = width)
+            val saved = bundle(value)
+            assertEquals(width.mm, saved.getInt("carplayScreenWidth"))
+            assertEquals(value, relaySettingsSaver(base).restore(saved))
+        }
+        val old = bundle(base)
+        old.remove("carplayScreenWidth"); old.putString("carplayIconSize", "ignored")
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
     @Test fun carAndViewAreasDraftRoundTripAndOldExperimentalKeyIsIgnored() {
         for (areas in listOf(false, true)) for (car in listOf(CarSelection(), CarSelection("xpeng", model = "g6-2023"),
             CarSelection("other", "My brand ", "other", "My model "))) {

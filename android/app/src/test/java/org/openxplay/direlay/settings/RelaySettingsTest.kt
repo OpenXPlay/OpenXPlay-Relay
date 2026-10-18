@@ -62,11 +62,11 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { store ->
             val original = store.awaitSnapshot()
             assertEquals(CarPlayResolution.AUTO, original.carplayResolution)
-            assertEquals(CarPlayIconSize.STANDARD, original.carplayIconSize)
+            assertEquals(CarPlayScreenWidth.MM200, original.carplayScreenWidth)
             val seen = java.util.concurrent.CopyOnWriteArrayList<org.openxplay.stream.web.DisplaySettings>()
             val listener = store.listen { seen.add(it) }
-            for (resolution in CarPlayResolution.entries) for (size in CarPlayIconSize.entries) {
-                val value = original.copy(carplayResolution = resolution, carplayIconSize = size)
+            for (resolution in CarPlayResolution.entries) for (size in CarPlayScreenWidth.entries) {
+                val value = original.copy(carplayResolution = resolution, carplayScreenWidth = size)
                 store.save(value)
                 assertEquals(value, store.load())
                 assertEquals(value.displaySettings(), store.current())
@@ -75,14 +75,44 @@ class RelaySettingsTest {
                 val expected = com.shilapi.xcertplay.airplay.AirPlayDisplaySettings.sanitizeWidthPhysicalMm(physicalWidth(profile, size))
                 assertEquals(expected, AirPlayPersistence.loadWidthPhysicalMm(context))
             }
-            store.set(org.openxplay.stream.web.DisplaySettings("720p", "small"), org.openxplay.stream.core.Origin("web", "test"))
+            store.set(org.openxplay.stream.web.DisplaySettings("720p", 125), org.openxplay.stream.core.Origin("web", "test"))
             assertEquals(CarPlayResolution.P720, store.load().carplayResolution)
-            assertEquals(CarPlayIconSize.SMALL, store.load().carplayIconSize)
+            assertEquals(CarPlayScreenWidth.MM125, store.load().carplayScreenWidth)
             assertEquals(store.current(), seen.last())
             listener.close()
             val count = seen.size
             store.save(original)
             assertEquals(count, seen.size)
+        }
+    }
+
+    @Test fun screenWidthUsesNewNumericKeyAndIgnoresOldPreference() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        preferences.edit().putString("carplayIconSize", "ignored").commit()
+        RelaySettingsStore(context).use { store ->
+            assertEquals(CarPlayScreenWidth.MM200, store.load().carplayScreenWidth)
+            for (preset in CarPlayScreenWidth.entries) {
+                store.save(store.load().copy(carplayScreenWidth = preset))
+                assertEquals(preset.mm, preferences.getInt("carplayScreenWidth", 0))
+                assertEquals(preset, store.load().carplayScreenWidth)
+            }
+            preferences.edit().putInt("carplayScreenWidth", 150).commit()
+            assertEquals(CarPlayScreenWidth.MM200, store.load().carplayScreenWidth)
+        }
+    }
+    @Test fun developerWidthOverrideWinsForPreparedAndFixedDisplays() {
+        RelaySettingsStore(context).use { store ->
+            val profile = DisplayProfile(2400, 1200, 300)
+            store.physicalWidthOverrideMm = 225
+            for (preset in CarPlayScreenWidth.entries) {
+                store.prepareDisplay(profile, preset)
+                assertEquals(225, AirPlayPersistence.loadWidthPhysicalMm(context))
+                store.save(store.load().copy(displayMode = DisplayMode.FIXED, display = profile, carplayScreenWidth = preset))
+                assertEquals(225, AirPlayPersistence.loadWidthPhysicalMm(context))
+            }
+            store.physicalWidthOverrideMm = 0
+            store.prepareDisplay(profile, CarPlayScreenWidth.MM300)
+            assertEquals(375, AirPlayPersistence.loadWidthPhysicalMm(context))
         }
     }
 
@@ -275,8 +305,8 @@ class RelaySettingsTest {
             assertEquals(100, AirPlayPersistence.loadDisplayScalePercent(context))
             assertEquals(AirPlayPhysicalSizeBasis.WIDTH, AirPlayPersistence.loadPhysicalSizeBasis(context))
             assertEquals(0 to 0, AirPlayPersistence.loadMaximumDetectedDisplay(context))
-            val expected = com.shilapi.xcertplay.airplay.AirPlayDisplaySettings.sanitizeWidthPhysicalMm(
-                kotlin.math.round(profile.width * 25.4 / profile.density).toInt())
+            // The default 200 mm screen width, widened only for canvases wider than 1920 px.
+            val expected = (kotlin.math.ceil(200 * maxOf(1.0, profile.width / 1920.0) / 25).toInt() * 25).coerceIn(100, 400)
             assertEquals(expected, AirPlayPersistence.loadWidthPhysicalMm(context))
         }
         store.save(store.load().copy(display = null, displayMode = DisplayMode.AUTOMATIC))

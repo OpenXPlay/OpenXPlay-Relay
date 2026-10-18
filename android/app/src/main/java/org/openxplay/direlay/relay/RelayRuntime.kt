@@ -239,8 +239,8 @@ class RelayRuntime(private val context: Context,
         rememberCarDisplay()
         preparedPlanningDisplay = planningDisplay(settings)
         return startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car)).also {
-            settingsStore.prepareDisplay(it?.profile, settings.carplayIconSize)
-            appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayIconSize, preparedPlanningDisplay?.screen) }
+            settingsStore.prepareDisplay(it?.profile, settings.carplayScreenWidth)
+            appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth, preparedPlanningDisplay?.screen) }
             carPlayScreen = it
             screenPrepared = true
         }
@@ -466,7 +466,7 @@ class RelayRuntime(private val context: Context,
         rememberCarDisplay()
         val settings = settingsStore.snapshot.value ?: return
         val desiredScreen = startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car))
-        val desired = desiredScreen?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayIconSize,
+        val desired = desiredScreen?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth,
             displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)?.screen ?: appliedDisplay?.screen) }
         if (displayRefit.due(android.os.SystemClock.elapsedRealtime(), autoStartSessions.tracker.running,
                 settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null, settings.viewAreas || declaredViewAreas.isNotEmpty()) &&

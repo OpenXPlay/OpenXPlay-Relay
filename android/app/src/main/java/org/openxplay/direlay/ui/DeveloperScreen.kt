@@ -125,6 +125,14 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         if (debug != null) CarlinkDebugPanel(debug, draft.carlinkTrace)
         SmallHeading(stringResource(R.string.car_view_areas))
         if (debug != null) ViewAreasPanel(debug)
+        if (debug != null) {
+            val widths = listOf(0) + (100..400 step 25)
+            var width by remember { mutableIntStateOf(debug.settingsStore.physicalWidthOverrideMm) }
+            Text(stringResource(R.string.dev_physical_width))
+            Options(widths.map { if (it == 0) stringResource(R.string.dev_physical_width_off) else "$it mm" },
+                widths.indexOf(width).coerceAtLeast(0)) { width = widths[it]; debug.settingsStore.physicalWidthOverrideMm = width }
+            Hint(stringResource(R.string.dev_physical_width_hint))
+        }
         SmallHeading(stringResource(R.string.dev_runtime))
         KeyValue(stringResource(R.string.dev_connected_clients), stringResource(R.string.dev_unavailable))
         view.rows.forEach { row -> KeyValue(stringResource(row.label, row.argument), if (row.valueKey == 0) row.value else stringResource(row.valueKey, *row.valueArguments.toTypedArray())) }

@@ -27,6 +27,20 @@ class SavedHeadUnitTest {
         .model(CarSelection("xpeng", model = "g6-2023")))
     private fun store() = SavedHeadUnitStore(preferences)
 
+    @Test fun screenWidthPresetsKeepStartupCanvasesAndUseTheirActualPixelWidth() {
+        val settings = settings().copy(carplayResolution = CarPlayResolution.NATIVE, viewAreas = false, displayMode = DisplayMode.AUTOMATIC)
+        val native = DisplayProfile(2400, 1200, 300)
+        for ((preset, declared) in CarPlayScreenWidth.entries.zip(listOf(175, 250, 325, 375))) {
+            val next = settings.copy(carplayScreenWidth = preset)
+            for (selected in listOf(startupCarPlayScreen(next, native, saved, model()),
+                startupCarPlayScreen(next, null, saved, null), startupCarPlayScreen(next, null, null, model()),
+                startupCarPlayScreen(next.copy(displayMode = DisplayMode.FIXED, display = native), null, saved, model()))) {
+                val profile = checkNotNull(selected).profile
+                assertEquals(native, profile)
+                assertEquals(declared, physicalWidth(profile, preset))
+            }
+        }
+    }
     @Test fun nativeReFitsSavedScreenKeepsDecoderBudgetAndPlansInCanvasPixels() {
         val settings = settings().copy(carplayResolution = CarPlayResolution.NATIVE, viewAreas = false)
         val native = DisplayProfile(2400, 1200, 300)

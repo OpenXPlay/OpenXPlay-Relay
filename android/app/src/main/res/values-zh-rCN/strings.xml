@@ -456,11 +456,9 @@
     <string name="picture_native">原画</string>
     <string name="picture_native_hint">画面最清晰，需要更多 Wi-Fi 带宽。</string>
     <string name="picture_resolution">分辨率</string>
-    <string name="picture_icons">图标大小</string>
+    <string name="picture_screen_width">CarPlay 屏幕宽度</string>
+    <string name="picture_screen_width_hint">数值越大，一页显示的图标越多。</string>
     <string name="picture_screen">整屏</string>
-    <string name="picture_small">小</string>
-    <string name="picture_standard">标准</string>
-    <string name="picture_large">大</string>
     <string name="picture_window">窗口</string>
     <string name="ui_browser_https_hint">注意：地址以 https:// 开头，不是 http://。</string>
     <string name="ui_iphone_name">iPhone：%1$s</string>
@@ -529,4 +527,7 @@
     <string name="car_canvas_default">来源：默认值</string>
     <string name="car_clear_screen">清除已保存的屏幕与画布</string>
     <string name="dev_screen_model">%1$s · 内置车型</string>
+    <string name="dev_physical_width">物理宽度（调试）</string>
+    <string name="dev_physical_width_off">关闭</string>
+    <string name="dev_physical_width_hint">向 iPhone 声明这个宽度，覆盖所选的屏幕宽度，用来找出 iOS 切换 CarPlay 布局的尺寸。下次启动 CarPlay 时生效。</string>
 </resources>

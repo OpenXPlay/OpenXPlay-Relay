@@ -462,11 +462,9 @@
     <string name="picture_native">Native</string>
     <string name="picture_native_hint">Sharpest picture; needs more Wi-Fi bandwidth.</string>
     <string name="picture_resolution">Resolution</string>
-    <string name="picture_icons">Icon size</string>
+    <string name="picture_screen_width">CarPlay screen width</string>
+    <string name="picture_screen_width_hint">Larger values show more icons on one page.</string>
     <string name="picture_screen">Whole screen</string>
-    <string name="picture_small">Small</string>
-    <string name="picture_standard">Standard</string>
-    <string name="picture_large">Large</string>
     <string name="picture_window">Window</string>
     <string name="ui_browser_https_hint">Note: the address starts with https://, not http://.</string>
     <string name="ui_iphone_name">iPhone: %1$s</string>
@@ -535,4 +533,7 @@
     <string name="car_canvas_default">Source: default</string>
     <string name="car_clear_screen">Clear saved screen and canvas</string>
     <string name="dev_screen_model">%1$s · built-in car model</string>
+    <string name="dev_physical_width">Physical width (calibration)</string>
+    <string name="dev_physical_width_off">Off</string>
+    <string name="dev_physical_width_hint">Declares this width to the iPhone instead of the selected screen width, to find where iOS changes the CarPlay layout. Applies at the next CarPlay start.</string>
 </resources>

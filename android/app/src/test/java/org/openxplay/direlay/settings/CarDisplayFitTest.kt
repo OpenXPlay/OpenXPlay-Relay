@@ -7,12 +7,12 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
 class CarDisplayFitTest {
-    @Test fun nativeUsesEvenDevicePixelsAndPreservesPhysicalIconSize() {
+    @Test fun nativeUsesEvenDevicePixelsAndIncreasesDeclaredWidth() {
         val capped = CarDisplayFit.fit(2401, 1201, 36864)
         val native = CarDisplayFit.fit(2401, 1201, 36864, native = true)
         assertEquals(DisplayProfile(1920, 960, 240), capped)
         assertEquals(DisplayProfile(2400, 1200, 300), native)
-        for (size in CarPlayIconSize.entries) assertEquals(physicalWidth(capped, size), physicalWidth(native, size))
+        for (size in CarPlayScreenWidth.entries) assertTrue(physicalWidth(native, size) >= physicalWidth(capped, size))
     }
     @Test fun nativeRespectsDecoderAndAbsoluteBoundsAndScalesDensityAfterFitting() {
         for ((width, height) in listOf(2401 to 1201, 7680 to 4320, 4320 to 7680)) {
@@ -24,7 +24,7 @@ class CarDisplayFitTest {
                 assertEquals(width.toDouble() / height, native.width.toDouble() / native.height, .01)
                 if (limit != null) assertTrue(CarDisplayFit.macroblocks(native.width, native.height) <= limit)
                 val capped = CarDisplayFit.fit(width, height, limit)
-                assertTrue(kotlin.math.abs(physicalWidth(capped, CarPlayIconSize.STANDARD) - physicalWidth(native, CarPlayIconSize.STANDARD)) <= 1)
+                assertTrue(physicalWidth(native, CarPlayScreenWidth.MM200) >= physicalWidth(capped, CarPlayScreenWidth.MM200))
             }
         }
         assertEquals(DisplayProfile(3840, 2160, 480), CarDisplayFit.fit(7680, 4320, native = true))

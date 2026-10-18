@@ -28,7 +28,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("iphoneAddress", value.iphoneAddress)
         putString("displayMode", value.displayMode.name)
         putString("carplayResolution", value.carplayResolution.name)
-        putString("carplayIconSize", value.carplayIconSize.name)
+        putInt("carplayScreenWidth", value.carplayScreenWidth.mm)
         value.display?.let { putIntArray("display", intArrayOf(it.width, it.height, it.density)) }
     }
 }, restore = { bundle ->
@@ -41,7 +41,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],
         playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), fps = numbers[0], webPort = numbers[1].takeIf { it != 0 },
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,
-        carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == bundle.getString("carplayIconSize") } ?: base.carplayIconSize,
+        carplayScreenWidth = CarPlayScreenWidth.entries.firstOrNull { it.mm == bundle.getInt("carplayScreenWidth", base.carplayScreenWidth.mm) } ?: base.carplayScreenWidth,
         carlinkTrace = bundle.getBoolean("carlinkTrace", false),
         viewAreas = bundle.getBoolean("carPlayViewAreas", base.viewAreas),
         car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 }?.let { CarSelection(it[0], it[1], it[2], it[3]) } ?: base.car,

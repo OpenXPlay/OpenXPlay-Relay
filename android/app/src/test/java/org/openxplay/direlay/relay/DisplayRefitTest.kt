@@ -24,7 +24,7 @@ class DisplayRefitTest {
         assertTrue(CarDisplayFit.macroblocks(budget.width, budget.height) <= 3600)
     }
     private val display = DisplayInfo(2401, 1201, 240, 60.0, viewport = Viewport(1533, 906))
-    private val running = DisplayTarget(DisplayProfile(1920, 960, 240), CarPlayResolution.AUTO, CarPlayIconSize.STANDARD)
+    private val running = DisplayTarget(DisplayProfile(1920, 960, 240), CarPlayResolution.AUTO, CarPlayScreenWidth.MM200)
     private val desired = running.copy(profile = DisplayProfile(1534, 906, 240))
     private fun due(gate: DisplayRefit, now: Long, applied: DisplayTarget = running, next: DisplayTarget = desired,
         mode: DisplayMode = DisplayMode.AUTOMATIC, active: Boolean = true, viewport: Boolean = true) =
@@ -74,7 +74,7 @@ class DisplayRefitTest {
         val gate = DisplayRefit()
         assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, running, desired, true, viewAreas = true))
         assertFalse(gate.due(20000, true, DisplayMode.AUTOMATIC, running, desired, true, viewAreas = true))
-        for (next in listOf(running.copy(iconSize = CarPlayIconSize.SMALL),
+        for (next in listOf(running.copy(screenWidth = CarPlayScreenWidth.MM125),
             running.copy(resolution = CarPlayResolution.P720), running.copy(resolution = CarPlayResolution.SCREEN))) {
             val settings = DisplayRefit()
             assertFalse(settings.due(0, true, DisplayMode.AUTOMATIC, running, next, false, viewAreas = true))
@@ -114,11 +114,30 @@ class DisplayRefitTest {
             }
         }
     }
-    @Test fun iconFactorsAreAppliedBeforeThePhysicalSizeClampAndSnap() {
-        val profile = DisplayProfile(1920, 960, 240)
-        assertEquals(284, physicalWidth(profile, CarPlayIconSize.SMALL))
-        assertEquals(203, physicalWidth(profile, CarPlayIconSize.STANDARD))
-        assertEquals(152, physicalWidth(profile, CarPlayIconSize.LARGE))
+    @Test fun everyWidthChangeRestartsAutomaticAndFixedSessionsWithOrWithoutAreas() {
+        for (from in CarPlayScreenWidth.entries) for (to in CarPlayScreenWidth.entries) {
+            if (from == to) continue
+            for (mode in listOf(DisplayMode.AUTOMATIC, DisplayMode.FIXED)) for (areas in listOf(false, true)) {
+                val gate = DisplayRefit()
+                val applied = running.copy(screenWidth = from)
+                val next = running.copy(screenWidth = to)
+                assertFalse(gate.due(0, true, mode, applied, next, false, areas))
+                assertFalse(gate.due(999, true, mode, applied, next, false, areas))
+                assertTrue(gate.due(1000, true, mode, applied, next, false, areas))
+                assertFalse(gate.due(2000, true, mode, next, next, false, areas))
+            }
+        }
+    }
+    @Test fun declaredWidthFollowsVerifiedDensityAndClamps() {
+        val presets = CarPlayScreenWidth.entries
+        assertEquals(listOf(125, 200, 250, 300), presets.map { physicalWidth(DisplayProfile(1920, 960, 240), it) })
+        assertEquals(listOf(175, 250, 325, 375), presets.map { physicalWidth(DisplayProfile(2400, 1200, 300), it) })
+        assertEquals(listOf(125, 200, 250, 300), presets.map { physicalWidth(DisplayProfile(1280, 720, 160), it) })
+        for (preset in presets) for (width in listOf(1, 1921, 3840, Int.MAX_VALUE)) {
+            val declared = physicalWidth(DisplayProfile(width, 960, 240), preset)
+            assertTrue(declared in 100..400); assertEquals(0, declared % 25)
+        }
+        assertEquals(400, physicalWidth(DisplayProfile(3840, 2160, 480), CarPlayScreenWidth.MM300))
     }
     @Test fun thresholdsAreStrictlyGreaterThanThreePercentAspectOrTenPercentSide() {
         val base = DisplayProfile(1000, 1000, 160)
@@ -148,14 +167,14 @@ class DisplayRefitTest {
         assertFalse(due(gate, 1000))
         assertFalse(due(gate, 1999)); assertTrue(due(gate, 2000))
     }
-    @Test fun settingChangesRestartWithUnchangedPixelsButOverridesAndStoppedSessionsDisableRefit() {
-        val small = running.copy(iconSize = CarPlayIconSize.SMALL)
+    @Test fun settingChangesRestartWithUnchangedPixelsButExplicitModesDisableGeometryRefit() {
+        val wider = running.copy(screenWidth = CarPlayScreenWidth.MM125)
         val gate = DisplayRefit()
-        assertFalse(due(gate, 0, next = small, viewport = false))
-        assertTrue(due(gate, 1000, next = small, viewport = false))
+        assertFalse(due(gate, 0, next = wider, viewport = false))
+        assertTrue(due(gate, 1000, next = wider, viewport = false))
         for (mode in listOf(DisplayMode.FIXED, DisplayMode.RELAY_SCREEN)) {
-            assertFalse(due(gate, 2000, next = small, mode = mode))
-            assertFalse(due(gate, 4000, next = small, mode = mode))
+            assertFalse(due(gate, 2000, next = desired, mode = mode))
+            assertFalse(due(gate, 4000, next = desired, mode = mode))
         }
         assertFalse(due(gate, 5000, active = false)); assertFalse(due(gate, 7000, active = false))
         assertFalse(due(gate, 8000, viewport = false)); assertFalse(due(gate, 10000, viewport = false))

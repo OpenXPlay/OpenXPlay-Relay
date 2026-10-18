@@ -63,7 +63,7 @@ data class RelaySettings(
     val pluginsEnabled: List<String> = emptyList(),
     val carlinkTrace: Boolean = false,
     val carplayResolution: CarPlayResolution = CarPlayResolution.AUTO,
-    val carplayIconSize: CarPlayIconSize = CarPlayIconSize.STANDARD,
+    val carplayScreenWidth: CarPlayScreenWidth = CarPlayScreenWidth.MM200,
     val viewAreas: Boolean = true,
     val car: CarSelection = CarSelection(),
 ) {
@@ -91,7 +91,7 @@ data class RelaySettings(
     }
 }
 
-fun RelaySettings.displaySettings() = org.openxplay.stream.web.DisplaySettings(carplayResolution.wire, carplayIconSize.wire)
+fun RelaySettings.displaySettings() = org.openxplay.stream.web.DisplaySettings(carplayResolution.wire, carplayScreenWidth.mm)
 
 /** Maps relay controls to DiPlay's persistence; only relay-specific values live in direlay. */
 class RelaySettingsStore(private val context: Context) : AutoCloseable, org.openxplay.stream.web.DisplaySettingsPort {
@@ -100,7 +100,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     @Synchronized override fun set(settings: org.openxplay.stream.web.DisplaySettings, origin: org.openxplay.stream.core.Origin) {
         save((cached.value ?: load()).copy(
             carplayResolution = CarPlayResolution.entries.first { it.wire == settings.resolution },
-            carplayIconSize = CarPlayIconSize.entries.first { it.wire == settings.iconSize }))
+            carplayScreenWidth = CarPlayScreenWidth.entries.first { it.mm == settings.screenWidth }))
     }
     override fun listen(callback: (org.openxplay.stream.web.DisplaySettings) -> Unit): AutoCloseable {
         displayListeners.add(callback)
@@ -201,7 +201,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
                 relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
             carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
-            carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == relay.getString("carplayIconSize", null) } ?: CarPlayIconSize.STANDARD,
+            carplayScreenWidth = CarPlayScreenWidth.entries.firstOrNull { it.mm == relay.getInt("carplayScreenWidth", 200) } ?: CarPlayScreenWidth.MM200,
             plugins = relay.getBoolean("plugins", false),
             pluginsEnabled = runCatching {
                 val ids = org.json.JSONArray(relay.getString("pluginsEnabled", "[]"))
@@ -233,7 +233,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         if (settings.display != previousDisplay || settings.displayMode != current.displayMode) {
             AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
         }
-        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let { applyDisplayProfile(it, settings.carplayIconSize) }
+        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let { applyDisplayProfile(it, settings.carplayScreenWidth) }
         AirPlayPersistence.saveFps(context, settings.fps)
         AirPlayPersistence.saveAutoStartOnBoot(context, settings.autoStartOnBoot)
         val edit = relay.edit().putBoolean("localPreview", settings.localPreview)
@@ -248,7 +248,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("carBrand", settings.car.brand).putString("carBrandText", settings.car.brandText)
             .putString("carModel", settings.car.model).putString("carModelText", settings.car.modelText)
             .putString("carplayResolution", settings.carplayResolution.name)
-            .putString("carplayIconSize", settings.carplayIconSize.name)
+            .putInt("carplayScreenWidth", settings.carplayScreenWidth.mm)
             .putBoolean("plugins", settings.plugins)
             .putString("pluginsEnabled", org.json.JSONArray(settings.pluginsEnabled).toString())
             .putString("iphoneAddress", settings.iphoneAddress)
@@ -263,22 +263,27 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         publish(load())
     }
 
-    fun prepareDisplay(profile: DisplayProfile?, iconSize: CarPlayIconSize = CarPlayIconSize.STANDARD) {
+    fun prepareDisplay(profile: DisplayProfile?, screenWidth: CarPlayScreenWidth = CarPlayScreenWidth.MM200) {
         profile?.validate()
         AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
-        profile?.let { applyDisplayProfile(it, iconSize) }
+        profile?.let { applyDisplayProfile(it, screenWidth) }
     }
 
-    private fun applyDisplayProfile(profile: DisplayProfile, iconSize: CarPlayIconSize) {
+    private fun applyDisplayProfile(profile: DisplayProfile, screenWidth: CarPlayScreenWidth) {
         AirPlayPersistence.saveDisplayScalePercent(context, 100)
         // DiPlay reports physical millimeters, with its existing 100–400 mm / 25 mm steps.
-        AirPlayPersistence.saveWidthPhysicalMm(context, physicalWidth(profile, iconSize))
+        AirPlayPersistence.saveWidthPhysicalMm(context, physicalWidthOverrideMm.takeIf { it > 0 } ?: physicalWidth(profile, screenWidth))
         AirPlayPersistence.savePhysicalSizeBasis(context, com.shilapi.xcertplay.airplay.AirPlayPhysicalSizeBasis.WIDTH)
     }
 
     var developerMode: Boolean
         get() = relay.getBoolean("developerMode", false)
         set(value) { relay.edit().putBoolean("developerMode", value).apply() }
+
+    /** Developer calibration: the physical width in mm declared instead of the selected preset, or 0 to use the preset. */
+    var physicalWidthOverrideMm: Int
+        get() = relay.getInt("devPhysicalWidthMm", 0)
+        set(value) { relay.edit().putInt("devPhysicalWidthMm", value).apply() }
 
     /** Whether the guided setup has been finished; [load] seeds it once for installs that predate the guide. */
     var setupCompleted: Boolean

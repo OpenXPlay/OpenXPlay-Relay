@@ -130,9 +130,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
                 CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
             if (draft.carplayResolution == CarPlayResolution.NATIVE) Hint(stringResource(R.string.picture_native_hint))
-            SmallHeading(stringResource(R.string.picture_icons))
-            Options(listOf(stringResource(R.string.picture_small), stringResource(R.string.picture_standard), stringResource(R.string.picture_large)),
-                CarPlayIconSize.entries.indexOf(draft.carplayIconSize)) { draft = draft.copy(carplayIconSize = CarPlayIconSize.entries[it]) }
+            SmallHeading(stringResource(R.string.picture_screen_width))
+            Options(CarPlayScreenWidth.entries.map { "${it.mm} mm" },
+                CarPlayScreenWidth.entries.indexOf(draft.carplayScreenWidth)) { draft = draft.copy(carplayScreenWidth = CarPlayScreenWidth.entries[it]) }
+            Hint(stringResource(R.string.picture_screen_width_hint))
             Box(sectionModifier("connection")) { SmallHeading(stringResource(R.string.ui_iphone_connection)) }
             RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
                 val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)
