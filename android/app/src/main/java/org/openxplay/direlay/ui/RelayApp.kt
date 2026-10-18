@@ -27,11 +27,18 @@ import org.openxplay.direlay.settings.*
 @Composable fun RelayApp(value: HomeContent, store: RelaySettingsStore, runtime: RelayRuntime,
     onStartStop: () -> Unit, onRestart: () -> Unit, onAutomatic: (Boolean) -> Unit, onSetup: (SetupAction) -> Unit,
     onCopy: (String) -> Unit, onReconnect: () -> Unit, onNetwork: () -> Unit,
-    importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit) {
+    importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit,
+    openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {},
+    onGuideVisible: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val motion = rememberRelayMotion()
-    var entries by rememberSaveable { mutableStateOf(listOf("home")) }
+    var entries by rememberSaveable { mutableStateOf(when {
+        openSetup -> listOf("home", "setup")
+        openLaunch -> listOf("home", "launch")
+        else -> listOf("home")
+    }) }
     var developer by remember { mutableStateOf(store.developerMode) }
+    var setupCompleted by remember { mutableStateOf(store.setupCompleted) }
     val snapshot by store.snapshot.collectAsState()
     val initial = checkNotNull(snapshot)
     val savedStates = rememberSaveableStateHolder()
@@ -81,22 +88,37 @@ import org.openxplay.direlay.settings.*
             delay(500)
         }
     }
+    // Auto start waits while the launch choice or the guide is open, so CarPlay starts only from their buttons.
+    LaunchedEffect(entries.last()) { onGuideVisible(entries.last() == "launch" || entries.last().startsWith("setup")) }
+    fun completeSetup() {
+        if (setupCompleted) return
+        setupCompleted = true
+        scope.launch { withContext(Dispatchers.IO) { store.setupCompleted = true } }
+    }
+    // Starting CarPlay from Home also counts as set up, and a running relay needs no launch choice.
+    LaunchedEffect(value.presentation.running) {
+        if (!value.presentation.running) return@LaunchedEffect
+        completeSetup()
+        if (entries.last() == "launch") entries = listOf("home")
+    }
     val saveLock = remember { Mutex() }
-    val save: suspend (RelaySettings, RelaySettings) -> Boolean = { before, after ->
-        var appliedBefore = before
-        val success = withContext(NonCancellable + Dispatchers.IO) {
-            saveLock.withLock {
+    /** Saves without feedback; returns the settings that applied before, or null if saving failed. */
+    suspend fun persist(after: RelaySettings): RelaySettings? = withContext(NonCancellable + Dispatchers.IO) {
+        saveLock.withLock {
             runCatching {
-                appliedBefore = store.awaitSnapshot()
+                val appliedBefore = store.awaitSnapshot()
                 val controller = SettingsAutoSave(appliedBefore, store::save)
                 controller.apply(after, store.wireless(after))
                 runtime.reloadSettings()
-            }.isSuccess
-            }
+                appliedBefore
+            }.getOrNull()
         }
-        if (success && appliedBefore.wirelessNetwork.choice != after.wirelessNetwork.choice && value.presentation.running) {
+    }
+    val save: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after ->
+        val appliedBefore = persist(after)
+        if (appliedBefore != null && appliedBefore.wirelessNetwork.choice != after.wirelessNetwork.choice && value.presentation.running) {
             onRestart()
-        } else if (success) {
+        } else if (appliedBefore != null) {
             val feedback = settingsFeedback(appliedBefore, after, runtime.carlinkConnected, value.presentation.running)
             if (feedback != null) scope.launch {
                 snackbar.currentSnackbarData?.dismiss()
@@ -107,7 +129,7 @@ import org.openxplay.direlay.settings.*
                 }
             }
         }
-        success
+        appliedBefore != null
     }
     CompositionLocalProvider(LocalRelayMotion provides motion) {
         Box(Modifier.fillMaxSize()) {
@@ -128,7 +150,22 @@ import org.openxplay.direlay.settings.*
                     savedStates.SaveableStateProvider("${stack.lastIndex}:$route") {
                         when {
                             route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic, { action -> if (action == SetupAction.SHARED_WIFI) open("settings:sharedWifi") else if (action == SetupAction.SETTINGS) open("settings:output") else if (action == SetupAction.CHOOSE_IPHONE) open("settings:iphone") else onSetup(action) },
-                                ::copy, onReconnect, onNetwork, { open("vehicle") }, shared, sharedContent, onRestart)
+                                ::copy, onReconnect, onNetwork, { open("vehicle") }, shared, sharedContent, onRestart,
+                                setupCompleted) { step -> open(if (step == null) "setup" else "setup:$step") }
+                            route == "launch" -> LaunchScreen(value, onContinue = {
+                                // Missing preparation opens the guide where it is finished, then Start.
+                                if (value.presentation.canStart) {
+                                    entries = listOf("home")
+                                    if (!value.presentation.running) onStartStop()
+                                } else open("setup:${SetupStep.PREPARE.key}")
+                            }, onNewSetup = { open("setup") }) { onLater(); entries = listOf("home") }
+                            route.startsWith("setup") -> SetupScreen(initial, store::wireless, value,
+                                setupStep(route.substringAfter(':', "")), runtime.bondedDevices, { runtime.sharedWifiSelection.use(it) },
+                                { _, after -> persist(after) != null }, onSetup, ::back) { changed ->
+                                completeSetup()
+                                entries = listOf("home")
+                                if (!value.presentation.running) onStartStop() else if (changed) onRestart()
+                            }
                             route.startsWith("settings") -> SettingsScreen(initial, store::wireless, developer,
                                 route.substringAfter(':', "output"), ::back, ::open, save, value.currentWifi, runtime.bondedDevices, useSharedWifi = { runtime.sharedWifiSelection.use(it) }, adminPage = {
                                     AdminPageSettings(adminEnabled, adminUrls, { enabled ->

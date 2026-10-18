@@ -44,6 +44,20 @@ class RelaySettingsTest {
         assertEquals(original, RelaySettingsStore(context).load())
     }
 
+    @Test fun guidedSetupStaysOpenAfterTheGuidesOwnSavesButExistingInstallsCountAsSetUp() {
+        val fresh = RelaySettingsStore(context)
+        fresh.save(fresh.load().copy(carlinkOutput = true))
+        assertFalse(RelaySettingsStore(context).setupCompleted)
+        fresh.setupCompleted = true
+        assertTrue(RelaySettingsStore(context).setupCompleted)
+
+        clear()
+        context.getSharedPreferences("direlay", 0).edit().putBoolean("carlinkOutput", false).commit()
+        val existing = RelaySettingsStore(context)
+        existing.load()
+        assertTrue(existing.setupCompleted)
+    }
+
     @Test fun legacyDisplayPreferencesMigrateOnceAndExplicitRelayScreenSurvives() {
         val preferences = context.getSharedPreferences("direlay", 0)
         assertEquals(DisplayMode.AUTOMATIC, store.load().displayMode)

@@ -52,7 +52,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
 @Composable fun HomeScreen(value: HomeContent, onSettings: (String) -> Unit, onStartStop: () -> Unit,
     onAutomatic: (Boolean) -> Unit, onSetup: (SetupAction) -> Unit, onCopy: (String) -> Unit,
     onReconnect: () -> Unit, onNetwork: () -> Unit, onVehicle: () -> Unit,
-    vehicleModifier: Modifier = Modifier, vehicleContentModifier: Modifier = Modifier, onRestart: () -> Unit = {}) {
+    vehicleModifier: Modifier = Modifier, vehicleContentModifier: Modifier = Modifier, onRestart: () -> Unit = {},
+    setupCompleted: Boolean = true, onGuide: (String?) -> Unit = {}) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val window = homeWindow(maxWidth.value.toInt(), maxHeight.value.toInt())
     val motion = LocalRelayMotion.current
@@ -93,19 +94,22 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 if (layout == WindowLayout.COMPACT) {
                     item("hero") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { status() } }
                     if (window.inlineActions) item("actions") { actions() }
-                    item("setup") { Checklist(value, onSetup) }
+                    item("setup") { if (setupCompleted) Checklist(value, onSetup) else GuideCard(value, onGuide) }
                     item("browser") { BrowserCard(value, onCopy) }
                     item("carlink") { CarlinkCard(value, onReconnect) }
-                    item("relay") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { RelaySummary(value, onSettings, onNetwork) } }
+                    item("mode") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { ModeCard(value, onGuide) } }
+                    item("network") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { NetworkCard(value, onNetwork) } }
                     item("vehicle") { VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier) }
                 } else item("panes") {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (layout == WindowLayout.EXPANDED) 24.dp else 16.dp)) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            status(); Checklist(value, onSetup); BrowserCard(value, onCopy); CarlinkCard(value, onReconnect)
+                            status(); if (setupCompleted) Checklist(value, onSetup) else GuideCard(value, onGuide)
+                            BrowserCard(value, onCopy); CarlinkCard(value, onReconnect)
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             if (window.inlineActions) actions()
-                            RelaySummary(value, onSettings, onNetwork); VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier)
+                            ModeCard(value, onGuide); NetworkCard(value, onNetwork)
+                            VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier)
                         }
                     }
                 }
@@ -260,19 +264,31 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
         TextButton(onClick = reconnect, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.direlay_carlink_reconnect)) }
     }
 }
-@OptIn(ExperimentalLayoutApi::class)
-@Composable private fun RelaySummary(value: HomeContent, settings: (String) -> Unit, network: () -> Unit) {
+/** Shown until the guided setup is finished, in place of the checklist it covers. */
+@Composable private fun GuideCard(value: HomeContent, guide: (String?) -> Unit) {
+    MotionCard(!value.presentation.running) {
+        Heading(stringResource(R.string.setup_home_title))
+        Hint(stringResource(R.string.setup_home_hint))
+        Button(onClick = { guide(null) }, Modifier.fillMaxWidth().heightIn(min = 56.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = RelayGreen)) { Text(stringResource(R.string.setup_home_action)) }
+    }
+}
+/** The chosen mode; each row opens the guide at the step that changes it. */
+@Composable private fun ModeCard(value: HomeContent, guide: (String?) -> Unit) {
     MotionCard {
-        Heading(stringResource(R.string.ui_this_relay))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Symbol(R.drawable.symbol_wifi, stringResource(R.string.ui_network)); Text(value.wifi, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Text(value.ip, fontFamily = FontFamily.Monospace)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            value.presentation.chips.forEachIndexed { index, label ->
-                SuggestionChip(onClick = { settings(listOf("output", "connection", "network")[index]) },
-                    modifier = Modifier.heightIn(min = 48.dp), label = { Text(stringResource(label)) })
-            }
+        Heading(stringResource(R.string.mode_title))
+        Column { ModeSummary(value.presentation.mode) { guide(it.key) } }
+        OutlinedButton(onClick = { guide(null) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.setup_change_mode)) }
+    }
+}
+/** This phone's own network: the Wi-Fi it is on and its IP addresses. */
+@Composable private fun NetworkCard(value: HomeContent, network: () -> Unit) {
+    MotionCard {
+        Heading(stringResource(R.string.network_title))
+        Column {
+            SettingsRow(stringResource(R.string.network_wifi), value.wifi, R.drawable.symbol_wifi)
+            HorizontalDivider()
+            SettingsRow(stringResource(R.string.network_addresses), value.ip, R.drawable.symbol_link)
         }
         if (!value.onWifi) TextButton(onClick = network, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.ui_open_wifi)) }
     }

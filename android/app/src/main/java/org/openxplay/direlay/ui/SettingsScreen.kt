@@ -177,7 +177,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         IconButton(onClick = back) { Symbol(R.drawable.symbol_back, stringResource(R.string.ui_back)) }
     })
 }
-@Composable private fun NetworkFields(network: WirelessNetworkSettings, choice: WirelessNetworkChoice,
+@Composable fun NetworkFields(network: WirelessNetworkSettings, choice: WirelessNetworkChoice,
     errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit, change: (WirelessNetworkSettings) -> Unit) {
     val hotspot = choice == WirelessNetworkChoice.PHONE_HOTSPOT
     val context = LocalContext.current

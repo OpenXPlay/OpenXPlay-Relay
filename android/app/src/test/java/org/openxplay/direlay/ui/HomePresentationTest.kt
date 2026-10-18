@@ -40,12 +40,14 @@ class HomePresentationTest {
             settings = settings.copy(bothOutputs = true))).subline)
     }
 
-    @Test fun chipsReflectAllChosenModesRatherThanSessionDiagnostics() {
+    @Test fun modeReflectsAllChosenModesRatherThanSessionDiagnostics() {
         for (network in WirelessNetworkChoice.entries) for (carlink in listOf(false, true)) for (wireless in listOf(false, true)) {
             val result = presentHome(ready.copy(wireless = wireless, settings = settings.copy(carlinkOutput = carlink,
                 wirelessNetwork = settings.wirelessNetwork.copy(choice = network))))
-            assertEquals(listOf(if (carlink) R.string.ui_carlink else R.string.ui_browser,
-                if (wireless) R.string.direlay_wireless else R.string.ui_usb, network.label), result.chips)
+            // USB CarPlay uses no wireless network, so it shows no network row.
+            assertEquals(listOfNotNull(if (carlink) R.string.ui_carlink else R.string.ui_browser,
+                if (wireless) R.string.direlay_wireless else R.string.ui_usb, setupNetworkLabel(network).takeIf { wireless }),
+                result.mode.map { it.value })
         }
     }
 
