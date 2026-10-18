@@ -24,6 +24,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBoolean("carlinkTrace", value.carlinkTrace)
         putString("iphoneAddress", value.iphoneAddress)
         putString("displayMode", value.displayMode.name)
+        putString("carplayResolution", value.carplayResolution.name)
+        putString("carplayIconSize", value.carplayIconSize.name)
         value.display?.let { putIntArray("display", intArrayOf(it.width, it.height, it.density)) }
     }
 }, restore = { bundle ->
@@ -36,6 +38,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],
         playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = flags.getOrElse(8) { true }, fps = numbers[0], webPort = numbers[1].takeIf { it != 0 },
         requirePairingCode = flags.getOrElse(7) { false },
+        carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,
+        carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == bundle.getString("carplayIconSize") } ?: base.carplayIconSize,
         carlinkTrace = bundle.getBoolean("carlinkTrace", false),
         iphoneAddress = bundle.getString("iphoneAddress"),
         displayMode = migratedDisplayMode(bundle.getString("displayMode"), bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) }),

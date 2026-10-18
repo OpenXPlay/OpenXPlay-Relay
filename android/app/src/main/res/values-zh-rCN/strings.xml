@@ -456,4 +456,12 @@
     <string name="carlink_capture_start">开始 TS 录制（60 秒 / 64 MB）</string>
     <string name="carlink_capture_stop">停止 TS 录制</string>
     <string name="carlink_trace_failure">跟踪写入失败：%1$s</string>
+    <string name="picture_title">CarPlay 画面</string>
+    <string name="picture_resolution">分辨率</string>
+    <string name="picture_icons">图标大小</string>
+    <string name="picture_screen">整屏</string>
+    <string name="picture_small">小</string>
+    <string name="picture_standard">标准</string>
+    <string name="picture_large">大</string>
+    <string name="picture_window">窗口</string>
 </resources>

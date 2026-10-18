@@ -39,6 +39,9 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
             else -> R.string.dev_screen_relay
         }, valueArguments = listOf(size)))
     }
+    runtime.displayPolicy.primaryDisplay?.viewport?.let {
+        add(DeveloperRow(R.string.picture_window, "${it.width} × ${it.height} · ${"%.2f".format(java.util.Locale.ROOT, it.width.toDouble() / it.height)}:1"))
+    }
     add(DeveloperRow(R.string.dev_receiver, "", valueKey = developerStateKey(runtime.serverState)))
     add(DeveloperRow(R.string.ui_carlink, "", valueKey = developerStateKey(runtime.carlinkState)))
     add(DeveloperRow(R.string.dev_iphone_selection, runtime.iphoneSelection().diagnostic()))

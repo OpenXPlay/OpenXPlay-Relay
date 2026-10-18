@@ -80,4 +80,12 @@
     <string name="app_name">OpenXPlay Relay</string>
     <string name="relay_brand_first">OpenXPlay</string>
     <string name="relay_brand_second">Relay</string>
+    <string name="picture_title">CarPlay の画面</string>
+    <string name="picture_resolution">解像度</string>
+    <string name="picture_icons">アイコンのサイズ</string>
+    <string name="picture_screen">画面全体</string>
+    <string name="picture_small">小</string>
+    <string name="picture_standard">標準</string>
+    <string name="picture_large">大</string>
+    <string name="picture_window">ウィンドウ</string>
 </resources>

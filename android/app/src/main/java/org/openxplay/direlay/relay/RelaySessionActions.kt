@@ -43,6 +43,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         }
         "restart" -> {
             if (runtime.startRequest.pending || restarting) "error.conflict" else {
+                runtime.displayRestarted()
                 runtime.autoStartSessions.tracker.restarting()
                 restarting = true
                 stop()

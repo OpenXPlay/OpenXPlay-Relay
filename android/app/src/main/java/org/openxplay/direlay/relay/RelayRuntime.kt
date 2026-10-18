@@ -78,7 +78,7 @@ class RelayRuntime(private val context: Context,
 
     fun prepareCarPlayFrameRate() { AirPlayPersistence.saveFps(context, negotiatedFps) }
     val status = RelayStatus()
-    internal val displayPolicy = CarDisplayPolicy()
+    internal val displayPolicy = CarDisplayPolicy { settingsStore.snapshot.value?.carplayResolution ?: CarPlayResolution.AUTO }
     private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
     private val preferences = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
@@ -119,18 +119,24 @@ class RelayRuntime(private val context: Context,
     fun currentSharedWifi(settings: RelaySettings, currentSsid: String? = currentWifiSsid(context)) =
         sharedWifiSelection.resolve(currentSsid, settings.wirelessNetwork.sharedWifiNetworks)
 
-    /** Called on the start worker; freeze the canvas until the user explicitly reconnects. */
+    private val displayRefit = DisplayRefit()
+    @Volatile private var appliedDisplay: DisplayTarget? = null
+    fun displayRestarted() { displayRefit.restarted(android.os.SystemClock.elapsedRealtime()) }
+
+    /** Called on the start worker; freeze the canvas for this CarPlay session. */
     @Synchronized fun prepareCarPlayScreen(settings: RelaySettings): CarPlayScreen? {
         loadRememberedDisplay()
+        displayPolicy.refreshDisplay()
         rememberCarDisplay()
         return resolveCarPlayScreen(settings.displayMode, settings.display, displayPolicy.carDisplay, rememberedDisplay).also {
-            settingsStore.prepareDisplay(it?.profile)
+            settingsStore.prepareDisplay(it?.profile, settings.carplayIconSize)
+            appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayIconSize) }
             carPlayScreen = it
             screenPrepared = true
         }
     }
 
-    fun displayMismatch(running: Boolean, settings: RelaySettings): Boolean = carDisplayMismatch(
+    fun displayMismatch(running: Boolean, settings: RelaySettings): Boolean = (settings.carplayResolution == CarPlayResolution.SCREEN || displayPolicy.primaryDisplay?.viewport == null) && carDisplayMismatch(
         running, settings.displayMode, carPlayScreen?.profile, displayPolicy.lastCarDisplay ?: rememberedDisplay)
 
     /** The CarPlay canvas as "W × H · D dpi" plus where it came from ("car screen", …, "relay screen"). */
@@ -346,7 +352,16 @@ class RelayRuntime(private val context: Context,
             if (sessionActions.action("restart") != null) codecRestartPending = false
         }
     }
-    private val displayTick = setup.scheduleWithFixedDelay({ rememberCarDisplay(); refreshVideoCodec() }, 0, 250, TimeUnit.MILLISECONDS)
+    private fun refreshDisplay() {
+        displayPolicy.refreshDisplay()
+        rememberCarDisplay()
+        val settings = settingsStore.snapshot.value ?: return
+        val desired = (displayPolicy.carDisplay ?: carPlayScreen?.profile)?.let { DisplayTarget(it, settings.carplayResolution, settings.carplayIconSize) }
+        if (displayRefit.due(android.os.SystemClock.elapsedRealtime(), autoStartSessions.tracker.running,
+                settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null) &&
+            !sessionActions.restarting && !startRequest.pending) sessionActions.action("restart")
+    }
+    private val displayTick = setup.scheduleWithFixedDelay({ refreshDisplay(); refreshVideoCodec() }, 0, 250, TimeUnit.MILLISECONDS)
 
     private val vehicleTick = setup.scheduleWithFixedDelay({
         try {
@@ -591,7 +606,7 @@ class RelayRuntime(private val context: Context,
             }.onFailure { Log.w("OpenXPlay Relay", "Plugin packages unavailable", it) }.getOrNull()
             val output = WebOutput(WebOutputConfig(
                 bindAddress = "0.0.0.0", port = port, sslContext = ssl,
-                staticAssetRoot = root.toPath(), tokenVerifier = verifier, plugins = plugins,
+                staticAssetRoot = root.toPath(), tokenVerifier = verifier, plugins = plugins, displaySettings = settingsStore,
                 sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-DiRelay",
             ))
             synchronized(lifecycle) {

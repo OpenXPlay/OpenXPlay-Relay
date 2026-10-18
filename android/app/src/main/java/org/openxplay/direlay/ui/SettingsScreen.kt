@@ -123,6 +123,13 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         trailing = { LabeledSwitch(stringResource(R.string.carlink_auto_reconnect), draft.carlinkAutoReconnect, { draft = draft.copy(carlinkAutoReconnect = it) }) })
                 }
             }
+            Box(sectionModifier("picture")) { SmallHeading(stringResource(R.string.picture_title)) }
+            SmallHeading(stringResource(R.string.picture_resolution))
+            Options(listOf(stringResource(R.string.display_automatic), "1080p", "720p", stringResource(R.string.picture_screen)),
+                CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
+            SmallHeading(stringResource(R.string.picture_icons))
+            Options(listOf(stringResource(R.string.picture_small), stringResource(R.string.picture_standard), stringResource(R.string.picture_large)),
+                CarPlayIconSize.entries.indexOf(draft.carplayIconSize)) { draft = draft.copy(carplayIconSize = CarPlayIconSize.entries[it]) }
             Box(sectionModifier("connection")) { SmallHeading(stringResource(R.string.ui_iphone_connection)) }
             RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
                 val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)

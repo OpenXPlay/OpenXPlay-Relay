@@ -63,6 +63,8 @@ data class RelaySettings(
     val plugins: Boolean = false,
     val pluginsEnabled: List<String> = emptyList(),
     val carlinkTrace: Boolean = false,
+    val carplayResolution: CarPlayResolution = CarPlayResolution.AUTO,
+    val carplayIconSize: CarPlayIconSize = CarPlayIconSize.STANDARD,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -88,8 +90,26 @@ data class RelaySettings(
     }
 }
 
+fun RelaySettings.displaySettings() = org.openxplay.stream.web.DisplaySettings(carplayResolution.wire, carplayIconSize.wire)
+
 /** Maps relay controls to DiPlay's persistence; only relay-specific values live in direlay. */
-class RelaySettingsStore(private val context: Context) : AutoCloseable {
+class RelaySettingsStore(private val context: Context) : AutoCloseable, org.openxplay.stream.web.DisplaySettingsPort {
+    private val displayListeners = java.util.concurrent.CopyOnWriteArrayList<(org.openxplay.stream.web.DisplaySettings) -> Unit>()
+    override fun current() = cached.value?.displaySettings() ?: org.openxplay.stream.web.DisplaySettings()
+    @Synchronized override fun set(settings: org.openxplay.stream.web.DisplaySettings, origin: org.openxplay.stream.core.Origin) {
+        save((cached.value ?: load()).copy(
+            carplayResolution = CarPlayResolution.entries.first { it.wire == settings.resolution },
+            carplayIconSize = CarPlayIconSize.entries.first { it.wire == settings.iconSize }))
+    }
+    override fun listen(callback: (org.openxplay.stream.web.DisplaySettings) -> Unit): AutoCloseable {
+        displayListeners.add(callback)
+        return AutoCloseable { displayListeners.remove(callback) }
+    }
+    private fun publish(value: RelaySettings) {
+        val previous = cached.value?.displaySettings()
+        cached.value = value
+        if (previous != value.displaySettings()) displayListeners.forEach { it(value.displaySettings()) }
+    }
     private val relay get() = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     private val diplay get() = context.getSharedPreferences("diplay", Context.MODE_PRIVATE)
 
@@ -105,7 +125,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
     private val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         if (!closed && refreshQueued.compareAndSet(false, true)) try { refreshWorker.execute {
             refreshQueued.set(false)
-            synchronized(this) { if (!closed) cached.value = load() }
+            synchronized(this) { if (!closed) publish(load()) }
         } } catch (_: java.util.concurrent.RejectedExecutionException) { refreshQueued.set(false) }
     }
     @Synchronized fun startObserving() {
@@ -113,7 +133,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
         if (initialRead != null) return
         listOf(relay, diplay, context.getSharedPreferences("xcertplay_airplay", Context.MODE_PRIVATE))
             .forEach { it.registerOnSharedPreferenceChangeListener(listener) }
-        initialRead = refreshWorker.submit { synchronized(this) { cached.value = load() } }
+        initialRead = refreshWorker.submit { synchronized(this) { publish(load()) } }
     }
     /** Only workers may wait for the first disk-backed preference snapshot. */
     fun awaitSnapshot(): RelaySettings {
@@ -126,6 +146,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
         closed = true
         listOf(relay, diplay, context.getSharedPreferences("xcertplay_airplay", Context.MODE_PRIVATE))
             .forEach { it.unregisterOnSharedPreferenceChangeListener(listener) }
+        displayListeners.clear()
         refreshWorker.shutdownNow()
     }
 
@@ -176,6 +197,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
             relay.getBoolean("requirePairingCode", false),
             relay.getString("iphoneAddress", null),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
+            carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
+            carplayIconSize = CarPlayIconSize.entries.firstOrNull { it.name == relay.getString("carplayIconSize", null) } ?: CarPlayIconSize.STANDARD,
             plugins = relay.getBoolean("plugins", false),
             pluginsEnabled = runCatching {
                 val ids = org.json.JSONArray(relay.getString("pluginsEnabled", "[]"))
@@ -206,7 +229,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
         if (settings.display != previousDisplay || settings.displayMode != current.displayMode) {
             AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
         }
-        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let(::applyDisplayProfile)
+        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let { applyDisplayProfile(it, settings.carplayIconSize) }
         AirPlayPersistence.saveFps(context, settings.fps)
         AirPlayPersistence.saveAutoStartOnBoot(context, settings.autoStartOnBoot)
         val edit = relay.edit().putBoolean("localPreview", settings.localPreview)
@@ -217,6 +240,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
             .putBoolean("carlinkTrace", settings.carlinkTrace)
+            .putString("carplayResolution", settings.carplayResolution.name)
+            .putString("carplayIconSize", settings.carplayIconSize.name)
             .putBoolean("plugins", settings.plugins)
             .putString("pluginsEnabled", org.json.JSONArray(settings.pluginsEnabled).toString())
             .putBoolean("requirePairingCode", settings.requirePairingCode)
@@ -229,19 +254,19 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
             edit.putInt("displayWidth", it.width).putInt("displayHeight", it.height).putInt("displayDensity", it.density)
         }
         edit.apply()
-        cached.value = load()
+        publish(load())
     }
 
-    fun prepareDisplay(profile: DisplayProfile?) {
+    fun prepareDisplay(profile: DisplayProfile?, iconSize: CarPlayIconSize = CarPlayIconSize.STANDARD) {
         profile?.validate()
         AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
-        profile?.let(::applyDisplayProfile)
+        profile?.let { applyDisplayProfile(it, iconSize) }
     }
 
-    private fun applyDisplayProfile(profile: DisplayProfile) {
+    private fun applyDisplayProfile(profile: DisplayProfile, iconSize: CarPlayIconSize) {
         AirPlayPersistence.saveDisplayScalePercent(context, 100)
         // DiPlay reports physical millimeters, with its existing 100–400 mm / 25 mm steps.
-        AirPlayPersistence.saveWidthPhysicalMm(context, kotlin.math.round(profile.width * 25.4 / profile.density).toInt())
+        AirPlayPersistence.saveWidthPhysicalMm(context, physicalWidth(profile, iconSize))
         AirPlayPersistence.savePhysicalSizeBasis(context, com.shilapi.xcertplay.airplay.AirPlayPhysicalSizeBasis.WIDTH)
     }
 

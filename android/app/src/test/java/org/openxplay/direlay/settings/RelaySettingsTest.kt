@@ -33,6 +33,34 @@ class RelaySettingsTest {
         }
     }
 
+    @Test fun pictureSettingsPersistAndTheWebPortPublishesTheSameValues() {
+        RelaySettingsStore(context).use { store ->
+            val original = store.awaitSnapshot()
+            assertEquals(CarPlayResolution.AUTO, original.carplayResolution)
+            assertEquals(CarPlayIconSize.STANDARD, original.carplayIconSize)
+            val seen = java.util.concurrent.CopyOnWriteArrayList<org.openxplay.stream.web.DisplaySettings>()
+            val listener = store.listen { seen.add(it) }
+            for (resolution in CarPlayResolution.entries) for (size in CarPlayIconSize.entries) {
+                val value = original.copy(carplayResolution = resolution, carplayIconSize = size)
+                store.save(value)
+                assertEquals(value, store.load())
+                assertEquals(value.displaySettings(), store.current())
+                val profile = DisplayProfile(1920, 960, 240)
+                store.prepareDisplay(profile, size)
+                val expected = com.shilapi.xcertplay.airplay.AirPlayDisplaySettings.sanitizeWidthPhysicalMm(physicalWidth(profile, size))
+                assertEquals(expected, AirPlayPersistence.loadWidthPhysicalMm(context))
+            }
+            store.set(org.openxplay.stream.web.DisplaySettings("720p", "small"), org.openxplay.stream.core.Origin("web", "test"))
+            assertEquals(CarPlayResolution.P720, store.load().carplayResolution)
+            assertEquals(CarPlayIconSize.SMALL, store.load().carplayIconSize)
+            assertEquals(store.current(), seen.last())
+            listener.close()
+            val count = seen.size
+            store.save(original)
+            assertEquals(count, seen.size)
+        }
+    }
+
     @Test fun carlinkTraceDefaultsOffAndPersists() {
         val store = RelaySettingsStore(context)
         val original = store.load()

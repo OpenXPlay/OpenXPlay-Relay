@@ -80,4 +80,12 @@
     <string name="app_name">OpenXPlay Relay</string>
     <string name="relay_brand_first">OpenXPlay</string>
     <string name="relay_brand_second">Relay</string>
+    <string name="picture_title">Imagen de CarPlay</string>
+    <string name="picture_resolution">Resolución</string>
+    <string name="picture_icons">Tamaño de los iconos</string>
+    <string name="picture_screen">Pantalla completa</string>
+    <string name="picture_small">Pequeño</string>
+    <string name="picture_standard">Estándar</string>
+    <string name="picture_large">Grande</string>
+    <string name="picture_window">Ventana</string>
 </resources>
