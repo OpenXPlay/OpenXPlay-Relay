@@ -70,6 +70,37 @@ class TranscodingOutputTest {
         output.close()
     }
 
+    @Test fun keyFrameRequestsReachTheHostWithoutHoldingTheTranscoderLock() {
+        // The hub can call back into the input, whose thread may be delivering a frame to this output
+        // while holding its own lock (the 2026-10-18 ANR). Each request must leave the output free.
+        lateinit var output: TranscodingOutput
+        val sent = mutableListOf<ControlEvent>()
+        val blocked = mutableListOf<ControlEvent>()
+        val host = object : OutputHost {
+            override fun capabilities(capabilities: OutputCapabilities) {}
+            override fun stats(stats: OutputStats) {}
+            override fun control(event: ControlEvent) {
+                sent += event
+                val delivery = Thread { output.onVideoFrame(frame()) }.apply { isDaemon = true; start(); join(2_000) }
+                if (delivery.isAlive) blocked += event
+            }
+        }
+        val inner = RecordingOutput()
+        val pipelines = mutableListOf<Pipeline>()
+        output = TranscodingOutput(inner, VideoPipeline.Factory { _, _, listener -> Pipeline(listener).also { pipelines.add(it) } })
+        output.open(host)
+        output.onVideoFormat(ScreenId.MAIN, high())
+        // Starting the transcoder asks the input for a key frame.
+        inner.host!!.capabilities(capabilities("avc1.42E01F"))
+        val pipeline = pipelines.single()
+        for (callback in listOf({ pipeline.listener.inputKeyFrame() }, { pipeline.listener.failed(IllegalStateException("test")) })) {
+            Thread { callback() }.apply { isDaemon = true; start(); join(5_000) }
+        }
+        assertEquals(3, sent.size)
+        assertTrue(blocked.isEmpty(), "requests sent while the transcoder lock was held: $blocked")
+        output.close()
+    }
+
     @Test fun repeatedIdenticalFormatKeepsThePipelineAndRequestsNoKeyframe() {
         // The iPhone repeats its configuration with every keyframe; rebuilding looped on the real car.
         val inner = RecordingOutput(reportedCapabilities = capabilities("avc1.42E01F"))

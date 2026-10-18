@@ -46,16 +46,35 @@ class TranscodingOutput(
     private var capabilities: OutputCapabilities? = null
     private var host: OutputHost? = null
     private var closed = false
+    // Requests to the host are queued under the gate and sent after it is released: the hub can call
+    // back into the input while the input thread holds its own lock and waits for this gate.
+    private val outbox = ArrayList<ControlEvent>()
+    private fun requestKeyFrame(screen: ScreenId) { outbox += ControlEvent.KeyFrameRequest(screen, Origin(id, "transcoder")) }
+    private var depth = 0
+    /** Runs [block] under the gate; the outermost call sends the queued requests once the gate is free. */
+    private fun <T> locked(block: () -> T): T {
+        val (result, target, events) = synchronized(gate) {
+            depth++
+            val result = try { block() } finally { depth-- }
+            val events = if (depth == 0) outbox.toList().also { outbox.clear() } else emptyList()
+            Triple(result, host, events)
+        }
+        events.forEach { target?.control(it) }
+        return result
+    }
 
     override fun open(host: OutputHost) {
         synchronized(gate) { this.host = host; closed = false }
         inner.open(object : OutputHost by host {
             override fun capabilities(capabilities: OutputCapabilities) {
-                synchronized(gate) {
-                    if (closed) return
-                    this@TranscodingOutput.capabilities = capabilities
-                    streams.values.forEach { configure(it) }
+                val open = locked {
+                    if (!closed) {
+                        this@TranscodingOutput.capabilities = capabilities
+                        streams.values.forEach { configure(it) }
+                    }
+                    !closed
                 }
+                if (!open) return
                 observeCapabilities(capabilities)
                 host.capabilities(capabilities)
             }
@@ -73,16 +92,16 @@ class TranscodingOutput(
         })
     }
 
-    override fun onVideoFormat(screen: ScreenId, format: VideoFormat?) = synchronized(gate) {
-        if (closed) return@synchronized
+    override fun onVideoFormat(screen: ScreenId, format: VideoFormat?) = locked {
+        if (closed) return@locked
         val existing = streams[screen]
         if (format != null && existing != null && sameFormat(existing.format, format)) {
             // The iPhone repeats an identical configuration with every keyframe. Rebuilding the
             // transcoder for it requests another keyframe and loops; keep the running pipeline.
-            if (existing.pipeline != null && !existing.failed) return@synchronized
+            if (existing.pipeline != null && !existing.failed) return@locked
             if (existing.decision.mode != VideoCompatibility.Mode.TRANSCODE || existing.failed) {
                 inner.onVideoFormat(screen, format)
-                return@synchronized
+                return@locked
             }
         }
         streams.remove(screen)?.let { it.revision++; it.pipeline?.close() }
@@ -115,7 +134,7 @@ class TranscodingOutput(
         val revision = stream.revision
         val listener = object : VideoPipeline.Listener {
             private fun current() = !closed && streams[stream.format.screen] === stream && stream.revision == revision
-            override fun format(format: VideoFormat) = synchronized(gate) {
+            override fun format(format: VideoFormat) = locked {
                 if (current()) {
                     if (capabilities?.decoders?.any { VideoCompatibility.accepts(format, it) } != true) {
                         failed(IllegalStateException("encoder_profile_mismatch"))
@@ -125,18 +144,17 @@ class TranscodingOutput(
             override fun frame(frame: VideoFrame) = synchronized(gate) {
                 if (current()) inner.onVideoFrame(frame)
             }
-            override fun inputKeyFrame() = synchronized(gate) {
-                if (current()) host?.control(ControlEvent.KeyFrameRequest(stream.format.screen, Origin(id, "transcoder")))
-                Unit
+            override fun inputKeyFrame() = locked {
+                if (current()) requestKeyFrame(stream.format.screen)
             }
-            override fun failed(error: Exception) = synchronized(gate) {
+            override fun failed(error: Exception) = locked {
                 if (current()) {
                     stream.revision++
                     stream.pipeline?.close(); stream.pipeline = null
                     stream.failed = true
                     reportChange(stream.format, decision, true)
                     inner.onVideoFormat(stream.format.screen, stream.format)
-                    host?.control(ControlEvent.KeyFrameRequest(stream.format.screen, Origin(id, "transcoder")))
+                    requestKeyFrame(stream.format.screen)
                 }
             }
         }
@@ -144,7 +162,7 @@ class TranscodingOutput(
             stream.pipeline = factory.create(stream.format, checkNotNull(decision.target), listener)
             stream.pipeline?.start()
             // A new decoder needs an input IDR once; receiver recovery thereafter targets the encoder.
-            if (!stream.failed) host?.control(ControlEvent.KeyFrameRequest(stream.format.screen, Origin(id, "transcoder")))
+            if (!stream.failed) requestKeyFrame(stream.format.screen)
         } catch (failure: Exception) { listener.failed(failure) }
     }
 
