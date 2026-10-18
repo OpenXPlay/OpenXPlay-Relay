@@ -165,11 +165,20 @@ class StreamBridgeSink(
             previewConfigured.remove(screen)
             val format = try {
                 val codec = codecs[screen] ?: VideoCodec.H264
+                fun create(candidate: VideoCodec) = VideoFormat.create(screen, candidate,
+                    if (candidate == VideoCodec.H265) hevcRecord(codecData) else codecData.copyOf(), fpsHint)
                 val parsed = try {
-                    VideoFormat.create(screen, codec, codecData.copyOf(), fpsHint)
-                } catch (_: IllegalArgumentException) {
+                    create(codec)
+                } catch (announced: IllegalArgumentException) {
                     val other = if (codec == VideoCodec.H264) VideoCodec.H265 else VideoCodec.H264
-                    VideoFormat.create(screen, other, codecData.copyOf(), fpsHint)
+                    try {
+                        create(other)
+                    } catch (fallback: IllegalArgumentException) {
+                        // Keep both reasons and the record (codec parameters only) so a rejected configuration can be reproduced.
+                        val record = codecData.take(256).joinToString("") { "%02x".format(it) }
+                        throw IllegalArgumentException("$codec: ${announced.message}; $other: ${fallback.message}; " +
+                            "config(${codecData.size}B)=$record", fallback)
+                    }
                 }
                 if (codecs[screen] != parsed.codec) {
                     Log.i("OpenXPlay Relay", "Video configuration identifies ${parsed.codec}; correcting announced codec")
