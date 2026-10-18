@@ -16,8 +16,14 @@ defaults:
     shell: bash
 
 # The Rust and Android builds reference OpenXPlay-Stream and OpenXPlay-DiPlay by relative path,
-# so those jobs check the repositories out side by side.
+# so those jobs check the repositories out side by side; Stream at the commit in stream.lock.
 jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fsfe/reuse-action@v5
+
   rust:
     runs-on: ubuntu-latest
     defaults:
@@ -27,9 +33,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: OpenXPlay-Relay
+      - name: Read the pinned Stream commit
+        id: pin
+        run: echo "stream=$(tr -d '[:space:]' < OpenXPlay-Relay/stream.lock)" >> "$GITHUB_OUTPUT"
+        working-directory: .
       - uses: actions/checkout@v4
         with:
           repository: OpenXPlay/OpenXPlay-Stream
+          ref: ${{ steps.pin.outputs.stream }}
           path: OpenXPlay-Stream
       - name: Install Rust
         run: rustup toolchain install 1.99.1 --profile minimal --component clippy && rustup default 1.99.1
@@ -64,9 +75,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: OpenXPlay-Relay
+      - name: Read the pinned Stream commit
+        id: pin
+        run: echo "stream=$(tr -d '[:space:]' < OpenXPlay-Relay/stream.lock)" >> "$GITHUB_OUTPUT"
+        working-directory: .
       - uses: actions/checkout@v4
         with:
           repository: OpenXPlay/OpenXPlay-Stream
+          ref: ${{ steps.pin.outputs.stream }}
           path: OpenXPlay-Stream
       - uses: actions/checkout@v4
         with:

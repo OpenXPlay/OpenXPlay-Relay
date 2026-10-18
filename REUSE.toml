@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-18
+
+# Copyright and licensing for files that cannot carry a header (REUSE 3.3). Every other file carries
+# its own SPDX header; files derived from DiPlay or xcertplay keep GPL-3.0-only in their headers.
+version = 1
+
+[[annotations]]
+path = [
+    ".gitignore",
+    "CLA.md",
+    "NOTICE",
+    "README.md",
+    "README-zh.md",
+    "stream.lock",
+    "admin-web/.gitignore",
+    "admin-web/package.json",
+    "admin-web/package-lock.json",
+    "admin-web/THIRD-PARTY.md",
+    "admin-web/tsconfig.json",
+    "rust/direlay-linux/tests/fixtures/*.txt",
+]
+SPDX-FileCopyrightText = "2026 OpenXPlay.org"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+# The OpenXPlay logo in the launcher, the CarPlay host and the CarPlay car button.
+[[annotations]]
+path = [
+    "android/app/src/main/res/drawable/ic_carplay.png",
+    "android/app/src/main/res/raw/ic_car_home.png",
+    "android/app/src/main/res/mipmap-*/ic_launcher_foreground.png",
+    "android/app/src/main/res/mipmap-*/ic_launcher_monochrome.png",
+]
+SPDX-FileCopyrightText = "2026 OpenXPlay.org"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = ["android/gradle/wrapper/gradle-wrapper.jar", "android/gradle/wrapper/gradle-wrapper.properties"]
+SPDX-FileCopyrightText = "Gradle Inc. and the Gradle contributors"
+SPDX-License-Identifier = "Apache-2.0"

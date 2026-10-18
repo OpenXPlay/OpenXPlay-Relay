@@ -18,9 +18,12 @@ import org.xml.sax.InputSource
 /** Pure JVM transformation; XML serialization preserves markup and Android escape sequences. */
 object BrandingResources {
     const val ATTRIBUTION = "receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay"
+    // The header written into generated resources, not this file's own (REUSE must not read it).
+    // REUSE-IgnoreStart
     const val HEADER = "<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org\n" +
         "     SPDX-License-Identifier: AGPL-3.0-only\n" +
         "     Created by riko chen on 2026-10-14 -->\n"
+    // REUSE-IgnoreEnd
 
     private fun parse(xml: String) = DocumentBuilderFactory.newInstance().apply {
         isNamespaceAware = true

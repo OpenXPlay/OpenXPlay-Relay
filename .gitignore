@@ -7,3 +7,4 @@ node_modules
 dist/
 *.iml
 .idea/
+__pycache__/
