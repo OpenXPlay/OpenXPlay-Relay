@@ -54,6 +54,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private var pairingInFlight = false
     private var bootAutoStart = false
     private var started = false
+    /** The launch choice or the guided setup is on screen; CarPlay then starts only from their buttons. */
+    private var guideOpen = false
     private val restartPending get() = runtime.sessionActions.restarting
     private val importOnly get() = intent.getBooleanExtra(EXTRA_IMPORT_IDENTITY, false) ||
         intent.getBooleanExtra(EXTRA_IMPORT_TLS, false)
@@ -74,6 +76,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             ?: intent.getBooleanExtra(EXTRA_AUTO_START, false)
         requestingPermissions = savedInstanceState?.getBoolean("requestingPermissions") ?: false
         pairingInFlight = savedInstanceState?.getBoolean("pairingInFlight") ?: false
+        // A fresh open with a saved setup asks whether to continue with it; a running relay skips the question.
+        val offerLaunchChoice = savedInstanceState == null && runtime.status.session?.phase !in
+            setOf(SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.RECONNECTING)
         enableEdgeToEdge(androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         setContent {
@@ -109,6 +114,12 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     onNetwork = { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) },
                     importMaterial = { identity -> openDocument(if (identity) IDENTITY_KEY else TLS_FILE, if (identity) R.string.direlay_choose_key else R.string.direlay_choose_tls) },
                     removeMaterial = { identity -> work { if (identity) runtime.identityStore.remove() else runtime.tlsStore.remove() } },
+                    openSetup = !settingsStore.setupCompleted && !bootAutoStart && !importOnly,
+                    openLaunch = offerLaunchChoice && !bootAutoStart && !importOnly,
+                    onLater = {
+                        if (settingsStore.snapshot.value?.autoStartWhenReady == true) runtime.autoStartSessions.pause("not now at launch")
+                    },
+                    onGuideVisible = { visible -> guideOpen = visible; if (!visible) updateReadiness() },
                 ) }
             }
         }
@@ -194,7 +205,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             .map { org.openxplay.direlay.relay.receiverUrl(it, settings.requirePairingCode, runtime.pairingCode) }
         val ip = carAddresses.joinToString("\n")
             .ifEmpty { getString(R.string.ui_no_network) }
-        val wifi = cachedWifi ?: getString(R.string.ui_wifi_unavailable)
+        // Without location access Android hides the network name, but the connection itself is known.
+        val wifi = cachedWifi ?: getString(if (onWifi) R.string.ui_wifi_connected else R.string.ui_wifi_not_connected)
         val deviceName = cachedDeviceName ?: settings.carlinkDeviceName
         content = org.openxplay.direlay.ui.HomeContent(presentation, urls, org.openxplay.direlay.relay.visiblePairingCode(settings.requirePairingCode, runtime.pairingCode),
             ip, wifi, deviceName, settings.autoStartWhenReady, settings.carlinkOutput, settings.bothOutputs,
@@ -207,7 +219,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             }, runtime.carlinkPins.pending.takeIf { resumed }, starting || requestingPermissions, onWifi = onWifi, vehicle = runtime.vehicleView,
             pinRejected = runtime.pinRejected, pairingSuccess = runtime.pairingSuccess,
             displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi)
-        if (!importOnly && presentation.canStart && resumed && !requestingPermissions && !networkRefreshPending && !restartPending && !starting && !presentation.running && runtime.status.failure == null && !runtime.autoStartGate.paused &&
+        if (!importOnly && !guideOpen && presentation.canStart && resumed && !requestingPermissions && !networkRefreshPending && !restartPending && !starting && !presentation.running && runtime.status.failure == null && !runtime.autoStartGate.paused &&
             runtime.autoStartSessions.tracker.observed && !runtime.autoStartSessions.tracker.running &&
             phase !in setOf(SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.RECONNECTING) &&
             (settings.autoStartWhenReady || bootAutoStart)) startCarPlay()

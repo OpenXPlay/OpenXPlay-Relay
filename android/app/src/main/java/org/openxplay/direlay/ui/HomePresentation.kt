@@ -13,7 +13,8 @@ enum class StatusTone { IDLE, PROGRESS, ATTENTION, RUNNING, ERROR }
 enum class SetupAction { PERMISSIONS, IDENTITY, IPHONE, SETTINGS, SHARED_WIFI, CHOOSE_IPHONE }
 data class SetupItem(val text: Int, val actionLabel: Int, val action: SetupAction)
 data class HomePresentation(val headline: Int, val subline: Int, val tone: StatusTone,
-    val chips: List<Int>, val checklist: List<SetupItem>, val canStart: Boolean, val running: Boolean)
+    val mode: List<ModeRow>, val checklist: List<SetupItem>, val canStart: Boolean, val running: Boolean,
+    val checking: Boolean = false)
 data class HomeSnapshot(
     val settings: RelaySettings, val wireless: Boolean, val permissionsReady: Boolean,
     val identityReady: Boolean, val checking: Boolean = false, val validSettings: Boolean = true,
@@ -66,9 +67,6 @@ fun presentHome(value: HomeSnapshot): HomePresentation {
         value.settings.autoStartWhenReady && value.autoStartPaused && !running -> R.string.ui_automatic_paused
         else -> R.string.ui_start_hint
     }
-    return HomePresentation(headline, subline, tone, listOf(
-        if (value.settings.carlinkOutput) R.string.ui_carlink else R.string.ui_browser,
-        if (value.wireless) R.string.direlay_wireless else R.string.ui_usb,
-        value.settings.wirelessNetwork.choice.label,
-    ), checklist, ready && iphoneReady, running)
+    return HomePresentation(headline, subline, tone, modeRows(value.settings, value.wireless),
+        checklist, ready && iphoneReady, running, value.checking)
 }

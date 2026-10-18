@@ -133,6 +133,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
         if (!diplay.contains("auto_connect")) diplay.edit().putBoolean("auto_connect", true).apply()
         val identity = context.getSharedPreferences("xcertplay_airplay", Context.MODE_PRIVATE)
         AccessoryIdentityDefaults.apply(context, relay)
+        // Settings saved before the guided setup existed mean the relay is already set up. Decided once, before
+        // the guide's own saves could look the same.
+        if (!relay.contains("setupCompleted")) relay.edit().putBoolean("setupCompleted", relay.contains("carlinkOutput")).apply()
         // Migrate an existing choice once, before installing our safe default into DiPlay's store.
         // Keep the user-choice marker unset until a choice is actually saved.
         if (!relay.getBoolean("wirelessNetworkInitialized", false)) {
@@ -242,6 +245,11 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable {
     var developerMode: Boolean
         get() = relay.getBoolean("developerMode", false)
         set(value) { relay.edit().putBoolean("developerMode", value).apply() }
+
+    /** Whether the guided setup has been finished; [load] seeds it once for installs that predate the guide. */
+    var setupCompleted: Boolean
+        get() = relay.getBoolean("setupCompleted", false)
+        set(value) { relay.edit().putBoolean("setupCompleted", value).apply() }
 
     fun wireless(settings: RelaySettings = cached.value ?: load()): Boolean =
         settings.connectionMode.wireless(AirPlayPersistence.loadWirelessEnabled(context))
