@@ -308,6 +308,7 @@
     <string name="dev_screen_fixed">%1$s（固定）</string>
     <string name="dev_screen_relay">%1$s（本机屏幕）</string>
     <string name="direlay_car_hotspot_hint">填写与 Android 热点设置中相同的名称和密码。</string>
+    <string name="hotspot_5ghz_hint">建议使用 5 GHz 频段：在 Android 热点设置中把频段改为 5 GHz，2.4 GHz 下画面容易卡顿。车机连不上 5 GHz 热点时再改回 2.4 GHz。部分手机连着 Wi-Fi 时只能开 2.4 GHz 热点，请先断开 Wi-Fi。</string>
     <string name="direlay_existing_wifi_hint">此手机需要已连接到这个 Wi-Fi，且路由器允许设备之间互相访问。</string>
     <string name="settings_hotspot_name">热点名称</string>
     <string name="settings_hotspot_password">热点密码</string>

@@ -10,6 +10,7 @@
     <string name="option_hotspot_hint">Activa el punto de acceso de este teléfono. El iPhone y la pantalla del coche se conectan a él.</string>
     <string name="option_wifi_hint">El iPhone, este teléfono y la pantalla del coche se conectan al mismo Wi-Fi, como el del coche o un router de viaje.</string>
     <string name="direlay_car_hotspot_hint">Usa el mismo nombre y contraseña que en los ajustes del punto de acceso de Android.</string>
+    <string name="hotspot_5ghz_hint">Usa la banda de 5 GHz: cámbiala en los ajustes del punto de acceso de Android, porque en 2,4 GHz la imagen suele entrecortarse. Si la pantalla del coche no puede conectarse a 5 GHz, vuelve a 2,4 GHz. Algunos teléfonos solo ofrecen 2,4 GHz mientras están conectados a una Wi-Fi; desconéctala primero.</string>
     <string name="direlay_existing_wifi_hint">Este teléfono debe estar conectado a ese Wi-Fi. El router debe permitir la comunicación entre dispositivos.</string>
     <string name="direlay_network_ssid">Nombre del Wi-Fi</string>
     <string name="direlay_network_passphrase">Contraseña del Wi-Fi</string>

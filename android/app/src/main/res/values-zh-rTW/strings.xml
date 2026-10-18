@@ -10,6 +10,7 @@
     <string name="option_hotspot_hint">開啟此手機的個人熱點，iPhone 和車機螢幕都連接到它。</string>
     <string name="option_wifi_hint">iPhone、此手機和車機螢幕連接同一個 Wi-Fi，例如車機熱點或行動路由器。</string>
     <string name="direlay_car_hotspot_hint">填寫與 Android 熱點設定中相同的名稱和密碼。</string>
+    <string name="hotspot_5ghz_hint">建議使用 5 GHz 頻段：在 Android 熱點設定中把頻段改為 5 GHz，2.4 GHz 下畫面容易卡頓。車機連不上 5 GHz 熱點時再改回 2.4 GHz。部分手機連著 Wi-Fi 時只能開 2.4 GHz 熱點，請先中斷 Wi-Fi。</string>
     <string name="direlay_existing_wifi_hint">此手機需要已連接到這個 Wi-Fi，且路由器允許裝置之間互相存取。</string>
     <string name="direlay_network_ssid">Wi-Fi 名稱</string>
     <string name="direlay_network_passphrase">Wi-Fi 密碼</string>

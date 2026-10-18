@@ -10,6 +10,7 @@
     <string name="option_hotspot_hint">Включите точку доступа на этом телефоне. iPhone и экран автомобиля подключаются к ней.</string>
     <string name="option_wifi_hint">iPhone, этот телефон и экран автомобиля подключаются к одной сети Wi-Fi, например к точке доступа автомобиля или дорожному роутеру.</string>
     <string name="direlay_car_hotspot_hint">Укажите те же имя и пароль, что и в настройках точки доступа Android.</string>
+    <string name="hotspot_5ghz_hint">Используйте диапазон 5 ГГц: выберите его в настройках точки доступа Android — на 2,4 ГГц изображение часто подтормаживает. Если головное устройство не подключается к точке доступа 5 ГГц, верните 2,4 ГГц. Некоторые телефоны при подключении к Wi-Fi позволяют только 2,4 ГГц — сначала отключите Wi-Fi.</string>
     <string name="direlay_existing_wifi_hint">Этот телефон уже должен быть подключён к этой сети Wi-Fi. Роутер должен разрешать связь между устройствами.</string>
     <string name="direlay_network_ssid">Имя сети Wi-Fi</string>
     <string name="direlay_network_passphrase">Пароль Wi-Fi</string>

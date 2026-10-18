@@ -94,6 +94,7 @@
     <string name="direlay_existing_wifi">Shared Wi-Fi</string>
     <string name="direlay_network_status">Selected wireless network: %1$s</string>
     <string name="direlay_car_hotspot_hint">Use the same name and password as in Android\'s hotspot settings.</string>
+    <string name="hotspot_5ghz_hint">Use the 5 GHz band: change it in Android\'s hotspot settings, because the picture often stutters on 2.4 GHz. If the head unit cannot join a 5 GHz hotspot, switch back to 2.4 GHz. Some phones offer only 2.4 GHz while connected to Wi-Fi; disconnect Wi-Fi first.</string>
     <string name="direlay_existing_wifi_hint">This phone must already be connected to this Wi-Fi. The router must allow devices to reach each other.</string>
     <string name="direlay_network_ssid">Wi-Fi name</string>
     <string name="direlay_network_passphrase">Wi-Fi password</string>

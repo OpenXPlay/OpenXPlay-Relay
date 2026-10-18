@@ -10,6 +10,7 @@
     <string name="option_hotspot_hint">このスマートフォンの Wi-Fi テザリングをオンにし、iPhone と車の画面を接続します。</string>
     <string name="option_wifi_hint">iPhone、このスマートフォン、車の画面を、車の Wi-Fi やモバイルルーターなど、同じ Wi-Fi に接続します。</string>
     <string name="direlay_car_hotspot_hint">Android のテザリング設定と同じ名前とパスワードを入力してください。</string>
+    <string name="hotspot_5ghz_hint">5 GHz 帯をおすすめします。Android のテザリング設定で帯域を 5 GHz にしてください。2.4 GHz では映像がカクつきやすくなります。車載機が 5 GHz のアクセスポイントに接続できない場合は 2.4 GHz に戻してください。Wi-Fi 接続中は 2.4 GHz しか使えない機種もあるため、先に Wi-Fi を切断してください。</string>
     <string name="direlay_existing_wifi_hint">このスマートフォンを先にこの Wi-Fi に接続してください。ルーターで端末同士の通信を許可する必要があります。</string>
     <string name="direlay_network_ssid">Wi-Fi 名</string>
     <string name="direlay_network_passphrase">Wi-Fi パスワード</string>

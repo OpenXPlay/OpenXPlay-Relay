@@ -188,6 +188,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(stringResource(if (hotspot) R.string.direlay_car_hotspot_hint else R.string.direlay_existing_wifi_hint))
+        // Apps cannot read the hotspot band, so the advice is unconditional (2.4 GHz stutters on real cars).
+        Hint(stringResource(R.string.hotspot_5ghz_hint))
         TextButton(onClick = { opener.open(hotspot) }) {
             Text(stringResource(if (hotspot) R.string.settings_open_hotspot else R.string.ui_open_wifi))
         }

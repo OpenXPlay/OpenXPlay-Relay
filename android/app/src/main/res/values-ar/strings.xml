@@ -10,6 +10,7 @@
     <string name="option_hotspot_hint">شغّل نقطة الاتصال في هذا الهاتف. يتصل بها كل من iPhone وشاشة السيارة.</string>
     <string name="option_wifi_hint">يتصل iPhone وهذا الهاتف وشاشة السيارة بشبكة Wi-Fi واحدة، مثل نقطة اتصال السيارة أو موجّه محمول.</string>
     <string name="direlay_car_hotspot_hint">استخدم الاسم وكلمة المرور نفسيهما الموجودين في إعدادات نقطة الاتصال في Android.</string>
+    <string name="hotspot_5ghz_hint">استخدم نطاق 5 غيغاهرتز: غيّره من إعدادات نقطة الاتصال في Android، لأن الصورة تتقطع كثيرًا على 2.4 غيغاهرتز. إذا تعذّر على شاشة السيارة الاتصال بنقطة اتصال 5 غيغاهرتز، فارجع إلى 2.4 غيغاهرتز. بعض الهواتف لا توفّر إلا 2.4 غيغاهرتز أثناء الاتصال بشبكة Wi-Fi، لذا افصل Wi-Fi أولًا.</string>
     <string name="direlay_existing_wifi_hint">يجب أن يكون هذا الهاتف متصلاً بهذه الشبكة بالفعل. يجب أن يسمح الموجّه للأجهزة بالتواصل فيما بينها.</string>
     <string name="direlay_network_ssid">اسم شبكة Wi-Fi</string>
     <string name="direlay_network_passphrase">كلمة مرور Wi-Fi</string>
