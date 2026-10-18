@@ -127,8 +127,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             if (runtime != null) CarScreenSettings(draft, runtime) { draft = it }
             Box(sectionModifier("picture")) { SmallHeading(stringResource(R.string.picture_title)) }
             SmallHeading(stringResource(R.string.picture_resolution))
-            Options(listOf(stringResource(R.string.display_automatic), "1080p", "720p", stringResource(R.string.picture_screen)),
+            Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
                 CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
+            if (draft.carplayResolution == CarPlayResolution.NATIVE) Hint(stringResource(R.string.picture_native_hint))
             SmallHeading(stringResource(R.string.picture_icons))
             Options(listOf(stringResource(R.string.picture_small), stringResource(R.string.picture_standard), stringResource(R.string.picture_large)),
                 CarPlayIconSize.entries.indexOf(draft.carplayIconSize)) { draft = draft.copy(carplayIconSize = CarPlayIconSize.entries[it]) }

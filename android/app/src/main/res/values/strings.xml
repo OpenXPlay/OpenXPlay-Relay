@@ -459,6 +459,8 @@
     <string name="carlink_capture_stop">Stop TS capture</string>
     <string name="carlink_trace_failure">Trace write failed: %1$s</string>
     <string name="picture_title">CarPlay picture</string>
+    <string name="picture_native">Native</string>
+    <string name="picture_native_hint">Sharpest picture; needs more Wi-Fi bandwidth.</string>
     <string name="picture_resolution">Resolution</string>
     <string name="picture_icons">Icon size</string>
     <string name="picture_screen">Whole screen</string>

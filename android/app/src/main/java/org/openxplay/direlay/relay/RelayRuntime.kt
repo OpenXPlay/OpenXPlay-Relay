@@ -250,7 +250,7 @@ class RelayRuntime(private val context: Context,
         val live = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)
         if (settings.viewAreas || declaredViewAreas.isNotEmpty()) return running && settings.displayMode == DisplayMode.AUTOMATIC &&
             live != null && appliedDisplay != null && live.screen != appliedDisplay?.screen
-        return (settings.carplayResolution == CarPlayResolution.SCREEN || live?.visible == null) && carDisplayMismatch(
+        return (settings.carplayResolution in setOf(CarPlayResolution.SCREEN, CarPlayResolution.NATIVE) || live?.visible == null) && carDisplayMismatch(
             running, settings.displayMode, carPlayScreen?.profile, displayPolicy.carDisplay ?: savedHeadUnit?.canvas)
     }
 

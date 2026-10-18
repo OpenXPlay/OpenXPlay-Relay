@@ -9,6 +9,20 @@ import org.openxplay.direlay.settings.*
 import org.openxplay.stream.core.*
 
 class DisplayRefitTest {
+    @Test fun nativeAlwaysUsesWholeScreenAndExplicitChangesRestartBothWays() {
+        val native = checkNotNull(fitDisplay(display, CarPlayResolution.NATIVE))
+        assertEquals(DisplayProfile(2400, 1200, 300), native)
+        assertEquals(native, fitDisplay(display.copy(viewport = Viewport(856, 1014)), CarPlayResolution.NATIVE))
+        val target = running.copy(profile = native, resolution = CarPlayResolution.NATIVE)
+        for (areas in listOf(false, true)) for ((from, to) in listOf(running to target, target to running)) {
+            val gate = DisplayRefit()
+            assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, from, to, false, areas))
+            assertTrue(gate.due(1000, true, DisplayMode.AUTOMATIC, from, to, false, areas))
+            assertFalse(gate.due(2000, true, DisplayMode.AUTOMATIC, to, to, false, areas))
+        }
+        val budget = checkNotNull(fitDisplay(display, CarPlayResolution.NATIVE, 3600))
+        assertTrue(CarDisplayFit.macroblocks(budget.width, budget.height) <= 3600)
+    }
     private val display = DisplayInfo(2401, 1201, 240, 60.0, viewport = Viewport(1533, 906))
     private val running = DisplayTarget(DisplayProfile(1920, 960, 240), CarPlayResolution.AUTO, CarPlayIconSize.STANDARD)
     private val desired = running.copy(profile = DisplayProfile(1534, 906, 240))
@@ -74,7 +88,7 @@ class DisplayRefitTest {
     @Test fun viewAreasKeepWholeScreenAspectResolutionCapAndDecoderBudget() {
         val screen = display.copy(densityDpi = 280)
         for ((resolution, cap) in listOf(CarPlayResolution.P1080 to 1080, CarPlayResolution.P720 to 720,
-            CarPlayResolution.AUTO to 2160, CarPlayResolution.SCREEN to 2160)) {
+            CarPlayResolution.AUTO to 2160, CarPlayResolution.NATIVE to 2160, CarPlayResolution.SCREEN to 2160)) {
             val fitted = checkNotNull(fitDisplay(screen, resolution, wholeScreen = true))
             assertTrue(minOf(fitted.width, fitted.height) <= cap)
             assertEquals(2401.0 / 1201, fitted.width.toDouble() / fitted.height, .01)

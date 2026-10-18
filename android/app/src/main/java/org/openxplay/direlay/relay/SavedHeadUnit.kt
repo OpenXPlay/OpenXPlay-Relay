@@ -57,7 +57,7 @@ fun startupCarPlayScreen(settings: RelaySettings, live: DisplayProfile?, saved: 
     val whole = settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC
     val builtIn = model?.screens?.firstOrNull()?.let { fitDisplay(HeadUnitDisplay.builtIn(it).display(), settings.carplayResolution, wholeScreen = true) }
     val remembered = saved?.takeIf { it.display != null || builtIn == null }?.let {
-        if (it.display != null && it.resolution != null && (it.resolution != settings.carplayResolution || it.wholeScreen != whole))
+        if (it.display != null && (it.resolution != null || settings.carplayResolution == CarPlayResolution.NATIVE) && (it.resolution != settings.carplayResolution || it.wholeScreen != whole))
             fitDisplay(it.display.display(), settings.carplayResolution, it.maxMacroblocks, whole) else it.canvas
     }
     return resolveCarPlayScreen(settings.displayMode, settings.display, live, remembered, builtIn)

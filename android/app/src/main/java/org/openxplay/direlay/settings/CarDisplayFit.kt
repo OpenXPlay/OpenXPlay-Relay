@@ -15,8 +15,17 @@ object CarDisplayFit {
      * the minimum size, because a canvas the head unit cannot decode shows only black (2026-10-15:
      * 888×1920 sent to a level 3.1 Carlink decoder, limit 3600 macroblocks = 1280×720).
      */
-    fun fit(width: Int, height: Int, maxMacroblocks: Int? = null): DisplayProfile {
-        val fitted = fit(width, height)
+    fun fit(width: Int, height: Int, maxMacroblocks: Int? = null, native: Boolean = false): DisplayProfile {
+        val fitted = fitBounds(width, height, native)
+        val limited = fitDecoder(fitted, maxMacroblocks)
+        if (!native) return limited
+        // Preserve the physical width of the same screen fitted with the ordinary cap and decoder limit.
+        val capped = fit(width, height, maxMacroblocks)
+        return limited.copy(density = (capped.density * limited.width.toDouble() / capped.width).roundToInt().coerceIn(120, 640))
+            .also { it.validate() }
+    }
+
+    private fun fitDecoder(fitted: DisplayProfile, maxMacroblocks: Int?): DisplayProfile {
         if (maxMacroblocks == null || macroblocks(fitted.width, fitted.height) <= maxMacroblocks) return fitted
         var scale = kotlin.math.sqrt(maxMacroblocks * 256.0 / (fitted.width.toDouble() * fitted.height))
         while (true) {
@@ -39,19 +48,20 @@ object CarDisplayFit {
         }
     }
 
-    private fun fit(width: Int, height: Int): DisplayProfile {
+    private fun fitBounds(width: Int, height: Int, native: Boolean): DisplayProfile {
         require(width > 0 && height > 0)
         val portrait = height > width
         val minWidth = if (portrait) 360 else 640
         val minHeight = if (portrait) 640 else 360
-        val maxWidth = if (portrait) 1080 else 1920
-        val maxHeight = if (portrait) 1920 else 1080
+        val maxWidth = if (native) 3840 else if (portrait) 1080 else 1920
+        val maxHeight = if (native) 2160 else if (portrait) 1920 else 1080
         val lower = max(minWidth.toDouble() / width, minHeight.toDouble() / height)
         val upper = min(maxWidth.toDouble() / width, maxHeight.toDouble() / height)
         // Ratios outside these bounds cannot satisfy both limits without distortion.
         require(lower <= upper) { "Car display aspect ratio cannot fit the CarPlay bounds." }
         val scale = 1.0.coerceIn(lower, upper)
-        fun even(value: Double, low: Int, high: Int) = ((value / 2).roundToInt() * 2).coerceIn(low, high)
+        fun even(value: Double, low: Int, high: Int) =
+            ((if (native) (value / 2).toInt() else (value / 2).roundToInt()) * 2).coerceIn(low, high)
         var w = even(width * scale, minWidth, maxWidth)
         var h = even(height * scale, minHeight, maxHeight)
         // Rounding nearly square odd sizes must not turn a portrait or landscape into a square.

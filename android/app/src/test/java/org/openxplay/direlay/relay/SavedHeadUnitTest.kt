@@ -27,6 +27,25 @@ class SavedHeadUnitTest {
         .model(CarSelection("xpeng", model = "g6-2023")))
     private fun store() = SavedHeadUnitStore(preferences)
 
+    @Test fun nativeReFitsSavedScreenKeepsDecoderBudgetAndPlansInCanvasPixels() {
+        val settings = settings().copy(carplayResolution = CarPlayResolution.NATIVE, viewAreas = false)
+        val native = DisplayProfile(2400, 1200, 300)
+        for (previous in listOf(CarPlayResolution.AUTO, null)) {
+            assertEquals(CarPlayScreen(native, "remembered"), startupCarPlayScreen(settings, null, saved.copy(resolution = previous), null))
+        }
+        val value = saved.copy(canvas = native, resolution = CarPlayResolution.NATIVE, wholeScreen = false)
+        store().save(value); assertEquals(value, store().load())
+        assertEquals(CarPlayScreen(native, "remembered"), startupCarPlayScreen(settings, null, store().load(), null))
+        assertEquals(canvas, startupCarPlayScreen(settings.copy(carplayResolution = CarPlayResolution.AUTO, viewAreas = true), null, value, null)?.profile)
+        assertEquals(native, startupCarPlayScreen(settings, null, null, model())?.profile)
+        val limited = checkNotNull(startupCarPlayScreen(settings, null, saved.copy(maxMacroblocks = 3600), null)).profile
+        assertEquals(fitDisplay(report.display(), CarPlayResolution.NATIVE, 3600), limited)
+        val areas = planHeadUnitAreas(native.width, native.height, report, emptyList(), model())
+        assertEquals(ViewAreaSize(2400, 1200), areas[0])
+        assertTrue(areas.size > 2)
+        assertTrue(areas.all { it.width <= native.width && it.height <= native.height })
+    }
+
     @Test fun persistsCanvasReportNullableFlagsAndDecoderBudgetTogether() {
         for (full in listOf(null, false, true)) for (preferred in listOf(null, false, true)) {
             val original = saved.copy(display = report.copy(fullscreen = full, preferred = preferred))

@@ -19,7 +19,7 @@ class DisplayRefit {
         val changedSetting = applied != null && desired != null &&
             (applied.resolution != desired.resolution || applied.iconSize != desired.iconSize)
         val changedScreen = applied != null && desired?.screen != null && applied.screen != desired.screen
-        val geometry = applied != null && desired != null && !viewAreas && viewport && desired.resolution != CarPlayResolution.SCREEN &&
+        val geometry = applied != null && desired != null && !viewAreas && viewport && desired.resolution != CarPlayResolution.SCREEN && desired.resolution != CarPlayResolution.NATIVE &&
             significant(applied.profile, desired.profile)
         if (!running || mode != DisplayMode.AUTOMATIC || desired == null || (!changedSetting && !changedScreen && !geometry)) {
             pending = null; return false

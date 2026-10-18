@@ -46,11 +46,11 @@ class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private
 }
 
 fun fitDisplay(display: DisplayInfo, resolution: CarPlayResolution, limit: Int? = null, wholeScreen: Boolean = false): DisplayProfile? {
-    val viewport = display.viewport.takeUnless { wholeScreen || resolution == CarPlayResolution.SCREEN }
+    val viewport = display.viewport.takeUnless { wholeScreen || resolution == CarPlayResolution.SCREEN || resolution == CarPlayResolution.NATIVE }
     val width = viewport?.width ?: display.widthPx
     val height = viewport?.height ?: display.heightPx
     val cap = when (resolution) { CarPlayResolution.P1080 -> 1080; CarPlayResolution.P720 -> 720; else -> Int.MAX_VALUE }
     val scale = minOf(1.0, cap.toDouble() / minOf(width, height))
     return runCatching { CarDisplayFit.fit((width * scale).toInt().coerceAtLeast(1),
-        (height * scale).toInt().coerceAtLeast(1), limit) }.getOrNull()
+        (height * scale).toInt().coerceAtLeast(1), limit, native = resolution == CarPlayResolution.NATIVE) }.getOrNull()
 }
