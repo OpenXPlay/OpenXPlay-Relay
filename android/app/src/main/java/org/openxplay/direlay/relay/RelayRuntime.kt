@@ -267,6 +267,8 @@ class RelayRuntime(private val context: Context,
 
     @Volatile var serverState = "Starting web receiver…"
         private set
+    @Volatile var serverReason: WebStartReason? = null
+        private set
     @Volatile var ipv4: Set<String> = emptySet()
         private set
     /** Addresses a head unit can reach; Wi-Fi Direct groups (p2p-*) only carry the iPhone link. */
@@ -386,12 +388,14 @@ class RelayRuntime(private val context: Context,
     private var carlinkRetiring = false
     private var carlinkRestartPending = false
 
+    private var webStarting = false
+    private var lastWebFailure: String? = null
     private var bindRetry: java.util.concurrent.ScheduledFuture<*>? = null
     private var urlRefresh: java.util.concurrent.ScheduledFuture<*>? = null
     val identityStore = IdentityStore(context.noBackupFilesDir) {
         AirPlayPersistence.saveMfiTarget(context, MfiTarget.LOCAL)
     }
-    val tlsStore = TlsStore(context.noBackupFilesDir) { restartWeb(); adminService.restartTls() }
+    val tlsStore = TlsStore(context.noBackupFilesDir) { refreshWebTls(); adminService.restartTls() }
     private val sessionController = RelaySessionActions(context.applicationContext, this)
     val sessionActions: RelayActions get() = sessionController
     val adminService = org.openxplay.direlay.admin.RelayAdminService(context.applicationContext, this,
@@ -423,9 +427,10 @@ class RelayRuntime(private val context: Context,
         setup.scheduleWithFixedDelay({
             try {
                 ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
-                if (tlsStore.ensureDefault(ipv4, adminHosts()) && webEnabled) restartWeb()
+                if (tlsStore.ensureDefault(carIpv4, adminHosts())) updateWebTls()
             }
             catch (_: Exception) { /* Retain the last interface snapshot. */ }
+            if (!closed && webEnabled && web == null && !webStarting && bindRetry == null) startWeb()
         }, 0, 5, TimeUnit.SECONDS)
     }
 
@@ -698,14 +703,27 @@ class RelayRuntime(private val context: Context,
         catch (_: java.util.concurrent.RejectedExecutionException) { }
     }
 
+    private fun updateWebTls() {
+        web?.updateTls(tlsStore.webContext(carIpv4, adminHosts()))
+    }
+
+    private fun refreshWebTls() {
+        try { setup.execute {
+            if (!closed) runCatching { updateWebTls() }
+                .onFailure { Log.w("OpenXPlay Relay", "TLS update failed", it) }
+        } } catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
     private fun startWeb(bindAttempt: Int = 0) {
         bindRetry = null
+        if (closed || webStarting || web != null) return
+        if (!webEnabled) { serverReason = null; serverState = "Web receiver disabled"; return }
+        webStarting = true
+        val port = configuredWebPort ?: TlsStore.port(true)
         try {
-            tlsStore.ensureDefault(ipv4Addresses(), adminHosts())
-            if (!webEnabled) { serverState = "Web receiver disabled"; return }
-            val ssl = tlsStore.webContext(ipv4Addresses(), adminHosts())
+            carIpv4 = ipv4Addresses(includeIphoneLink = false)
+            val ssl = tlsStore.webContext(carIpv4, adminHosts())
             val root = installReceiver()
-            val port = configuredWebPort ?: TlsStore.port(true)
             val settings = settingsStore.awaitSnapshot()
             val plugins = if (!settings.plugins) null else runCatching {
                 org.openxplay.direlay.plugins.RelayPlugins.configuration(settings, bundledPlugins.root(), context.filesDir)
@@ -723,6 +741,9 @@ class RelayRuntime(private val context: Context,
                 hub.addOutput(TranscodingOutput(destination, MediaCodecPipeline.factory))
             }
             output.awaitListening()
+            if (closed) return
+            serverReason = null
+            lastWebFailure = null
             pluginContext.configure(plugins != null, status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
             val assetsState = if (File(root, "receiver/index.html").isFile) "" else "\nReceiver assets missing; build Stream web/dist and rebuild the APK."
             serverState = "TLS enabled · HTTPS/WSS :$port" + assetsState
@@ -735,15 +756,24 @@ class RelayRuntime(private val context: Context,
             }, 0, 5, TimeUnit.SECONDS)
         } catch (failure: Exception) {
             pluginContext.configure(false)
+            serverReason = webStartReason(failure, port)
+            val root = generateSequence<Throwable>(failure) { it.cause }.last()
+            val reason = "$serverReason: ${root.javaClass.name}: ${root.message}"
+            if (reason != lastWebFailure) {
+                Log.w("OpenXPlay Relay", "Web receiver start failed: $reason", failure)
+                lastWebFailure = reason
+            }
             serverState = "Web receiver unavailable: ${failure.message ?: failure.javaClass.simpleName}"
+            receiverUrls = emptyList()
+            urlRefresh?.cancel(false)
+            urlRefresh = null
             web?.let { hub.removeOutput(it.id) }
             web = null
-            // Stream closes sockets asynchronously; give the previous listener time to release its port.
-            val portBusy = generateSequence<Throwable>(failure) { it.cause }.any { it is java.net.BindException }
-            if (!closed && portBusy && bindAttempt < 5) {
-                bindRetry = setup.schedule({ startWeb(bindAttempt + 1) }, 200, TimeUnit.MILLISECONDS)
+            if (!closed && webEnabled) {
+                bindRetry = setup.schedule({ startWeb((bindAttempt + 1).coerceAtMost(4)) },
+                    webStartRetryDelay(bindAttempt), TimeUnit.MILLISECONDS)
             }
-        }
+        } finally { webStarting = false }
     }
 
     private fun installReceiver(): File {
@@ -784,6 +814,7 @@ class RelayRuntime(private val context: Context,
                     pluginContext.configure(false)
                     web?.let { hub.removeOutput(it.id) }
                     web = null
+                    serverReason = null
                     serverState = "Starting web receiver…"
                 }
                 startWeb()
