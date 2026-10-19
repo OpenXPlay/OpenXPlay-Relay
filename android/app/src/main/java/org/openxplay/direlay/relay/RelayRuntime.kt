@@ -67,6 +67,7 @@ class RelayRuntime(private val context: Context,
     val input = DiPlayInput(
         applyFrameRate = { fps -> negotiatedFps = fps; AirPlayPersistence.saveFps(context, fps) },
         restartCarPlay = { setup.execute { sessionActions.action("restart") } },
+        automaticHevc = { settingsStore.snapshot.value?.videoCodec == VideoCodecSetting.AUTO && appliedVideoDecision.codec == VideoCodec.H265 },
     )
     private val bundledPlugins = org.openxplay.direlay.plugins.BundledPlugins(context.applicationContext)
     fun installedPlugins() = runCatching {
@@ -446,12 +447,39 @@ class RelayRuntime(private val context: Context,
     @Volatile var appliedVideoDecision = videoDecision
         private set
     @Volatile private var codecRestartPending = false
-    // The iPhone's H.265 through DiPlay on Android is not verified yet (OpenXPlay-15d), so this relay
-    // always asks for H.264; the receiver page shows the codec in use.
-    private fun currentVideoCodecDecision(): VideoCodecDecision = VideoCodecPolicy.resolve(displayPolicy.activeOutputs,
-        carlinkConnected).let { if (it.codec == VideoCodec.H265) VideoCodecDecision(VideoCodec.H264, "relay-h264-only") else it }
+    @Volatile private var observedCodecSetting: VideoCodecSetting? = null
+    @Volatile private var immediateCodecChange = false
+    private var hevcFailed = false
+    private var rememberedCodec: VideoCodec? = null
+    private var rememberedCodecLoaded = false
+    private fun currentVideoCodecDecision(): VideoCodecDecision {
+        input.hevcFailure()?.let { failure ->
+            if (!hevcFailed) {
+                hevcFailed = true
+                immediateCodecChange = true
+                Log.w("OpenXPlay Relay", "H.265 failed: $failure")
+            }
+        }
+        if (!rememberedCodecLoaded) {
+            rememberedCodec = when (preferences.getString("automaticVideoCodec", null)) {
+                "H265" -> VideoCodec.H265
+                "H264" -> VideoCodec.H264
+                else -> null
+            }
+            rememberedCodecLoaded = true
+        }
+        return relayVideoCodec(settingsStore.snapshot.value?.videoCodec ?: VideoCodecSetting.AUTO,
+            displayPolicy.activeOutputs, carlinkConnected, hevcFailed, rememberedCodec)
+    }
     private fun refreshVideoCodec() {
+        val setting = settingsStore.snapshot.value?.videoCodec ?: return
+        if (observedCodecSetting != null && observedCodecSetting != setting) immediateCodecChange = true
+        observedCodecSetting = setting
         val next = currentVideoCodecDecision()
+        if (setting == VideoCodecSetting.AUTO && next.reason != "remembered-codec" && next.reason != "no-main-screen-output" && next.codec != rememberedCodec) {
+            rememberedCodec = next.codec
+            preferences.edit().putString("automaticVideoCodec", next.codec.name).apply()
+        }
         if (next != videoDecision) {
             if (next.codec != videoDecision.codec) codecRestarts.changed(android.os.SystemClock.elapsedRealtime())
             videoDecision = next
@@ -459,10 +487,12 @@ class RelayRuntime(private val context: Context,
         }
         if (autoStartSessions.tracker.running && !sessionActions.restarting && !startRequest.pending &&
             !codecRestartPending && next.codec != appliedVideoDecision.codec &&
-            codecRestarts.allow(android.os.SystemClock.elapsedRealtime())) {
+            (immediateCodecChange || codecRestarts.allow(android.os.SystemClock.elapsedRealtime()))) {
             codecRestartPending = true
             if (sessionActions.action("restart") != null) codecRestartPending = false
+            else immediateCodecChange = false
         }
+        if (next.codec == appliedVideoDecision.codec) immediateCodecChange = false
     }
     private fun refreshDisplay() {
         // A page can connect before the phone declares its areas; reconsider its latest report once active.
@@ -494,6 +524,8 @@ class RelayRuntime(private val context: Context,
         enqueueCarlink()
         synchronized(this) {
             val decision = currentVideoCodecDecision()
+            observedCodecSetting = settingsStore.snapshot.value?.videoCodec
+            immediateCodecChange = false
             videoDecision = decision
             appliedVideoDecision = decision
             codecRestartPending = false
