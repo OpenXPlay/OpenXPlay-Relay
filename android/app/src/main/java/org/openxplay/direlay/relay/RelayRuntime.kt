@@ -710,7 +710,10 @@ class RelayRuntime(private val context: Context,
             Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
         }, observeCapabilities = { caps ->
             Log.i("DiRelayCarlink", "video decoders=${caps?.decoders?.joinToString { it.codecString }.orEmpty()}")
-        }, deliveryCodecs = setOf(org.openxplay.stream.core.VideoCodec.H264)))
+        // The H.265 experiment lets Carlink take H.265 as is; it reports an H.265 decoder only for head units
+        // that advertise iccoa_support_hevc. Off, Carlink stays H.264 only.
+        }, deliveryCodecs = if (requested.hevc == ClinkHevcMode.OFF) setOf(org.openxplay.stream.core.VideoCodec.H264)
+            else setOf(org.openxplay.stream.core.VideoCodec.H264, org.openxplay.stream.core.VideoCodec.H265)))
     }
 
     @Volatile private var carlinkVideoFailed = false
