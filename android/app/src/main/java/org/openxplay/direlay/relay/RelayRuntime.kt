@@ -299,7 +299,7 @@ class RelayRuntime(private val context: Context,
     @Volatile var carlinkFailed = false
         private set
     // Sensor opt-in belongs to a socket generation and waits for the explicit reconnect action.
-    private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean)
+    private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean, val hevc: ClinkHevcMode)
     private var carlinkConfig: CarlinkConfig? = null
     private val carlinkBlock = CarlinkWifiDirectBlock()
     @Volatile private var carlink: ClinkOutput? = null
@@ -601,7 +601,7 @@ class RelayRuntime(private val context: Context,
         val requested = CarlinkConfig(settings.carlinkOutput || settings.bothOutputs, permitted,
             settings.carlinkDeviceName, settings.carlinkDeviceModel,
             carlinkBlock.blocked(CarlinkConnectionPolicy.enabled(settings),
-                settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running), settings.carlinkTrace)
+                settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running), settings.carlinkTrace, settings.carlinkHevc)
         if (!force && requested == carlinkConfig && !carlinkRestartPending) return
         carlinkConfig = requested
         if (carlinkRetiring) { carlinkRestartPending = true; return }
@@ -644,7 +644,7 @@ class RelayRuntime(private val context: Context,
         val output = ClinkOutput(link, sessionDiagnostics.pinProvider, sessionDiagnostics.trustStore,
             deviceId = id, deviceName = requested.name,
             vehicleData = settings.vehicleInformation,
-            trace = trace, mediaTap = if (settings.carlinkTrace) carlinkMediaCapture else null,
+            hevc = requested.hevc, trace = trace, mediaTap = if (settings.carlinkTrace) carlinkMediaCapture else null,
             listener = object : ClinkListener {
                 override fun state(state: ClinkState) {
                     sessionDiagnostics.state(state)

@@ -136,6 +136,17 @@ class RelaySettingsTest {
         }
     }
 
+    @Test fun carlinkHevcDefaultsOffPersistsAndRejectsUnknownNames() {
+        RelaySettingsStore(context).use { store ->
+            assertEquals(org.openxplay.stream.clink.ClinkHevcMode.OFF, store.load().carlinkHevc)
+            for (mode in org.openxplay.stream.clink.ClinkHevcMode.entries) {
+                store.save(store.load().copy(carlinkHevc = mode))
+                assertEquals(mode, store.load().carlinkHevc)
+            }
+            context.getSharedPreferences("direlay", 0).edit().putString("carlinkHevc", "unknown").commit()
+            assertEquals(org.openxplay.stream.clink.ClinkHevcMode.OFF, store.load().carlinkHevc)
+        }
+    }
     @Test fun carlinkTraceDefaultsOffAndPersists() {
         val store = RelaySettingsStore(context)
         val original = store.load()
