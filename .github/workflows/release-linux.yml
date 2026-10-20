@@ -55,8 +55,9 @@ jobs:
               exit 1
             fi
             version=${GITHUB_REF_NAME#linux-v}
-            if [ "$cargo" != "$version" ] && [ "$cargo" != "${version%%-*}" ]; then
-              echo "::error::rust/Cargo.toml has version $cargo; set it to ${version%%-*} before tagging $GITHUB_REF_NAME."
+            # Exact match, pre-release included, so every release candidate reports its own version.
+            if [ "$cargo" != "$version" ]; then
+              echo "::error::rust/Cargo.toml has version $cargo; set it to $version before tagging $GITHUB_REF_NAME."
               exit 1
             fi
             prerelease=false
