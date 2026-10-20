@@ -136,15 +136,18 @@ class RelaySettingsTest {
         }
     }
 
-    @Test fun carlinkHevcDefaultsOffPersistsAndRejectsUnknownNames() {
+    @Test fun carlinkHevcDefaultsAutomaticPreservesStoredNamesAndRejectsUnknownNames() {
         RelaySettingsStore(context).use { store ->
-            assertEquals(org.openxplay.stream.clink.ClinkHevcMode.OFF, store.load().carlinkHevc)
+            assertEquals(org.openxplay.stream.clink.ClinkHevcMode.STREAM_ONLY, store.load().carlinkHevc)
             for (mode in org.openxplay.stream.clink.ClinkHevcMode.entries) {
+                // Existing installations persisted the enum name, independent of option order.
+                context.getSharedPreferences("direlay", 0).edit().putString("carlinkHevc", mode.name).commit()
+                assertEquals(mode, store.load().carlinkHevc)
                 store.save(store.load().copy(carlinkHevc = mode))
                 assertEquals(mode, store.load().carlinkHevc)
             }
             context.getSharedPreferences("direlay", 0).edit().putString("carlinkHevc", "unknown").commit()
-            assertEquals(org.openxplay.stream.clink.ClinkHevcMode.OFF, store.load().carlinkHevc)
+            assertEquals(org.openxplay.stream.clink.ClinkHevcMode.STREAM_ONLY, store.load().carlinkHevc)
         }
     }
     @Test fun carlinkTraceDefaultsOffAndPersists() {
