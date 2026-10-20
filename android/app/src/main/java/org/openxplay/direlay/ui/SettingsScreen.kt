@@ -138,6 +138,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_force_h265), stringResource(R.string.picture_force_h264)),
                 VideoCodecSetting.entries.indexOf(draft.videoCodec)) { draft = draft.copy(videoCodec = VideoCodecSetting.entries[it]) }
             Hint(stringResource(R.string.picture_video_codec_hint))
+            SmallHeading(stringResource(R.string.video_stats_title))
+            Options(listOf(stringResource(R.string.video_stats_off), stringResource(R.string.video_stats_5), stringResource(R.string.video_stats_15)),
+                VideoStatsWindow.entries.indexOf(draft.videoStats)) { draft = draft.copy(videoStats = VideoStatsWindow.entries[it]) }
+            Hint(stringResource(R.string.video_stats_hint))
             Box(sectionModifier("connection")) { SmallHeading(stringResource(R.string.ui_iphone_connection)) }
             RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
                 val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)

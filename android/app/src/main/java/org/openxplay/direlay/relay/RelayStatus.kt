@@ -8,10 +8,26 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /** Model-only observer supplements HubListener, which has no frame or connection callbacks. */
-class RelayStatus : HubListener, ProjectionOutput {
+class RelayStatus(private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
     override val id = "relay-status"
     private val frames = ConcurrentHashMap<ScreenId, AtomicLong>()
-    private val reporters = ConcurrentHashMap<Origin, Long>()
+    @Volatile var countVideoBytes = false
+    private val bytes = AtomicLong()
+    val videoBytes: Long get() = bytes.get()
+    val mainFrames: Long get() = frames[ScreenId.MAIN]?.get() ?: 0L
+    private data class WebReport(val stats: OutputStats, val seen: Long)
+    private val webReports = LinkedHashMap<Origin, WebReport>()
+    @Synchronized fun webMeasurements(): List<OutputStats> {
+        val cutoff = clock() - 15_000_000_000L
+        webReports.entries.removeIf { it.value.seen < cutoff }
+        return webReports.values.map { it.stats }
+    }
+    @Synchronized private fun rememberWeb(stats: OutputStats) {
+        if (stats.screen != ScreenId.MAIN) return
+        webReports.remove(stats.origin)
+        if (webReports.size >= ReceiverDiagnostics.MAX_CLIENTS) webReports.remove(webReports.keys.first())
+        webReports[stats.origin] = WebReport(stats, clock())
+    }
     @Volatile var videoCodec: VideoCodec? = null
         private set
     /** The iPhone's main-screen stream format for the admin page; null between sessions. */
@@ -23,11 +39,7 @@ class RelayStatus : HubListener, ProjectionOutput {
     @Volatile var failure: String? = null
         private set
     val frameCounts: Map<Int, Long> get() = frames.mapKeys { it.key.value }.mapValues { it.value.get() }
-    val recentWebReporters: Int get() {
-        val cutoff = System.nanoTime() - 15_000_000_000L
-        reporters.entries.removeIf { it.value < cutoff }
-        return reporters.size
-    }
+    val recentWebReporters: Int get() = webMeasurements().size
 
     private val measurements = ConcurrentHashMap<String, OutputStats>()
     val outputMeasurements: Map<String, OutputStats> get() = measurements.toMap()
@@ -36,7 +48,7 @@ class RelayStatus : HubListener, ProjectionOutput {
     override fun stats(outputId: String, stats: OutputStats) {
         measurements[outputId] = stats
         latestStats[outputId] = stats.toString()
-        if (outputId == "web") reporters[stats.origin] = System.nanoTime()
+        if (outputId == "web") rememberWeb(stats)
     }
     override fun receiverDiagnostics(outputId: String, origin: Origin, type: String, json: String) {
         receivers.report(origin.clientId, type, json)
@@ -51,7 +63,7 @@ class RelayStatus : HubListener, ProjectionOutput {
     }
     override fun open(host: OutputHost) = Unit
     override fun onSession(state: SessionState, config: SessionConfig) {
-        if (session?.id != state.id) { frames.clear(); clearFailure() }
+        if (session?.id != state.id) { frames.clear(); bytes.set(0); clearFailure() }
         if (session?.id != state.id || state.phase == SessionPhase.ENDED) { videoCodec = null; videoFormat = null }
         session = state
     }
@@ -59,6 +71,8 @@ class RelayStatus : HubListener, ProjectionOutput {
         if (screen == ScreenId.MAIN) { videoCodec = format?.codec; videoFormat = format }
     }
     override fun onVideoFrame(frame: VideoFrame) {
+        if (countVideoBytes && frame.screen == ScreenId.MAIN && frame.session == session?.id && session?.phase == SessionPhase.ACTIVE)
+            bytes.addAndGet(frame.data.size.toLong())
         if (frame.session == session?.id && session?.phase == SessionPhase.ACTIVE) {
             frames.computeIfAbsent(frame.screen) { AtomicLong() }.incrementAndGet()
         }
@@ -66,5 +80,5 @@ class RelayStatus : HubListener, ProjectionOutput {
     override fun onAudioFormat(stream: Int, format: AudioFormat?) = Unit
     override fun onAudioPacket(packet: AudioPacket) = Unit
     override fun onMicrophone(stream: Int, request: MicRequest?) = Unit
-    override fun close() { reporters.clear(); receivers.clear() }
+    override fun close() { countVideoBytes = false; synchronized(this) { webReports.clear() }; receivers.clear() }
 }

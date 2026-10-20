@@ -548,4 +548,21 @@
     <string name="carlink_hevc_signal">Signal in M4 (experimental)</string>
     <string name="carlink_hevc_stream_only">Automatic (default)</string>
     <string name="carlink_hevc_hint">Automatic sends H.265 to head units that advertise support; Off always sends H.264. Reconnect Carlink after changing.</string>
+    <string name="video_stats_title">Video statistics</string>
+    <string name="video_stats_off">Off</string>
+    <string name="video_stats_5">Last 5 s</string>
+    <string name="video_stats_15">Last 15 s</string>
+    <string name="video_stats_hint">Shows frame rate, resolution, bit rate and dropped frames on the home screen while the relay runs. Values appear once the chosen period has been measured. Off measures nothing.</string>
+    <string name="video_stats_iphone">iPhone</string>
+    <string name="video_stats_carlink">Carlink</string>
+    <string name="video_stats_browser">Browser %1$d</string>
+    <string name="video_stats_measuring">Measuring… about %1$s s</string>
+    <string name="video_stats_average">Average of the last %1$s s</string>
+    <string name="video_stats_input">%1$s · %2$s · %3$s fps · %4$s Mbps</string>
+    <string name="video_stats_placeholder">Waiting for iPhone video (placeholder)</string>
+    <string name="video_stats_transcode">%1$s → %2$s transcode · %3$s · %4$s fps · %5$s %% dropped</string>
+    <string name="video_stats_passthrough">%1$s passthrough · %2$s · %3$s fps · %4$s %% dropped</string>
+    <string name="video_stats_screen">Head unit screen %1$s · %2$s Hz</string>
+    <string name="video_stats_send_stalls">Send stalls %1$s</string>
+    <string name="video_stats_browser_values">%1$s fps · %2$s %% dropped · decode %3$s · latency %4$s</string>
 </resources>

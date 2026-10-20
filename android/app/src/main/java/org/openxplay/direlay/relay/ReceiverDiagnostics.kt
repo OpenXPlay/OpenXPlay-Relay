@@ -60,6 +60,15 @@ class ReceiverDiagnostics(private val clock: () -> Long = System::nanoTime) {
         expire(now)
         return clients.map { Report(it.id, Math.round((now - it.seen) / 100_000_000.0) / 10.0, it.info, it.stats.toList()) }
     }
+    /** Only combine diagnostics with the matching typed report; callbacks can arrive separately. */
+    @Synchronized fun relayDroppedFrames(stats: org.openxplay.stream.core.OutputStats): Long? {
+        val json = clients.firstOrNull { it.id == stats.origin.clientId }?.stats?.lastOrNull() ?: return null
+        return runCatching {
+            val value = org.json.JSONObject(json)
+            if (value.getLong("rendered") != stats.rendered || value.getLong("dropped") != stats.dropped) null
+            else value.getLong("relayDroppedFrames").takeIf { it >= 0 }
+        }.getOrNull()
+    }
     @Synchronized fun clear() { clients.clear(); exits.clear(); screenInfo.clear() }
     // The web output reports no disconnects; a browser silent this long has gone.
     private fun expire(now: Long) { clients.removeAll { now - it.seen >= EXPIRY_NANOS } }

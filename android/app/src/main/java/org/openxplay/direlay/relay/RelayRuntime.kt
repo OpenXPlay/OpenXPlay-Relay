@@ -660,6 +660,7 @@ class RelayRuntime(private val context: Context,
                         carlinkDetail = carlinkVideoDetail
                     }
                     if (state == ClinkState.ENDED) {
+                        carlinkStatistics = null; carlinkVideoDecision = null; carlinkScreen = null
                         carlinkEnded = true
                         try { setup.execute {
                             carlinkRetiring = false
@@ -682,18 +683,21 @@ class RelayRuntime(private val context: Context,
                 }
                 // Output-side video diagnostics only (queue resets); session diagnostics stay in the diagnostics port.
                 override fun diagnostic(message: String) { if (message.startsWith("video ") || message.startsWith("audio ") || message.startsWith("frame ")) android.util.Log.i("DiRelayCarlink", message) }
+                override fun statistics(stats: ClinkStatistics) { carlinkStatistics = stats }
                 override fun profileMismatch(inputCodec: String, decoders: List<String>) {
                     carlinkFailed = true
                     carlinkDetail = "Head unit cannot decode this video"
                     Log.w("DiRelayCarlink", "video encoder mismatch input=$inputCodec decoders=${decoders.joinToString()}")
                 }
             })
+        carlinkStatistics = null; carlinkVideoDecision = null; carlinkScreen = null
         carlinkEnded = false
         carlinkPins.resumeRequests()
         carlinkState = "CONNECTING"
         carlinkLink = link
         carlink = output
         hub.addOutput(TranscodingOutput(output, MediaCodecPipeline.factory, report = { format, decision, failed ->
+            carlinkVideoDecision = CarlinkVideoDecision(format, decision)
             val source = when {
                 format.codec == org.openxplay.stream.core.VideoCodec.H265 -> "H.265"
                 format.codecString.substringAfter("avc1.").startsWith("64") -> "H.264 High"
@@ -712,6 +716,7 @@ class RelayRuntime(private val context: Context,
             val reason = VideoCompatibility.reportKey(format, decision, failed).reason
             Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
         }, observeCapabilities = { caps ->
+            carlinkScreen = caps?.displays?.get(org.openxplay.stream.core.ScreenId.MAIN)
             val decoders = caps?.decoders.orEmpty()
             if (carlinkDecoders != decoders) {
                 carlinkDecoders = decoders
@@ -724,6 +729,12 @@ class RelayRuntime(private val context: Context,
             else setOf(org.openxplay.stream.core.VideoCodec.H264, org.openxplay.stream.core.VideoCodec.H265)))
     }
 
+    @Volatile var carlinkStatistics: ClinkStatistics? = null
+        private set
+    @Volatile var carlinkVideoDecision: CarlinkVideoDecision? = null
+        private set
+    @Volatile var carlinkScreen: org.openxplay.stream.core.DisplayInfo? = null
+        private set
     @Volatile private var carlinkVideoFailed = false
     @Volatile private var carlinkVideoDetail = ""
     private val carlinkBackoff = AndroidClinkLink.retryBackoff

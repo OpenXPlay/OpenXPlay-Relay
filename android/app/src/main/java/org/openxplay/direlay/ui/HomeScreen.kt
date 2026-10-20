@@ -38,7 +38,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val ip: String, val wifi: String, val deviceName: String, val automatic: Boolean,
     val carlink: Boolean, val both: Boolean, val carlinkState: Int, val pending: DialogPinProvider.Request?,
     val busy: Boolean = false, val onWifi: Boolean = false, val vehicle: VehicleView = VehicleView(),
-    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null)
+    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null,
+    val videoStats: org.openxplay.direlay.relay.VideoStatsSnapshot? = null)
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -60,6 +61,17 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val status: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusHero(value)
+            value.videoStats?.let { stats ->
+                val display = presentVideoStats(stats)
+                MotionCard {
+                    Heading(stringResource(R.string.video_stats_title))
+                    Hint(stringResource(display.caption.resource, *display.caption.arguments.toTypedArray()))
+                    display.sections.forEach { section ->
+                        SmallHeading(stringResource(section.title.resource, *section.title.arguments.toTypedArray()))
+                        section.lines.forEach { Text(stringResource(it.resource, *it.arguments.toTypedArray())) }
+                    }
+                }
+            }
             MotionCard(value.displayMismatch && value.presentation.running) {
                 Text(stringResource(R.string.display_changed))
                 TextButton(onClick = onRestart, modifier = Modifier.heightIn(min = 48.dp)) {

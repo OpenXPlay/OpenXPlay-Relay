@@ -33,6 +33,17 @@ class SettingsDraftSaverTest {
         val old = bundle(base); old.remove("carlinkHevc")
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
+    @Test fun everyVideoStatsWindowSurvivesRotation() {
+        for (window in VideoStatsWindow.entries) {
+            val value = base.copy(videoStats = window)
+            assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
+        }
+        val old = bundle(base); old.remove("videoStats")
+        val remembered = base.copy(videoStats = VideoStatsWindow.SECONDS_15)
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        old.putString("videoStats", "unknown")
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
     @Test fun everyVideoCodecDraftSurvivesRotationAndOldDraftsKeepTheBase() {
         for (codec in VideoCodecSetting.entries) {
             val value = base.copy(videoCodec = codec)

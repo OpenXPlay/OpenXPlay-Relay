@@ -23,7 +23,7 @@ class AdminSettingsMappingTest {
         return RelaySettingsStore(context).use { it.load() }
     }
     @Test fun allSupportedSettingsRoundTripWithoutLosingNativeFields() {
-        val original = initial()
+        val original = initial().copy(videoStats = VideoStatsWindow.SECONDS_15)
         for (network in WirelessNetworkChoice.entries) for (mode in DisplayMode.entries) for (output in listOf("web", "carlink", "both")) {
             val value = original.copy(connectionMode = ConnectionMode.WIRELESS,
                 carlinkOutput = output != "web", bothOutputs = output == "both",

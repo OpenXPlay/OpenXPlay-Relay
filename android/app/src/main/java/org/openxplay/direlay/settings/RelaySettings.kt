@@ -37,6 +37,11 @@ data class DisplayProfile(val width: Int, val height: Int, val density: Int) {
 
 enum class VideoCodecSetting(val wire: String) { AUTO("auto"), H265("h265"), H264("h264") }
 
+enum class VideoStatsWindow(val seconds: Int) {
+    OFF(0), SECONDS_5(5), SECONDS_15(15);
+    companion object { fun fromStored(value: String?) = entries.firstOrNull { it.name == value } ?: OFF }
+}
+
 enum class MicrophoneSource { HEAD_UNIT, THIS_DEVICE }
 
 data class RelaySettings(
@@ -71,6 +76,7 @@ data class RelaySettings(
     val viewAreas: Boolean = true,
     val car: CarSelection = CarSelection(),
     val videoCodec: VideoCodecSetting = VideoCodecSetting.AUTO,
+    val videoStats: VideoStatsWindow = VideoStatsWindow.OFF,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -207,6 +213,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             viewAreas = relay.getBoolean("carPlayViewAreas", true),
             car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
                 relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
+            videoStats = VideoStatsWindow.fromStored(relay.getString("videoStats", null)),
             videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == relay.getString("videoCodec", null) } ?: VideoCodecSetting.AUTO,
             carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
             carplayScreenWidth = CarPlayScreenWidth.entries.firstOrNull { it.mm == relay.getInt("carplayScreenWidth", 200) } ?: CarPlayScreenWidth.MM200,
@@ -257,6 +264,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("carBrand", settings.car.brand).putString("carBrandText", settings.car.brandText)
             .putString("carModel", settings.car.model).putString("carModelText", settings.car.modelText)
             .putString("videoCodec", settings.videoCodec.name)
+            .putString("videoStats", settings.videoStats.name)
             .putString("carplayResolution", settings.carplayResolution.name)
             .putInt("carplayScreenWidth", settings.carplayScreenWidth.mm)
             .putBoolean("plugins", settings.plugins)

@@ -150,6 +150,19 @@ class RelaySettingsTest {
             assertEquals(org.openxplay.stream.clink.ClinkHevcMode.STREAM_ONLY, store.load().carlinkHevc)
         }
     }
+    @Test fun videoStatsDefaultsOffRoundTripsAndRejectsUnknownValues() {
+        RelaySettingsStore(context).use { store ->
+            assertEquals(VideoStatsWindow.OFF, store.load().videoStats)
+            for (window in VideoStatsWindow.entries) {
+                store.save(store.load().copy(videoStats = window))
+                assertEquals(window, RelaySettingsStore(context).use { it.load().videoStats })
+            }
+            context.getSharedPreferences("direlay", 0).edit().putString("videoStats", "unknown").commit()
+            assertEquals(VideoStatsWindow.OFF, store.load().videoStats)
+            context.getSharedPreferences("direlay", 0).edit().remove("videoStats").commit()
+            assertEquals(VideoStatsWindow.OFF, store.load().videoStats)
+        }
+    }
     @Test fun carlinkTraceDefaultsOffAndPersists() {
         val store = RelaySettingsStore(context)
         val original = store.load()

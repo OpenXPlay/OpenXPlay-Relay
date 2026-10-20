@@ -542,4 +542,21 @@
     <string name="carlink_hevc_signal">在 M4 中声明（实验）</string>
     <string name="carlink_hevc_stream_only">自动（推荐）</string>
     <string name="carlink_hevc_hint">车机声明支持 H.265 时，「自动」直接发送 H.265；「关闭」始终发送 H.264。修改后请重新连接 Carlink。</string>
+    <string name="video_stats_title">视频统计</string>
+    <string name="video_stats_off">关闭</string>
+    <string name="video_stats_5">近 5 秒</string>
+    <string name="video_stats_15">近 15 秒</string>
+    <string name="video_stats_hint">中继运行时在首页显示帧率、分辨率、码率和丢帧率，统计满所选时长后才开始显示。关闭时不做任何统计。</string>
+    <string name="video_stats_iphone">iPhone</string>
+    <string name="video_stats_carlink">Carlink</string>
+    <string name="video_stats_browser">浏览器 %1$d</string>
+    <string name="video_stats_measuring">统计中，约 %1$s 秒后显示</string>
+    <string name="video_stats_average">近 %1$s 秒平均</string>
+    <string name="video_stats_input">%1$s · %2$s · %3$s fps · %4$s Mbps</string>
+    <string name="video_stats_placeholder">等待 iPhone 画面（占位画面）</string>
+    <string name="video_stats_transcode">%1$s → %2$s 转码 · %3$s · %4$s fps · 丢帧 %5$s%%</string>
+    <string name="video_stats_passthrough">%1$s 直通 · %2$s · %3$s fps · 丢帧 %4$s%%</string>
+    <string name="video_stats_screen">车机屏幕 %1$s · %2$s Hz</string>
+    <string name="video_stats_send_stalls">发送阻塞 %1$s 次</string>
+    <string name="video_stats_browser_values">%1$s fps · 丢帧 %2$s%% · 解码 %3$s · 延迟 %4$s</string>
 </resources>
