@@ -314,6 +314,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
                 .ok_or_else(|| std::io::Error::other("AP BSSID unavailable"))?,
             self.backends.bluetooth.local_address()?,
             self.session,
+            self.options.settings.car_bluetooth_audio,
         );
         self.input.configure_display(&mut config.main);
         let input = self.input.clone();
@@ -375,8 +376,15 @@ impl WirelessPlatform for LinuxWirelessPlatform {
     }
 }
 /// The AirPlay receiver the Linux relay declares to the iPhone, for a session of (fps, HEVC).
-fn air_play_config(device_id: String, bt_mac: String, session: (u32, bool)) -> AirPlayConfig {
+fn air_play_config(
+    device_id: String,
+    bt_mac: String,
+    session: (u32, bool),
+    car_bluetooth_audio: bool,
+) -> AirPlayConfig {
     let mut config = AirPlayConfig::linux_receiver(device_id, bt_mac);
+    // No audio offer leaves the iPhone's audio on its own Bluetooth link with the car.
+    config.disable_audio_output = car_bluetooth_audio;
     config.microphone_opus = false;
     // The Linux relay cannot decode Opus and its receivers play only PCM and AAC.
     config.output_opus = false;
@@ -902,6 +910,7 @@ mod network_tests {
             "02:00:00:00:00:02".into(),
             "02:00:00:00:00:03".into(),
             (30, false),
+            false,
         );
         let info = AirPlayInfoPlist::build(&config).unwrap();
         let key = |key: &str| info.get(key).unwrap();
@@ -926,5 +935,20 @@ mod network_tests {
         assert_eq!((side(16), side(20)), (192, 192));
         // Opaque 8-bit RGB: the tile has no transparent corners for the iPhone to fill.
         assert_eq!((png[24], png[25]), (8, 2));
+    }
+    #[test]
+    fn car_bluetooth_audio_offers_the_iphone_no_carplay_audio() {
+        for car_bluetooth_audio in [false, true] {
+            let config = air_play_config(
+                "02:00:00:00:00:02".into(),
+                "02:00:00:00:00:03".into(),
+                (30, false),
+                car_bluetooth_audio,
+            );
+            let info = AirPlayInfoPlist::build(&config).unwrap();
+            for key in ["audioFormats", "audioLatencies"] {
+                assert_eq!(info.get(key).is_none(), car_bluetooth_audio, "{key}");
+            }
+        }
     }
 }

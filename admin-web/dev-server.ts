@@ -20,13 +20,14 @@ const when = (key: string, ...equals: Value[]) => ({ key, equals });
 export function mockSettings(linux = false): Settings {
   if (linux) return { schema: [
     { id: 'connection', titleKey: 'section.connection', fields: [field('iphone', 'phone'), choice('output', ['web', 'carlink', 'both']), field('requirePairingCode', 'bool')] },
+    { id: 'audio', titleKey: 'section.audio', fields: [field('carBluetoothAudio', 'bool', { hintKey: 'hint.field.carBluetoothAudio' })] },
     { id: 'plugins', titleKey: 'section.plugins', fields: [field('plugins', 'bool', { hintKey: 'hint.plugins' }), field('pluginsEnabled', 'plugins')] },
     { id: 'wifi', titleKey: 'section.wifi', fields: [] },
     { id: 'network', titleKey: 'section.network', fields: [choice('networkMode', ['shared-wifi', 'device-hotspot'], { options: ['shared-wifi', 'device-hotspot'].map(value => ({ value, labelKey: `option.networkMode.${value}`, hintKey: `hint.option.networkMode.${value}`, illustration: value as 'shared-wifi' | 'device-hotspot' })) }), field('sharedWifiNetworks', 'networks')] },
     { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('wifiChannel', 'number', { min: 1, max: 14 }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
   ], installedPlugins: [{ id: 'org.openxplay.clock', name: { en: 'Clock', 'zh-CN': '时钟' }, version: '1.0.0', license: 'Apache-2.0 OR MIT', icon: null, nonCommercialAssets: false },
     { id: 'org.openxplay.pet', name: { en: 'Pet', 'zh-CN': '宠物' }, version: '1.0.0', license: '(Apache-2.0 OR MIT) AND CC-BY-NC-SA-4.0', icon: null, nonCommercialAssets: true }],
-  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', wifiChannel: 6, rfcommChannel: '', output: 'web', requirePairingCode: false } };
+  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', wifiChannel: 6, rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: false } };
   const schema: Section[] = [
     { id: 'connection', titleKey: 'section.connection', fields: [
       field('iphone', 'phone', { hintKey: 'hint.iphone' }), choice('transport', ['wireless', 'usb']),
