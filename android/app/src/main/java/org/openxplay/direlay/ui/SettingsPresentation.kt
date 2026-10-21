@@ -24,7 +24,8 @@ fun settingsNotice(before: RelaySettings, after: RelaySettings, carlinkConnected
     // These options are captured by the next CarPlay input session.
     before.iphoneAddress != after.iphoneAddress || before.connectionMode != after.connectionMode || before.wirelessNetwork != after.wirelessNetwork ||
         before.displayMode != after.displayMode || before.display != after.display || before.fps != after.fps || before.mfiTarget != after.mfiTarget ||
-        before.i2cPath != after.i2cPath || before.remoteServer != after.remoteServer || before.remoteToken != after.remoteToken -> SettingsNotice.NEXT_START
+        before.i2cPath != after.i2cPath || before.remoteServer != after.remoteServer || before.remoteToken != after.remoteToken ||
+        before.carBluetoothAudio != after.carBluetoothAudio -> SettingsNotice.NEXT_START
     else -> SettingsNotice.SILENT
 }
 

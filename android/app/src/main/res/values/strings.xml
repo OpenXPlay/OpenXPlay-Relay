@@ -565,4 +565,7 @@
     <string name="video_stats_screen">Head unit screen %1$s · %2$s Hz</string>
     <string name="video_stats_send_stalls">Send stalls %1$s</string>
     <string name="video_stats_browser_values">%1$s fps · %2$s %% dropped · decode %3$s · latency %4$s</string>
+    <string name="audio_title">Sound</string>
+    <string name="audio_car_bluetooth">CarPlay audio over the car\'s Bluetooth (experimental)</string>
+    <string name="audio_car_bluetooth_hint">The relay offers the iPhone no CarPlay audio, so music, navigation and calls play over the iPhone\'s own Bluetooth connection with the car. Keep the iPhone paired with the car and choose Bluetooth as the car\'s audio source. If the sound plays on the iPhone instead, turn this off.</string>
 </resources>

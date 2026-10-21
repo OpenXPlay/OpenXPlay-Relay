@@ -289,6 +289,17 @@ class RelaySettingsTest {
         assertEquals(MicrophoneSource.HEAD_UNIT, store.load().microphoneSource)
     }
 
+    @Test fun carBluetoothAudioDefaultsOffAndLivesInDiPlayPersistence() {
+        assertFalse(store.load().carBluetoothAudio)
+        for (enabled in listOf(true, false)) {
+            store.save(store.load().copy(carBluetoothAudio = enabled))
+            assertEquals(enabled, AirPlayPersistence.loadCarBluetoothAudio(context))
+            assertEquals(enabled, RelaySettingsStore(context).load().carBluetoothAudio)
+        }
+        AirPlayPersistence.saveCarBluetoothAudio(context, true)
+        assertTrue(store.load().carBluetoothAudio)
+    }
+
     @Test fun sharedValuesAreWrittenThroughAirPlayPersistenceAndReadBack() {
         for (target in MfiTarget.entries) {
             val settings = store.load().copy(

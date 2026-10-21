@@ -77,6 +77,8 @@ data class RelaySettings(
     val car: CarSelection = CarSelection(),
     val videoCodec: VideoCodecSetting = VideoCodecSetting.AUTO,
     val videoStats: VideoStatsWindow = VideoStatsWindow.OFF,
+    /** Offer the iPhone no CarPlay audio, so music, navigation and calls stay on its Bluetooth link with the car. */
+    val carBluetoothAudio: Boolean = false,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -214,6 +216,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
                 relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
             videoStats = VideoStatsWindow.fromStored(relay.getString("videoStats", null)),
+            carBluetoothAudio = AirPlayPersistence.loadCarBluetoothAudio(context),
             videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == relay.getString("videoCodec", null) } ?: VideoCodecSetting.AUTO,
             carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
             carplayScreenWidth = CarPlayScreenWidth.entries.firstOrNull { it.mm == relay.getInt("carplayScreenWidth", 200) } ?: CarPlayScreenWidth.MM200,
@@ -251,6 +254,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         if (settings.displayMode == DisplayMode.FIXED) settings.display?.let { applyDisplayProfile(it, settings.carplayScreenWidth) }
         AirPlayPersistence.saveFps(context, settings.fps)
         AirPlayPersistence.saveAutoStartOnBoot(context, settings.autoStartOnBoot)
+        // DiPlay reads this when it builds the next session's AirPlay configuration.
+        AirPlayPersistence.saveCarBluetoothAudio(context, settings.carBluetoothAudio)
         val edit = relay.edit().putBoolean("localPreview", settings.localPreview)
             .putBoolean("playCarPlayAudio", settings.playCarPlayAudio)
             .putString("microphoneSource", settings.microphoneSource.name)

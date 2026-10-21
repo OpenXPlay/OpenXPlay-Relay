@@ -33,6 +33,15 @@ class SettingsDraftSaverTest {
         val old = bundle(base); old.remove("carlinkHevc")
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
+    @Test fun carBluetoothAudioDraftSurvivesRotationAndOldDraftsKeepTheBase() {
+        for (enabled in listOf(true, false)) {
+            val value = base.copy(carBluetoothAudio = enabled)
+            assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
+        }
+        val old = bundle(base); old.remove("carBluetoothAudio")
+        val remembered = base.copy(carBluetoothAudio = true)
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+    }
     @Test fun everyVideoStatsWindowSurvivesRotation() {
         for (window in VideoStatsWindow.entries) {
             val value = base.copy(videoStats = window)

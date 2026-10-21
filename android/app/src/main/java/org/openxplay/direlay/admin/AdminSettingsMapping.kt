@@ -32,6 +32,7 @@ object AdminSettingsMapping {
             AdminField("displayWidth", "number", visibleWhen = fixed, min = 320, max = 3840),
             AdminField("displayHeight", "number", visibleWhen = fixed, min = 240, max = 2160),
             AdminField("displayDensity", "number", visibleWhen = fixed, min = 120, max = 640))),
+        AdminSection("audio", listOf(AdminField("carBluetoothAudio", "bool", hintKey = "hint.field.carBluetoothAudio"))),
         AdminSection("startup", listOf(AdminField("autoStart", "bool", hintKey = "hint.field.autoStart"), AdminField("bootStart", "bool"))),
         AdminSection("carlink", listOf(AdminField("carlinkName", "text", visibleWhen = visible("output", "carlink", "both")),
             AdminField("vehicleInformation", "bool", visibleWhen = visible("output", "carlink", "both")),
@@ -53,7 +54,7 @@ object AdminSettingsMapping {
             "iphone" to (s.iphoneAddress ?: "auto"), "displayMode" to when (s.displayMode) {
                 DisplayMode.AUTOMATIC -> "auto"; DisplayMode.RELAY_SCREEN -> "relay-screen"; DisplayMode.FIXED -> "custom"
             }, "displayWidth" to profile.width, "displayHeight" to profile.height, "displayDensity" to profile.density,
-            "autoStart" to s.autoStartWhenReady, "bootStart" to s.autoStartOnBoot,
+            "carBluetoothAudio" to s.carBluetoothAudio, "autoStart" to s.autoStartWhenReady, "bootStart" to s.autoStartOnBoot,
             "carlinkName" to s.carlinkDeviceName, "vehicleInformation" to s.vehicleInformation, "carlinkAutoReconnect" to s.carlinkAutoReconnect)
     }
     private fun updatedNetworks(value: Any?, stored: List<SharedWifiNetwork>): List<SharedWifiNetwork> {
@@ -114,7 +115,7 @@ object AdminSettingsMapping {
             wirelessNetwork = network, iphoneAddress = string("iphone").takeUnless { it == "auto" },
             displayMode = displayMode, display = if (!profileChanged) before.display else if (displayMode == DisplayMode.FIXED || before.display != null)
                 DisplayProfile(number("displayWidth"), number("displayHeight"), number("displayDensity")) else null,
-            autoStartWhenReady = bool("autoStart"), autoStartOnBoot = bool("bootStart"), carlinkDeviceName = string("carlinkName"), vehicleInformation = bool("vehicleInformation"), carlinkAutoReconnect = bool("carlinkAutoReconnect"))
+            carBluetoothAudio = bool("carBluetoothAudio"), autoStartWhenReady = bool("autoStart"), autoStartOnBoot = bool("bootStart"), carlinkDeviceName = string("carlinkName"), vehicleInformation = bool("vehicleInformation"), carlinkAutoReconnect = bool("carlinkAutoReconnect"))
         if (CarlinkConnectionPolicy.enabled(before) && CarlinkConnectionPolicy.enabled(candidate) &&
             changes["networkMode"] == "wifi-direct")
             return Mapping(null, mapOf("networkMode" to CarlinkConnectionPolicy.REASON_KEY))

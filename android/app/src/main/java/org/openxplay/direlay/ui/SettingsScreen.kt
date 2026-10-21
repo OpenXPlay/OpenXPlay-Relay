@@ -142,6 +142,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             Options(listOf(stringResource(R.string.video_stats_off), stringResource(R.string.video_stats_5), stringResource(R.string.video_stats_15)),
                 VideoStatsWindow.entries.indexOf(draft.videoStats)) { draft = draft.copy(videoStats = VideoStatsWindow.entries[it]) }
             Hint(stringResource(R.string.video_stats_hint))
+            Box(sectionModifier("audio")) { SmallHeading(stringResource(R.string.audio_title)) }
+            SettingsRow(stringResource(R.string.audio_car_bluetooth), stringResource(R.string.audio_car_bluetooth_hint), R.drawable.symbol_bluetooth,
+                trailing = { LabeledSwitch(stringResource(R.string.audio_car_bluetooth), draft.carBluetoothAudio, { draft = draft.copy(carBluetoothAudio = it) }) })
             Box(sectionModifier("connection")) { SmallHeading(stringResource(R.string.ui_iphone_connection)) }
             RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
                 val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)
