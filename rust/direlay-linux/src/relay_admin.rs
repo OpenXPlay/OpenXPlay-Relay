@@ -235,6 +235,13 @@ impl LinuxRelayAdmin {
             &options.state_dir,
             &options.host_profile.profile.settings_defaults(),
         )?;
+        if !settings.unknown.is_empty() {
+            let keys = settings.unknown.keys().cloned().collect::<Vec<_>>();
+            events.log(&format!(
+                "settings unknown fields kept: {}",
+                keys.join(", ")
+            ));
+        }
         input.initialize_video_state(&options.state_dir);
         // The AP stays down for a gap before the next one comes up, also across relay restarts.
         let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
@@ -1186,7 +1193,8 @@ pub fn update_settings(
         if k == "rfcommChannel" && (v == 0 || v == "") {
             v = serde_json::Value::Null
         }
-        if merged.get(&k).is_none() {
+        // Keys kept from a newer relay are not settings of this version.
+        if merged.get(&k).is_none() || current.unknown.contains_key(&k) {
             errors.insert(k, "error.setting".into());
         } else {
             merged[&k] = v;

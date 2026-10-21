@@ -5,6 +5,7 @@
 use crate::{platform::private_state_file, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
+/// Entries stay strict: a new field here would make older relays reject settings.json.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SharedWifiNetwork {
@@ -20,7 +21,7 @@ impl SharedWifiNetwork {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub plugins: bool,
     pub plugins_enabled: Vec<String>,
@@ -42,6 +43,10 @@ pub struct Settings {
     pub carlink_ports: BTreeMap<String, u16>,
     /// Offer the iPhone no CarPlay audio, so music, navigation and calls stay on its Bluetooth link with the car.
     pub car_bluetooth_audio: bool,
+    /// Keys this version does not know, written by a newer relay. Kept and saved back unchanged, so
+    /// the relay still starts after a rollback and the newer relay finds its values again.
+    #[serde(flatten)]
+    pub unknown: BTreeMap<String, serde_json::Value>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -65,6 +70,7 @@ impl Default for Settings {
             carlink_pin: None,
             carlink_ports: BTreeMap::new(),
             car_bluetooth_audio: false,
+            unknown: BTreeMap::new(),
         }
     }
 }
@@ -211,7 +217,7 @@ impl Settings {
 mod tests {
     use super::*;
     #[test]
-    fn legacy_wifi_migrates_and_unknown_fields_stay_rejected() {
+    fn legacy_wifi_migrates_and_unknown_fields_survive_a_save() {
         let dir = std::env::temp_dir().join(format!(
             "settings-migrate-{}",
             crate::admin::auth::random_hex(8).unwrap()
@@ -236,11 +242,31 @@ mod tests {
         assert!(json.get("wifiSsid").is_none());
         assert!(json.get("wifiPassword").is_none());
         assert_eq!(json["sharedWifiNetworks"][0]["password"], "password");
+        // A newer relay's keys load, stay out of the known fields and are saved back unchanged.
         std::fs::write(
             dir.join("settings.json"),
-            br#"{"wifiSsid":"Home","unknown":true}"#,
+            br#"{"wifiSsid":"Home","output":"both","futureFlag":true,"futureMap":{"a":[1,2]}}"#,
         )
         .unwrap();
+        let mut settings = Settings::load(&dir).unwrap();
+        assert_eq!(settings.output, "both");
+        assert_eq!(settings.shared_wifi_networks.len(), 1);
+        assert_eq!(
+            settings.unknown.keys().collect::<Vec<_>>(),
+            ["futureFlag", "futureMap"]
+        );
+        settings.output = "web".into();
+        settings.save(&dir).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(json["output"], "web");
+        assert_eq!(json["futureFlag"], true);
+        assert_eq!(json["futureMap"], serde_json::json!({"a": [1, 2]}));
+        assert_eq!(Settings::load(&dir).unwrap(), settings);
+        // Known keys still have to be valid.
+        std::fs::write(dir.join("settings.json"), br#"{"output":"radio"}"#).unwrap();
+        assert!(Settings::load(&dir).is_err());
+        std::fs::write(dir.join("settings.json"), br#"{"hotspotChannel":"six"}"#).unwrap();
         assert!(Settings::load(&dir).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }

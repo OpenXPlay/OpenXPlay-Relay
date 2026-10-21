@@ -392,6 +392,30 @@ fn invalid_admin_update_is_atomic() {
     )
     .is_err());
     assert_eq!(s.output, "web");
+    // Keys kept from a newer relay stay out of reach of the admin page.
+    let mut kept = Settings::default();
+    kept.unknown
+        .insert("futureFlag".into(), serde_json::json!(true));
+    let result = update_settings(
+        &kept,
+        serde_json::json!({"futureFlag":false})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    assert_eq!(
+        result.unwrap_err().get("futureFlag").map(String::as_str),
+        Some("error.setting")
+    );
+    let next = update_settings(
+        &kept,
+        serde_json::json!({"output":"both"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    assert_eq!(next.unknown, kept.unknown);
 }
 #[test]
 fn identity_pairings_restart_and_exclusive_lock() {

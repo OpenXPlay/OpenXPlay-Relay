@@ -747,10 +747,10 @@ mod tests {
         s.screen_width = 300;
         s.save(&path).unwrap();
         assert_eq!(crate::settings::Settings::load(&dir).unwrap(), old);
-        assert!(serde_json::from_value::<crate::settings::Settings>(
-            json!({"resolution":"native"})
-        )
-        .is_err());
+        // Picture keys are not settings: settings.json would keep them only as unknown keys.
+        let foreign: crate::settings::Settings =
+            serde_json::from_value(json!({"resolution":"native"})).unwrap();
+        assert_eq!(foreign.unknown.keys().collect::<Vec<_>>(), ["resolution"]);
         assert!(!path.with_extension("json.tmp").exists());
         std::fs::write(&path, b"broken").unwrap();
         assert_eq!(
