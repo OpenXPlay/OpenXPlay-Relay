@@ -95,7 +95,7 @@ pub const CLOCK_FLOOR: u64 = 1_790_812_800;
 #[cfg(target_os = "linux")]
 pub fn kernel_synchronized() -> bool {
     let mut timex: libc::timex = unsafe { std::mem::zeroed() };
-    (unsafe { libc::adjtimex(&mut timex) }) >= 0 && i64::from(timex.maxerror) < 16_000_000
+    (unsafe { libc::adjtimex(&mut timex) }) >= 0 && timex.maxerror < 16_000_000
 }
 /// Development hosts keep their clock synchronised.
 #[cfg(not(target_os = "linux"))]
