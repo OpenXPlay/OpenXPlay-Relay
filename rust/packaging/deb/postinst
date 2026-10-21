@@ -1,0 +1,39 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-19
+set -e
+unit=openxplay-relay.service
+state=/var/lib/openxplay
+case "$1" in
+configure|abort-upgrade|abort-deconfigure|abort-remove)
+    # Never touch existing state: it holds the accessory identity, pairings and settings.
+    [ -d "$state" ] || install -d -m 0700 "$state"
+    [ -d "$state/mfi" ] || install -d -m 0700 "$state/mfi"
+    # Same logic as dh_installsystemd: enable on first install, keep the admin's choice on upgrade.
+    deb-systemd-helper unmask "$unit" >/dev/null || :
+    if deb-systemd-helper --quiet was-enabled "$unit"; then
+        deb-systemd-helper enable "$unit" >/dev/null || :
+    else
+        deb-systemd-helper update-state "$unit" >/dev/null || :
+    fi
+    if [ -d /run/systemd/system ]; then
+        # Reload defaults; active connections pick up power-save policy on reactivation.
+        nmcli general reload >/dev/null 2>&1 || :
+        systemctl --system daemon-reload >/dev/null || :
+        # Restart on upgrade, and on a first install over a running tarball relay, so the new build
+        # runs at once ("start" leaves a running old process alone). Without an identity the relay
+        # still serves its admin page; CarPlay starts once the identity is in place.
+        if [ -n "$2" ] || systemctl is-active --quiet "$unit"; then action=restart; else action=start; fi
+        deb-systemd-invoke "$action" "$unit" >/dev/null || :
+    fi
+    if [ "$1" = configure ] && [ -z "$2" ] &&
+        { [ ! -s "$state/mfi/identity.pk8" ] || [ ! -s "$state/mfi/certificate.p7b" ]; }; then
+        printf '%s\n' 'openxplay-relay: no accessory identity yet. Supply your own as' \
+            "  $state/mfi/identity.pk8 and $state/mfi/certificate.p7b (mode 0600)," \
+            '  then: systemctl restart openxplay-relay' \
+            'Admin page: https://openxplay-linux.local:6975 (first password: openxplay).'
+    fi
+    ;;
+esac
+exit 0

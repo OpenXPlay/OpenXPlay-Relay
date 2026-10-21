@@ -1,0 +1,37 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-19
+set -e
+owned() { dpkg-query -S "$1" >/dev/null 2>&1; }
+case "$1" in
+install|upgrade)
+    # A tarball install (rust/packaging/install.sh) puts the unit into /etc/systemd/system, where it
+    # would shadow the packaged unit. Keep it under a name systemd ignores; drop-ins stay in effect.
+    unit=/etc/systemd/system/openxplay-relay.service
+    if [ -f "$unit" ] && ! owned "$unit"; then
+        mv -f "$unit" "$unit.pre-deb"
+        echo "openxplay-relay: moved the tarball unit to $unit.pre-deb"
+    fi
+    link=/etc/systemd/system/multi-user.target.wants/openxplay-relay.service
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$unit" ]; then rm -f "$link"; fi
+    # A debugging drop-in from 2026-10 (UTF-8 locale for nmcli), now set by the relay itself.
+    dropin=/etc/systemd/system/openxplay-relay.service.d/utf8.conf
+    if [ -f "$dropin" ] && ! owned "$dropin" &&
+        [ "$(grep -v '^#' "$dropin" | tr -s '\n')" = "$(printf '[Service]\nEnvironment=LANG=C.UTF-8 LC_ALL=C.UTF-8')" ]; then
+        rm -f "$dropin"
+        rmdir "${dropin%/*}" 2>/dev/null || :
+        echo "openxplay-relay: removed the obsolete $dropin"
+    fi
+    # Asset names carry content hashes, so a tarball install accumulates stale files; the package
+    # replaces both trees. Plugins, *.prev copies and the state directory are left alone.
+    for tree in web:receiver/index.html admin:index.html; do
+        dir=/opt/openxplay/share/${tree%%:*}
+        if [ -f "$dir/${tree#*:}" ] && ! owned "$dir/${tree#*:}"; then
+            rm -rf "$dir"
+            echo "openxplay-relay: replaced the tarball copy of $dir"
+        fi
+    done
+    ;;
+esac
+exit 0

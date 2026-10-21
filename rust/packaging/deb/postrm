@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-19
+set -e
+unit=openxplay-relay.service
+if [ -d /run/systemd/system ]; then systemctl --system daemon-reload >/dev/null || :; fi
+if [ "$1" = remove ] && [ -x /usr/bin/deb-systemd-helper ]; then
+    deb-systemd-helper mask "$unit" >/dev/null || :
+fi
+if [ "$1" = purge ]; then
+    if [ -x /usr/bin/deb-systemd-helper ]; then
+        deb-systemd-helper purge "$unit" >/dev/null || :
+        deb-systemd-helper unmask "$unit" >/dev/null || :
+    fi
+    rm -rf /var/cache/openxplay/relay
+    rmdir /var/cache/openxplay 2>/dev/null || :
+    # The state directory holds the owner's accessory identity and pairings: never deleted here.
+    if [ -d /var/lib/openxplay ]; then
+        echo 'openxplay-relay: kept /var/lib/openxplay (identity, pairings, settings); delete it yourself if wanted.'
+    fi
+fi
+exit 0
