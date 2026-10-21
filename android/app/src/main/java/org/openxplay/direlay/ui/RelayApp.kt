@@ -27,7 +27,7 @@ import org.openxplay.direlay.settings.*
 @Composable fun RelayApp(value: HomeContent, store: RelaySettingsStore, runtime: RelayRuntime,
     onStartStop: () -> Unit, onRestart: () -> Unit, onAutomatic: (Boolean) -> Unit, onSetup: (SetupAction) -> Unit,
     onCopy: (String) -> Unit, onReconnect: () -> Unit, onNetwork: () -> Unit,
-    importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit,
+    importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit, importPublicName: () -> Unit = {},
     openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {},
     onGuideVisible: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
@@ -40,6 +40,8 @@ import org.openxplay.direlay.settings.*
     var developer by remember { mutableStateOf(store.developerMode) }
     var setupCompleted by remember { mutableStateOf(store.setupCompleted) }
     val snapshot by store.snapshot.collectAsState()
+    val publicNameView by runtime.publicName.view.collectAsState()
+    val publicNameStatus by runtime.publicName.status.collectAsState()
     val initial = checkNotNull(snapshot)
     val savedStates = rememberSaveableStateHolder()
     var diagnostics by remember { mutableStateOf(DeveloperView()) }
@@ -177,6 +179,11 @@ import org.openxplay.direlay.settings.*
                                     scope.launch { withContext(Dispatchers.IO) { store.developerMode = it } }
                                 }
                             route == "about" -> AboutScreen(::back)
+                            route == "publicName" -> PublicNameScreen(publicNameView, publicNameStatus,
+                                remember(publicNameStatus) { runtime.publicNameUrl() }, ::back,
+                                { edit -> withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.save(edit) }.getOrNull() } },
+                                importPublicName, runtime.publicName::renewNow,
+                                { withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.remove() }.isSuccess } })
                             route == "developer" -> if (developer) DeveloperScreen(initial, diagnostics, ::back, save, ::copy,
                                 onReconnect, importMaterial, removeMaterial,
                                 runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless, runtime)

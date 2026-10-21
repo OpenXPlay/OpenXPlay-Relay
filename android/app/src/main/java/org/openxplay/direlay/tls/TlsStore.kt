@@ -6,14 +6,36 @@ package org.openxplay.direlay.tls
 import org.openxplay.direlay.storage.MaterialStatus
 import org.openxplay.direlay.storage.PrivateStore
 import java.io.File
+import java.security.KeyFactory
 import java.security.KeyStore
+import java.security.PrivateKey
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.security.spec.PKCS8EncodedKeySpec
+import javax.net.ssl.KeyManager
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
+import javax.net.ssl.X509KeyManager
 
-class TlsStore(noBackupFilesDir: File, private val onChanged: () -> Unit = {}) {
+/** The public name's Let's Encrypt certificate: [chain] starts with the leaf for [name]. */
+class AcmeMaterial(val name: String, val chain: List<X509Certificate>, val key: PrivateKey) {
+    val leaf: X509Certificate get() = chain.first()
+    val fingerprint: String get() = java.security.MessageDigest.getInstance("SHA-256").digest(leaf.encoded)
+        .joinToString(":") { "%02X".format(it.toInt() and 255) }
+}
+
+class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::currentTimeMillis,
+    private val onChanged: () -> Unit = {}) {
     private val store = PrivateStore(noBackupFilesDir, "tls")
     private val generated = PrivateStore(noBackupFilesDir, "tls-generated")
+    /** Separate from the imported material, so Developer → Remove never deletes it. */
+    private val acme = PrivateStore(noBackupFilesDir, "tls-acme")
+    /** The name the public name service serves; null while it is off. */
+    private var acmeName: String? = null
+    /** Every install is a new generation directory, so its canonical path identifies the parsed material. */
+    private var acmeCache: Pair<File, AcmeMaterial?>? = null
 
     /** Imported material always wins, even if invalid; never silently replace a user's certificate. */
     @Synchronized fun ensureDefault(addresses: Set<String>, hostNames: Set<String> = emptySet()): Boolean {
@@ -55,6 +77,7 @@ class TlsStore(noBackupFilesDir: File, private val onChanged: () -> Unit = {}) {
         return checkNotNull(sslContext()) { "TLS certificate unavailable" }
     }
 
+    /** The imported or generated certificate; the ACME certificate has its own [AcmeMaterial.fingerprint]. */
     @Synchronized fun fingerprint(): String? {
         val directory = if (hasImported()) store.directory else generated.directory
         if (!directory.exists()) return null
@@ -66,6 +89,12 @@ class TlsStore(noBackupFilesDir: File, private val onChanged: () -> Unit = {}) {
             return java.security.MessageDigest.getInstance("SHA-256").digest(keys.getCertificate(alias).encoded)
                 .joinToString(":") { "%02X".format(it.toInt() and 255) }
         } finally { password.fill('\u0000') }
+    }
+
+    /** Changes whenever a new connection would see a different certificate: servers restart on a change. */
+    @Synchronized fun revision(): String? {
+        val base = fingerprint()
+        return servedAcme()?.let { "$base+${it.fingerprint}" } ?: base
     }
 
     @Synchronized fun hasImported(): Boolean =
@@ -86,16 +115,94 @@ class TlsStore(noBackupFilesDir: File, private val onChanged: () -> Unit = {}) {
         onChanged()
     }
 
+    /**
+     * Today's certificate (imported, else generated). While the public name is served, the key manager
+     * hands its Let's Encrypt chain to clients that ask for that name (SNI) and today's to everyone else.
+     */
     @Synchronized fun sslContext(): SSLContext? {
         val selected = if (hasImported()) store else generated
         if (!java.nio.file.Files.exists(selected.directory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return null
-        return try { load(selected.directory.canonicalFile) }
+        val managers = try { keyManagers(selected.directory.canonicalFile) }
         catch (_: Exception) { throw IllegalStateException("Stored TLS files failed validation; import again or remove them") }
+        val served = servedAcme()
+        val chosen = if (served == null) managers else managers.map { manager ->
+            if (manager is X509KeyManager) SniKeyManager(served.name, served.key, served.chain, manager, now) else manager
+        }.toTypedArray()
+        return SSLContext.getInstance("TLS").apply { init(chosen, null, SecureRandom()) }
     }
 
+    /** Removes only imported material; the generated certificate and the ACME certificate stay. */
     @Synchronized fun remove() { store.remove(); onChanged() }
 
-    private fun load(directory: File, validateDates: Boolean = false): SSLContext {
+    /** The ACME certificate, or null when there is none or it fails validation. */
+    @Synchronized fun acmeMaterial(): AcmeMaterial? {
+        if (!java.nio.file.Files.exists(acme.directory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return null
+        val directory = acme.directory.canonicalFile
+        acmeCache?.takeIf { it.first == directory }?.let { return it.second }
+        return (try { readAcme(directory) } catch (_: Exception) { null }).also { acmeCache = directory to it }
+    }
+
+    /** Validated before it replaces the previous ACME certificate in one atomic switch. */
+    @Synchronized fun installAcme(name: String, chain: List<X509Certificate>, key: PrivateKey) {
+        require(chain.isNotEmpty()) { "Empty certificate chain" }
+        acme.replace { staging ->
+            PrivateStore.write(staging, ACME_NAME, name.toByteArray(Charsets.US_ASCII))
+            PrivateStore.write(staging, ACME_CHAIN, pem(chain).toByteArray(Charsets.US_ASCII))
+            val encoded = key.encoded
+            try { PrivateStore.write(staging, ACME_KEY, encoded) } finally { encoded.fill(0) }
+            require(readAcme(staging).name == name) { "Stored certificate does not match" }
+        }
+        acmeCache = null
+        onChanged()
+    }
+
+    @Synchronized fun removeAcme() {
+        val existed = java.nio.file.Files.exists(acme.directory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)
+        acme.remove()
+        acmeCache = null
+        if (existed) onChanged()
+    }
+
+    /** Serve the ACME certificate for SNI [name] while it is valid; null serves only today's certificate. */
+    @Synchronized fun serveAcme(name: String?) {
+        if (name == acmeName) return
+        val before = servedAcme()?.fingerprint
+        acmeName = name
+        if (servedAcme()?.fingerprint != before) onChanged()
+    }
+
+    private fun servedAcme(): AcmeMaterial? {
+        val name = acmeName ?: return null
+        val material = acmeMaterial()?.takeIf { it.name == name } ?: return null
+        val time = now()
+        return material.takeIf { time >= it.leaf.notBefore.time && time < it.leaf.notAfter.time }
+    }
+
+    private fun readAcme(directory: File): AcmeMaterial {
+        val nameFile = File(directory, ACME_NAME)
+        val chainFile = File(directory, ACME_CHAIN)
+        val keyFile = File(directory, ACME_KEY)
+        require(nameFile.length() in 1..253 && chainFile.length() in 1..MAX_FILE_BYTES && keyFile.length() in 1..4096)
+        val name = nameFile.readText(Charsets.US_ASCII)
+        val chain = chainFile.inputStream().buffered().use { input ->
+            CertificateFactory.getInstance("X.509").generateCertificates(input).filterIsInstance<X509Certificate>()
+        }
+        require(chain.isNotEmpty())
+        val encoded = keyFile.readBytes()
+        val key = try { KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(encoded)) } finally { encoded.fill(0) }
+        val leaf = chain.first()
+        require(leaf.subjectAlternativeNames.orEmpty().any { it.getOrNull(0) == 2 && (it.getOrNull(1) as? String).equals(name, ignoreCase = true) })
+        // The key must belong to the leaf: sign a random message and check it with the leaf's public key.
+        val probe = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val signature = Signature.getInstance("SHA256withECDSA").run { initSign(key); update(probe); sign() }
+        require(Signature.getInstance("SHA256withECDSA").run { initVerify(leaf.publicKey); update(probe); verify(signature) })
+        return AcmeMaterial(name, chain, key)
+    }
+
+    private fun load(directory: File, validateDates: Boolean = false): SSLContext =
+        SSLContext.getInstance("TLS").apply { init(keyManagers(directory, validateDates), null, SecureRandom()) }
+
+    private fun keyManagers(directory: File, validateDates: Boolean = false): Array<KeyManager> {
         val certificate = File(directory, "certificate.p12")
         val passwordFile = File(directory, "password")
         require(certificate.length() in 1..MAX_FILE_BYTES.toLong())
@@ -113,13 +220,22 @@ class TlsStore(noBackupFilesDir: File, private val onChanged: () -> Unit = {}) {
             }
             val managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
             managers.init(keys, password)
-            return SSLContext.getInstance("TLS").apply { init(managers.keyManagers, null, SecureRandom()) }
+            return managers.keyManagers
         } finally { password.fill('\u0000') }
     }
 
     companion object {
         const val MAX_FILE_BYTES = 1024 * 1024
         const val MAX_PASSWORD_CHARS = 4096
+        private const val ACME_NAME = "name"
+        private const val ACME_CHAIN = "chain.pem"
+        private const val ACME_KEY = "key.pk8"
         fun port(tls: Boolean): Int = if (tls) 8443 else 8080
+
+        fun pem(chain: List<X509Certificate>): String = chain.joinToString("") { certificate ->
+            "-----BEGIN CERTIFICATE-----\n" +
+                java.util.Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(certificate.encoded) +
+                "\n-----END CERTIFICATE-----\n"
+        }
     }
 }

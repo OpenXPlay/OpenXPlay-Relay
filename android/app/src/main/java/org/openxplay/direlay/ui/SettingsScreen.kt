@@ -184,6 +184,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             SettingsRow(stringResource(R.string.ui_boot), stringResource(R.string.direlay_boot_hint), R.drawable.symbol_play,
                 trailing = { LabeledSwitch(stringResource(R.string.ui_boot), draft.autoStartOnBoot, { draft = draft.copy(autoStartOnBoot = it) }) })
             adminPage()
+            SettingsRow(stringResource(R.string.public_name_title), stringResource(R.string.public_name_summary), R.drawable.symbol_link,
+                { open("publicName") })
             if (savingError) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
             errors["advanced"]?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
             SettingsRow(stringResource(R.string.direlay_about), stringResource(R.string.direlay_attribution), R.drawable.symbol_info, { open("about") })

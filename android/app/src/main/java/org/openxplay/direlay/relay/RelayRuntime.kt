@@ -403,6 +403,10 @@ class RelayRuntime(private val context: Context,
     val adminService = org.openxplay.direlay.admin.RelayAdminService(context.applicationContext, this,
         org.openxplay.direlay.admin.AdminActions { org.openxplay.direlay.admin.AdminResult(sessionActions.action(it)) })
     private fun adminHosts(): Set<String> = listOfNotNull(adminService.advertisedHost).toSet()
+    /** Trusted HTTPS with a free domain name; off by default, and then it requests nothing and serves nothing new. */
+    val publicName = org.openxplay.direlay.publicname.PublicNameService.create(context.applicationContext,
+        org.openxplay.direlay.publicname.TlsStoreCertificates(tlsStore),
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()) { publicNameCandidates() }
 
     init {
         prepareCarPlay()
@@ -423,6 +427,7 @@ class RelayRuntime(private val context: Context,
             prepareCarPlay()
             ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
             startWeb()
+            publicName.start()
             configureVehicle()
             configureCarlink()
         }
@@ -430,6 +435,7 @@ class RelayRuntime(private val context: Context,
             try {
                 ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
                 if (tlsStore.ensureDefault(carIpv4, adminHosts())) updateWebTls()
+                publicName.refreshAddress()
             }
             catch (_: Exception) { /* Retain the last interface snapshot. */ }
             if (!closed && webEnabled && web == null && !webStarting && bindRetry == null) startWeb()
@@ -876,6 +882,31 @@ class RelayRuntime(private val context: Context,
         } catch (_: java.util.concurrent.RejectedExecutionException) { }
     }
 
+    /** The head-unit page under the public name, while its certificate is valid and the name points at this relay. */
+    fun publicNameUrl(): String? = publicName.status.value.trustedName?.let { "https://$it:${configuredWebPort ?: TlsStore.port(true)}/" }
+
+    /**
+     * The car-facing addresses, each marked when it sits on this phone's own hotspot: a tethering
+     * interface is no network of ConnectivityManager (Android 15 may list it as a local-only network).
+     */
+    @Suppress("DEPRECATION")
+    private fun publicNameCandidates(): List<org.openxplay.direlay.publicname.AddressCandidate> {
+        val car = carIpv4
+        val upstream = runCatching {
+            sharedWifiConnectivity.allNetworks.filter { network ->
+                Build.VERSION.SDK_INT < 35 || sharedWifiConnectivity.getNetworkCapabilities(network)
+                    ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_LOCAL_NETWORK) != true
+            }.mapNotNull { sharedWifiConnectivity.getLinkProperties(it)?.interfaceName }.toSet()
+        }.getOrNull()
+        val marked = runCatching {
+            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty().flatMap { network ->
+                network.inetAddresses.toList().filterIsInstance<Inet4Address>().mapNotNull { it.hostAddress }.filter { it in car }
+                    .map { org.openxplay.direlay.publicname.AddressCandidate(it, hotspot = upstream != null && network.name !in upstream) }
+            }
+        }.getOrDefault(emptyList())
+        return marked + (car - marked.map { it.address }.toSet()).map { org.openxplay.direlay.publicname.AddressCandidate(it, false) }
+    }
+
     /** Without the iPhone link it is the car-facing set: mobile data sits behind the carrier's NAT and is left out too. */
     private fun ipv4Addresses(includeIphoneLink: Boolean = true): Set<String> {
         val cellular = if (includeIphoneLink) emptySet() else cellularInterfaces()
@@ -900,6 +931,7 @@ class RelayRuntime(private val context: Context,
             if (closed) return
             closed = true
             sharedWifiConnectivity.unregisterNetworkCallback(sharedWifiCallback)
+            publicName.close()
             adminService.close()
             sessionController.close()
             carlinkPins.cancel()

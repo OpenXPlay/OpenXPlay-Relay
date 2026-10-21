@@ -29,6 +29,10 @@ import org.openxplay.direlay.identity.IdentityKind
 import org.openxplay.direlay.identity.IdentityFileException
 import org.openxplay.direlay.identity.IdentityFileProblem
 import org.openxplay.direlay.tls.TlsStore
+import org.openxplay.direlay.publicname.ConfigError
+import org.openxplay.direlay.publicname.ConfigParse
+import org.openxplay.direlay.publicname.ConfigProblem
+import org.openxplay.direlay.publicname.PublicNameFile
 import java.util.concurrent.Executors
 import android.content.Intent
 import android.os.Bundle
@@ -63,7 +67,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private var guideOpen = false
     private val restartPending get() = runtime.sessionActions.restarting
     private val importOnly get() = intent.getBooleanExtra(EXTRA_IMPORT_IDENTITY, false) ||
-        intent.getBooleanExtra(EXTRA_IMPORT_TLS, false)
+        intent.getBooleanExtra(EXTRA_IMPORT_TLS, false) || intent.getBooleanExtra(EXTRA_IMPORT_PUBLIC_NAME, false)
     private var content by androidx.compose.runtime.mutableStateOf<org.openxplay.direlay.ui.HomeContent?>(null)
     private val refreshStatus = object : Runnable {
         override fun run() {
@@ -124,6 +128,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     onNetwork = { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) },
                     importMaterial = { identity -> openDocument(if (identity) IDENTITY_KEY else TLS_FILE, if (identity) R.string.direlay_choose_key else R.string.direlay_choose_tls) },
                     removeMaterial = { identity -> work { if (identity) runtime.identityStore.remove() else runtime.tlsStore.remove() } },
+                    importPublicName = { openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose) },
                     openSetup = !settingsStore.setupCompleted && !bootAutoStart && !importOnly,
                     openLaunch = offerLaunchChoice && !bootAutoStart && !importOnly,
                     onLater = {
@@ -142,6 +147,10 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 intent.getBooleanExtra(EXTRA_IMPORT_TLS, false) -> {
                     bootAutoStart = false
                     openDocument(TLS_FILE, R.string.direlay_choose_tls)
+                }
+                intent.getBooleanExtra(EXTRA_IMPORT_PUBLIC_NAME, false) -> {
+                    bootAutoStart = false
+                    openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose)
                 }
             }
         }
@@ -211,8 +220,10 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             webReason = runtime.serverReason, webListening = runtime.serverState.startsWith("TLS enabled"),
             carNetworkAvailable = runtime.carIpv4.isNotEmpty(), currentWifi = cachedWifi, sharedWifiReady = !wireless || settings.wirelessNetwork.choice != org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI || runtime.currentSharedWifi(settings, cachedWifi) != null))
         val carAddresses = runtime.carIpv4
-        val urls = runtime.receiverUrls.filterNot { it.contains("://localhost:") }
+        val receiverUrls = runtime.receiverUrls.filterNot { it.contains("://localhost:") }
             .filter { url -> carAddresses.any { url.contains("://$it:") } }
+        // The public name comes first while it is trusted; the IP addresses stay listed as the fallback.
+        val urls = listOfNotNull(runtime.publicNameUrl()?.takeIf { receiverUrls.isNotEmpty() }) + receiverUrls
         val ip = carAddresses.joinToString("\n")
             .ifEmpty { getString(R.string.ui_no_network) }
         // Without location access Android hides the network name, but the connection itself is known.
@@ -458,6 +469,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         }
         val uri = data?.data ?: return
         when (requestCode) {
+            PUBLIC_NAME_FILE -> importPublicName(uri)
             TLS_FILE -> {
                 val password = EditText(this).apply {
                     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -480,6 +492,33 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     }.show()
             }
         }
+    }
+
+    /** Bounded read on the imports worker; problems are listed per key, success names only the provider and the name. */
+    private fun importPublicName(uri: Uri) {
+        val service = runtime.publicName
+        imports.execute {
+            val result = try {
+                val bytes = try { read(uri, PublicNameFile.MAX_BYTES) } catch (_: IllegalArgumentException) { null }
+                if (bytes == null) ConfigParse.Invalid(listOf(ConfigError(ConfigError.FILE, ConfigProblem.TOO_LARGE)))
+                else try { service.import(bytes) } finally { bytes.fill(0) }
+            } catch (_: Exception) { null }
+            handler.post { showPublicNameImport(result) }
+        }
+    }
+
+    private fun showPublicNameImport(result: ConfigParse?) {
+        if (isDestroyed) return
+        val builder = AlertDialog.Builder(this)
+        when (result) {
+            is ConfigParse.Valid -> builder.setTitle(R.string.public_name_title)
+                .setMessage(getString(R.string.public_name_imported, result.config.provider?.label.orEmpty(), result.config.name))
+            is ConfigParse.Invalid -> builder.setTitle(R.string.direlay_import_error)
+                .setMessage(org.openxplay.direlay.ui.publicNameImportProblems(this, result.errors))
+            null -> builder.setTitle(R.string.direlay_import_error).setMessage(R.string.direlay_file_unreadable)
+        }
+        builder.setPositiveButton(android.R.string.ok) { _, _ -> if (importOnly) finish() }
+            .setOnCancelListener { if (importOnly) finish() }.show()
     }
 
     private fun work(finishAfter: Boolean = false, startingSession: Boolean = false, action: () -> Unit) {
@@ -534,6 +573,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     companion object {
         const val EXTRA_IMPORT_IDENTITY = "org.openxplay.relay.IMPORT_IDENTITY"
         const val EXTRA_IMPORT_TLS = "org.openxplay.relay.IMPORT_TLS"
+        const val EXTRA_IMPORT_PUBLIC_NAME = "org.openxplay.relay.IMPORT_PUBLIC_NAME"
         const val EXTRA_AUTO_START = "org.openxplay.relay.AUTO_START"
         private const val PERMISSIONS = 103
         private const val VPN_CONSENT = 104
@@ -542,6 +582,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         private const val IDENTITY_KEY = 100
         private const val IDENTITY_CERTIFICATE = 101
         private const val TLS_FILE = 102
+        private const val PUBLIC_NAME_FILE = 107
     }
 
     override fun onResume() {
