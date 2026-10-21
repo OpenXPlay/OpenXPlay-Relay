@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-19
+set -e
+# On upgrade the old relay keeps running until postinst restarts it with the new files.
+if [ -d /run/systemd/system ] && [ "$1" = remove ]; then
+    deb-systemd-invoke stop openxplay-relay.service >/dev/null || :
+fi
+exit 0
