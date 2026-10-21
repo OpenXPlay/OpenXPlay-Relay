@@ -4,6 +4,20 @@
 # Created by riko chen on 2026-10-15
 # Usage: [DESTDIR=/absolute/staging/root] install.sh OPENXPLAY_RELAY_BINARY OXP_RELAY_BINARY WEB_ASSETS ADMIN_ASSETS
 set -eu
+# The Debian builder uses this same host payload installer.
+install_host_tuning() {
+  host_dir="$(dirname "$0")/host"
+  install -d -m 0755 "$1/etc/NetworkManager/conf.d" "$1/usr/lib/openxplay-relay"
+  install -m 0644 "$host_dir/openxplay-relay-wifi-powersave.conf" \
+    "$host_dir/openxplay-relay-wifi-scan-mac.conf" "$1/etc/NetworkManager/conf.d/"
+  install -m 0755 "$host_dir/clock-guard" "$1/usr/lib/openxplay-relay/clock-guard"
+}
+if [ "${1:-}" = --install-host-tuning ]; then
+  [ "$#" -eq 2 ] && [ -n "$2" ] || exit 2
+  case "$2" in /*) ;; *) exit 2 ;; esac
+  install_host_tuning "${2%/}"
+  exit 0
+fi
 if [ "$#" -ne 4 ]; then
   echo "Usage: $0 OPENXPLAY_RELAY_BINARY OXP_RELAY_BINARY WEB_ASSETS ADMIN_ASSETS" >&2
   exit 2
@@ -39,10 +53,18 @@ license_dir="$(dirname "$0")/licenses"
 install -d -m 0755 "$DESTDIR/opt/openxplay/share/licenses"
 install -m 0644 "$license_dir/LICENSE" "$license_dir/LICENSE-GPL-3.0" "$license_dir/NOTICE" "$DESTDIR/opt/openxplay/share/licenses/"
 install -d -m 0700 "$DESTDIR/var/lib/openxplay" "$DESTDIR/var/lib/openxplay/mfi"
+# Older device bundles ship only install.sh and the unit.
+if [ -d "$(dirname "$0")/host" ]; then
+  install_host_tuning "$DESTDIR"
+else
+  echo "Host tuning files not bundled next to install.sh; skipped." >&2
+fi
+install -d -m 0755 "$DESTDIR/etc/systemd/system"
 install -m 0644 "$(dirname "$0")/openxplay-relay.service" "$DESTDIR/etc/systemd/system/openxplay-relay.service"
 if [ -n "$DESTDIR" ]; then
   systemctl --root="$DESTDIR" enable openxplay-relay.service
 else
+  nmcli general reload >/dev/null 2>&1 || :
   systemctl daemon-reload
   systemctl enable openxplay-relay.service
 fi
@@ -51,4 +73,5 @@ printf '%s\n' 'Installed. Supply your MFi identity separately:' \
   '  /var/lib/openxplay/mfi/certificate.p7b' \
   'Set both files to mode 0600, then run systemctl start openxplay-relay.service.' \
   'First setup: https://openxplay-linux.local:6975 (password: openxplay).' \
-  'Requires BlueZ (sdptool, hciconfig), NetworkManager (nmcli), and iw.'
+  'Requires NetworkManager (nmcli), iw, dnsmasq-base (shared-mode DHCP),' \
+  'BlueZ (bluetoothctl, btmgmt, sdptool, hciconfig), and kernel RFCOMM support.'

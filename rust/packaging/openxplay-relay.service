@@ -15,6 +15,7 @@ Group=root
 StateDirectory=openxplay
 StateDirectoryMode=0700
 UMask=0077
+ExecStartPre=-/usr/lib/openxplay-relay/clock-guard
 ExecStart=/opt/openxplay/bin/openxplay-relay --state-dir /var/lib/openxplay --identity-dir /var/lib/openxplay/mfi --oxp-relay /opt/openxplay/bin/oxp-relay --web-root /opt/openxplay/share/web --admin-root /opt/openxplay/share/admin
 Restart=on-failure
 RestartSec=3

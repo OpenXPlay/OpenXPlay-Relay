@@ -1,0 +1,29 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-16
+# Best-effort maintenance never waits for synchronization; cap local commands at 2 s.
+# Coreutils timeout reaps its timer and bounds the whole command group, including a
+# stalled D-Bus call. Do not wait for NTP or network connectivity on the start path.
+timeout -s KILL 2 sh <<'GUARD' >/dev/null 2>&1
+systemctl enable systemd-timesyncd.service || :
+systemctl --no-block start systemd-timesyncd.service || :
+synced=$(timedatectl show -p NTPSynchronized --value) || exit 0
+[ "$synced" = yes ] || exit 0
+now=$(date +%s) || exit 0
+case "$now" in ''|*[!0-9]*) exit 0 ;; esac
+state=${DESTDIR:-}/var/lib/openxplay
+future() {
+    [ -f "$1" ] || return 1
+    mtime=$(stat -c %Y "$1") || return 1
+    case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$mtime" -gt "$now" ]
+}
+if future "$state/admin-tls.json"; then
+    rm -f "$state/admin-tls.json"
+fi
+if future "$state/receiver-tls/cert.pem" || future "$state/receiver-tls/key.pem"; then
+    rm -f "$state/receiver-tls/cert.pem" "$state/receiver-tls/key.pem"
+fi
+GUARD
+exit 0
