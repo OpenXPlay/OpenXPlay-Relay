@@ -157,6 +157,7 @@ jobs:
           install -m 0644 OpenXPlay-Stream/NOTICE OpenXPlay-Stream/THIRD-PARTY-LICENSES.md "$pkg/licenses/OpenXPlay-Stream/"
           install -m 0755 OpenXPlay-Relay/rust/packaging/install.sh "$pkg/rust/packaging/"
           install -m 0644 OpenXPlay-Relay/rust/packaging/openxplay-relay.service "$pkg/rust/packaging/"
+          cp -a OpenXPlay-Relay/rust/packaging/host "$pkg/rust/packaging/host"
           # Install into a staging root to prove the package meets the installer's input checks.
           root="$RUNNER_TEMP/install-root"
           stub="$RUNNER_TEMP/stub"
@@ -164,6 +165,12 @@ jobs:
           printf '#!/bin/sh\nexit 0\n' > "$stub/systemctl" && chmod +x "$stub/systemctl"
           (cd "$pkg" && PATH="$stub:$PATH" DESTDIR="$root" sh rust/packaging/install.sh bin/openxplay-relay bin/oxp-relay web admin)
           test -x "$root/opt/openxplay/bin/oxp-relay" && test -f "$root/opt/openxplay/share/web/receiver/index.html"
+          for policy in powersave scan-mac; do
+            cmp "$pkg/rust/packaging/host/openxplay-relay-wifi-$policy.conf" "$root/etc/NetworkManager/conf.d/openxplay-relay-wifi-$policy.conf"
+            test "$(stat -c %a "$root/etc/NetworkManager/conf.d/openxplay-relay-wifi-$policy.conf")" = 644
+          done
+          cmp "$pkg/rust/packaging/host/clock-guard" "$root/usr/lib/openxplay-relay/clock-guard"
+          test "$(stat -c %a "$root/usr/lib/openxplay-relay/clock-guard")" = 755
           tar --sort=name --owner=0 --group=0 --numeric-owner -C "$RUNNER_TEMP/package" -czf "$RUNNER_TEMP/dist/$name.tar.gz" "$name"
           if found=$(tar -tzf "$RUNNER_TEMP/dist/$name.tar.gz" | grep -E -i "$IDENTITY_FILES"); then
             echo "::error::The package contains identity files:"
