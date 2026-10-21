@@ -40,7 +40,7 @@ if [ -z "$version" ]; then
     version=$(basename "$pkg" | sed -n 's/^openxplay-relay-\(.*\)-linux-aarch64$/\1/p')
 fi
 case "$version" in ''|*[!0-9A-Za-z.+-]*|[!0-9]*) fail "Invalid release version: '$version'" ;; esac
-# A release pre-release (0.2.0-rc.1) sorts before its release in Debian as 0.2.0~rc.1.
+# A pre-release (0.2.0-beta.1) sorts before its release in Debian as 0.2.0~beta.1.
 debversion=$(printf '%s' "$version" | sed 's/-/~/')
 for f in bin/openxplay-relay bin/oxp-relay web/receiver/index.html admin/index.html LICENSE LICENSE-GPL-3.0 NOTICE \
     rust/packaging/openxplay-relay.service; do
