@@ -65,6 +65,9 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn load(dir: &Path) -> Result<Self> {
+        Self::load_with_defaults(dir, &Self::default())
+    }
+    pub fn load_with_defaults(dir: &Path, defaults: &Self) -> Result<Self> {
         match std::fs::read(dir.join("settings.json")) {
             Ok(b) => {
                 let mut value: serde_json::Value = serde_json::from_slice(&b)?;
@@ -87,11 +90,19 @@ impl Settings {
                         }
                     }
                 }
+                if let Some(object) = value.as_object_mut() {
+                    object
+                        .entry("wifiInterface")
+                        .or_insert_with(|| defaults.wifi_interface.clone().into());
+                    object
+                        .entry("hotspotChannel")
+                        .or_insert_with(|| defaults.hotspot_channel.into());
+                }
                 let s: Self = serde_json::from_value(value)?;
                 s.validate()?;
                 Ok(s)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(defaults.clone()),
             Err(e) => Err(e),
         }
     }

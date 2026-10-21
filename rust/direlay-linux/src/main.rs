@@ -22,6 +22,7 @@ use std::{
 };
 #[derive(Clone, Debug)]
 pub struct Options {
+    pub host_profile: crate::host_profile::LoadedHostProfile,
     pub state_dir: PathBuf,
     pub wifi_interface: String,
     pub wifi_channel: u8,
@@ -56,6 +57,7 @@ impl Options {
                 continue;
             }
             if ![
+                "--host-profile",
                 "--state-dir",
                 "--wifi-interface",
                 "--wifi-channel",
@@ -103,7 +105,14 @@ impl Options {
                 .map(String::as_str)
                 .unwrap_or("/var/lib/openxplay"),
         )?;
-        let settings = Settings::load(&state)?;
+        let host_profile = crate::host_profile::LoadedHostProfile::load(&path(
+            values
+                .get("--host-profile")
+                .map(String::as_str)
+                .unwrap_or(crate::host_profile::DEFAULT_PATH),
+        )?);
+        let settings =
+            Settings::load_with_defaults(&state, &host_profile.profile.settings_defaults())?;
         let mut options = Self {
             state_dir: state,
             wifi_interface: settings.wifi_interface.clone(),
@@ -152,8 +161,15 @@ impl Options {
                 values
                     .get("--bluetooth-guard-status")
                     .map(String::as_str)
-                    .unwrap_or(crate::bluetooth_guard::DEFAULT_STATUS_PATH),
+                    .unwrap_or(
+                        host_profile
+                            .profile
+                            .bluetooth_guard_status
+                            .to_str()
+                            .unwrap(),
+                    ),
             )?,
+            host_profile,
             settings,
             test_input: crate::replay_input::TestInput::from_options(&values)?,
             overrides: values,
@@ -464,4 +480,4 @@ pub fn run() -> Result<()> {
     }
     state.close()
 }
-pub const USAGE:&str="Usage: openxplay-relay [options]\n  --identity-dir DIR    Local identity.pk8 and certificate.p7b (default /var/lib/openxplay/mfi)\n  --state-dir DIR       Private state (default /var/lib/openxplay)\n  --network-mode MODE   device-hotspot or shared-wifi\n  --wifi-interface IF   Wi-Fi interface (default wlan0)\n  --wifi-channel N      AP channel (default 36; 2.4 GHz fallback 6)\n  --wifi-ssid SSID      Shared Wi-Fi SSID\n  --wifi-password PASS  Shared Wi-Fi password\n  --iphone ADDR         Select bonded iPhone\n  --rfcomm-channel N    iAP2 RFCOMM channel override (1..30)\n  --pair SECONDS        Auto-accept pairing window (1..3600)\n  --stream-socket PATH  oxp-relay socket (default /tmp/oxp-relay.sock)\n  --oxp-relay PATH      Output binary\n  --web-root DIR        Receiver web assets\n  --plugins-root DIR   Installed plugins (default /opt/openxplay/share/plugins)\n  --admin-root DIR      Admin assets (default /opt/openxplay/share/admin)\n  --bluetooth-guard-status PATH Bluetooth guard state (default /run/openxplay/bluetooth-guard.json)\n  --receiver-port PORT  Receiver HTTPS port (default 8443)\n  --pairing             Require receiver pairing code\n  --output MODE        web, carlink or both\n  --record DIR          Record decrypted media\n  --test-input replay:PATH[,PATH]  Test mode: replay Annex B clips (files or directories; a <file>.jsonl timing index from --record is used when present) instead of an iPhone\n  --test-keyframe RULES Test-mode key-frame answers: immediate (default), delay:MS, ignore-first, ignore:N, ignore-all, stream-restart; comma-separated, an h264: or h265: prefix limits a rule to that codec\n  --test-context FILE   Test-mode context script (JSON) or demo; needs the plugins setting\n  --reset-admin-password Reset admin password and exit\n  --help                Show this help";
+pub const USAGE:&str="Usage: openxplay-relay [options]\n  --identity-dir DIR    Local identity.pk8 and certificate.p7b (default /var/lib/openxplay/mfi)\n  --state-dir DIR       Private state (default /var/lib/openxplay)\n  --host-profile PATH  Device profile (default /etc/openxplay/host.json)\n  --network-mode MODE   device-hotspot or shared-wifi\n  --wifi-interface IF   Wi-Fi interface (profile default, otherwise wlan0)\n  --wifi-channel N      AP channel (profile default, otherwise 36; 2.4 GHz fallback 6)\n  --wifi-ssid SSID      Shared Wi-Fi SSID\n  --wifi-password PASS  Shared Wi-Fi password\n  --iphone ADDR         Select bonded iPhone\n  --rfcomm-channel N    iAP2 RFCOMM channel override (1..30)\n  --pair SECONDS        Auto-accept pairing window (1..3600)\n  --stream-socket PATH  oxp-relay socket (default /tmp/oxp-relay.sock)\n  --oxp-relay PATH      Output binary\n  --web-root DIR        Receiver web assets\n  --plugins-root DIR   Installed plugins (default /opt/openxplay/share/plugins)\n  --admin-root DIR      Admin assets (default /opt/openxplay/share/admin)\n  --bluetooth-guard-status PATH Bluetooth guard state (default /run/openxplay/bluetooth-guard.json)\n  --receiver-port PORT  Receiver HTTPS port (default 8443)\n  --pairing             Require receiver pairing code\n  --output MODE        web, carlink or both\n  --record DIR          Record decrypted media\n  --test-input replay:PATH[,PATH]  Test mode: replay Annex B clips (files or directories; a <file>.jsonl timing index from --record is used when present) instead of an iPhone\n  --test-keyframe RULES Test-mode key-frame answers: immediate (default), delay:MS, ignore-first, ignore:N, ignore-all, stream-restart; comma-separated, an h264: or h265: prefix limits a rule to that codec\n  --test-context FILE   Test-mode context script (JSON) or demo; needs the plugins setting\n  --reset-admin-password Reset admin password and exit\n  --help                Show this help";

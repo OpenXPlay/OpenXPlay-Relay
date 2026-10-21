@@ -183,12 +183,76 @@ fn objects(c: &Connection) -> Result<Objects> {
         .call("GetManagedObjects", &())
         .map_err(err)
 }
-fn adapter(c: &Connection) -> Result<String> {
-    objects(c)?
-        .into_iter()
-        .find(|(_, i)| i.contains_key("org.bluez.Adapter1"))
-        .map(|(p, _)| p.to_string())
-        .ok_or_else(|| err("Bluetooth adapter address unavailable"))
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct SelectedAdapter {
+    pub name: String,
+    pub address: String,
+}
+#[derive(Clone, Debug, Default)]
+pub struct AdapterSelection(pub Option<String>);
+impl AdapterSelection {
+    fn select(&self, objects: &Objects) -> Option<String> {
+        objects
+            .iter()
+            .filter_map(|(path, interfaces)| {
+                let props = interfaces.get("org.bluez.Adapter1")?;
+                let index = adapter_path_index(path.as_str())?;
+                let name = path.rsplit('/').next()?;
+                let address = text(props.get("Address")).unwrap_or_default();
+                if self.0.as_ref().is_some_and(|wanted| {
+                    !wanted.eq_ignore_ascii_case(name) && !wanted.eq_ignore_ascii_case(&address)
+                }) {
+                    return None;
+                }
+                Some((index, path.to_string()))
+            })
+            .min_by_key(|(index, _)| *index)
+            .map(|(_, path)| path)
+    }
+    fn selected_path(&self, objects: &Objects) -> Result<String> {
+        self.select(objects).ok_or_else(|| {
+            err(match &self.0 {
+                Some(wanted) => format!("Bluetooth adapter {wanted} unavailable"),
+                None => "Bluetooth adapter address unavailable".into(),
+            })
+        })
+    }
+    fn adapter(&self, c: &Connection) -> Result<String> {
+        self.selected_path(&objects(c)?)
+    }
+    pub fn resolved(&self) -> Option<SelectedAdapter> {
+        let c = Connection::system().ok()?;
+        let objects = objects(&c).ok()?;
+        let path = self.select(&objects)?;
+        let address = text(
+            objects
+                .iter()
+                .find(|(p, _)| p.as_str() == path)?
+                .1
+                .get("org.bluez.Adapter1")?
+                .get("Address"),
+        )
+        .unwrap_or_default();
+        Some(SelectedAdapter {
+            name: path.rsplit('/').next()?.into(),
+            address,
+        })
+    }
+    pub fn index(&self) -> Option<u16> {
+        let c = Connection::system().ok()?;
+        adapter_path_index(&self.adapter(&c).ok()?)
+    }
+    pub fn clink_adapter(&self) -> Option<String> {
+        self.clink_adapter_for(self.resolved())
+    }
+    fn clink_adapter_for(&self, resolved: Option<SelectedAdapter>) -> Option<String> {
+        resolved.map(|a| a.name).or_else(|| {
+            self.0
+                .as_deref()
+                .and_then(crate::host_profile::adapter_name_index)
+                .map(|n| format!("hci{n}"))
+        })
+    }
 }
 fn prop<'a>(c: &'a Connection, p: &'a str, interface: &'a str) -> Result<Proxy<'a>> {
     Proxy::new(c, "org.bluez", p, interface).map_err(err)
@@ -197,6 +261,7 @@ fn text(v: Option<&OwnedValue>) -> Option<String> {
     v.and_then(|x| <&str>::try_from(x).ok()).map(str::to_string)
 }
 pub struct LinuxBluetooth {
+    selection: AdapterSelection,
     runner: Arc<dyn CommandRunner>,
     configured: Option<String>,
     channel_override: Option<u8>,
@@ -209,16 +274,26 @@ impl LinuxBluetooth {
         rfcomm_channel: Option<u8>,
     ) -> Self {
         Self {
+            selection: AdapterSelection::default(),
             runner,
             configured,
             channel_override: rfcomm_channel,
             registration: Mutex::new(None),
         }
     }
+    pub fn with_adapter_selection(mut self, selection: AdapterSelection) -> Self {
+        self.selection = selection;
+        self
+    }
     pub fn devices(&self) -> Result<Vec<BondedDevice>> {
         let c = Connection::system().map_err(err)?;
-        Ok(objects(&c)?
-            .into_values()
+        let objects = objects(&c)?;
+        let selected = self.selection.selected_path(&objects)?;
+        let prefix = format!("{selected}/");
+        Ok(objects
+            .into_iter()
+            .filter(|(path, _)| path.as_str().starts_with(&prefix))
+            .map(|(_, interfaces)| interfaces)
             .filter_map(|mut interfaces| {
                 let p = interfaces.remove("org.bluez.Device1")?;
                 let class = p
@@ -253,7 +328,7 @@ impl LinuxBluetooth {
     /// waits for it with the access point already up; BlueZ changes end that wait early.
     pub fn check_radio(&self) -> Result<()> {
         let c = Connection::system().map_err(err)?;
-        let path = adapter(&c)?;
+        let path = self.selection.adapter(&c)?;
         {
             let adapter = prop(&c, &path, "org.bluez.Adapter1")?;
             // A controller that has no public address yet cannot page the iPhone.
@@ -269,7 +344,7 @@ impl LinuxBluetooth {
         }
         let mut r = self.registration.lock().unwrap();
         if r.is_none() {
-            *r = Some(BluezRegistration::new(c)?);
+            *r = Some(BluezRegistration::new(c, &path)?);
         }
         Ok(())
     }
@@ -278,7 +353,7 @@ impl LinuxBluetooth {
     }
     pub fn local_address(&self) -> Result<String> {
         let c = Connection::system().map_err(err)?;
-        let a = adapter(&c)?;
+        let a = self.selection.adapter(&c)?;
         let result = prop(&c, &a, "org.bluez.Adapter1")?
             .get_property("Address")
             .map_err(err);
@@ -291,12 +366,23 @@ impl LinuxBluetooth {
         if let Some(n) = self.channel_override {
             return Ok(n);
         }
+        let c = Connection::system().map_err(err)?;
+        let path = self.selection.adapter(&c)?;
+        let name = path.rsplit('/').next().unwrap();
         rfcomm_channel(&command(
             self.runner.as_ref(),
-            &["sdptool", "browse", address],
+            &sdp_command(name, address),
             Duration::from_secs(20),
         )?)
     }
+}
+fn sdp_command<'a>(adapter: &'a str, address: &'a str) -> Vec<&'a str> {
+    let mut args = vec!["sdptool"];
+    if adapter != "hci0" {
+        args.extend(["-i", adapter]);
+    }
+    args.extend(["browse", address]);
+    args
 }
 struct Profile;
 #[zbus::interface(name = "org.bluez.Profile1")]
@@ -322,7 +408,7 @@ struct BluezRegistration {
     paths: Vec<String>,
 }
 impl BluezRegistration {
-    fn new(connection: Connection) -> Result<Self> {
+    fn new(connection: Connection, adapter_path: &str) -> Result<Self> {
         let mut result = Self {
             connection,
             paths: Vec::new(),
@@ -361,8 +447,7 @@ impl BluezRegistration {
                 Err(e) => return Err(err(e)),
             }
         }
-        let p = adapter(&result.connection)?;
-        prop(&result.connection, &p, "org.bluez.Adapter1")?
+        prop(&result.connection, adapter_path, "org.bluez.Adapter1")?
             .set_property("Alias", crate::branding::DEVICE_NAME)
             .map_err(err)?;
         Ok(result)
@@ -560,17 +645,25 @@ pub trait PairingSession: Send {
 }
 /// Pairing through BlueZ on the system bus.
 pub struct BluezPairing {
+    selection: AdapterSelection,
     events: Arc<JsonEvents>,
 }
 impl BluezPairing {
     pub fn new(events: Arc<JsonEvents>) -> Self {
-        Self { events }
+        Self {
+            events,
+            selection: AdapterSelection::default(),
+        }
+    }
+    pub fn with_adapter_selection(mut self, selection: AdapterSelection) -> Self {
+        self.selection = selection;
+        self
     }
 }
 impl PairingBackend for BluezPairing {
     fn open(&self, seconds: u32, deadline: Instant) -> Result<Box<dyn PairingSession>> {
         let c = Connection::system().map_err(err)?;
-        let a = adapter(&c)?;
+        let a = self.selection.adapter(&c)?;
         let p = prop(&c, &a, "org.bluez.Adapter1")?;
         let previous_class = p.get_property::<u32>("Class").unwrap_or(0);
         p.set_property("Alias", crate::branding::DEVICE_NAME)
@@ -637,11 +730,6 @@ impl PairingSession for BluezPairingSession {
             Duration::from_secs(3),
         );
     }
-}
-/// The index N of the BlueZ adapter `/org/bluez/hciN` the relay uses, if BlueZ lists one.
-pub fn adapter_index() -> Option<u16> {
-    let c = Connection::system().ok()?;
-    adapter_path_index(&adapter(&c).ok()?)
 }
 fn adapter_path_index(path: &str) -> Option<u16> {
     path.rsplit('/').next()?.strip_prefix("hci")?.parse().ok()
@@ -962,6 +1050,84 @@ impl BluetoothOutput {
 #[cfg(test)]
 mod signal_tests {
     use super::*;
+    #[test]
+    fn adapter_selection_is_deterministic_and_never_falls_back() {
+        assert_eq!(sdp_command("hci0", "phone"), ["sdptool", "browse", "phone"]);
+        assert_eq!(
+            sdp_command("hci2", "phone"),
+            ["sdptool", "-i", "hci2", "browse", "phone"]
+        );
+        let entry = |n: u16, address: &str| {
+            (
+                OwnedObjectPath::try_from(format!("/org/bluez/hci{n}")).unwrap(),
+                HashMap::from([(
+                    "org.bluez.Adapter1".into(),
+                    HashMap::from([(
+                        "Address".into(),
+                        OwnedValue::from(zbus::zvariant::Str::from(address)),
+                    )]),
+                )]),
+            )
+        };
+        for reversed in [false, true] {
+            let mut entries = vec![
+                entry(10, "AA:BB:CC:DD:EE:10"),
+                entry(2, "AA:BB:CC:DD:EE:02"),
+            ];
+            if reversed {
+                entries.reverse();
+            }
+            let objects: Objects = entries.into_iter().collect();
+            assert_eq!(
+                AdapterSelection::default().select(&objects).as_deref(),
+                Some("/org/bluez/hci2")
+            );
+            for configured in ["hci10", "HCI10", "aa:bb:cc:dd:ee:10"] {
+                assert_eq!(
+                    AdapterSelection(Some(configured.into()))
+                        .select(&objects)
+                        .as_deref(),
+                    Some("/org/bluez/hci10")
+                );
+            }
+            for missing in ["hci0", "AA:BB:CC:DD:EE:00"] {
+                let selection = AdapterSelection(Some(missing.into()));
+                assert!(selection.select(&objects).is_none());
+                assert!(selection
+                    .selected_path(&objects)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(missing));
+            }
+        }
+        assert_eq!(
+            AdapterSelection(Some("hci3".into()))
+                .clink_adapter_for(None)
+                .as_deref(),
+            Some("hci3")
+        );
+        assert!(AdapterSelection(Some("AA:BB:CC:DD:EE:FF".into()))
+            .clink_adapter_for(None)
+            .is_none());
+        assert!(AdapterSelection::default()
+            .clink_adapter_for(None)
+            .is_none());
+        assert_eq!(
+            AdapterSelection::default()
+                .clink_adapter_for(Some(SelectedAdapter {
+                    name: "hci2".into(),
+                    address: String::new()
+                }))
+                .as_deref(),
+            Some("hci2")
+        );
+        let one = HashMap::from([entry(0, "AA:BB:CC:DD:EE:00")]);
+        assert_eq!(
+            AdapterSelection::default().select(&one).as_deref(),
+            Some("/org/bluez/hci0")
+        );
+    }
+
     use crate::bluetooth_wake::BluetoothChange;
     const DEVICE: &str = "/org/bluez/hci0/dev_aa_bb_cc_dd_ee_01";
     fn props(entries: &[(&str, OwnedValue)]) -> Properties {

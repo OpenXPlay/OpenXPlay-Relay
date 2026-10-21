@@ -28,6 +28,7 @@ pub struct CarlinkSettings {
 }
 #[derive(Clone, Debug)]
 pub struct BleCarlinkSettings {
+    pub adapter: Option<String>,
     pub interface: String,
     pub address: Option<String>,
     pub id: String,
@@ -103,6 +104,9 @@ impl SupervisorSettings {
                     "--pin-file".into(),
                     self.state_dir.join("carlink/pin").into_os_string(),
                 ]);
+                if let Some(adapter) = &ble.adapter {
+                    args.extend(["--clink-adapter".into(), adapter.into()]);
+                }
                 if let Some(address) = &ble.address {
                     args.extend(["--clink-address".into(), address.into()]);
                 }

@@ -164,7 +164,9 @@ export function diagnosticsView(status: Status, t: Translate): string {
   const video = v ? `<p>${esc(videoLine(status, t))}</p><dl class="facts"><dt>${t('diag.codec')}</dt><dd>${esc(v.codec)}</dd><dt>${t('diag.reason')}</dt><dd><code>${esc(status.video!.reason)}</code></dd>${stream ? `<dt>${t('diag.stream')}</dt><dd>${stream}</dd>` : ''}</dl>`
     + v.mismatches.map(m => `<p class="notice">${esc(t(`video.mismatch.${m.support}`, { screen: t('diag.screen', { n: m.screen }), codec: v.codec }))}</p>`).join('') : '<p class="muted">—</p>';
   const receivers = (status.receivers ?? []).map((report, index) => receiverCard(report, index, t)).join('');
-  return `${bluetoothView(status, t)}<h3>${t('diag.video')}</h3>${video}<h3>${t('diag.receivers')}</h3>${receivers || `<p class="muted">${t('diag.none')}</p>`}`;
+  const h = status.hostProfile;
+  const host = h ? `<dl class="facts"><dt>${t('host.model')}</dt><dd>${esc(h.model ?? '—')}</dd><dt>${t('host.bluetooth')}</dt><dd>${esc(h.bluetoothAdapter ? `${h.bluetoothAdapter.name} · ${h.bluetoothAdapter.address}` : '—')}</dd>${h.secureConnections === 'untouched' ? `<dt>${t('host.sc')}</dt><dd>${t('host.unmanaged')}</dd>` : ''}</dl>` : '';
+  return `${host}${bluetoothView(status, t)}<h3>${t('diag.video')}</h3>${video}<h3>${t('diag.receivers')}</h3>${receivers || `<p class="muted">${t('diag.none')}</p>`}`;
 }
 export function receiverReport(status: Status, client: string, now = new Date()): string | null {
   const receiver = status.receivers?.find(r => r.client === client);

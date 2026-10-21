@@ -160,8 +160,10 @@ pub struct LinuxRelayAdmin {
     settings: Mutex<Settings>,
     state: Arc<PersistentState>,
     events: Arc<JsonEvents>,
-    provision: Arc<Mutex<Provision>>,
+    provision: Arc<Mutex<Option<Provision>>>,
     provision_interface: Mutex<String>,
+    net_root: std::path::PathBuf,
+    provision_cli: std::path::PathBuf,
     controller: Mutex<Option<Arc<LinuxCarPlayController>>>,
     hotspot_lifetime: Arc<crate::hotspot_lifetime::HotspotLifetime>,
     /// BlueZ changes for every controller's Bluetooth waits; the bus listener outlives them.
@@ -200,15 +202,20 @@ impl LinuxRelayAdmin {
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
     ) -> Result<Self> {
-        let mac =
-            std::fs::read_to_string(format!("/sys/class/net/{}/address", options.wifi_interface))?;
-        let provision = WifiProvisioner::new(
-            ProcessNetworkManagerCli::default(),
-            options.wifi_interface.clone(),
-            mac.trim(),
-            &options.state_dir,
-        )?;
-        let admin = Self::with_provisioner(options, state, events, provision)?;
+        let provision = match std::fs::read_to_string(format!(
+            "/sys/class/net/{}/address",
+            options.wifi_interface
+        )) {
+            Ok(mac) => Some(WifiProvisioner::new(
+                ProcessNetworkManagerCli::default(),
+                options.wifi_interface.clone(),
+                mac.trim(),
+                &options.state_dir,
+            )?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        let admin = Self::with_optional_provisioner(options, state, events, provision)?;
         // Without BlueZ changes the controller's Bluetooth waits only poll.
         let signals = crate::linux_bluetooth::BluezSignals::new(admin.events.clone());
         if let Err(e) = admin.bluetooth_wake.listen(&signals) {
@@ -218,11 +225,20 @@ impl LinuxRelayAdmin {
         }
         Ok(admin)
     }
+    #[cfg(test)]
     fn with_provisioner(
         options: Options,
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
         provision: Provision,
+    ) -> Result<Self> {
+        Self::with_optional_provisioner(options, state, events, Some(provision))
+    }
+    fn with_optional_provisioner(
+        options: Options,
+        state: Arc<PersistentState>,
+        events: Arc<JsonEvents>,
+        provision: Option<Provision>,
     ) -> Result<Self> {
         let input = Arc::new(DiPlayInput::with_plugins(
             events.clone(),
@@ -235,29 +251,50 @@ impl LinuxRelayAdmin {
             None => RecordingMediaSink::discard(events.clone()),
         });
         let (tx, rx) = std::sync::mpsc::sync_channel(16);
-        let settings = Settings::load(&options.state_dir)?;
+        let settings = Settings::load_with_defaults(
+            &options.state_dir,
+            &options.host_profile.profile.settings_defaults(),
+        )?;
         input.initialize_video_state(&options.state_dir);
         // The AP stays down for a gap before the next one comes up, also across relay restarts.
         let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
-            crate::hotspot_lifetime::AP_DOWN_GAP,
+            Duration::from_secs(options.host_profile.profile.hotspot_down_gap_seconds),
             Some(
                 options
                     .state_dir
                     .join(crate::hotspot_lifetime::AP_DOWN_RECORD),
             ),
         ));
+        if let Some(error) = &options.host_profile.error {
+            events.log(&format!("host-profile ignored: {error}"));
+        } else if !options.host_profile.unknown.is_empty() {
+            events.log(&format!(
+                "host-profile unknown fields ignored: {}",
+                options.host_profile.unknown.join(", ")
+            ));
+        }
+        let selection = crate::linux_bluetooth::AdapterSelection(
+            options.host_profile.profile.bluetooth_adapter.clone(),
+        );
+        let sc_selection = selection.clone();
         let secure_connections = Arc::new(
             crate::secure_connections::SecureConnections::new(
                 Arc::new(ProcessCommandRunner::new()),
                 events.clone(),
             )
-            .with_adapter_index(Arc::new(crate::linux_bluetooth::adapter_index)),
+            .with_adapter_index(Arc::new(move || sc_selection.index()))
+            .with_policy(options.host_profile.profile.secure_connections),
         );
         Ok(Self {
             pairing: Mutex::new(None),
-            pairing_backend: Arc::new(crate::linux_bluetooth::BluezPairing::new(events.clone())),
+            pairing_backend: Arc::new(
+                crate::linux_bluetooth::BluezPairing::new(events.clone())
+                    .with_adapter_selection(selection),
+            ),
             secure_connections,
             provision_interface: Mutex::new(options.wifi_interface.clone()),
+            net_root: "/sys/class/net".into(),
+            provision_cli: "nmcli".into(),
             options,
             settings: Mutex::new(settings),
             state,
@@ -294,6 +331,39 @@ impl LinuxRelayAdmin {
                 ..Default::default()
             })),
         })
+    }
+    fn wifi_present(&self, interface: &str) -> bool {
+        self.net_root.join(interface).join("address").exists()
+    }
+    fn prepare_wifi(&self) -> Result<bool> {
+        let options = self.effective_options()?;
+        let mut provision = self.provision.lock().unwrap();
+        let mut interface = self.provision_interface.lock().unwrap();
+        if *interface != options.wifi_interface {
+            if let Some(p) = provision.as_mut() {
+                p.stop_setup()?;
+            }
+            *provision = None;
+            *interface = options.wifi_interface.clone();
+        }
+        if provision.is_none() {
+            let mac = match std::fs::read_to_string(
+                self.net_root.join(&options.wifi_interface).join("address"),
+            ) {
+                Ok(mac) => mac,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(e),
+            };
+            *provision = Some(WifiProvisioner::new(
+                ProcessNetworkManagerCli {
+                    executable: self.provision_cli.clone(),
+                },
+                options.wifi_interface,
+                mac.trim(),
+                &options.state_dir,
+            )?);
+        }
+        Ok(true)
     }
     fn effective_options(&self) -> Result<Options> {
         let mut o = self.options.clone();
@@ -380,6 +450,10 @@ impl LinuxRelayAdmin {
             Some(CarlinkSettings {
                 ble: if o.settings.carlink_link == "ble" {
                     Some(BleCarlinkSettings {
+                        adapter: crate::linux_bluetooth::AdapterSelection(
+                            o.host_profile.profile.bluetooth_adapter.clone(),
+                        )
+                        .clink_adapter(),
                         interface: o.wifi_interface.clone(),
                         address: o.settings.carlink_address.clone(),
                         id: self.state.identity()?.pairing_id.clone(),
@@ -478,6 +552,9 @@ impl LinuxRelayAdmin {
         Ok(())
     }
     fn reconcile_carlink_network(&self) -> Result<()> {
+        if self.provision.lock().unwrap().is_none() {
+            return Ok(());
+        }
         let (target, generation) = {
             let follow = self.follow.lock().unwrap();
             if !follow.ready() {
@@ -497,7 +574,13 @@ impl LinuxRelayAdmin {
                 follow.changed = None;
                 if target.is_none() {
                     self.hotspot_lifetime.hold_for_carlink(false);
-                    let held = self.provision.lock().unwrap().hold_for_carlink(false);
+                    let held = self
+                        .provision
+                        .lock()
+                        .unwrap()
+                        .as_mut()
+                        .unwrap()
+                        .hold_for_carlink(false);
                     drop(follow);
                     if held {
                         self.operation(Operation::Initialize)?;
@@ -508,11 +591,23 @@ impl LinuxRelayAdmin {
         }
         // Hold the provisioner even if reading the secret fails; never reconnect home here.
         if target.is_some() {
-            self.provision.lock().unwrap().hold_for_carlink(true);
+            self.provision
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .hold_for_carlink(true);
         }
         let network = match target
             .as_ref()
-            .map(|ssid| self.provision.lock().unwrap().carlink_network(ssid))
+            .map(|ssid| {
+                self.provision
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .carlink_network(ssid)
+            })
             .transpose()
         {
             Ok(network) => network,
@@ -546,7 +641,12 @@ impl LinuxRelayAdmin {
                     self.hotspot_lifetime.hold_for_carlink(false);
                 }
             }
-            self.provision.lock().unwrap().hold_for_carlink(false);
+            self.provision
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .hold_for_carlink(false);
             self.operation(Operation::Initialize)?;
         }
         Ok(())
@@ -582,6 +682,9 @@ impl LinuxRelayAdmin {
     fn operation(&self, op: Operation) -> Result<()> {
         match op {
             Operation::Startup => {
+                if !self.prepare_wifi()? {
+                    return Ok(());
+                }
                 // In device-hotspot mode the provisioning only takes the saved Wi-Fi client
                 // connections down, which matters to the AP alone; at boot its nmcli calls end
                 // once NetworkManager has set wlan0 up. So the controller starts now, Bluetooth
@@ -605,22 +708,11 @@ impl LinuxRelayAdmin {
                     return Ok(());
                 }
                 let options = self.effective_options()?;
-                let mut provision = self.provision.lock().unwrap();
-                let mut interface = self.provision_interface.lock().unwrap();
-                if *interface != options.wifi_interface {
-                    provision.stop_setup()?;
-                    let mac = std::fs::read_to_string(format!(
-                        "/sys/class/net/{}/address",
-                        options.wifi_interface
-                    ))?;
-                    *provision = WifiProvisioner::new(
-                        ProcessNetworkManagerCli::default(),
-                        options.wifi_interface.clone(),
-                        mac.trim(),
-                        &options.state_dir,
-                    )?;
-                    *interface = options.wifi_interface.clone();
+                if !self.prepare_wifi()? {
+                    return Ok(());
                 }
+                let mut provision_guard = self.provision.lock().unwrap();
+                let provision = provision_guard.as_mut().unwrap();
                 provision.sync(&options.settings.shared_wifi_networks)?;
                 if options.settings.network_mode == "shared-wifi" {
                     provision.start()?;
@@ -675,7 +767,9 @@ impl LinuxRelayAdmin {
             }
             Operation::Forget => {
                 self.stop_controller();
-                self.provision.lock().unwrap().forget()?;
+                if let Some(p) = self.provision.lock().unwrap().as_mut() {
+                    p.forget()?;
+                }
                 let mut settings = self.settings.lock().unwrap();
                 settings.shared_wifi_networks.clear();
                 settings.save(&self.options.state_dir)?;
@@ -731,7 +825,11 @@ impl LinuxRelayAdmin {
                     self.stop_controller();
                 }
                 let options = self.effective_options()?;
-                let mut provision = self.provision.lock().unwrap();
+                if !self.prepare_wifi()? {
+                    return Ok(());
+                }
+                let mut provision_guard = self.provision.lock().unwrap();
+                let provision = provision_guard.as_mut().unwrap();
                 provision.sync(&options.settings.shared_wifi_networks)?;
                 if options.settings.network_mode == "shared-wifi" {
                     if mode_changed || reconnect || provision.status().ssid.is_none() {
@@ -743,7 +841,12 @@ impl LinuxRelayAdmin {
             }
             Operation::Join(ssid, password) => {
                 self.stop_controller();
-                self.provision.lock().unwrap().join(&ssid, &password)?;
+                self.provision
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .ok_or_else(|| std::io::Error::other("Wi-Fi interface unavailable"))?
+                    .join(&ssid, &password)?;
                 let mut settings = self.settings.lock().unwrap();
                 settings.network_mode = "shared-wifi".into();
                 if let Some(network) = settings
@@ -804,11 +907,27 @@ impl LinuxRelayAdmin {
         {
             return Ok(());
         }
+        if *self.provision_interface.lock().unwrap() != self.effective_options()?.wifi_interface {
+            self.stop_controller();
+            self.prepare_wifi()?;
+            if self.provision.lock().unwrap().is_some() {
+                self.operation(Operation::Startup)?;
+            }
+        }
+        if self.provision.lock().unwrap().is_none() {
+            if !self.wifi_present(&self.effective_options()?.wifi_interface) {
+                return Ok(());
+            }
+            self.operation(Operation::Startup)?;
+        }
         self.ensure_controller()
     }
     /// Runs the CarPlay controller: starts one unless it runs, Carlink or the setup hotspot owns
     /// the radio, and applies a requested session restart. The caller holds `lifecycle`.
     fn ensure_controller(&self) -> Result<()> {
+        if self.provision.lock().unwrap().is_none() {
+            return Ok(());
+        }
         {
             let follow = self.follow.lock().unwrap();
             let current = self.network_override.lock().unwrap();
@@ -821,7 +940,12 @@ impl LinuxRelayAdmin {
             }
         }
         if self.network_override.lock().unwrap().is_none()
-            && self.provision.lock().unwrap().status().setup_hotspot
+            && self
+                .provision
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|p| p.status().setup_hotspot)
         {
             return Ok(());
         }
@@ -898,7 +1022,9 @@ impl LinuxRelayAdmin {
         self.stop_controller();
         // After the controller's `--pair` window has closed too.
         self.secure_connections.close("relay-stop");
-        let _ = self.provision.lock().unwrap().stop_setup();
+        if let Some(p) = self.provision.lock().unwrap().as_mut() {
+            let _ = p.stop_setup();
+        }
         if let Some(mut s) = self.supervisor.lock().unwrap().take() {
             s.stop();
         }
@@ -1150,7 +1276,7 @@ pub fn update_settings(
                 }
                 let check = Settings {
                     shared_wifi_networks: networks.clone(),
-                    ..Default::default()
+                    ..current.clone()
                 };
                 check.validate().ok()?;
                 serde_json::to_value(networks).ok()
@@ -1221,6 +1347,9 @@ impl RelayAdmin for LinuxRelayAdmin {
             .unwrap_or_else(|_| self.options.clone());
         let wifi = self.wifi_status();
         let devices = LinuxBluetooth::new(Arc::new(ProcessCommandRunner::new()), None, None)
+            .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
+                options.host_profile.profile.bluetooth_adapter.clone(),
+            ))
             .devices()
             .unwrap_or_default();
         let now = crate::admin::auth::monotonic_seconds();
@@ -1314,6 +1443,27 @@ impl RelayAdmin for LinuxRelayAdmin {
             name: crate::branding::DEVICE_NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
             host: "openxplay-linux.local".into(),
+            host_profile: Some(AdminHostProfile {
+                model: options.host_profile.profile.model.clone(),
+                profile_path: options.host_profile.path.clone(),
+                profile_loaded: options.host_profile.loaded,
+                profile_error: options.host_profile.error.clone(),
+                bluetooth_adapter: crate::linux_bluetooth::AdapterSelection(
+                    options.host_profile.profile.bluetooth_adapter.clone(),
+                )
+                .resolved()
+                .map(|a| AdminBluetoothAdapter {
+                    name: a.name,
+                    address: a.address,
+                }),
+                wifi_interface: options.wifi_interface.clone(),
+                wifi_present: self.wifi_present(&options.wifi_interface),
+                secure_connections: match options.host_profile.profile.secure_connections {
+                    crate::host_profile::SecureConnectionsPolicy::PairingOff => "pairing-off",
+                    crate::host_profile::SecureConnectionsPolicy::Untouched => "untouched",
+                }
+                .into(),
+            }),
             admin_url: "https://openxplay-linux.local:6975/".into(),
             receiver_urls,
             state: stage,
@@ -1340,7 +1490,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 let mut notices = self
                     .provision
                     .try_lock()
-                    .map(|p| p.notices().to_vec())
+                    .map(|p| p.as_ref().map(|p| p.notices().to_vec()).unwrap_or_default())
                     .unwrap_or_default();
                 if self.restart_required.load(Ordering::Acquire)
                     || self.apply_pending.load(Ordering::Acquire)
@@ -1363,7 +1513,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             .provision
             .try_lock()
             .ok()
-            .and_then(|p| p.current_ssid());
+            .and_then(|p| p.as_ref().and_then(|p| p.current_ssid()));
         let networks = self.settings.lock().unwrap().shared_wifi_networks.iter().map(|n|
             serde_json::json!({"ssid": n.ssid, "hasPassword": !n.password.is_empty(), "current": current.as_ref() == Some(&n.ssid)})
         ).collect::<Vec<_>>();
@@ -1449,7 +1599,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                         .provision
                         .try_lock()
                         .ok()
-                        .and_then(|p| p.current_ssid());
+                        .and_then(|p| p.as_ref().and_then(|p| p.current_ssid()));
                     let reconnect = ssid.as_ref().is_some_and(|ssid| {
                         current
                             .shared_wifi_networks
@@ -1581,6 +1731,9 @@ impl RelayAdmin for LinuxRelayAdmin {
     fn phones(&self) -> Vec<AdminPhone> {
         let choice = self.effective_options().ok().and_then(|o| o.iphone);
         LinuxBluetooth::new(Arc::new(ProcessCommandRunner::new()), None, None)
+            .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
+                self.options.host_profile.profile.bluetooth_adapter.clone(),
+            ))
             .devices()
             .unwrap_or_default()
             .into_iter()
@@ -1618,13 +1771,15 @@ impl RelayAdmin for LinuxRelayAdmin {
     fn wifi_status(&self) -> WifiClient {
         self.provision
             .try_lock()
-            .map(|p| p.status())
+            .map(|p| p.as_ref().map(|p| p.status()).unwrap_or_default())
             .unwrap_or_default()
     }
     fn wifi_networks(&self) -> std::result::Result<Vec<WifiNetwork>, String> {
         self.provision
             .try_lock()
             .map_err(|_| "error.busy".to_string())?
+            .as_mut()
+            .ok_or_else(|| "Wi-Fi interface unavailable".to_string())?
             .scan()
             .map_err(|e| e.to_string())
     }
@@ -1678,6 +1833,139 @@ mod tests {
             Arc::new(LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap()),
             dir,
         )
+    }
+    #[test]
+    fn missing_wifi_keeps_admin_available_and_starts_once_when_it_appears() {
+        let (mut a, dir) = fake();
+        let outputs = Arc::new(OutputFake::default());
+        {
+            let a = Arc::get_mut(&mut a).unwrap();
+            a.child_factory = outputs.clone();
+            a.net_root = dir.join("net");
+            a.provision_cli = "/usr/bin/true".into();
+            *a.provision.lock().unwrap() = None;
+        }
+        a.start_supervisor().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while outputs.launches.lock().unwrap().is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        a.operation(Operation::Startup).unwrap();
+        a.tick().unwrap();
+        assert!(a.supervisor.lock().unwrap().is_some());
+        assert!(a.provision.lock().unwrap().is_none());
+        assert!(a.controller.lock().unwrap().is_none());
+        let status = serde_json::to_value(a.status()).unwrap();
+        assert_eq!(status["host"], "openxplay-linux.local");
+        let host = &status["hostProfile"];
+        assert!(host.get("hostname").is_none());
+        assert_eq!(host["profilePath"], "/etc/openxplay/host.json");
+        assert!(host.get("bluetoothAdapter").is_some());
+        assert_eq!(host["wifiPresent"], false);
+        assert_eq!(host["wifiInterface"], "wlan0");
+        assert_eq!(host["secureConnections"], "pairing-off");
+        assert_eq!(host["profileLoaded"], false);
+        assert!(host["model"].is_null() && host["profileError"].is_null());
+        let mut auth = AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap();
+        let token = auth
+            .login("127.0.0.1".parse().unwrap(), "openxplay", 100)
+            .ok()
+            .unwrap();
+        let server = AdminServer::new(
+            a.clone(),
+            auth,
+            AdminServerConfig::new(dir.clone(), dir.clone(), vec![]),
+        );
+        for path in ["/api/v0/status", "/api/v0/settings"] {
+            let request = Request {
+                method: "GET".into(),
+                path: path.into(),
+                headers: BTreeMap::from([("cookie".into(), format!("oxp_admin={token}"))]),
+                body: Vec::new(),
+                peer: "127.0.0.1".parse().unwrap(),
+            };
+            assert_eq!(server.route(&request, 101).status, 200);
+        }
+        std::fs::create_dir_all(dir.join("net/wlan0")).unwrap();
+        std::fs::write(dir.join("net/wlan0/address"), "AA:BB:CC:DD:EE:FF").unwrap();
+        a.tick().unwrap();
+        assert!(a.provision.lock().unwrap().is_some());
+        let controller = a.controller.lock().unwrap().clone().unwrap();
+        a.tick().unwrap();
+        assert!(Arc::ptr_eq(
+            &controller,
+            a.controller.lock().unwrap().as_ref().unwrap()
+        ));
+        assert_eq!(
+            serde_json::to_value(a.status()).unwrap()["hostProfile"]["wifiPresent"],
+            true
+        );
+        assert!(matches!(
+            a.update(
+                serde_json::json!({"wifiInterface":"wlan9"})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::NextStart
+        ));
+        a.tick().unwrap();
+        assert!(a.provision.lock().unwrap().is_none());
+        assert!(a.controller.lock().unwrap().is_none());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn profile_defaults_survive_admin_updates_and_gap_includes_zero() {
+        for seconds in [0, 15, 60] {
+            let (mut a, dir) = fake();
+            let options = {
+                let a = Arc::get_mut(&mut a).unwrap();
+                a.options.host_profile.profile.wifi_interface = "wlan7".into();
+                a.options.host_profile.profile.hotspot_channel = 11;
+                a.options.host_profile.profile.hotspot_down_gap_seconds = seconds;
+                a.options.host_profile.profile.secure_connections =
+                    crate::host_profile::SecureConnectionsPolicy::Untouched;
+                a.options.clone()
+            };
+            let state = a.state.clone();
+            let events = a.events.clone();
+            drop(a);
+            let a =
+                LinuxRelayAdmin::with_optional_provisioner(options, state, events, None).unwrap();
+            assert_eq!(a.settings().values["wifiInterface"], "wlan7");
+            assert_eq!(a.settings().values["hotspotChannel"], 11);
+            assert!(matches!(
+                a.update(
+                    serde_json::json!({"output":"both"})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                ),
+                AdminUpdate::AppliedNow
+            ));
+            let saved = Settings::load(&dir).unwrap();
+            assert_eq!(saved.wifi_interface, "wlan7");
+            assert_eq!(saved.hotspot_channel, 11);
+            a.hotspot_lifetime
+                .remove_stale_once(|| Ok(true))
+                .unwrap()
+                .unwrap();
+            let remaining = a.hotspot_lifetime.down_remaining();
+            if seconds == 0 {
+                assert_eq!(remaining, Duration::ZERO);
+            } else {
+                assert!(
+                    remaining > Duration::from_secs(seconds - 1)
+                        && remaining <= Duration::from_secs(seconds)
+                );
+            }
+            let status = serde_json::to_value(a.status()).unwrap();
+            assert_eq!(status["hostProfile"]["secureConnections"], "untouched");
+            assert!(status.get("bluetoothSecureConnections").is_none());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
     struct UnusedPlatform;
     impl WirelessPlatform for UnusedPlatform {
@@ -1910,13 +2198,15 @@ case "$*" in
 esac
 "#).unwrap();
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-            *a.provision.lock().unwrap() = WifiProvisioner::new(
-                ProcessNetworkManagerCli { executable: script },
-                "wlan0".into(),
-                "AA:BB:CC:DD:EE:FF",
-                &dir,
-            )
-            .unwrap();
+            *a.provision.lock().unwrap() = Some(
+                WifiProvisioner::new(
+                    ProcessNetworkManagerCli { executable: script },
+                    "wlan0".into(),
+                    "AA:BB:CC:DD:EE:FF",
+                    &dir,
+                )
+                .unwrap(),
+            );
             {
                 let mut settings = a.settings.lock().unwrap();
                 settings.network_mode = mode.into();
@@ -1997,7 +2287,14 @@ esac
                 calls,
                 std::fs::read_to_string(dir.join("nmcli-calls")).unwrap()
             );
-            assert!(a.provision.lock().unwrap().start().is_err());
+            assert!(a
+                .provision
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .start()
+                .is_err());
             a.follow.lock().unwrap().observe(
                 &serde_json::json!({"type":"state","state":"Ended"}),
                 "wlan0",
@@ -2036,7 +2333,14 @@ esac
             "Could not read the Carlink network credentials"
         );
         assert_eq!(controller.stage(), "Stopped");
-        assert!(a.provision.lock().unwrap().stop().is_err());
+        assert!(a
+            .provision
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .stop()
+            .is_err());
         a.tick().unwrap();
         assert!(a.controller.lock().unwrap().is_none());
         a.follow
@@ -2044,7 +2348,13 @@ esac
             .unwrap()
             .observe(&serde_json::json!({"type":"receiver-stopped"}), "wlan0");
         settle_follow(&a);
-        a.provision.lock().unwrap().stop().unwrap();
+        a.provision
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .stop()
+            .unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
