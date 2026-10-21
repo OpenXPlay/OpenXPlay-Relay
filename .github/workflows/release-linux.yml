@@ -5,8 +5,9 @@
 name: Release Linux
 
 # A pushed tag linux-vMAJOR.MINOR.PATCH[-PRERELEASE] publishes the Linux relay as a GitHub
-# Release. A manual run from a branch builds the same files and keeps them as workflow artifacts
-# only. The Android app is released separately by release-android.yml.
+# Release (tarball, Debian package and flash-stage manifest). A manual run from a branch builds
+# the same files and keeps them as workflow artifacts only. The Android app is released separately
+# by release-android.yml.
 on:
   push:
     tags: ['linux-v*']
@@ -177,6 +178,48 @@ jobs:
             echo "$found"
             exit 1
           fi
+      - name: Build and check relay flash stage
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          fail() { echo "::error::$*" >&2; exit 1; }
+          pkg="$RUNNER_TEMP/package/openxplay-relay-$VERSION-linux-aarch64"
+          dist="$RUNNER_TEMP/dist"
+          SOURCE_DATE_EPOCH=$(git -C OpenXPlay-Relay log -1 --format=%ct) || fail "Cannot read the relay commit time."
+          export SOURCE_DATE_EPOCH
+          sh OpenXPlay-Relay/rust/packaging/build-deb.sh "$pkg" "$dist" || fail "Failed to build the relay flash stage."
+          debversion=$(printf '%s' "$VERSION" | sed 's/-/~/')
+          name="openxplay-relay_${debversion}_arm64"
+          deb="$dist/$name.deb"
+          manifest="$dist/$name.manifest.json"
+          shopt -s nullglob
+          debs=("$dist"/*.deb)
+          manifests=("$dist"/*.manifest.json)
+          [[ ${#debs[@]} -eq 1 && ${debs[0]} = "$deb" ]] || fail "Expected exactly one Debian package: $name.deb."
+          [[ ${#manifests[@]} -eq 1 && ${manifests[0]} = "$manifest" ]] || fail "Expected exactly one flash-stage manifest: $name.manifest.json."
+          info=$(dpkg-deb --info "$deb") || fail "Cannot read the Debian package metadata."
+          for field in 'Package: openxplay-relay' 'Architecture: arm64' "Version: $debversion"; do
+            grep -Fxq " $field" <<< "$info" || fail "The Debian package must declare $field."
+          done
+          contents=$(dpkg-deb --contents "$deb") || fail "Cannot list the Debian package contents."
+          if found=$(grep -E -i "$IDENTITY_FILES" <<< "$contents"); then
+            fail "The Debian package contains identity files: $found"
+          elif [ "$?" -ne 1 ]; then
+            fail "Cannot check the Debian package for identity files."
+          fi
+          digest=$(sha256sum "$deb") || fail "Cannot hash the Debian package."
+          digest=${digest%% *}
+          jq -e --arg version "$debversion" --arg sha256 "$digest" '
+            .schema == "org.openxplay.flash-stage/1" and .stage == "relay" and
+            .version == $version and .sha256 == $sha256
+          ' "$manifest" >/dev/null || fail "The relay flash-stage manifest has invalid metadata or a mismatched SHA-256."
+          # GitHub renames release assets with "~" in their names, so the assets use the release
+          # version (0.1.5-beta.1). The manifest keeps the Debian file name it installs under.
+          asset="openxplay-relay_${VERSION}_arm64"
+          if [ "$asset" != "$name" ]; then
+            mv "$deb" "$dist/$asset.deb" && mv "$manifest" "$dist/$asset.manifest.json" ||
+              fail "Cannot rename the relay flash stage to its release asset names."
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux-aarch64
@@ -227,6 +270,8 @@ jobs:
           }Built from [OpenXPlay-Relay@${GITHUB_SHA::12}]($server/OpenXPlay-Relay/commit/$GITHUB_SHA) and [OpenXPlay-Stream@${STREAM_SHA::12}]($server/OpenXPlay-Stream/commit/$STREAM_SHA).
 
           - \`openxplay-relay-$VERSION-linux-aarch64.tar.gz\`: the Linux relay for aarch64 (static musl binaries, web pages and \`rust/packaging/install.sh\`).
+          - \`openxplay-relay_${VERSION}_arm64.deb\`: the relay Debian package for OpenXPlay Flasher and other Debian-based hosts.
+          - \`openxplay-relay_${VERSION}_arm64.manifest.json\`: the relay flash-stage manifest (\`org.openxplay.flash-stage/1\`), including the package SHA-256.
           - \`SHA256SUMS\`: SHA-256 checksums of these files.
 
           Setup: https://openxplay.org/en/quick-start · 设置：https://openxplay.org/quick-start. No build contains an Apple accessory (MFi) identity; supply your own."
