@@ -40,6 +40,8 @@ pub struct Settings {
     pub carlink_local: String,
     pub carlink_pin: Option<String>,
     pub carlink_ports: BTreeMap<String, u16>,
+    /// Offer the iPhone no CarPlay audio, so music, navigation and calls stay on its Bluetooth link with the car.
+    pub car_bluetooth_audio: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -62,6 +64,7 @@ impl Default for Settings {
             carlink_local: "192.168.43.2".into(),
             carlink_pin: None,
             carlink_ports: BTreeMap::new(),
+            car_bluetooth_audio: false,
         }
     }
 }

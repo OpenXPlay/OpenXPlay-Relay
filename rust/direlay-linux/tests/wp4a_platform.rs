@@ -349,8 +349,9 @@ fn settings_round_trip_private_permissions() {
 #[test]
 fn admin_mapping_and_schema() {
     let s = Settings::default();
-    let next=update_settings(&s,serde_json::json!({"networkMode":"shared-wifi","sharedWifiNetworks":[{"ssid":"Car","password":"password"}],"hotspotChannel":6,"iphone":"auto","wifiInterface":"wlan1","rfcommChannel":12,"requirePairingCode":true,"output":"both"}).as_object().unwrap().clone()).unwrap();
+    let next=update_settings(&s,serde_json::json!({"networkMode":"shared-wifi","sharedWifiNetworks":[{"ssid":"Car","password":"password"}],"hotspotChannel":6,"iphone":"auto","wifiInterface":"wlan1","rfcommChannel":12,"requirePairingCode":true,"output":"both","carBluetoothAudio":true}).as_object().unwrap().clone()).unwrap();
     assert!(next.iphone.is_none());
+    assert!(next.car_bluetooth_audio);
     assert_eq!(next.rfcomm_channel, Some(12));
     assert!(next.require_pairing_code);
     let keys = settings_schema()
@@ -366,6 +367,7 @@ fn admin_mapping_and_schema() {
         "rfcommChannel",
         "requirePairingCode",
         "output",
+        "carBluetoothAudio",
     ] {
         assert!(keys.iter().any(|s| s == k));
     }

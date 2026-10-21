@@ -1091,6 +1091,20 @@ pub fn settings_schema() -> Vec<Section> {
             fields,
         },
         Section {
+            id: "audio".into(),
+            title_key: "section.audio".into(),
+            fields: vec![Field {
+                key: "carBluetoothAudio".into(),
+                field_type: "bool".into(),
+                label_key: "field.carBluetoothAudio".into(),
+                hint_key: Some("hint.field.carBluetoothAudio".into()),
+                options: None,
+                visible_when: None,
+                min: None,
+                max: None,
+            }],
+        },
+        Section {
             id: "plugins".into(),
             title_key: "section.plugins".into(),
             fields: [("plugins", "bool"), ("pluginsEnabled", "plugins")]
@@ -1465,7 +1479,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                 let controller_changed = next.iphone != current.iphone
                     || next.rfcomm_channel != current.rfcomm_channel
                     || next.wifi_interface != current.wifi_interface
-                    || next.hotspot_channel != current.hotspot_channel;
+                    || next.hotspot_channel != current.hotspot_channel
+                    // Read when the controller builds the AirPlay receiver for the iPhone.
+                    || next.car_bluetooth_audio != current.car_bluetooth_audio;
                 let network = if network_update {
                     let ssid = self
                         .provision
@@ -2790,6 +2806,18 @@ esac
             ),
             AdminUpdate::NextStart
         ));
+        assert!(matches!(
+            a.update(
+                serde_json::json!({"carBluetoothAudio":true})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::NextStart
+        ));
+        assert!(a.settings.lock().unwrap().car_bluetooth_audio);
+        assert_eq!(a.settings().values["carBluetoothAudio"], true);
+        assert!(Settings::load(&dir).unwrap().car_bluetooth_audio);
         std::fs::remove_dir_all(dir).unwrap();
     }
     fn pin_request(a: &LinuxRelayAdmin) {
