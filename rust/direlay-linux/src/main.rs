@@ -435,14 +435,17 @@ pub fn run() -> Result<()> {
     let auth = crate::admin::AdminAuth::new(Box::new(crate::admin::FileAuthStore(
         options.state_dir.join("admin-auth.json"),
     )))?;
+    let mut admin_config = crate::admin::AdminServerConfig::new(
+        options.state_dir.clone(),
+        options.admin_root.clone(),
+        addresses.clone(),
+    );
+    // Trusted HTTPS: the admin page also answers its public name with that certificate.
+    admin_config.named = admin.admin_certificate();
     let server = Arc::new(crate::admin::AdminServer::new(
         admin.clone(),
         auth,
-        crate::admin::AdminServerConfig::new(
-            options.state_dir.clone(),
-            options.admin_root.clone(),
-            addresses.clone(),
-        ),
+        admin_config,
     ));
     let mut http = server.start()?;
     admin.start_services()?;

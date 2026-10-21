@@ -102,6 +102,8 @@ pub struct AdminServerConfig {
     pub static_dir: PathBuf,
     pub addresses: Vec<Ipv4Addr>,
     pub workers: usize,
+    /// A certificate served only for its own name (trusted HTTPS); empty by default.
+    pub named: NamedCertificate,
 }
 impl AdminServerConfig {
     pub fn new(state_dir: PathBuf, static_dir: PathBuf, addresses: Vec<Ipv4Addr>) -> Self {
@@ -111,6 +113,7 @@ impl AdminServerConfig {
             static_dir,
             addresses,
             workers: 4,
+            named: NamedCertificate::default(),
         }
     }
 }
@@ -299,6 +302,8 @@ impl AdminServer {
                     "forget-carlink",
                     "pair-iphone",
                     "cancel-pairing",
+                    "public-name-renew",
+                    "public-name-remove",
                 ]
                 .contains(&name)
                 {
@@ -378,9 +383,10 @@ impl AdminServer {
         }
     }
     pub fn start(self: Arc<Self>) -> io::Result<AdminServerHandle> {
-        let tls = Arc::new(RwLock::new(tls_config(
+        let tls = Arc::new(RwLock::new(tls_config_with(
             &self.config.state_dir,
             &self.config.addresses,
+            &self.config.named,
         )?));
         let listener = TcpListener::bind(self.config.bind)?;
         let address = listener.local_addr()?;
@@ -453,6 +459,7 @@ impl AdminServer {
             threads,
             tls,
             state_dir: self.config.state_dir.clone(),
+            named: self.config.named.clone(),
         })
     }
 }
@@ -537,8 +544,73 @@ struct SavedTls {
     cert: Vec<u8>,
     key: Vec<u8>,
 }
+/// A certificate the admin page serves only to clients that ask for its name (SNI): the
+/// trusted-HTTPS name's. It changes in place, without rebuilding the TLS configuration.
+type Named = Option<(String, Arc<rustls::sign::CertifiedKey>)>;
+#[derive(Clone, Debug, Default)]
+pub struct NamedCertificate(Arc<RwLock<Named>>);
+impl NamedCertificate {
+    /// Serves the PEM `chain` and PKCS #8 `key` for `name` from now on.
+    pub fn set(&self, name: &str, chain: &[u8], key: &[u8]) -> io::Result<()> {
+        use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+        let certs = CertificateDer::pem_slice_iter(chain)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(io::Error::other)?;
+        if certs.is_empty() {
+            return Err(io::Error::other("empty certificate chain"));
+        }
+        let key = PrivateKeyDer::from_pem_slice(key).map_err(io::Error::other)?;
+        let signer =
+            rustls::crypto::ring::sign::any_supported_type(&key).map_err(io::Error::other)?;
+        *self.0.write().unwrap() = Some((
+            name.to_ascii_lowercase(),
+            Arc::new(rustls::sign::CertifiedKey::new(certs, signer)),
+        ));
+        Ok(())
+    }
+    pub fn clear(&self) {
+        *self.0.write().unwrap() = None;
+    }
+    pub fn name(&self) -> Option<String> {
+        self.0
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|(name, _)| name.clone())
+    }
+}
+/// SNI equal to the named certificate's name gets that certificate; everything else, including
+/// clients that send no SNI (IP addresses), the relay's own.
+#[derive(Debug)]
+struct SniResolver {
+    own: Arc<rustls::sign::CertifiedKey>,
+    named: NamedCertificate,
+}
+impl rustls::server::ResolvesServerCert for SniResolver {
+    fn resolve(
+        &self,
+        hello: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        if let (Some(sni), Some((name, key))) =
+            (hello.server_name(), &*self.named.0.read().unwrap())
+        {
+            if sni.eq_ignore_ascii_case(name) {
+                return Some(key.clone());
+            }
+        }
+        Some(self.own.clone())
+    }
+}
 /// Certificate and key are atomically stored together, never leaving a mismatched pair.
 pub fn tls_config(state: &Path, addresses: &[Ipv4Addr]) -> io::Result<Arc<rustls::ServerConfig>> {
+    tls_config_with(state, addresses, &NamedCertificate::default())
+}
+/// [`tls_config`] that also serves `named` for its own name.
+pub fn tls_config_with(
+    state: &Path,
+    addresses: &[Ipv4Addr],
+    named: &NamedCertificate,
+) -> io::Result<Arc<rustls::ServerConfig>> {
     let mut sans = vec!["openxplay-linux.local".into(), "localhost".into()];
     sans.extend(addresses.iter().map(ToString::to_string));
     sans.sort();
@@ -572,15 +644,24 @@ pub fn tls_config(state: &Path, addresses: &[Ipv4Addr]) -> io::Result<Arc<rustls
         }
     };
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let key = rustls::pki_types::PrivateKeyDer::from(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        saved.key,
+    ));
+    let own = Arc::new(rustls::sign::CertifiedKey::new(
+        vec![rustls::pki_types::CertificateDer::from(saved.cert)],
+        provider
+            .key_provider
+            .load_private_key(key)
+            .map_err(io::Error::other)?,
+    ));
     let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(io::Error::other)?
         .with_no_client_auth()
-        .with_single_cert(
-            vec![rustls::pki_types::CertificateDer::from(saved.cert)],
-            rustls::pki_types::PrivatePkcs8KeyDer::from(saved.key).into(),
-        )
-        .map_err(io::Error::other)?;
+        .with_cert_resolver(Arc::new(SniResolver {
+            own,
+            named: named.clone(),
+        }));
     Ok(Arc::new(config))
 }
 pub struct AdminServerHandle {
@@ -589,10 +670,11 @@ pub struct AdminServerHandle {
     threads: Vec<JoinHandle<()>>,
     tls: Arc<RwLock<Arc<rustls::ServerConfig>>>,
     state_dir: PathBuf,
+    named: NamedCertificate,
 }
 impl AdminServerHandle {
     pub fn update_addresses(&self, addresses: &[Ipv4Addr]) -> io::Result<()> {
-        *self.tls.write().unwrap() = tls_config(&self.state_dir, addresses)?;
+        *self.tls.write().unwrap() = tls_config_with(&self.state_dir, addresses, &self.named)?;
         Ok(())
     }
     pub fn stop(&mut self) {
@@ -605,5 +687,125 @@ impl AdminServerHandle {
 impl Drop for AdminServerHandle {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod sni_tests {
+    use super::*;
+    use rustls::{
+        client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+        pki_types::{CertificateDer, ServerName, UnixTime},
+        DigitallySignedStruct, SignatureScheme,
+    };
+    /// Accepts any certificate and remembers the leaf it was shown.
+    #[derive(Debug, Default)]
+    struct Recorder(Mutex<Option<Vec<u8>>>);
+    impl ServerCertVerifier for Recorder {
+        fn verify_server_cert(
+            &self,
+            end_entity: &CertificateDer<'_>,
+            _: &[CertificateDer<'_>],
+            _: &ServerName<'_>,
+            _: &[u8],
+            _: UnixTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            *self.0.lock().unwrap() = Some(end_entity.to_vec());
+            Ok(ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+    /// The leaf the server presents to a client asking for `name`.
+    fn presented(server: &Arc<rustls::ServerConfig>, name: ServerName<'static>) -> Vec<u8> {
+        let recorder = Arc::new(Recorder::default());
+        let client = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(recorder.clone())
+        .with_no_client_auth();
+        let mut client = rustls::ClientConnection::new(Arc::new(client), name).unwrap();
+        let mut server = rustls::ServerConnection::new(server.clone()).unwrap();
+        for _ in 0..10 {
+            let mut buffer = Vec::new();
+            client.write_tls(&mut buffer).unwrap();
+            server.read_tls(&mut buffer.as_slice()).unwrap();
+            server.process_new_packets().unwrap();
+            let mut buffer = Vec::new();
+            server.write_tls(&mut buffer).unwrap();
+            client.read_tls(&mut buffer.as_slice()).unwrap();
+            client.process_new_packets().unwrap();
+            if !client.is_handshaking() {
+                break;
+            }
+        }
+        let leaf = recorder.0.lock().unwrap().clone();
+        leaf.unwrap()
+    }
+    #[test]
+    fn the_named_certificate_answers_only_its_own_name() {
+        let state = std::env::temp_dir().join(format!(
+            "admin-sni-{}",
+            crate::admin::auth::random_hex(6).unwrap()
+        ));
+        let named = NamedCertificate::default();
+        let config = tls_config_with(&state, &[Ipv4Addr::new(10, 77, 0, 1)], &named).unwrap();
+        let saved: SavedTls =
+            serde_json::from_slice(&fs::read(state.join("admin-tls.json")).unwrap()).unwrap();
+        let dns = |n: &str| ServerName::try_from(n.to_string()).unwrap();
+        let ip = ServerName::IpAddress(rustls::pki_types::IpAddr::from(std::net::IpAddr::from([
+            10, 77, 0, 1,
+        ])));
+        assert_eq!(presented(&config, dns("myrelay.duckdns.org")), saved.cert);
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let acme = rcgen::CertificateParams::new(vec!["myrelay.duckdns.org".into()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        named
+            .set(
+                "MyRelay.duckdns.org",
+                acme.pem().as_bytes(),
+                key.serialize_pem().as_bytes(),
+            )
+            .unwrap();
+        assert_eq!(named.name().as_deref(), Some("myrelay.duckdns.org"));
+        // The same configuration picks the new certificate up without a rebuild.
+        assert_eq!(
+            presented(&config, dns("myrelay.duckdns.org")),
+            acme.der().to_vec()
+        );
+        assert_eq!(
+            presented(&config, dns("MYRELAY.duckdns.org")),
+            acme.der().to_vec()
+        );
+        assert_eq!(presented(&config, dns("openxplay-linux.local")), saved.cert);
+        assert_eq!(presented(&config, ip.clone()), saved.cert);
+        assert!(named.set("x", b"", b"").is_err());
+        named.clear();
+        assert_eq!(presented(&config, dns("myrelay.duckdns.org")), saved.cert);
+        fs::remove_dir_all(state).unwrap();
     }
 }

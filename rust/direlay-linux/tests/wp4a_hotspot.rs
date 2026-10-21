@@ -81,6 +81,46 @@ fn manager(p: &std::path::Path, runner: Arc<Fake>) -> LinuxHotspot {
     LinuxHotspot::new(p.into(), runner, "wlan0".into(), 36)
 }
 #[test]
+fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_ap() {
+    let p = temp();
+    let runner = Arc::new(Fake::default());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let hook = {
+        let (seen, runner) = (seen.clone(), runner.clone());
+        Arc::new(move |address: std::net::Ipv4Addr| {
+            let calls = runner.calls.lock().unwrap().len();
+            seen.lock().unwrap().push((address, calls));
+        })
+    };
+    let h = manager(&p, runner.clone()).with_before_activation(hook);
+    h.start(Duration::from_secs(60)).unwrap();
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1);
+    let (address, calls_before) = seen[0];
+    assert!(
+        address.is_private() && address.octets()[3] == 1,
+        "{address}"
+    );
+    // Before the connection is added and brought up.
+    let calls = runner.calls.lock().unwrap();
+    let add = calls
+        .iter()
+        .position(|a| {
+            a.get(1).is_some_and(|s| s == "connection") && a.get(2).is_some_and(|s| s == "add")
+        })
+        .unwrap();
+    assert!(calls_before <= add);
+    let subnet = calls[add]
+        .windows(2)
+        .find(|w| w[0] == "ipv4.addresses")
+        .map(|w| w[1].clone())
+        .unwrap();
+    assert_eq!(subnet, format!("{address}/24"));
+    drop(calls);
+    h.close().unwrap();
+    std::fs::remove_dir_all(p).unwrap();
+}
+#[test]
 fn hotspot_persists_credentials_and_deletes_owned_connection() {
     let p = temp();
     let runner = Arc::new(Fake::default());

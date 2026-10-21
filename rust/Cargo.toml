@@ -41,6 +41,11 @@ rustls-pki-types = { version = "1", features = ["std"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 x509-cert = "0.2"
 cms = "0.2"
+# Trusted HTTPS with a free domain name (2026-10-20): provider and ACME requests over rustls (ring)
+# with the Mozilla roots built in (webpki-roots), since the Debian package does not depend on
+# ca-certificates; base64url for JWS (already in the tree through der/pkcs8).
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+base64ct = { version = "=1.8.3", features = ["alloc"] }
 
 [profile.release]
 opt-level = "z"

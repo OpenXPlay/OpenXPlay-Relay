@@ -316,6 +316,7 @@ pub struct LinuxHotspot {
     state: Mutex<HotspotState>,
     closed: AtomicBool,
     provisioning: Option<Arc<crate::provision::ProvisioningGate>>,
+    before_activation: Option<crate::host_backends::BeforeActivation>,
 }
 impl LinuxHotspot {
     pub fn new(
@@ -335,7 +336,14 @@ impl LinuxHotspot {
             }),
             closed: AtomicBool::new(false),
             provisioning: None,
+            before_activation: None,
         }
+    }
+    /// Runs with the AP's address just before its activation, e.g. to give NetworkManager's
+    /// shared-mode dnsmasq configuration it reads only when it starts.
+    pub fn with_before_activation(mut self, hook: crate::host_backends::BeforeActivation) -> Self {
+        self.before_activation = Some(hook);
+        self
     }
     /// The relay's Wi-Fi provisioning, which the AP's activation waits for: at startup it takes
     /// the saved client connections on the interface down.
@@ -385,6 +393,12 @@ impl LinuxHotspot {
             .map(|(_, a, p)| format!("{a}/{p}"))
             .collect::<Vec<_>>();
         let subnet = WifiOutput::free_hotspot_address(&occupied)?;
+        if let (Some(hook), Some(address)) = (
+            &self.before_activation,
+            subnet.split('/').next().and_then(|a| a.parse().ok()),
+        ) {
+            hook(address);
+        }
         let id = format!(
             "{HOTSPOT_CONNECTION_PREFIX}{}",
             crate::admin::auth::random_hex(16)?

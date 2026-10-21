@@ -67,6 +67,7 @@ pub fn supervisor_settings(
         addresses,
         pairing: o.settings.require_pairing_code,
         carlink,
+        pem_tls: None,
     }
 }
 

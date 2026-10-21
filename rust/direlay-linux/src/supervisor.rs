@@ -35,6 +35,12 @@ pub struct BleCarlinkSettings {
     /// Carlink band the head unit creates its group on: 0 is 2.4 GHz, 1 allows 5 GHz.
     pub band: u8,
 }
+/// A certificate for the head-unit page from PEM files (the trusted-HTTPS name's).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PemTls {
+    pub cert: PathBuf,
+    pub key: PathBuf,
+}
 #[derive(Clone, Debug)]
 pub struct SupervisorSettings {
     pub binary: PathBuf,
@@ -46,13 +52,20 @@ pub struct SupervisorSettings {
     pub addresses: Vec<Ipv4Addr>,
     pub pairing: bool,
     pub carlink: Option<CarlinkSettings>,
+    /// Serve this certificate instead of the self-signed one, while both files exist.
+    pub pem_tls: Option<PemTls>,
 }
 impl SupervisorSettings {
     pub fn arguments(&self) -> Vec<OsString> {
+        // Checked at every spawn: a respawn after the files were removed serves self-signed.
+        let pem = self
+            .pem_tls
+            .as_ref()
+            .filter(|t| t.cert.is_file() && t.key.is_file());
         let mut args: Vec<OsString> = if self.web_port == 0 {
             vec!["--unix".into(), self.socket.as_os_str().into()]
         } else {
-            vec![
+            let mut args: Vec<OsString> = vec![
                 "--unix".into(),
                 self.socket.as_os_str().into(),
                 "--web-port".into(),
@@ -61,11 +74,22 @@ impl SupervisorSettings {
                 self.web_root.as_os_str().into(),
                 "--web-bind".into(),
                 "0.0.0.0".into(),
-                "--tls-self-signed".into(),
-                self.state_dir.join("receiver-tls").into_os_string(),
-                "--tls-san".into(),
-                "openxplay-linux.local".into(),
-            ]
+            ];
+            match pem {
+                Some(pem) => args.extend([
+                    "--tls-cert".into(),
+                    pem.cert.as_os_str().into(),
+                    "--tls-key".into(),
+                    pem.key.as_os_str().into(),
+                ]),
+                None => args.extend([
+                    "--tls-self-signed".into(),
+                    self.state_dir.join("receiver-tls").into_os_string(),
+                    "--tls-san".into(),
+                    "openxplay-linux.local".into(),
+                ]),
+            }
+            args
         };
         args.extend([
             "--relay-name".into(),
@@ -76,7 +100,11 @@ impl SupervisorSettings {
         let mut ips = self.addresses.clone();
         ips.sort();
         ips.dedup();
-        for ip in ips.into_iter().filter(|_| self.web_port != 0) {
+        // oxp-relay takes --tls-san only with --tls-self-signed.
+        for ip in ips
+            .into_iter()
+            .filter(|_| self.web_port != 0 && pem.is_none())
+        {
             args.extend(["--tls-san".into(), ip.to_string().into()]);
         }
         if self.pairing && self.web_port != 0 {
@@ -723,6 +751,7 @@ mod band_tests {
                 state_dir: dir.clone(),
                 addresses: vec![],
                 pairing: false,
+                pem_tls: None,
                 carlink: Some(CarlinkSettings {
                     ble: None,
                     head_unit: Ipv4Addr::LOCALHOST,
@@ -872,5 +901,93 @@ mod band_tests {
         assert!(!carlink);
         assert_eq!(f.backoff_delays(), [400]);
         relay.stop();
+    }
+}
+
+#[cfg(test)]
+mod tls_tests {
+    use super::*;
+    fn settings(dir: &Path) -> SupervisorSettings {
+        SupervisorSettings {
+            binary: "oxp-relay".into(),
+            socket: "/tmp/oxp-relay.sock".into(),
+            web_port: 8443,
+            web_root: "/opt/openxplay/share/web".into(),
+            plugins: None,
+            state_dir: dir.into(),
+            addresses: vec![Ipv4Addr::new(10, 77, 0, 1), Ipv4Addr::new(192, 168, 1, 2)],
+            pairing: false,
+            carlink: None,
+            pem_tls: None,
+        }
+    }
+    fn strings(args: Vec<OsString>) -> Vec<String> {
+        args.into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+    #[test]
+    fn without_a_trusted_certificate_the_arguments_are_exactly_as_before() {
+        let dir = std::env::temp_dir().join(format!(
+            "supervisor-tls-{}",
+            crate::admin::auth::random_hex(6).unwrap()
+        ));
+        let state = dir.to_string_lossy().into_owned();
+        let legacy = [
+            "--unix",
+            "/tmp/oxp-relay.sock",
+            "--web-port",
+            "8443",
+            "--web-root",
+            "/opt/openxplay/share/web",
+            "--web-bind",
+            "0.0.0.0",
+            "--tls-self-signed",
+            &format!("{state}/receiver-tls"),
+            "--tls-san",
+            "openxplay-linux.local",
+            "--relay-name",
+            crate::branding::DEVICE_NAME,
+            "--relay-version",
+            env!("CARGO_PKG_VERSION"),
+            "--tls-san",
+            "10.77.0.1",
+            "--tls-san",
+            "192.168.1.2",
+        ];
+        assert_eq!(strings(settings(&dir).arguments()), legacy);
+        // Configured but missing files (removed, or never issued) change nothing either.
+        let pem = PemTls {
+            cert: dir.join("public-name/cert.pem"),
+            key: dir.join("public-name/key.pem"),
+        };
+        let with = SupervisorSettings {
+            pem_tls: Some(pem.clone()),
+            ..settings(&dir)
+        };
+        assert_eq!(strings(with.arguments()), legacy);
+        std::fs::create_dir_all(dir.join("public-name")).unwrap();
+        std::fs::write(&pem.cert, "chain").unwrap();
+        std::fs::write(&pem.key, "key").unwrap();
+        let args = strings(with.arguments());
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--tls-cert", &format!("{state}/public-name/cert.pem")]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--tls-key", &format!("{state}/public-name/key.pem")]));
+        assert!(!args
+            .iter()
+            .any(|a| a == "--tls-self-signed" || a == "--tls-san"));
+        assert!(args.windows(2).any(|w| w == ["--web-port", "8443"]));
+        // Carlink-only children take no TLS options at all.
+        let carlink = SupervisorSettings {
+            web_port: 0,
+            ..with
+        };
+        assert!(!strings(carlink.arguments())
+            .iter()
+            .any(|a| a.starts_with("--tls")));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -31,6 +31,7 @@ pub struct LinuxWirelessPlatform {
     /// The SSID of the access point `create_hotspot` prepared, when known before it is up.
     planned_ssid: Mutex<Option<String>>,
     provisioning: Option<Arc<crate::provision::ProvisioningGate>>,
+    before_activation: Option<crate::host_backends::BeforeActivation>,
 }
 impl LinuxWirelessPlatform {
     #[allow(clippy::too_many_arguments)]
@@ -65,6 +66,7 @@ impl LinuxWirelessPlatform {
             secure_connections: None,
             planned_ssid: Mutex::new(None),
             provisioning: None,
+            before_activation: None,
         }
     }
     pub fn with_capabilities(
@@ -78,6 +80,11 @@ impl LinuxWirelessPlatform {
     /// Bluetooth does not wait for it.
     pub fn with_provisioning(mut self, gate: Arc<crate::provision::ProvisioningGate>) -> Self {
         self.provisioning = Some(gate);
+        self
+    }
+    /// Runs with the device hotspot's address just before it is activated.
+    pub fn with_before_activation(mut self, hook: crate::host_backends::BeforeActivation) -> Self {
+        self.before_activation = Some(hook);
         self
     }
     pub fn with_hotspot_lifetime(
@@ -213,6 +220,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
                         interface: self.options.wifi_interface.clone(),
                         channel: self.options.wifi_channel,
                         provisioning: self.provisioning.clone(),
+                        before_activation: self.before_activation.clone(),
                     },
                 ))
             })?;

@@ -37,6 +37,8 @@ enum Operation {
     Startup,
     Initialize,
     Outputs(Option<Box<Operation>>),
+    /// The head-unit page's certificate changed (trusted HTTPS): restart its child.
+    ReceiverTls,
     Hotspot,
     Network {
         mode_changed: bool,
@@ -156,6 +158,22 @@ pub struct LinuxRelayAdmin {
     tick_wake: (Mutex<bool>, std::sync::Condvar),
     /// Held while a provisioning step must finish before the controller's AP starts.
     provisioning: Arc<crate::provision::ProvisioningGate>,
+    /// Trusted HTTPS with a free domain name; off without `public-name.json`.
+    public_name: Arc<crate::public_name::PublicNameService>,
+    /// The admin page's certificate for that name, chosen by SNI.
+    admin_certificate: crate::admin::server::NamedCertificate,
+    /// What the running head-unit page serves; `None` while there is no web output.
+    receiver_tls: Mutex<Option<Option<crate::public_name::Served>>>,
+    /// The public-name generation the admin certificate follows.
+    public_name_generation: std::sync::atomic::AtomicU64,
+    receiver_tls_queued: AtomicBool,
+}
+/// The relay as the trusted-HTTPS worker sees it.
+struct RelayHost(std::sync::Weak<LinuxRelayAdmin>);
+impl crate::public_name::Host for RelayHost {
+    fn address(&self) -> Option<std::net::Ipv4Addr> {
+        self.0.upgrade()?.head_unit_address()
+    }
 }
 impl LinuxRelayAdmin {
     pub fn new(
@@ -282,7 +300,16 @@ impl LinuxRelayAdmin {
             }))
             .with_policy(options.host_profile.profile.secure_connections),
         );
+        let public_name = Arc::new(crate::public_name::PublicNameService::new(
+            &options.state_dir,
+            crate::public_name::Network::internet(),
+        ));
         Ok(Self {
+            public_name,
+            admin_certificate: Default::default(),
+            receiver_tls: Mutex::new(None),
+            public_name_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
+            receiver_tls_queued: AtomicBool::new(false),
             pairing: Mutex::new(None),
             pairing_backend: backends.bluetooth.pairing(),
             backends,
@@ -367,6 +394,9 @@ impl LinuxRelayAdmin {
         // Secure Connections on from the start, and again whenever bluetoothd resets the adapter.
         self.secure_connections.start(Some(&self.bluetooth_wake))?;
         self.stream.start()?;
+        // Trusted HTTPS: without public-name.json the worker only watches for one.
+        self.public_name
+            .start(Arc::new(RelayHost(Arc::downgrade(self))))?;
         let shell = self.clone();
         let rx = self
             .operation_rx
@@ -464,7 +494,7 @@ impl LinuxRelayAdmin {
                 &ProcessCommandRunner::new(),
                 o.carlink_interface(),
             );
-        let settings = crate::supervisor_settings::supervisor_settings(
+        let mut settings = crate::supervisor_settings::supervisor_settings(
             &o,
             addresses,
             &occupied,
@@ -472,6 +502,12 @@ impl LinuxRelayAdmin {
             ble_adapter,
             station_5ghz,
         );
+        let served = self.public_name.served();
+        settings.pem_tls = served.as_ref().map(|s| PemTls {
+            cert: s.cert.clone(),
+            key: s.key.clone(),
+        });
+        *self.receiver_tls.lock().unwrap() = (settings.web_port != 0).then_some(served);
         *self.carlink.lock().unwrap() = AdminCarlink {
             state: "waiting".into(),
             ..Default::default()
@@ -624,6 +660,16 @@ impl LinuxRelayAdmin {
                 self.start_supervisor()?;
                 self.apply_pending.store(false, Ordering::Release);
             }
+            Operation::ReceiverTls => {
+                self.receiver_tls_queued.store(false, Ordering::Release);
+                let running = self.supervisor.lock().unwrap().take();
+                // Nothing to compare until a supervisor runs again.
+                *self.receiver_tls.lock().unwrap() = None;
+                if let Some(mut supervisor) = running {
+                    supervisor.stop();
+                    self.start_supervisor()?;
+                }
+            }
             Operation::Restart => {
                 // An explicit restart starts over like Start, closing the AP too; only receiver
                 // renegotiation keeps it (see tick).
@@ -769,7 +815,70 @@ impl LinuxRelayAdmin {
         *self.tick_wake.0.lock().unwrap() = true;
         self.tick_wake.1.notify_all();
     }
+    /// The head-unit-facing IPv4 address: the CarPlay hotspot's (or, in shared-Wi-Fi mode, the
+    /// relay's address on that network as the controller uses it), else the Wi-Fi interface's
+    /// address in shared-Wi-Fi mode.
+    fn head_unit_address(&self) -> Option<std::net::Ipv4Addr> {
+        let controller = self.controller.lock().unwrap().clone();
+        if let Some(address) = controller
+            .and_then(|c| c.hotspot_info())
+            .and_then(|info| info.host_address)
+        {
+            return Some(address);
+        }
+        let options = self.effective_options().ok()?;
+        if options.settings.network_mode != "shared-wifi" {
+            return None;
+        }
+        crate::linux_hotspot::interface_addresses()
+            .ok()?
+            .into_iter()
+            .find(|(interface, a, _)| interface == &options.wifi_interface && !a.is_loopback())
+            .map(|(_, a, _)| a)
+    }
+    /// The admin page's handle on the trusted-HTTPS certificate (SNI).
+    pub fn admin_certificate(&self) -> crate::admin::server::NamedCertificate {
+        self.admin_certificate.clone()
+    }
+    /// Follows the trusted-HTTPS certificate: the admin page swaps it at once, the head-unit
+    /// page by restarting its child when the restart rule allows.
+    fn apply_public_name(&self) {
+        let served = self.public_name.served();
+        let generation = self.public_name.generation();
+        if self
+            .public_name_generation
+            .swap(generation, Ordering::AcqRel)
+            != generation
+        {
+            let files = served
+                .as_ref()
+                .and_then(|s| Some((s, std::fs::read(&s.cert).ok()?, std::fs::read(&s.key).ok()?)));
+            match files {
+                Some((s, chain, key))
+                    if self.admin_certificate.set(&s.name, &chain, &key).is_ok() => {}
+                _ => self.admin_certificate.clear(),
+            }
+        }
+        let Some(current) = self.receiver_tls.lock().unwrap().clone() else {
+            return;
+        };
+        if self.receiver_tls_queued.load(Ordering::Acquire) {
+            return;
+        }
+        if crate::public_name::service::should_restart(
+            current.as_ref(),
+            served.as_ref(),
+            self.input.session_active(),
+            crate::public_name::service::trusted_clock(),
+        ) && self.operations.try_send(Operation::ReceiverTls).is_ok()
+        {
+            self.receiver_tls_queued.store(true, Ordering::Release);
+            self.events
+                .log("receiver certificate changed; restarting the head-unit page");
+        }
+    }
     pub fn tick(&self) -> Result<()> {
+        self.apply_public_name();
         if self.capabilities.is_started() {
             let options = self.effective_options()?;
             self.capabilities
@@ -859,7 +968,12 @@ impl LinuxRelayAdmin {
             .with_hotspot_lifetime(self.hotspot_lifetime.clone())
             .with_bluetooth_wake(self.bluetooth_wake.clone())
             .with_secure_connections(self.secure_connections.clone())
-            .with_provisioning(self.provisioning.clone()),
+            .with_provisioning(self.provisioning.clone())
+            .with_before_activation({
+                // Trusted HTTPS: the local DNS answer for the hotspot about to start.
+                let public_name = self.public_name.clone();
+                Arc::new(move |address| public_name.before_hotspot(address))
+            }),
         );
         // Test mode: a simulated iPhone behind the same hotspot.
         let platform: Arc<dyn WirelessPlatform> = match &self.options.test_input {
@@ -889,6 +1003,7 @@ impl LinuxRelayAdmin {
         Ok(())
     }
     pub fn shutdown(&self) {
+        self.public_name.stop();
         if let Some((pairing, _)) = self.pairing.lock().unwrap().take() {
             pairing.end("relay-stop");
         }
@@ -917,6 +1032,22 @@ impl LinuxRelayAdmin {
         pending.insert(std::thread::current().id(), op);
         Ok(())
     }
+}
+/// The head-unit address under the trusted-HTTPS name, first in the list while the name is
+/// trusted (certificate valid, current address published), also while a renewal fails; the
+/// other addresses stay as fallbacks.
+fn public_name_url(
+    status: &crate::public_name::PublicNameStatus,
+    receiver_urls: &[String],
+    port: u16,
+) -> Option<String> {
+    let name = status.trusted_name.as_ref()?;
+    // Only with a web output, and with its pairing code.
+    let first = receiver_urls.first()?;
+    let fragment = first
+        .split_once('#')
+        .map_or(String::new(), |(_, f)| format!("#{f}"));
+    Some(format!("https://{name}:{port}/{fragment}"))
 }
 fn carlink_pin_path(state: &std::path::Path) -> std::path::PathBuf {
     state.join("carlink/pin")
@@ -984,6 +1115,43 @@ fn picture_section() -> Section {
             max: None,
         })
         .collect(),
+    }
+}
+/// Trusted HTTPS with a free domain name, stored in `public-name.json` (not `settings.json`).
+fn public_name_section() -> Section {
+    let field = |key: &str, kind: &str, label: &str, hint: Option<&str>| Field {
+        key: key.into(),
+        field_type: kind.into(),
+        label_key: format!("publicName.{label}"),
+        hint_key: hint.map(|h| format!("publicName.{h}")),
+        options: (key == "publicNameProvider").then(|| {
+            crate::public_name::config::Provider::ALL
+                .into_iter()
+                .map(|p| FieldOption {
+                    value: p.id().into(),
+                    label_key: format!("option.publicNameProvider.{}", p.id()),
+                    hint_key: None,
+                    illustration: None,
+                })
+                .collect()
+        }),
+        visible_when: (key != "publicNameEnabled").then(|| VisibleWhen {
+            key: "publicNameEnabled".into(),
+            equals: vec![true.into()],
+        }),
+        min: None,
+        max: None,
+    };
+    Section {
+        id: "publicName".into(),
+        title_key: "publicName.title".into(),
+        fields: vec![
+            field("publicNameEnabled", "bool", "enabled", Some("summary")),
+            field("publicNameProvider", "choice", "provider", None),
+            field("publicName", "text", "name", Some("nameHint")),
+            field("publicNameToken", "secret", "token", Some("tokenHint")),
+            field("publicNameAgreeTerms", "bool", "terms", None),
+        ],
     }
 }
 pub fn settings_schema() -> Vec<Section> {
@@ -1097,6 +1265,7 @@ pub fn settings_schema() -> Vec<Section> {
             title_key: "section.connection".into(),
             fields,
         },
+        public_name_section(),
         Section {
             id: "audio".into(),
             title_key: "section.audio".into(),
@@ -1267,13 +1436,19 @@ impl RelayAdmin for LinuxRelayAdmin {
                 "Idle".into()
             }
         });
-        let receiver_urls = self
+        let mut receiver_urls = self
             .supervisor
             .lock()
             .unwrap()
             .as_ref()
             .map(|s| s.receiver_urls("openxplay-linux.local"))
             .unwrap_or_default();
+        let public_name = self.public_name.status();
+        if let Some(url) =
+            public_name_url(&public_name, &receiver_urls, options.settings.receiver_port)
+        {
+            receiver_urls.insert(0, url);
+        }
         let hotspot = crate::linux_hotspot::hotspot_credentials(&options.state_dir)
             .ok()
             .map(|(ssid, password)| {
@@ -1394,6 +1569,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             },
             wifi_provisioning: Some(wifi.setup_hotspot),
             wifi_client: Some(wifi),
+            public_name: Some(public_name),
         }
     }
     fn settings(&self) -> AdminSettings {
@@ -1424,6 +1600,8 @@ impl RelayAdmin for LinuxRelayAdmin {
         if values["iphone"].is_null() {
             values.insert("iphone".into(), "auto".into());
         }
+        // The token never leaves the relay: `publicNameTokenSet` says whether one is saved.
+        values.extend(self.public_name.admin_values());
         AdminSettings {
             schema,
             values,
@@ -1431,6 +1609,32 @@ impl RelayAdmin for LinuxRelayAdmin {
         }
     }
     fn update(&self, mut values: Values) -> AdminUpdate {
+        // Trusted HTTPS lives in its own file and applies at once.
+        let public: Vec<String> = values
+            .keys()
+            .filter(|k| k.starts_with("publicName"))
+            .cloned()
+            .collect();
+        if !public.is_empty() {
+            let public: Values = public
+                .iter()
+                .filter_map(|k| values.remove_entry(k))
+                .collect();
+            let result = self.public_name.update(&public);
+            let rest = if values.is_empty() {
+                AdminUpdate::AppliedNow
+            } else {
+                self.update(values)
+            };
+            return match (result, rest) {
+                (Ok(()), rest) => rest,
+                (Err(errors), AdminUpdate::Errors(mut rest)) => {
+                    rest.extend(errors);
+                    AdminUpdate::Errors(rest)
+                }
+                (Err(errors), _) => AdminUpdate::Errors(errors),
+            };
+        }
         let mut display = oxp_wire::display_settings(&self.input.display_settings());
         let mut picture_keys = Vec::new();
         for key in ["resolution", "screenWidth", "videoCodec"] {
@@ -1583,6 +1787,14 @@ impl RelayAdmin for LinuxRelayAdmin {
             "restart" => self.defer(Operation::Restart),
             "forget-wifi" => self.defer(Operation::Forget),
             "forget-carlink" => self.defer(Operation::ForgetCarlink),
+            "public-name-renew" => {
+                self.public_name.renew();
+                Ok(())
+            }
+            "public-name-remove" => self
+                .public_name
+                .remove()
+                .map_err(|_| "error.request".to_string()),
             _ => Err("error.action".into()),
         }
     }
@@ -3728,6 +3940,133 @@ esac
             .is_ok());
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn trusted_https_is_off_without_public_name_json_and_changes_nothing() {
+        let (a, dir) = fake();
+        let status = a.status();
+        assert_eq!(status.public_name.as_ref().unwrap().state, "off");
+        assert!(a.public_name.served().is_none());
+        assert!(status.receiver_urls.iter().all(|u| !u.contains("duckdns")));
+        // No file, no directory, no SNI certificate, nothing for the head-unit page.
+        a.apply_public_name();
+        assert!(a.admin_certificate().name().is_none());
+        assert!(!dir.join("public-name.json").exists());
+        assert!(!dir.join("public-name").exists());
+        assert!(a.receiver_tls.lock().unwrap().is_none());
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["publicName"], serde_json::json!({"state":"off"}));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn public_name_settings_go_to_their_own_file_and_hide_the_token() {
+        let (a, dir) = fake();
+        let section = settings_schema()
+            .into_iter()
+            .find(|s| s.id == "publicName")
+            .unwrap();
+        let keys: Vec<_> = section.fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "publicNameEnabled",
+                "publicNameProvider",
+                "publicName",
+                "publicNameToken",
+                "publicNameAgreeTerms"
+            ]
+        );
+        let provider = section
+            .fields
+            .iter()
+            .find(|f| f.key == "publicNameProvider")
+            .unwrap();
+        let choices: Vec<_> = provider
+            .options
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|o| o.value.clone())
+            .collect();
+        assert_eq!(
+            choices,
+            [serde_json::json!("duckdns"), serde_json::json!("dynv6")]
+        );
+        assert_eq!(
+            section
+                .fields
+                .iter()
+                .find(|f| f.key == "publicNameToken")
+                .unwrap()
+                .field_type,
+            "secret"
+        );
+        let values = a.settings().values;
+        assert_eq!(values["publicNameEnabled"], false);
+        assert_eq!(values["publicNameTokenSet"], false);
+        let token = "a1b2c3d4-0000-0000-0000-000000000000";
+        let update = serde_json::json!({"publicNameEnabled":true,"publicNameProvider":"duckdns",
+            "publicName":"MyRelay.duckdns.org","publicNameToken":token,"output":"web"});
+        assert!(matches!(
+            a.update(update.as_object().unwrap().clone()),
+            AdminUpdate::AppliedNow
+        ));
+        let settings = serde_json::to_value(a.settings()).unwrap();
+        assert!(!settings.to_string().contains(token));
+        assert_eq!(settings["values"]["publicName"], "myrelay.duckdns.org");
+        assert_eq!(settings["values"]["publicNameTokenSet"], true);
+        // settings.json, which must survive a rollback, never sees these keys.
+        let stored: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.join("settings.json")).unwrap_or_else(|_| b"{}".to_vec()),
+        )
+        .unwrap();
+        assert!(stored
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|k| !k.starts_with("publicName")));
+        Settings::load(&dir).unwrap();
+        assert_eq!(a.status().public_name.unwrap().state, "incomplete");
+        match a.update(
+            serde_json::json!({"publicName":"bad_name","publicNameToken":""})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ) {
+            AdminUpdate::Errors(errors) => assert_eq!(errors["publicName"], "error.invalid"),
+            _ => panic!("invalid name accepted"),
+        }
+        assert!(a.action("public-name-renew").is_ok());
+        assert!(a.action("public-name-remove").is_ok());
+        assert!(!dir.join("public-name.json").exists());
+        assert_eq!(a.status().public_name.unwrap().state, "off");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn the_public_name_comes_first_only_while_trusted() {
+        let ready = crate::public_name::PublicNameStatus {
+            state: "ready".into(),
+            name: Some("myrelay.duckdns.org".into()),
+            trusted_name: Some("myrelay.duckdns.org".into()),
+            ..Default::default()
+        };
+        let urls = vec!["https://openxplay-linux.local:8443/#pair=1".to_string()];
+        assert_eq!(
+            public_name_url(&ready, &urls, 8443).as_deref(),
+            Some("https://myrelay.duckdns.org:8443/#pair=1")
+        );
+        assert_eq!(public_name_url(&ready, &[], 8443), None, "no web output");
+        // A failing renewal does not hide a name that still works.
+        let failing = crate::public_name::PublicNameStatus {
+            state: "error".into(),
+            ..ready.clone()
+        };
+        assert!(public_name_url(&failing, &urls, 8443).is_some());
+        let untrusted = crate::public_name::PublicNameStatus {
+            trusted_name: None,
+            ..ready
+        };
+        assert_eq!(public_name_url(&untrusted, &urls, 8443), None);
     }
 }
 

@@ -91,6 +91,7 @@ pub mod branding;
 pub mod mdns_host;
 pub mod plugins;
 pub mod provision;
+pub mod public_name;
 pub mod receiver_diagnostics;
 pub mod relay_admin;
 pub mod secure_connections;

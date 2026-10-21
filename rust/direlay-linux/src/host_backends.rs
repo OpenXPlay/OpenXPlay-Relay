@@ -16,11 +16,14 @@ use std::{
     time::Duration,
 };
 
+/// Runs with the access point's address just before NetworkManager activates it.
+pub type BeforeActivation = Arc<dyn Fn(std::net::Ipv4Addr) + Send + Sync>;
 pub struct AccessPointConfig {
     pub state_dir: PathBuf,
     pub interface: String,
     pub channel: u8,
     pub provisioning: Option<Arc<provision::ProvisioningGate>>,
+    pub before_activation: Option<BeforeActivation>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WifiBand {
@@ -235,8 +238,12 @@ impl AccessPointFactory for NetworkManagerBackend {
             config.interface,
             config.channel,
         );
-        let backend = Arc::new(match config.provisioning {
+        let ap = match config.provisioning {
             Some(gate) => ap.with_provisioning(gate),
+            None => ap,
+        };
+        let backend = Arc::new(match config.before_activation {
+            Some(hook) => ap.with_before_activation(hook),
             None => ap,
         });
         Arc::new(AccessPointManager { backend, request })

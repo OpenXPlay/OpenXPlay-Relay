@@ -25,6 +25,12 @@ rustls-pki-types.workspace = true
 rcgen.workspace = true
 hmac = "=0.12.1"
 sha2.workspace = true
+p256.workspace = true
+rand_core.workspace = true
+x509-cert.workspace = true
+der.workspace = true
+ureq.workspace = true
+base64ct.workspace = true
 
 [[bin]]
 name = "openxplay-relay"

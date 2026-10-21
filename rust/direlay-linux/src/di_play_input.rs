@@ -575,6 +575,10 @@ impl DiPlayInput {
         self.log_video_codec(video);
         video.codec == VideoCodec::H265
     }
+    /// Whether a CarPlay session is running (between `begin` and `end`).
+    pub fn session_active(&self) -> bool {
+        self.state.lock().unwrap().current.is_some()
+    }
     /// The codec in use and why, plus the iPhone stream's codec string and size once known.
     pub fn video_status(&self) -> serde_json::Value {
         let s = self.state.lock().unwrap();

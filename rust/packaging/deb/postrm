@@ -8,6 +8,10 @@ if [ -d /run/systemd/system ]; then systemctl --system daemon-reload >/dev/null 
 if [ "$1" = remove ] && [ -x /usr/bin/deb-systemd-helper ]; then
     deb-systemd-helper mask "$unit" >/dev/null || :
 fi
+# Trusted HTTPS: the local DNS answer the relay writes for NetworkManager's hotspot dnsmasq.
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    rm -f /etc/NetworkManager/dnsmasq-shared.d/openxplay-public-name.conf
+fi
 if [ "$1" = purge ]; then
     if [ -x /usr/bin/deb-systemd-helper ]; then
         deb-systemd-helper purge "$unit" >/dev/null || :

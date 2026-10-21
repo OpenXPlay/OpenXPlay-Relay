@@ -67,6 +67,9 @@ pub struct AdminStatus {
     pub wifi_provisioning: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wifi_client: Option<WifiClient>,
+    /// Trusted HTTPS with a free domain name; absent where the relay has no such feature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_name: Option<crate::public_name::PublicNameStatus>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

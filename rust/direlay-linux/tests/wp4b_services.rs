@@ -11,7 +11,7 @@ mod branding;
 mod mdns_host;
 #[path = "../src/provision.rs"]
 mod provision;
-use openxplay_relay::{boot_timing, host_capabilities, platform, plugins, settings};
+use openxplay_relay::{boot_timing, host_capabilities, platform, plugins, public_name, settings};
 #[path = "../src/supervisor.rs"]
 mod supervisor;
 use admin::auth::*;
@@ -818,6 +818,7 @@ fn supervisor_settings() -> supervisor::SupervisorSettings {
         addresses: vec!["192.168.1.78".parse().unwrap()],
         pairing: true,
         carlink: None,
+        pem_tls: None,
     }
 }
 #[test]
