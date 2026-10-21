@@ -17,6 +17,7 @@ import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkV
 import { icon } from './icons';
 import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
+import { publicNamePanel } from './public-name';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let language: Language = defaultLanguage(navigator.language);
@@ -50,6 +51,8 @@ let connectBusy = false;
 let dismissedPin: number | null = null;
 let pairingBusy = false;
 let pairingError = '';
+let publicNameBusy = false;
+let publicNameMessage = '';
 let reportCopied: { client: string; key: string; until: number } | null = null;
 const copied = new Map<string, { key: string; until: number }>();
 const phoneNames = new Map<string, string>();
@@ -72,7 +75,7 @@ events.addEventListener('online', () => { offline = false; banner(); });
 function resetSession(next: SessionState) {
   epoch++;
   for (const item of pending.values()) clearTimeout(item.timer);
-  needsRestart = false; pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null;
+  needsRestart = false; pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null; publicNameBusy = false; publicNameMessage = '';
   document.querySelectorAll('dialog').forEach(dialog => { dialog.close(); dialog.remove(); });
   session = next; actionBusy = false; render();
 }
@@ -129,10 +132,10 @@ function renderReady() {
   document.getElementById('main')!.innerHTML = currentView === 'home' ? '<div id="dashboard"></div>' : `<section aria-label="${t('ui.settings')}"><div id="settings"></div></section>`;
   if (currentView === 'home') { updateDashboard(); return; }
   const container = document.getElementById('settings')!;
-  container.innerHTML = settingsViews(settings!, developer).map(section => `<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : '')}</section>`).join('');
+  container.innerHTML = settingsViews(settings!, developer).map(section => `<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : section.id === 'publicName' ? '<div id="public-name-panel"></div>' : '')}</section>`).join('');
   for (const field of fields().filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key))) bindField(field);
   renderNetworkPanel(); renderPairingPanel();
-  updateVisibility();
+  updateVisibility(); renderPublicName();
   container.insertAdjacentHTML('beforeend', `<section class="card" id="password-card"><h2>${t('settings.security')}</h2><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form></section>`);
   container.insertAdjacentHTML('beforeend', `<section class="card"><h2>${t('settings.about')}</h2><p>${esc(status!.name)}</p><label class="switch-row"><span>${t('settings.developerOptions')}</span><input id="developer-options" type="checkbox" role="switch" ${developer ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>${developer ? `<p>${esc(status!.version)}</p><pre id="developer-state">${esc(status!.state)} · ${esc(status!.iphone.reason)}</pre><button id="developer-start">${t(status!.running ? 'ui.stop' : 'ui.start')}</button>` : ''}</section>`);
   document.getElementById('developer-options')!.addEventListener('change', event => { developer = (event.target as HTMLInputElement).checked; try { localStorage.setItem('openxplay.developer', developer ? '1' : '0'); } catch {} render(); });
@@ -230,6 +233,44 @@ function renderPairingPanel() {
   document.getElementById('pairing-open')?.addEventListener('click', () => void pairingAction('pair-iphone'));
   document.getElementById('pairing-cancel')?.addEventListener('click', () => void pairingAction('cancel-pairing'));
   if (focused) (document.getElementById(focused) ?? document.getElementById('pairing-cancel') ?? document.getElementById('pairing-open'))?.focus();
+}
+function renderPublicName() {
+  const el = document.getElementById('public-name-panel'); if (!el || !status || !settings) return;
+  const v = settings.values;
+  const signature = JSON.stringify([status.publicName, status.receiverUrls, v.publicNameEnabled, v.publicNameTokenSet, v.publicName, v.publicNameProvider, publicNameBusy, publicNameMessage, language]);
+  if (el.dataset.signature === signature) return;
+  const focused = el.contains(document.activeElement) ? (document.activeElement as HTMLElement).id : '';
+  el.dataset.signature = signature;
+  el.innerHTML = publicNamePanel(status, settings, publicNameBusy, publicNameMessage, t, language);
+  document.getElementById('public-name-renew')?.addEventListener('click', () => void publicNameAction('public-name-renew'));
+  document.getElementById('public-name-remove')?.addEventListener('click', confirmRemovePublicName);
+  if (focused) (document.getElementById(focused) ?? document.getElementById(fieldId('publicNameEnabled')))?.focus();
+}
+async function publicNameAction(name: 'public-name-renew' | 'public-name-remove') {
+  if (publicNameBusy) return;
+  const current = epoch;
+  publicNameBusy = true; publicNameMessage = ''; renderPublicName();
+  try {
+    await api.action(name);
+    const [nextStatus, nextSettings] = await Promise.all([fetchStatus(), name === 'public-name-remove' ? api.settings() : Promise.resolve(null)]);
+    if (current !== epoch) return;
+    status = nextStatus;
+    if (nextSettings) {
+      // The file is gone: unsaved edits of its fields go with it, others stay.
+      for (const [key, item] of [...pending]) { if (key.startsWith('publicName')) { clearTimeout(item.timer); pending.delete(key); feedback.delete(key); } else nextSettings.values[key] = item.value; }
+      settings = nextSettings; publicNameBusy = false; render(); document.getElementById(fieldId('publicNameEnabled'))?.focus();
+    }
+  } catch (error) { if (current === epoch) publicNameMessage = errorKey(error); }
+  finally { if (current === epoch) { publicNameBusy = false; renderPublicName(); } }
+}
+function confirmRemovePublicName() {
+  const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'public-name-remove-title');
+  dialog.innerHTML = `<h2 id="public-name-remove-title">${t('publicName.remove')}</h2><p>${t('publicName.removeHint')}</p><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm">${t('publicName.remove')}</button></div>`;
+  document.body.append(dialog); dialog.showModal();
+  const close = () => { dialog.close(); dialog.remove(); document.getElementById('public-name-remove')?.focus(); };
+  dialog.querySelector('.cancel')!.addEventListener('click', close);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+  dialog.querySelector('.confirm')!.addEventListener('click', () => { close(); void publicNameAction('public-name-remove'); });
 }
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
@@ -395,7 +436,7 @@ function fieldMarkup(field: Field): string {
   else if (field.type === 'bool') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attributes} type="checkbox" role="switch" ${value ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'choice') control = `<fieldset ${attributes}><legend>${label}</legend><div class="choices">${field.options?.map((option, i) => `<label class="choice"><div class="choice-label"><input type="radio" name="${id}" id="${id}-${i}" value="${esc(option.value)}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''} ${option.value === value ? 'checked' : ''}><span>${esc(t(option.labelKey))}</span></div>${(option.hintKey || field.key === 'output') ? `<p class="muted">${esc(t(option.hintKey || `hint.option.output.${option.value}`))}</p>` : ''}${option.illustration ? topology(option.illustration) : ''}</label>`).join('') ?? ''}</div></fieldset>`;
   else if (field.type === 'phone') control = `<label for="${id}">${label}</label><button ${attributes} class="picker-button" aria-haspopup="dialog">${icon('smartphone')}<span>${value === 'auto' ? t('ui.automatic') : esc(phoneNames.get(String(value)) ?? value)}</span>${icon('chevron-down')}</button>`;
-  else control = `<label for="${id}">${label}</label><div class="input-row"><input ${attributes} type="${field.type === 'secret' ? 'password' : field.type}" value="${esc(value)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''}>${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button>` : ''}</div>`;
+  else control = `<label for="${id}">${label}</label><div class="input-row"><input ${attributes} type="${field.type === 'secret' ? 'password' : field.type}" value="${esc(value)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${field.type === 'secret' && settings!.values[`${field.key}Set`] === true ? `placeholder="${esc(t(`${field.labelKey}Saved`))}"` : ''}>${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button>` : ''}</div>`;
   return `<div class="field" data-field="${esc(field.key)}">${control}${['output', 'transport'].includes(field.key) ? connectionConstraint(status?.platform, t) : ''}<p class="muted hint" id="${id}-hint">${field.hintKey ? esc(t(field.hintKey)) : ''}</p><p id="${id}-result" class="field-result ${invalid ? 'error' : ''}" role="status" aria-live="polite">${feedback.has(field.key) ? esc(t(feedback.get(field.key)!)) : ''}</p></div>`;
 }
 function bindField(field: Field) {
@@ -600,6 +641,7 @@ function updateVisibility() {
     if (el) el.hidden = !isVisible(field, settings!.values);
   }
   document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = !section.querySelector('#network-panel') && ![...section.querySelectorAll<HTMLElement>('.field')].some(field => !field.hidden); });
+  renderPublicName();
 }
 function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
@@ -629,6 +671,8 @@ async function save(key: string) {
     const response = await api.save({ [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
     if (current !== epoch) return;
     if (revision === item.revision) { pending.delete(key); needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
+    // A saved token is never shown again; the field then reads "Token saved".
+    if (key === 'publicNameToken' && item.value !== '' && settings) settings.values.publicNameTokenSet = true;
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {
@@ -741,7 +785,7 @@ async function tick() {
           settings = await api.settings();
           for (const [key, item] of pending) settings.values[key] = item.value;
           switching = null; render(); document.getElementById('network-switch')?.focus();
-        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); } }
+        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); } }
     }
   } catch (error) { if (!(error instanceof NetworkError)) { pageError = errorKey(error); if (!status) render(); } }
   finally { polling = false; }

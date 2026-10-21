@@ -8,7 +8,7 @@ import type { SavedNetwork } from './src/schema';
 import { randomUUID } from 'node:crypto';
 import type { Plugin } from 'vite';
 import type { Field, Section, Settings, Value } from './src/schema';
-import type { ReceiverReport, Status, WifiClient } from './src/api';
+import type { PublicNameStatus, ReceiverReport, Status, WifiClient } from './src/api';
 
 function field(key: string, type: Field['type'], extra: Partial<Field> = {}): Field {
   return { key, type, labelKey: `field.${key}`, ...extra };
@@ -17,17 +17,38 @@ function choice(key: string, values: string[], extra: Partial<Field> = {}): Fiel
   return field(key, 'choice', { options: values.map(value => ({ value, labelKey: `option.${key}.${value}` })), ...extra });
 }
 const when = (key: string, ...equals: Value[]) => ({ key, equals });
+// Trusted HTTPS as the Linux relay describes it (public-name.json); the token never comes back.
+const PUBLIC_NAME_OFF = { publicNameEnabled: false, publicNameProvider: '', publicName: '', publicNameToken: '', publicNameTokenSet: false, publicNameAgreeTerms: false };
+function publicNameSection(): Section {
+  const shown = { visibleWhen: when('publicNameEnabled', true) };
+  return { id: 'publicName', titleKey: 'publicName.title', fields: [
+    field('publicNameEnabled', 'bool', { labelKey: 'publicName.enabled', hintKey: 'publicName.summary' }),
+    choice('publicNameProvider', ['duckdns', 'dynv6'], { labelKey: 'publicName.provider', ...shown }),
+    field('publicName', 'text', { labelKey: 'publicName.name', hintKey: 'publicName.nameHint', ...shown }),
+    field('publicNameToken', 'secret', { labelKey: 'publicName.token', hintKey: 'publicName.tokenHint', ...shown }),
+    field('publicNameAgreeTerms', 'bool', { labelKey: 'publicName.terms', ...shown }),
+  ] };
+}
+/** The mock's trusted-HTTPS status: ready once complete; `fail.duckdns.org` shows an error. */
+export function mockPublicName(values: Settings['values'], now = Date.now() / 1000): PublicNameStatus {
+  if (values.publicNameEnabled !== true) return { state: 'off' };
+  const name = String(values.publicName ?? '');
+  if (!values.publicNameProvider || !name || values.publicNameTokenSet !== true || values.publicNameAgreeTerms !== true) return { state: 'incomplete', ...(name ? { name } : {}) };
+  if (name.startsWith('fail.')) return { state: 'error', name, address: '192.168.1.78', error: 'acme-rejected', errorDetail: 'Incorrect TXT record found at _acme-challenge.' + name, nextAttempt: Math.floor(now) + 300 };
+  return { state: 'ready', name, address: '192.168.1.78', notAfter: Math.floor(now) + 90 * 86400, trustedName: name };
+}
 export function mockSettings(linux = false): Settings {
   if (linux) return { schema: [
     { id: 'connection', titleKey: 'section.connection', fields: [field('iphone', 'phone'), choice('output', ['web', 'carlink', 'both']), field('requirePairingCode', 'bool')] },
     { id: 'audio', titleKey: 'section.audio', fields: [field('carBluetoothAudio', 'bool', { hintKey: 'hint.field.carBluetoothAudio' })] },
+    publicNameSection(),
     { id: 'plugins', titleKey: 'section.plugins', fields: [field('plugins', 'bool', { hintKey: 'hint.plugins' }), field('pluginsEnabled', 'plugins')] },
     { id: 'wifi', titleKey: 'section.wifi', fields: [] },
     { id: 'network', titleKey: 'section.network', fields: [choice('networkMode', ['shared-wifi', 'device-hotspot'], { options: ['shared-wifi', 'device-hotspot'].map(value => ({ value, labelKey: `option.networkMode.${value}`, hintKey: `hint.option.networkMode.${value}`, illustration: value as 'shared-wifi' | 'device-hotspot' })) }), field('sharedWifiNetworks', 'networks')] },
     { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('wifiChannel', 'number', { min: 1, max: 14 }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
   ], installedPlugins: [{ id: 'org.openxplay.clock', name: { en: 'Clock', 'zh-CN': '时钟' }, version: '1.0.0', license: 'Apache-2.0 OR MIT', icon: null, nonCommercialAssets: false },
     { id: 'org.openxplay.pet', name: { en: 'Pet', 'zh-CN': '宠物' }, version: '1.0.0', license: '(Apache-2.0 OR MIT) AND CC-BY-NC-SA-4.0', icon: null, nonCommercialAssets: true }],
-  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', wifiChannel: 6, rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: false } };
+  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', wifiChannel: 6, rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: false, ...PUBLIC_NAME_OFF } };
   const schema: Section[] = [
     { id: 'connection', titleKey: 'section.connection', fields: [
       field('iphone', 'phone', { hintKey: 'hint.iphone' }), choice('transport', ['wireless', 'usb']),
@@ -232,6 +253,7 @@ export function mockApi(linux = false): Plugin {
           else if (field.type === 'phone' && value !== 'auto' && !phones.some(phone => phone.id === value)) errors[key] = 'error.invalid';
           else if (key === 'hotspotPassword' && String(value).length < 8) errors[key] = 'error.invalid';
           else if (['hotspotSsid', 'carlinkName'].includes(key) && !String(value).trim()) errors[key] = 'error.required';
+          else if (key === 'publicName' && value !== '' && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(String(value))) errors[key] = 'error.invalid';
         }
         const requestedNetworks = body.sharedWifiNetworks ?? settings.values.sharedWifiNetworks;
         if (body.networkMode === 'shared-wifi' && Array.isArray(requestedNetworks) && requestedNetworks.length === 0) errors.networkMode = 'error.noSavedWifi';
@@ -246,6 +268,9 @@ export function mockApi(linux = false): Plugin {
           sharedPasswords = new Map(next.map(item => [item.ssid, item.password ?? sharedPasswords.get(item.ssid) ?? '']));
           body.sharedWifiNetworks = next.map(item => ({ ssid: item.ssid, hasPassword: !!sharedPasswords.get(item.ssid), current: item.ssid === (preview && !networkChanged ? wifiClient.ssid : currentSsid()) }));
         }
+        // An empty token keeps the saved one; a token is never stored where GET /settings returns it.
+        if (typeof body.publicNameToken === 'string') { if (body.publicNameToken !== '') settings.values.publicNameTokenSet = true; body.publicNameToken = ''; }
+        if (typeof body.publicName === 'string') body.publicName = body.publicName.trim().toLowerCase();
         Object.assign(settings.values, body);
         if (body.networkMode !== undefined) {
           networkChanged = true; outageUntil = Date.now() + 2000;
@@ -253,7 +278,7 @@ export function mockApi(linux = false): Plugin {
           wifiClient = shared ? { ssid: (settings.values.sharedWifiNetworks as SavedNetwork[])[0].ssid, ip: '192.168.1.78', signal: 82, setupHotspot: false } : { ssid: null, ip: null, signal: null, setupHotspot: false };
           redactNetworks();
         }
-        return send(200, { ok: true, applied: body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => ['plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
+        return send(200, { ok: true, applied: body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => key.startsWith('publicName') || ['plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
       }
       if (path === '/status' && method === 'GET') {
         if (Date.now() < outageUntil) return send(503, { error: 'error.network' });
@@ -272,7 +297,9 @@ export function mockApi(linux = false): Plugin {
           iphone: { name: phone.name, reason: running ? 'connected' : settings.values.iphone === 'auto' ? 'onlyCandidate' : 'selected' },
           network: { mode: String(settings.values.networkMode), wifi: currentSsid() },
           output: String(settings.values.output), carlink: { state: running ? 'connected' : 'idle', detail: '' }, notices,
+          ...(linux ? { publicName: mockPublicName(settings.values) } : {}),
         };
+        if (status.publicName?.state === 'ready') status.receiverUrls = [`https://${status.publicName.name}:8443/`, ...status.receiverUrls];
         const result = preview ? previewStatus(status, previewState) : status;
         if (preview && networkChanged) {
           result.network = status.network; result.hotspot = status.hotspot; result.wifiClient = wifiClient; result.hostAddresses = status.hostAddresses;
@@ -285,6 +312,8 @@ export function mockApi(linux = false): Plugin {
       if (preview && path === '/carlink/connect' && method === 'POST') return send(200, { ok: true });
       if (path === '/actions/pair-iphone' && method === 'POST') { if (!pairingDeadline || pairingDeadline <= Date.now() / 1000) pairingDeadline = Date.now() / 1000 + 600; return send(200, { ok: true }); }
       if (linux && path === '/actions/cancel-pairing' && method === 'POST') { pairingDeadline = null; return send(200, { ok: true }); }
+      if (linux && path === '/actions/public-name-renew' && method === 'POST') return send(200, { ok: true });
+      if (linux && path === '/actions/public-name-remove' && method === 'POST') { Object.assign(settings.values, PUBLIC_NAME_OFF); return send(200, { ok: true }); }
       if (path.startsWith('/actions/') && method === 'POST') {
         const name = path.split('/').pop();
         if (!['start', 'stop', 'restart', 'regenerate-pairing-code'].includes(name!)) return send(404, { error: 'error.request' });

@@ -252,3 +252,4 @@ a.copy-text { color: var(--text); text-decoration-color: var(--border); text-und
 .plugin-row .switch-row > span:first-of-type { flex: 1; min-width: 0; }
 .plugin-meta { display: block; overflow-wrap: anywhere; margin-block: 4px; }
 .plugin-icon { width: 48px; height: 48px; flex: 0 0 48px; object-fit: contain; }
+.public-name-actions { display: flex; flex-wrap: wrap; gap: 8px; }

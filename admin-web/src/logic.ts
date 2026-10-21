@@ -65,15 +65,25 @@ export function addressViews(status: Status, developer: boolean) {
   const addresses = status.hostAddresses ?? status.receiverUrls.flatMap(url => {
     try { const host = new URL(url).hostname; return /^\d+\.\d+\.\d+\.\d+$/.test(host) ? [{ interface: '', ipv4: host, developerOnly: false }] : []; } catch { return []; }
   });
+  // Trusted HTTPS: while ready, the name replaces the published address; the IP stays as fallback.
+  const named = publicNameUrl(status);
   return addresses.filter(a => developer || !a.developerOnly).map(a => {
     const original = status.receiverUrls.find(url => { try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === a.ipv4; } catch { return false; } });
     const query = status.receiverUrls.flatMap(url => { try { const parsed = new URL(url); return parsed.protocol === 'https:' ? [parsed.search] : []; } catch { return []; } })[0] ?? '';
-    return { ...a, label: a.developerOnly ? a.interface : status.wifiClient?.setupHotspot || status.network.mode !== 'shared-wifi' ? 'home.hotspot' : status.network.wifi || status.wifiClient?.ssid || 'home.hotspot', host: status.host, receiver: original ?? `https://${a.ipv4}:${status.receiverPort || 8443}/${query}`, admin: `https://${a.ipv4}:${status.adminPort || 6975}/` };
+    const receiver = original ?? `https://${a.ipv4}:${status.receiverPort || 8443}/${query}`;
+    const viaName = named !== null && (!status.publicName?.address || status.publicName.address === a.ipv4);
+    return { ...a, label: a.developerOnly ? a.interface : status.wifiClient?.setupHotspot || status.network.mode !== 'shared-wifi' ? 'home.hotspot' : status.network.wifi || status.wifiClient?.ssid || 'home.hotspot', host: status.host, receiver: viaName ? named : receiver, fallback: viaName ? receiver : null, admin: `https://${a.ipv4}:${status.adminPort || 6975}/` };
   });
+}
+/** The head-unit address under the trusted-HTTPS name while the relay trusts it (also during a failing renewal), as the relay lists it. */
+export function publicNameUrl(status: Pick<Status, 'publicName' | 'receiverUrls' | 'receiverPort'>): string | null {
+  const name = status.publicName?.trustedName;
+  if (!name) return null;
+  return status.receiverUrls.find(url => { try { return new URL(url).hostname === name; } catch { return false; } }) ?? `https://${name}:${status.receiverPort || 8443}/`;
 }
 const technicalFields = new Set(['wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
 export function settingsViews(settings: Settings, developer: boolean) {
-  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins').flatMap(s => s.fields).map(field => {
+  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).map(field => {
     if (field.key !== 'networkMode') return field;
     const options = field.options?.filter(o => developer || o.value === 'shared-wifi' || o.value === 'device-hotspot' || o.value === 'wifi-direct').map(option => {
       const mode = option.value === 'wifi-direct' ? 'device-hotspot' : String(option.value);
@@ -85,6 +95,8 @@ export function settingsViews(settings: Settings, developer: boolean) {
   return [
     { id: 'connection', titleKey: 'settings.connection', fields: all.filter(f => connection.has(f.key) && !technicalFields.has(f.key)) },
     { id: 'output', titleKey: 'settings.screen', fields: all.filter(f => !connection.has(f.key) && !technicalFields.has(f.key)) },
+    // Trusted HTTPS serves the car screen's page, so it follows the Car screen section (Linux only).
+    ...settings.schema.filter(s => s.id === 'publicName'),
     ...settings.schema.filter(s => s.id === 'plugins'),
     ...(developer ? [{ id: 'developer', titleKey: 'settings.developer', fields: all.filter(f => technicalFields.has(f.key)) }] : []),
   ];

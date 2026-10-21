@@ -29,6 +29,10 @@ export interface HostCapabilities {
 }
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
+// Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
+export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updating-address' | 'requesting-certificate' | 'ready' | 'error';
+// trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
+export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
   hostAddresses?: HostAddress[]; receiverPort?: number; adminPort?: number; pairingAvailable?: boolean; pairingDeadline?: number | null; screenConnected?: boolean;
   pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[];
@@ -40,7 +44,7 @@ export interface Status {
   platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; hostCapabilities?: HostCapabilities; adminUrl: string; receiverUrls: string[];
   state: 'idle' | 'waiting' | 'connecting' | 'active' | 'reconnecting'; running: boolean; autoStartPaused: boolean;
   iphone: { name: string | null; reason: string }; network: { mode: string; wifi: string | null; followingCarlink?: boolean };
-  output: string; carlink: CarlinkStatus | null; notices: string[];
+  output: string; carlink: CarlinkStatus | null; notices: string[]; publicName?: PublicNameStatus;
 }
 export interface Phone { id: string; name: string; kind: 'phone' | 'car' | 'other'; connected: boolean; likelyIphone: boolean; selected: boolean }
 export interface Update { ok: boolean; applied: 'now' | 'next-start' }
@@ -88,6 +92,6 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
-  action: (name: 'start' | 'stop' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'pair-iphone' | 'cancel-pairing') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
+  action: (name: 'start' | 'stop' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
   phones: () => request<Phone[]>('/phones'),
 };
