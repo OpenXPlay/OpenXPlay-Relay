@@ -183,6 +183,54 @@ fn objects(c: &Connection) -> Result<Objects> {
         .call("GetManagedObjects", &())
         .map_err(err)
 }
+#[derive(Clone, Debug)]
+pub struct AdapterInfo {
+    pub name: String,
+    pub address: String,
+    pub powered: Option<bool>,
+}
+fn adapter_entries(objects: &Objects) -> impl Iterator<Item = (&str, AdapterInfo)> {
+    objects.iter().filter_map(|(path, interfaces)| {
+        let props = interfaces.get("org.bluez.Adapter1")?;
+        adapter_path_index(path.as_str())?;
+        Some((
+            path.as_str(),
+            AdapterInfo {
+                name: path.rsplit('/').next()?.into(),
+                address: text(props.get("Address")).unwrap_or_default(),
+                powered: props.get("Powered").and_then(|v| bool::try_from(v).ok()),
+            },
+        ))
+    })
+}
+/// BlueZ adapter properties, or unknown when the system bus or BlueZ is unavailable.
+pub fn adapters() -> Option<Vec<AdapterInfo>> {
+    let c = Connection::system().ok()?;
+    Some(
+        adapter_entries(&objects(&c).ok()?)
+            .map(|(_, info)| info)
+            .collect(),
+    )
+}
+/// An explicit name or address never falls back; otherwise use the lowest numeric hci index.
+pub fn select_adapter<'a>(
+    configured: Option<&str>,
+    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<&'a str> {
+    entries
+        .into_iter()
+        .filter_map(|(name, address)| {
+            let index = adapter_path_index(name)?;
+            if configured.is_some_and(|wanted| {
+                !wanted.eq_ignore_ascii_case(name) && !wanted.eq_ignore_ascii_case(address)
+            }) {
+                return None;
+            }
+            Some((index, name))
+        })
+        .min_by_key(|(index, _)| *index)
+        .map(|(_, name)| name)
+}
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct SelectedAdapter {
     pub name: String,
@@ -192,22 +240,17 @@ pub struct SelectedAdapter {
 pub struct AdapterSelection(pub Option<String>);
 impl AdapterSelection {
     fn select(&self, objects: &Objects) -> Option<String> {
-        objects
+        let entries = adapter_entries(objects).collect::<Vec<_>>();
+        let name = select_adapter(
+            self.0.as_deref(),
+            entries
+                .iter()
+                .map(|(_, a)| (a.name.as_str(), a.address.as_str())),
+        )?;
+        entries
             .iter()
-            .filter_map(|(path, interfaces)| {
-                let props = interfaces.get("org.bluez.Adapter1")?;
-                let index = adapter_path_index(path.as_str())?;
-                let name = path.rsplit('/').next()?;
-                let address = text(props.get("Address")).unwrap_or_default();
-                if self.0.as_ref().is_some_and(|wanted| {
-                    !wanted.eq_ignore_ascii_case(name) && !wanted.eq_ignore_ascii_case(&address)
-                }) {
-                    return None;
-                }
-                Some((index, path.to_string()))
-            })
-            .min_by_key(|(index, _)| *index)
-            .map(|(_, path)| path)
+            .find(|(_, a)| a.name == name)
+            .map(|(path, _)| (*path).into())
     }
     fn selected_path(&self, objects: &Objects) -> Result<String> {
         self.select(objects).ok_or_else(|| {
@@ -1137,6 +1180,45 @@ mod signal_tests {
     }
     fn address(a: &str) -> OwnedValue {
         OwnedValue::try_from(Value::from(a)).unwrap()
+    }
+    #[test]
+    fn adapter_entries_use_bluez_paths_and_optional_properties() {
+        let objects = HashMap::from([
+            (
+                OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+                HashMap::from([(
+                    "org.bluez.Adapter1".into(),
+                    props(&[
+                        ("Address", address("AA:BB:CC:DD:EE:00")),
+                        ("Alias", address("OpenXPlay Linux")),
+                        ("Powered", true.into()),
+                    ]),
+                )]),
+            ),
+            (
+                OwnedObjectPath::try_from("/org/bluez/hci2").unwrap(),
+                HashMap::from([("org.bluez.Adapter1".into(), props(&[]))]),
+            ),
+            (
+                OwnedObjectPath::try_from("/org/bluez/hcix").unwrap(),
+                HashMap::from([("org.bluez.Adapter1".into(), props(&[]))]),
+            ),
+            (
+                OwnedObjectPath::try_from(DEVICE).unwrap(),
+                HashMap::from([("org.bluez.Device1".into(), props(&[]))]),
+            ),
+        ]);
+        let mut entries = adapter_entries(&objects).collect::<Vec<_>>();
+        entries.sort_by(|(_, a), (_, b)| a.name.cmp(&b.name));
+        assert_eq!(entries.len(), 2);
+        let (path, info) = &entries[0];
+        assert_eq!(*path, "/org/bluez/hci0");
+        assert_eq!(info.name, "hci0");
+        assert_eq!(info.address, "AA:BB:CC:DD:EE:00");
+        assert_eq!(info.powered, Some(true));
+        assert_eq!(entries[1].1.name, "hci2");
+        assert_eq!(entries[1].1.address, "");
+        assert_eq!(entries[1].1.powered, None);
     }
     #[test]
     fn adapter_changes_wake_only_when_it_may_have_become_usable() {
