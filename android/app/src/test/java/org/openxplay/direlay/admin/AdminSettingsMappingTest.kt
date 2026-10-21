@@ -28,7 +28,7 @@ class AdminSettingsMappingTest {
             val value = original.copy(connectionMode = ConnectionMode.WIRELESS,
                 carlinkOutput = output != "web", bothOutputs = output == "both",
                 iphoneAddress = "01:23:45:67:89:AB", autoStartOnBoot = true, autoStartWhenReady = false,
-                carlinkDeviceName = "My car", vehicleInformation = true, displayMode = mode,
+                carlinkDeviceName = "My car", vehicleInformation = true, carBluetoothAudio = true, displayMode = mode,
                 display = if (mode == DisplayMode.FIXED) DisplayProfile(1920, 1080, 240) else null,
                 wirelessNetwork = WirelessNetworkSettings(network, "Phone", "password", ManualHotspotBand.GHZ_5,
                     0, ManualHotspotSecurity.WPA2, listOf(SharedWifiNetwork("Home", "password"))))
@@ -48,7 +48,8 @@ class AdminSettingsMappingTest {
     @Test fun partialUpdatesValidateTypesDimensionsAndCredentialsWithoutSaving() {
         val before = initial()
         assertEquals(before.copy(autoStartOnBoot = true), AdminSettingsMapping.update(before, mapOf("bootStart" to true), true).settings)
-        listOf(mapOf("unknown" to true), mapOf("autoStart" to "true"), mapOf("displayWidth" to 800.5),
+        assertEquals(before.copy(carBluetoothAudio = true), AdminSettingsMapping.update(before, mapOf("carBluetoothAudio" to true), true).settings)
+        listOf(mapOf("unknown" to true), mapOf("autoStart" to "true"), mapOf("carBluetoothAudio" to "true"), mapOf("displayWidth" to 800.5),
             mapOf("output" to "invalid"), mapOf("iphone" to "bad address"), mapOf("carlinkName" to ""),
             mapOf("displayMode" to "custom", "displayWidth" to 801),
             mapOf("networkMode" to "shared-wifi", "sharedWifiNetworks" to listOf(mapOf("ssid" to ""))),

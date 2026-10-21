@@ -49,7 +49,7 @@ class SettingsAutoSaveTest {
         for (value in listOf(initial.copy(connectionMode = ConnectionMode.USB), initial.copy(fps = 60),
             initial.copy(display = DisplayProfile(800, 480, 160)), initial.copy(mfiTarget = MfiTarget.USB_CH341),
             initial.copy(i2cPath = "/dev/i2c-2"), initial.copy(remoteServer = "https://example.test"),
-            initial.copy(remoteToken = "new"), initial.copy(wirelessNetwork = initial.wirelessNetwork.copy(sharedWifiNetworks = listOf(SharedWifiNetwork("Car", "")))))) {
+            initial.copy(remoteToken = "new"), initial.copy(carBluetoothAudio = true), initial.copy(wirelessNetwork = initial.wirelessNetwork.copy(sharedWifiNetworks = listOf(SharedWifiNetwork("Car", "")))))) {
             assertEquals(SettingsNotice.NEXT_START, settingsNotice(initial, value, false))
             assertEquals(SettingsNotice.NEXT_START, settingsNotice(initial, value, true))
         }

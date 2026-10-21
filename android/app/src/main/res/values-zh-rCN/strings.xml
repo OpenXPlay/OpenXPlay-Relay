@@ -559,4 +559,7 @@
     <string name="video_stats_screen">车机屏幕 %1$s · %2$s Hz</string>
     <string name="video_stats_send_stalls">发送阻塞 %1$s 次</string>
     <string name="video_stats_browser_values">%1$s fps · 丢帧 %2$s%% · 解码 %3$s · 延迟 %4$s</string>
+    <string name="audio_title">声音</string>
+    <string name="audio_car_bluetooth">通过车辆蓝牙播放 CarPlay 音频（实验性）</string>
+    <string name="audio_car_bluetooth_hint">中继不向 iPhone 提供 CarPlay 音频，音乐、导航和通话改由 iPhone 自己与车辆的蓝牙连接播放。请保持 iPhone 与车辆配对，并将车辆音源设为蓝牙。如果声音改从 iPhone 播放，请关闭此选项。</string>
 </resources>
