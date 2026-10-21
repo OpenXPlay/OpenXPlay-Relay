@@ -102,3 +102,8 @@ pub mod context;
 mod context_route;
 
 pub mod host_profile;
+
+pub mod host_backends;
+pub mod host_capabilities;
+pub mod supervisor_settings;
+pub mod wifi_capabilities;

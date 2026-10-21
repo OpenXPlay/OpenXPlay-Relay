@@ -27,6 +27,7 @@ pub struct Settings {
     pub network_mode: String,
     pub shared_wifi_networks: Vec<SharedWifiNetwork>,
     pub wifi_interface: String,
+    pub carlink_interface: String,
     pub hotspot_channel: u8,
     pub iphone: Option<String>,
     pub rfcomm_channel: Option<u8>,
@@ -48,6 +49,7 @@ impl Default for Settings {
             network_mode: "device-hotspot".into(),
             shared_wifi_networks: Vec::new(),
             wifi_interface: "wlan0".into(),
+            carlink_interface: String::new(),
             hotspot_channel: 36,
             iphone: None,
             rfcomm_channel: None,
@@ -95,6 +97,9 @@ impl Settings {
                         .entry("wifiInterface")
                         .or_insert_with(|| defaults.wifi_interface.clone().into());
                     object
+                        .entry("carlinkInterface")
+                        .or_insert_with(|| defaults.carlink_interface.clone().into());
+                    object
                         .entry("hotspotChannel")
                         .or_insert_with(|| defaults.hotspot_channel.into());
                 }
@@ -125,6 +130,13 @@ impl Settings {
                 .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
         {
             return Err(invalid("Invalid Wi-Fi interface"));
+        }
+        if !self
+            .carlink_interface
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+        {
+            return Err(invalid("Invalid Carlink interface"));
         }
         if !(1..=14).contains(&self.hotspot_channel) && !(32..=177).contains(&self.hotspot_channel)
         {
@@ -280,6 +292,7 @@ mod tests {
         std::fs::write(dir.join("settings.json"), br#"{"output":"carlink","carlinkHeadUnit":"192.168.43.1","carlinkLocal":"192.168.43.2","carlinkPin":"1234","carlinkPorts":{"video":1234}}"#).unwrap();
         let settings = Settings::load(&dir).unwrap();
         assert_eq!(settings.carlink_link, "ble");
+        assert!(settings.carlink_interface.is_empty());
         assert_eq!(settings.carlink_address, None);
         assert_eq!(settings.carlink_pin.as_deref(), Some("1234"));
         assert_eq!(settings.carlink_ports["video"], 1234);

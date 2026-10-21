@@ -51,6 +51,8 @@ pub struct AdminStatus {
     pub host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_profile: Option<AdminHostProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_capabilities: Option<crate::host_capabilities::HostCapabilities>,
     pub admin_url: String,
     pub receiver_urls: Vec<String>,
     pub state: String,

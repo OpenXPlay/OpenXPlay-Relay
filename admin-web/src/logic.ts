@@ -71,7 +71,7 @@ export function addressViews(status: Status, developer: boolean) {
     return { ...a, label: a.developerOnly ? a.interface : status.wifiClient?.setupHotspot || status.network.mode !== 'shared-wifi' ? 'home.hotspot' : status.network.wifi || status.wifiClient?.ssid || 'home.hotspot', host: status.host, receiver: original ?? `https://${a.ipv4}:${status.receiverPort || 8443}/${query}`, admin: `https://${a.ipv4}:${status.adminPort || 6975}/` };
   });
 }
-const technicalFields = new Set(['wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
+const technicalFields = new Set(['wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
 export function settingsViews(settings: Settings, developer: boolean) {
   const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins').flatMap(s => s.fields).map(field => {
     if (field.key !== 'networkMode') return field;

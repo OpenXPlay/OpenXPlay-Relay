@@ -251,7 +251,11 @@ fn shared_wifi_restart_recreates_attachment_without_disconnect() {
     let platform = || {
         LinuxWirelessPlatform::new(
             options.clone(),
-            runner.clone(),
+            openxplay_relay::host_backends::HostBackends::linux(
+                &options,
+                runner.clone(),
+                events.clone(),
+            ),
             state.identity().unwrap(),
             state.pairings().unwrap(),
             Arc::new(RecordingMediaSink::discard(events.clone())),
@@ -460,4 +464,60 @@ fn the_provisioning_gate_opens_with_its_last_hold() {
     std::thread::sleep(Duration::from_millis(20));
     drop(second);
     assert!(waiter.join().unwrap());
+}
+
+#[test]
+fn ap_channel_rejects_no_ir_radar_and_missing_while_station_can_join() {
+    use openxplay_relay::{linux_hotspot::access_point_channel, wifi_capabilities::parse_phy};
+    for flags in ["(disabled)", "(no IR)", "(radar detection)"] {
+        let phy = parse_phy(&format!(" * 5180 MHz [36] (20.0 dBm) {flags}"));
+        assert_eq!(access_point_channel(36, Some(&phy)), 6);
+        assert_eq!(phy.station_5ghz(), flags != "(disabled)");
+    }
+    let country_set = parse_phy(" * 5180 MHz [36] (20.0 dBm)");
+    assert_eq!(access_point_channel(36, Some(&country_set)), 36);
+    assert_eq!(access_point_channel(44, Some(&country_set)), 6);
+    let ufi = parse_phy(" * 2437 MHz [6] (20.0 dBm)");
+    assert_eq!(access_point_channel(36, Some(&ufi)), 6);
+    assert_eq!(access_point_channel(11, Some(&ufi)), 11);
+    assert_eq!(access_point_channel(36, None), 6);
+}
+
+#[test]
+fn semantic_access_point_request_supplies_credentials_band_and_channel() {
+    use openxplay_relay::host_backends::{
+        AccessPointBackend, AccessPointCredentials, AccessPointRequest, WifiBand,
+    };
+    let root = temp();
+    let runner = Arc::new(Fake::default());
+    let hotspot = manager(&root, runner.clone());
+    let backend: &dyn AccessPointBackend = &hotspot;
+    let request = AccessPointRequest {
+        credentials: AccessPointCredentials::Supplied {
+            ssid: "Semantic AP".into(),
+            password: "password123".into(),
+        },
+        band: WifiBand::Ghz2,
+        channel: 11,
+    };
+    backend.start(&request, Duration::from_secs(60)).unwrap();
+    backend.validate().unwrap();
+    assert_eq!(backend.radio().unwrap().channel, Some(36));
+    backend.stations().unwrap();
+    backend.stop().unwrap();
+    let calls = runner.calls.lock().unwrap();
+    let add = calls
+        .iter()
+        .find(|args| args.get(2).is_some_and(|s| s == "add"))
+        .unwrap();
+    for pair in [
+        ["ssid", "Semantic AP"],
+        ["802-11-wireless-security.psk", "password123"],
+        ["802-11-wireless.band", "bg"],
+        ["802-11-wireless.channel", "11"],
+    ] {
+        assert!(add.windows(2).any(|w| w == pair));
+    }
+    assert!(!root.join("hotspot.credentials").exists());
+    std::fs::remove_dir_all(root).unwrap();
 }

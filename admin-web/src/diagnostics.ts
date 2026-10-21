@@ -158,6 +158,24 @@ function bluetoothView(status: Status, t: Translate): string {
   const rows: [string, string | number | null][] = [['bt.state', t(`bt.state.${guard.state}`)], ['bt.attempts', guard.attempts], ['bt.lastRecovery', guard.lastRecovery], ['bt.lastError', guard.lastError], ['bt.address', guard.address]];
   return `<h3>${t('bt.title')}</h3><dl class="facts">${rows.filter(([, value]) => value !== null && value !== '').map(([key, value]) => `<dt>${t(key)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>`;
 }
+export function hostCapabilitiesView(status: Status, t: Translate): string {
+  const h = status.hostCapabilities;
+  if (!h) return '';
+  const support = (value: boolean | null | undefined) => t(value === true ? 'host.yes' : value === false ? 'host.no' : 'host.unknown');
+  const rows: [string, string][] = [];
+  for (const wifi of h.wifi.interface === h.carlink.interface ? [h.wifi] : [h.wifi, h.carlink]) {
+    const c = wifi.capabilities;
+    const concurrency = c?.combinations.filter(c => c.apStation).map(c => c.channels === null ? t('host.unknown') : t('host.channels', { n: c.channels })).join(', ');
+    rows.push([wifi.interface, `${t('host.ap')}: ${support(c?.ap)} · ${t('host.station')}: ${support(c?.station)} · AP+station: ${c ? concurrency || t('host.no') : t('host.unknown')}`]);
+    const channels = c?.channels.filter(c => c.frequency >= 4900 && c.frequency < 5900 && !c.disabled && !c.noIr && !c.radar).map(c => c.channel).join(', ');
+    rows.push([t('host.ap5', { interface: wifi.interface }), c ? channels || t('host.none') : t('host.unknown')]);
+  }
+  rows.push([t('host.country'), Object.entries(h.regulatory).map(([scope, country]) => `${scope}: ${country}`).join(' · ') || t('host.unknown')]);
+  rows.push(['Bluetooth', `${h.selectedAdapter ?? '—'} · BR/EDR: ${support(h.bluetooth?.brEdr)} · LE: ${support(h.bluetooth?.le)} · Secure Connections: ${support(h.bluetooth?.secureConnections)}`]);
+  rows.push(['RFCOMM', support(h.rfcomm)]);
+  rows.push([t('host.missingTools'), Object.entries(h.tools).filter(([, tool]) => tool.present === false).map(([name]) => name).join(', ') || t(Object.values(h.tools).some(tool => tool.present === null) ? 'host.unknown' : 'host.none')]);
+  return `<h3>${t('host.title')}</h3><dl class="facts">${rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>`;
+}
 export function diagnosticsView(status: Status, t: Translate): string {
   const v = videoView(status);
   const stream = v && [v.codecString && `<code>${esc(v.codecString)}</code>`, v.size && esc(v.size)].filter(Boolean).join(' · ');
@@ -166,7 +184,7 @@ export function diagnosticsView(status: Status, t: Translate): string {
   const receivers = (status.receivers ?? []).map((report, index) => receiverCard(report, index, t)).join('');
   const h = status.hostProfile;
   const host = h ? `<dl class="facts"><dt>${t('host.model')}</dt><dd>${esc(h.model ?? '—')}</dd><dt>${t('host.bluetooth')}</dt><dd>${esc(h.bluetoothAdapter ? `${h.bluetoothAdapter.name} · ${h.bluetoothAdapter.address}` : '—')}</dd>${h.secureConnections === 'untouched' ? `<dt>${t('host.sc')}</dt><dd>${t('host.unmanaged')}</dd>` : ''}</dl>` : '';
-  return `${host}${bluetoothView(status, t)}<h3>${t('diag.video')}</h3>${video}<h3>${t('diag.receivers')}</h3>${receivers || `<p class="muted">${t('diag.none')}</p>`}`;
+  return `${host}${hostCapabilitiesView(status, t)}${bluetoothView(status, t)}<h3>${t('diag.video')}</h3>${video}<h3>${t('diag.receivers')}</h3>${receivers || `<p class="muted">${t('diag.none')}</p>`}`;
 }
 export function receiverReport(status: Status, client: string, now = new Date()): string | null {
   const receiver = status.receivers?.find(r => r.client === client);

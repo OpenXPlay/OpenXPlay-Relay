@@ -18,6 +18,7 @@ pub enum SecureConnectionsPolicy {
 pub struct HostProfile {
     pub model: Option<String>,
     pub wifi_interface: String,
+    pub carlink_interface: String,
     pub hotspot_channel: u8,
     pub bluetooth_adapter: Option<String>,
     pub hotspot_down_gap_seconds: u64,
@@ -29,6 +30,7 @@ impl Default for HostProfile {
         Self {
             model: None,
             wifi_interface: "wlan0".into(),
+            carlink_interface: String::new(),
             hotspot_channel: 36,
             bluetooth_adapter: None,
             hotspot_down_gap_seconds: crate::hotspot_lifetime::AP_DOWN_GAP.as_secs(),
@@ -41,6 +43,7 @@ impl HostProfile {
     pub fn settings_defaults(&self) -> crate::settings::Settings {
         crate::settings::Settings {
             wifi_interface: self.wifi_interface.clone(),
+            carlink_interface: self.carlink_interface.clone(),
             hotspot_channel: self.hotspot_channel,
             ..Default::default()
         }
@@ -51,6 +54,7 @@ impl HostProfile {
         let keys = [
             "model",
             "wifiInterface",
+            "carlinkInterface",
             "hotspotChannel",
             "bluetoothAdapter",
             "hotspotDownGapSeconds",
@@ -133,9 +137,10 @@ mod tests {
     use super::*;
     #[test]
     fn full_profile_and_unknown_fields() {
-        let (p, unknown) = HostProfile::parse(br#"{"model":"Phicomm N1","wifiInterface":"wlan1","hotspotChannel":6,"bluetoothAdapter":"AA:BB:CC:DD:EE:FF","hotspotDownGapSeconds":0,"secureConnections":"untouched","bluetoothGuardStatus":"/run/n1.json","future":42}"#).unwrap();
+        let (p, unknown) = HostProfile::parse(br#"{"model":"Phicomm N1","wifiInterface":"wlan1","carlinkInterface":"wlan2","hotspotChannel":6,"bluetoothAdapter":"AA:BB:CC:DD:EE:FF","hotspotDownGapSeconds":0,"secureConnections":"untouched","bluetoothGuardStatus":"/run/n1.json","future":42}"#).unwrap();
         assert_eq!(p.model.as_deref(), Some("Phicomm N1"));
         assert_eq!(p.wifi_interface, "wlan1");
+        assert_eq!(p.carlink_interface, "wlan2");
         assert_eq!(p.hotspot_channel, 6);
         assert_eq!(p.bluetooth_adapter.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
         assert_eq!(p.hotspot_down_gap_seconds, 0);
@@ -181,6 +186,8 @@ mod tests {
             r#"{"model":4}"#,
             r#"{"wifiInterface":"../wlan0"}"#,
             r#"{"wifiInterface":null}"#,
+            r#"{"carlinkInterface":"../wlan1"}"#,
+            r#"{"carlinkInterface":null}"#,
             r#"{"hotspotChannel":0}"#,
             r#"{"hotspotChannel":15}"#,
             r#"{"hotspotChannel":178}"#,
@@ -224,7 +231,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("host.json");
-        std::fs::write(&path, br#"{"wifiInterface":"wlan1","hotspotChannel":6,"bluetoothGuardStatus":"/run/profile.json"}"#).unwrap();
+        std::fs::write(&path, br#"{"wifiInterface":"wlan1","carlinkInterface":"wlan4","hotspotChannel":6,"bluetoothGuardStatus":"/run/profile.json"}"#).unwrap();
         let args = vec![
             "--state-dir".into(),
             dir.to_string_lossy().into_owned(),
@@ -233,6 +240,7 @@ mod tests {
         ];
         let options = crate::Options::parse(&args).unwrap();
         assert_eq!(options.wifi_interface, "wlan1");
+        assert_eq!(options.carlink_interface(), "wlan4");
         assert_eq!(options.wifi_channel, 6);
         assert_eq!(
             options.bluetooth_guard_status,
@@ -242,17 +250,21 @@ mod tests {
         let options = crate::Options::parse(&args).unwrap();
         assert_eq!(options.wifi_interface, "wlan1");
         assert_eq!(options.wifi_channel, 11);
+        assert_eq!(options.carlink_interface(), "wlan4");
         std::fs::write(
             dir.join("settings.json"),
-            br#"{"wifiInterface":"wlan2","hotspotChannel":11}"#,
+            br#"{"wifiInterface":"wlan2","carlinkInterface":"wlan5","hotspotChannel":11}"#,
         )
         .unwrap();
         let options = crate::Options::parse(&args).unwrap();
         assert_eq!(options.wifi_interface, "wlan2");
+        assert_eq!(options.carlink_interface(), "wlan5");
         let mut args = args;
         args.extend([
             "--wifi-interface".into(),
             "wlan3".into(),
+            "--carlink-interface".into(),
+            "wlan6".into(),
             "--wifi-channel".into(),
             "44".into(),
             "--bluetooth-guard-status".into(),
@@ -260,6 +272,15 @@ mod tests {
         ]);
         let options = crate::Options::parse(&args).unwrap();
         assert_eq!(options.wifi_interface, "wlan3");
+        assert_eq!(options.carlink_interface(), "wlan6");
+        assert!(!options.shared_carlink_radio());
+        let mut reset = options.clone();
+        reset
+            .overrides
+            .insert("--carlink-interface".into(), String::new());
+        reset.apply_overrides().unwrap();
+        assert_eq!(reset.carlink_interface(), "wlan3");
+        assert!(reset.shared_carlink_radio());
         assert_eq!(options.wifi_channel, 44);
         assert_eq!(options.bluetooth_guard_status, Path::new("/run/cli.json"));
         std::fs::remove_dir_all(dir).unwrap();

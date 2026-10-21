@@ -32,3 +32,11 @@ describe('password validation', () => {
   it('rejects a confirmation mismatch', () => expect(validatePassword('openxplay', 'different')).toBe('error.passwordMismatch'));
   it('preserves spaces when comparing passwords', () => expect(validatePassword(' password ', 'password')).toBe('error.passwordMismatch'));
 });
+
+// Host interface choices follow the existing developer-settings visibility rule.
+it('keeps a separate Carlink interface in developer settings', async () => {
+  const { settingsViews } = await import('../src/logic');
+  const settings = { schema: [{ id: 'connection', titleKey: 'section.connection', fields: [{ key: 'carlinkInterface', type: 'text' as const, labelKey: 'field.carlinkInterface' }] }], values: { carlinkInterface: '' } };
+  expect(settingsViews(settings, false).flatMap(s => s.fields).some(f => f.key === 'carlinkInterface')).toBe(false);
+  expect(settingsViews(settings, true).find(s => s.id === 'developer')?.fields.map(f => f.key)).toContain('carlinkInterface');
+});
