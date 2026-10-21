@@ -643,6 +643,14 @@ pub trait PairingBackend: Send + Sync {
 pub trait PairingSession: Send {
     fn close(self: Box<Self>);
 }
+pub fn set_device_class(runner: &dyn CommandRunner, adapter: &str, class: u32) -> Result<()> {
+    command(
+        runner,
+        &["hciconfig", adapter, "class", &format!("0x{class:06x}")],
+        Duration::from_secs(3),
+    )
+    .map(|_| ())
+}
 /// Pairing through BlueZ on the system bus.
 pub struct BluezPairing {
     selection: AdapterSelection,
@@ -684,11 +692,8 @@ impl PairingBackend for BluezPairing {
             .map_err(err)?;
         p.set_property("Discoverable", true).map_err(err)?;
         let device = a.rsplit('/').next().unwrap_or("hci0");
-        if let Err(e) = command(
-            &ProcessCommandRunner::new(),
-            &["hciconfig", device, "class", "0x240408"],
-            Duration::from_secs(3),
-        ) {
+        if let Err(e) = set_device_class(&ProcessCommandRunner::new(), device, PAIRING_DEVICE_CLASS)
+        {
             self.events
                 .log(&format!("Setting Bluetooth class failed: {e}"));
         }
@@ -718,16 +723,10 @@ impl PairingSession for BluezPairingSession {
                 &(ObjectPath::try_from("/org/openxplay/agent").unwrap(),),
             );
         }
-        let class = format!("0x{:06x}", self.previous_class);
-        let _ = command(
+        let _ = set_device_class(
             &ProcessCommandRunner::new(),
-            &[
-                "hciconfig",
-                self.adapter.rsplit('/').next().unwrap_or("hci0"),
-                "class",
-                &class,
-            ],
-            Duration::from_secs(3),
+            self.adapter.rsplit('/').next().unwrap_or("hci0"),
+            self.previous_class,
         );
     }
 }

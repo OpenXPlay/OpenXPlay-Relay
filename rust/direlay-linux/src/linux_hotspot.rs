@@ -155,30 +155,37 @@ pub fn remove_stale_hotspots(runner: &dyn CommandRunner) -> Result<bool> {
 }
 /// Whether the interface's radio offers an enabled 5 GHz channel. Undetectable counts as 2.4 GHz
 /// only, which every Carlink head unit can serve; the UFI003's wcn36xx has no 5 GHz band.
-pub fn supports_5ghz(runner: &dyn CommandRunner, interface: &str) -> bool {
+pub fn phy_info(
+    runner: &dyn CommandRunner,
+    interface: &str,
+) -> Option<crate::wifi_capabilities::PhyCapabilities> {
     let Ok(phy) = std::fs::read_to_string(format!("/sys/class/net/{interface}/phy80211/name"))
     else {
-        return false;
+        return None;
     };
     command(
         runner,
         &["iw", "phy", phy.trim(), "info"],
         Duration::from_secs(3),
     )
-    .is_ok_and(|info| lists_5ghz(&info))
+    .ok()
+    .map(|info| crate::wifi_capabilities::parse_phy(&info))
+}
+pub fn supports_5ghz(runner: &dyn CommandRunner, interface: &str) -> bool {
+    phy_info(runner, interface).is_some_and(|info| info.station_5ghz())
+}
+pub fn access_point_channel(
+    configured: u8,
+    info: Option<&crate::wifi_capabilities::PhyCapabilities>,
+) -> u8 {
+    hotspot_channel(
+        configured,
+        info.is_some_and(|info| info.ap_channel(configured)),
+    )
 }
 /// Parse `iw phy <phy> info` frequency lines such as `* 5180 MHz [36] (20.0 dBm)`.
 pub fn lists_5ghz(iw_phy_info: &str) -> bool {
-    iw_phy_info.lines().any(|line| {
-        let Some(rest) = line.trim().strip_prefix("* ") else {
-            return false;
-        };
-        let mhz = rest
-            .split(" MHz")
-            .next()
-            .and_then(|f| f.trim().parse::<f64>().ok());
-        mhz.is_some_and(|f| (4900.0..5900.0).contains(&f)) && !rest.contains("disabled")
-    })
+    crate::wifi_capabilities::parse_phy(iw_phy_info).station_5ghz()
 }
 /// Enumerate IPv4 addresses and masks directly; OpenStick has no iproute2 binary.
 pub fn interface_addresses() -> Result<Vec<(String, Ipv4Addr, u8)>> {
@@ -337,6 +344,16 @@ impl LinuxHotspot {
         self
     }
     pub fn start(&self, timeout: Duration) -> Result<WirelessHotspotInfo> {
+        self.start_requested(
+            &crate::host_backends::AccessPointRequest::saved(self.state_dir.clone(), self.channel),
+            timeout,
+        )
+    }
+    pub fn start_requested(
+        &self,
+        request: &crate::host_backends::AccessPointRequest,
+        timeout: Duration,
+    ) -> Result<WirelessHotspotInfo> {
         if self.closed.load(Ordering::Acquire) {
             return Err(std::io::Error::other("Hotspot cancelled"));
         }
@@ -356,7 +373,13 @@ impl LinuxHotspot {
             }
             command(self.runner.as_ref(), args, remaining)
         };
-        let (ssid, password) = hotspot_credentials(&self.state_dir)?;
+        let (ssid, password) = match &request.credentials {
+            crate::host_backends::AccessPointCredentials::Saved(dir) => hotspot_credentials(dir)?,
+            crate::host_backends::AccessPointCredentials::Supplied { ssid, password } => {
+                validate_hotspot_credentials(ssid, password).map_err(std::io::Error::other)?;
+                (ssid.clone(), password.clone())
+            }
+        };
         let occupied = interface_addresses()?
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
@@ -368,16 +391,27 @@ impl LinuxHotspot {
         );
         self.state.lock().unwrap().connection = Some(id.clone());
         let result = (|| {
-            let selected = hotspot_channel(
-                self.channel,
-                supports_5ghz(self.runner.as_ref(), &self.interface),
-            );
+            let info = phy_info(self.runner.as_ref(), &self.interface);
+            let selected = access_point_channel(request.channel, info.as_ref());
             static FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
-            if selected != self.channel && !FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {
-                eprintln!("Wi-Fi radio has no 5 GHz support; using hotspot channel 6");
+            if selected != request.channel && !FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {
+                let reason = info.as_ref().map_or("radio capabilities unavailable", |p| {
+                    p.ap_channel_reason(request.channel)
+                        .unwrap_or("channel unavailable")
+                });
+                eprintln!(
+                    "Wi-Fi hotspot channel {} cannot host an AP: {reason}; using hotspot channel 6",
+                    request.channel
+                );
             }
             let channel = selected.to_string();
-            let band = if selected > 14 { "a" } else { "bg" };
+            let band = if selected == request.channel
+                && request.band == crate::host_backends::WifiBand::Ghz5
+            {
+                "a"
+            } else {
+                "bg"
+            };
             cmd(&[
                 "nmcli",
                 "connection",
@@ -556,6 +590,12 @@ impl LinuxHotspot {
             }
         }
         Err(std::io::Error::other("Active AP radio details unavailable"))
+    }
+    pub fn associated_stations(&self) -> Result<Vec<String>> {
+        associated_stations(self.runner.as_ref(), &self.interface)
+    }
+    pub fn radio_info(&self) -> Result<Radio> {
+        self.radio(&|args| command(self.runner.as_ref(), args, Duration::from_secs(5)))
     }
     pub fn validate_ready(&self) -> Result<()> {
         let expected = self

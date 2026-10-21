@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
+#[cfg(test)]
+use crate::host_backends::shared_network;
 use crate::Result;
 use crate::*;
 use carplay_airplay::*;
@@ -13,31 +15,15 @@ use std::{
     },
     time::Duration,
 };
-fn shared_network<'a>(
-    saved: &'a [crate::settings::SharedWifiNetwork],
-    rows: &str,
-) -> Option<&'a crate::settings::SharedWifiNetwork> {
-    let rows = rows
-        .lines()
-        .map(crate::provision::terse_fields)
-        .collect::<Vec<_>>();
-    if let Some(active) = rows.iter().find(|f| f.len() == 2 && f[0] == "*") {
-        saved.iter().find(|n| n.ssid == active[1])
-    } else {
-        saved
-            .iter()
-            .find(|n| rows.iter().any(|f| f.len() == 2 && f[1] == n.ssid))
-    }
-}
 pub struct LinuxWirelessPlatform {
     options: Options,
-    runner: Arc<dyn CommandRunner>,
     identity: Arc<AirPlayIdentity>,
     pairings: Arc<dyn PairingStore>,
     sink: Arc<dyn MediaSink>,
     events: Arc<JsonEvents>,
     input: Arc<DiPlayInput>,
-    bluetooth: LinuxBluetooth,
+    backends: crate::host_backends::HostBackends,
+    capabilities: Option<Arc<crate::host_capabilities::CapabilityCache>>,
     session: (u32, bool),
     hotspot_lifetime: Arc<crate::hotspot_lifetime::HotspotLifetime>,
     bluetooth_wake: Option<Arc<crate::bluetooth_wake::BluetoothWake>>,
@@ -50,36 +36,29 @@ impl LinuxWirelessPlatform {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         options: Options,
-        runner: Arc<dyn CommandRunner>,
+        backends: crate::host_backends::HostBackends,
         identity: Arc<AirPlayIdentity>,
         pairings: Arc<dyn PairingStore>,
         sink: Arc<dyn MediaSink>,
         events: Arc<JsonEvents>,
         input: Arc<DiPlayInput>,
     ) -> Self {
+        let backends = backends.for_controller();
         input.initialize_video_state(&options.state_dir);
         let session = input.configure_session();
-        let bluetooth = LinuxBluetooth::new(
-            runner.clone(),
-            options.iphone.clone(),
-            options.rfcomm_channel,
-        )
-        .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
-            options.host_profile.profile.bluetooth_adapter.clone(),
-        ));
         let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
             Duration::from_secs(options.host_profile.profile.hotspot_down_gap_seconds),
             None,
         ));
         Self {
             options,
-            runner,
             identity,
             pairings,
             sink,
             events,
             input,
-            bluetooth,
+            backends,
+            capabilities: None,
             session,
             hotspot_lifetime,
             bluetooth_wake: None,
@@ -87,6 +66,13 @@ impl LinuxWirelessPlatform {
             planned_ssid: Mutex::new(None),
             provisioning: None,
         }
+    }
+    pub fn with_capabilities(
+        mut self,
+        cache: Arc<crate::host_capabilities::CapabilityCache>,
+    ) -> Self {
+        self.capabilities = Some(cache);
+        self
     }
     /// The relay's Wi-Fi provisioning, which the device hotspot's activation waits for.
     /// Bluetooth does not wait for it.
@@ -116,9 +102,9 @@ impl LinuxWirelessPlatform {
     }
     /// Before this process brings its first AP up, removes the APs a killed run left behind.
     fn remove_stale_hotspots(&self) {
-        let removed = self.hotspot_lifetime.remove_stale_once(|| {
-            crate::linux_hotspot::remove_stale_hotspots(self.runner.as_ref())
-        });
+        let removed = self
+            .hotspot_lifetime
+            .remove_stale_once(|| self.backends.access_point.prepare());
         match removed {
             Some(Ok(true)) => self.events.log(&format!(
                 "hotspot-stale removed=up gapMs={}",
@@ -130,12 +116,48 @@ impl LinuxWirelessPlatform {
             _ => {}
         }
     }
+    fn observe_hotspot(
+        &self,
+        inner: Arc<dyn WirelessHotspotManager>,
+    ) -> Arc<dyn WirelessHotspotManager> {
+        match &self.capabilities {
+            Some(cache) => Arc::new(ProbedHotspot {
+                inner,
+                cache: cache.clone(),
+                wifi: self.options.wifi_interface.clone(),
+                carlink: self.options.carlink_interface().into(),
+            }),
+            None => inner,
+        }
+    }
     pub fn load_local_mfi(directory: &std::path::Path) -> Result<Arc<dyn MfiAuthenticator>> {
         let key = std::fs::read(directory.join("identity.pk8"))?;
         let cert = std::fs::read(directory.join("certificate.p7b"))?;
         Ok(Arc::new(LocalMfiAuthenticationClient::from_identity(
             &key, &cert,
         )?))
+    }
+}
+struct ProbedHotspot {
+    inner: Arc<dyn WirelessHotspotManager>,
+    cache: Arc<crate::host_capabilities::CapabilityCache>,
+    wifi: String,
+    carlink: String,
+}
+impl WirelessHotspotManager for ProbedHotspot {
+    fn start(&self, timeout: Duration) -> Result<WirelessHotspotInfo> {
+        let result = self.inner.start(timeout);
+        self.cache.initiated(&self.wifi, &self.carlink);
+        result
+    }
+    fn validate_ready(&self) -> Result<()> {
+        self.inner.validate_ready()
+    }
+    fn on_car_play_confirmed(&self) -> Result<()> {
+        self.inner.on_car_play_confirmed()
+    }
+    fn close(&self) -> Result<()> {
+        self.inner.close()
     }
 }
 struct BluetoothClient {
@@ -162,7 +184,7 @@ impl BluetoothConnection for BluetoothClient {
 }
 impl WirelessPlatform for LinuxWirelessPlatform {
     fn check_bluetooth_radio(&self) -> Result<()> {
-        self.bluetooth.check_radio()?;
+        self.backends.bluetooth.check_radio()?;
         // A bonded iPhone reconnects only with Secure Connections on: a switch the policy is
         // making for this adapter, e.g. at startup or after BlueZ reset it, completes first.
         if let Some(policy) = &self.secure_connections {
@@ -177,44 +199,22 @@ impl WirelessPlatform for LinuxWirelessPlatform {
     }
     fn create_hotspot(&self) -> Result<Arc<dyn WirelessHotspotManager>> {
         if self.options.settings.network_mode == "shared-wifi" {
-            let rows = crate::platform::command(
-                self.runner.as_ref(),
-                &[
-                    "nmcli",
-                    "-t",
-                    "-f",
-                    "IN-USE,SSID",
-                    "device",
-                    "wifi",
-                    "list",
-                    "--rescan",
-                    "no",
-                    "ifname",
-                    &self.options.wifi_interface,
-                ],
-                Duration::from_secs(5),
+            let (ssid, manager) = self.backends.station.shared(
+                &self.options.wifi_interface,
+                &self.options.settings.shared_wifi_networks,
             )?;
-            let network = shared_network(&self.options.settings.shared_wifi_networks, &rows)
-                .ok_or_else(|| std::io::Error::other("No saved Wi-Fi is connected or in range"))?;
-            *self.planned_ssid.lock().unwrap() = Some(network.ssid.clone());
-            Ok(Arc::new(crate::linux_hotspot::ExistingWifiManager::new(
-                self.runner.clone(),
-                self.options.wifi_interface.clone(),
-                network.ssid.clone(),
-                network.password.clone(),
-            )))
+            *self.planned_ssid.lock().unwrap() = Some(ssid);
+            Ok(self.observe_hotspot(manager))
         } else {
             let hotspot = self.hotspot_lifetime.create(|| {
-                let hotspot = LinuxHotspot::new(
-                    self.options.state_dir.clone(),
-                    self.runner.clone(),
-                    self.options.wifi_interface.clone(),
-                    self.options.wifi_channel,
-                );
-                Arc::new(match &self.provisioning {
-                    Some(gate) => hotspot.with_provisioning(gate.clone()),
-                    None => hotspot,
-                })
+                self.observe_hotspot(self.backends.access_point.access_point(
+                    crate::host_backends::AccessPointConfig {
+                        state_dir: self.options.state_dir.clone(),
+                        interface: self.options.wifi_interface.clone(),
+                        channel: self.options.wifi_channel,
+                        provisioning: self.provisioning.clone(),
+                    },
+                ))
             })?;
             // A new AP takes the saved credentials; a reused one tells its SSID at once.
             *self.planned_ssid.lock().unwrap() = if self.hotspot_lifetime.reused() {
@@ -255,11 +255,10 @@ impl WirelessPlatform for LinuxWirelessPlatform {
         if self.options.settings.network_mode == "shared-wifi" {
             return None;
         }
-        crate::linux_hotspot::associated_stations(
-            self.runner.as_ref(),
-            &self.options.wifi_interface,
-        )
-        .ok()
+        self.backends
+            .access_point
+            .stations(&self.options.wifi_interface)
+            .ok()
     }
     fn hotspot_down_remaining(&self) -> Duration {
         if self.options.settings.network_mode == "shared-wifi" {
@@ -276,12 +275,8 @@ impl WirelessPlatform for LinuxWirelessPlatform {
     fn start_pairing(&self) -> Result<Option<Arc<dyn CloseResource>>> {
         match self.options.pair_seconds {
             Some(n) => {
-                let mut mode = PairingMode::new(n, self.events.clone()).with_backend(Arc::new(
-                    crate::linux_bluetooth::BluezPairing::new(self.events.clone())
-                        .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
-                            self.options.host_profile.profile.bluetooth_adapter.clone(),
-                        )),
-                ));
+                let mut mode = PairingMode::new(n, self.events.clone())
+                    .with_backend(self.backends.bluetooth.pairing());
                 if let Some(policy) = &self.secure_connections {
                     mode = mode.with_secure_connections(policy.clone());
                 }
@@ -293,13 +288,18 @@ impl WirelessPlatform for LinuxWirelessPlatform {
         }
     }
     fn select_iphone(&self) -> Result<BondedDevice> {
-        self.bluetooth.select()
+        self.backends
+            .bluetooth
+            .select(self.options.iphone.as_deref())
     }
     fn create_bluetooth(&self, device: &BondedDevice) -> Result<Arc<dyn BluetoothConnection>> {
         Ok(Arc::new(BluetoothClient {
             stream: LinuxRfcommStream::new(),
             address: device.address.clone(),
-            channel: self.bluetooth.channel(&device.address)?,
+            channel: self
+                .backends
+                .bluetooth
+                .channel(&device.address, self.options.rfcomm_channel)?,
         }))
     }
     fn create_network(
@@ -312,7 +312,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
             info.bssid
                 .clone()
                 .ok_or_else(|| std::io::Error::other("AP BSSID unavailable"))?,
-            self.bluetooth.local_address()?,
+            self.backends.bluetooth.local_address()?,
             self.session,
         );
         self.input.configure_display(&mut config.main);
@@ -346,7 +346,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
             // configuration and StartSession wait for the started network.
             let config = identification(
                 &self.identity,
-                &self.bluetooth.local_address()?,
+                &self.backends.bluetooth.local_address()?,
                 &network.ssid(
                     carplay_iap2::transport::iap2_wireless_control_client::DEFAULT_ENDPOINT_WAIT,
                 )?,
@@ -807,6 +807,52 @@ impl NetworkAttachment for LinuxNetwork {
 #[cfg(test)]
 mod network_tests {
     use super::*;
+    #[test]
+    fn capability_worker_starts_after_hotspot_start_even_if_it_fails() {
+        struct Runner(Arc<std::sync::atomic::AtomicBool>);
+        impl CommandRunner for Runner {
+            fn run(&self, _: &[String], _: Duration) -> Result<CommandResult> {
+                assert!(self.0.load(Ordering::SeqCst));
+                Err(std::io::Error::other("missing tool"))
+            }
+        }
+        struct Hotspot(Arc<std::sync::atomic::AtomicBool>);
+        impl WirelessHotspotManager for Hotspot {
+            fn start(&self, _: Duration) -> Result<WirelessHotspotInfo> {
+                self.0.store(true, Ordering::SeqCst);
+                Err(std::io::Error::other("fake AP"))
+            }
+            fn validate_ready(&self) -> Result<()> {
+                Ok(())
+            }
+            fn on_car_play_confirmed(&self) -> Result<()> {
+                Ok(())
+            }
+            fn close(&self) -> Result<()> {
+                Ok(())
+            }
+        }
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cache = Arc::new(crate::host_capabilities::CapabilityCache::new(
+            Arc::new(Runner(started.clone())),
+            std::env::temp_dir().join("absent-probe-root"),
+            Default::default(),
+        ));
+        let manager = ProbedHotspot {
+            inner: Arc::new(Hotspot(started)),
+            cache: cache.clone(),
+            wifi: "wlan0".into(),
+            carlink: "wlan0".into(),
+        };
+        cache.refresh("wlan0", "wlan0");
+        assert!(cache.get().is_none());
+        assert!(manager.start(Duration::from_secs(1)).is_err());
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while cache.get().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
     #[test]
     fn wifi_configuration_trace_never_emits_the_network_passphrase() {
         let captured = Arc::new(Mutex::new(Vec::new()));

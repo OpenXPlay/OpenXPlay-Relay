@@ -57,7 +57,7 @@ it('accepts only 4–8 ASCII digits for a Carlink PIN', () => {
   for (const pin of ['', '123', '123456789', '12a4', '１２３４', '1234\n']) expect(validCarlinkPin(pin)).toBe(false);
 });
 it('translates Carlink settings, states and pairing actions in both languages', () => {
-  for (const language of ['en', 'zh-CN'] as const) for (const key of ['field.carlinkLink', 'field.carlinkAddress', 'field.carlinkHeadUnit', 'field.carlinkLocal', 'carlink.scanning', 'carlink.joined', 'carlink.authenticating', 'carlink.playing', 'carlink.enterPin', 'carlink.pinHint', 'carlink.forgetHint', 'error.carlinkPin', 'error.carlinkPinNotRequested']) expect(translate(language, key)).not.toBe(key);
+  for (const language of ['en', 'zh-CN'] as const) for (const key of ['field.carlinkInterface', 'hint.field.carlinkInterface', 'field.carlinkLink', 'field.carlinkAddress', 'field.carlinkHeadUnit', 'field.carlinkLocal', 'carlink.scanning', 'carlink.joined', 'carlink.authenticating', 'carlink.playing', 'carlink.enterPin', 'carlink.pinHint', 'carlink.forgetHint', 'error.carlinkPin', 'error.carlinkPinNotRequested']) expect(translate(language, key)).not.toBe(key);
 });
 
 it.each(['head_unit_band_unsupported', 'head_unit_band_unsupported:5180'])(

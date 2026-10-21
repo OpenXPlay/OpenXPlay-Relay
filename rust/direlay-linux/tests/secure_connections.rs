@@ -369,7 +369,12 @@ fn a_rejected_switch_off_is_retried_while_the_window_is_open() {
         output: format!("{rejected}\n"),
     });
     let window = h.policy.open_window();
-    wait("retry", || h.policy.enabled() == Some(false));
+    wait("retry logged", || {
+        h.logs()
+            .iter()
+            .any(|line| line == "bluetooth-sc off reason=pairing")
+    });
+    assert_eq!(h.policy.enabled(), Some(false));
     assert_eq!(h.sequence(), ["sc on", "sc off", "sc off"]);
     assert_eq!(
         h.logs(),

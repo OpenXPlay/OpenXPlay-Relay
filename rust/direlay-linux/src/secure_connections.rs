@@ -37,6 +37,14 @@ pub fn switch_command(index: u16, enable: bool) -> Vec<String> {
         format!("exec btmgmt --index {index} sc {} <&1", word(enable)),
     ]
 }
+/// Like the SC switch, `info` must keep stdin open on BlueZ 5.55.
+pub fn info_command(index: u16) -> Vec<String> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        format!("exec btmgmt --index {index} info <&1"),
+    ]
+}
 fn word(enable: bool) -> &'static str {
     if enable {
         "on"
@@ -47,7 +55,7 @@ fn word(enable: bool) -> &'static str {
 
 /// Why a switch failed.
 #[derive(Debug, PartialEq, Eq)]
-enum Failure {
+pub enum Failure {
     /// The controller has no SC: nothing is switched any more.
     Unsupported(String),
     /// `btmgmt` is missing: tried again only on the next request.
@@ -57,7 +65,11 @@ enum Failure {
 }
 /// Checks `btmgmt`'s reply: its new settings must show SC as requested. An empty reply is a
 /// failure, since a `btmgmt` that cannot read its stdin exits 0 without doing anything.
-fn verify(exit_code: i32, output: &str, enable: bool) -> std::result::Result<(), Failure> {
+pub(crate) fn verify(
+    exit_code: i32,
+    output: &str,
+    enable: bool,
+) -> std::result::Result<(), Failure> {
     let summary = output
         .lines()
         .map(str::trim)
@@ -101,7 +113,7 @@ struct State {
 }
 
 pub struct SecureConnections {
-    runner: Arc<dyn CommandRunner>,
+    control: Arc<dyn crate::host_backends::SecureConnectionsControl>,
     events: Arc<JsonEvents>,
     index: AdapterIndex,
     managed: bool,
@@ -119,7 +131,7 @@ pub struct SecureConnections {
 impl SecureConnections {
     pub fn new(runner: Arc<dyn CommandRunner>, events: Arc<JsonEvents>) -> Self {
         Self {
-            runner,
+            control: Arc::new(crate::host_backends::BtmgmtControl(runner)),
             events,
             index: Arc::new(|| None),
             managed: true,
@@ -132,6 +144,13 @@ impl SecureConnections {
             worker: Mutex::new(None),
             subscription: Mutex::new(None),
         }
+    }
+    pub fn with_control(
+        mut self,
+        control: Arc<dyn crate::host_backends::SecureConnectionsControl>,
+    ) -> Self {
+        self.control = control;
+        self
     }
     /// Uses the selected adapter index, waiting when none is present (standalone default: 0).
     pub fn with_adapter_index(mut self, index: AdapterIndex) -> Self {
@@ -287,13 +306,7 @@ impl SecureConnections {
                 "selected Bluetooth adapter unavailable".into(),
             ))
         } else {
-            match self
-                .runner
-                .run(&switch_command(index, enable), SWITCH_TIMEOUT)
-            {
-                Ok(r) => verify(r.exit_code, &r.output, enable),
-                Err(e) => Err(Failure::Failed(e.to_string())),
-            }
+            self.control.set_secure_connections(index, enable)
         };
         let action = word(enable);
         let mut s = self.state.lock().unwrap();

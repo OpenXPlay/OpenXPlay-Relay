@@ -18,7 +18,10 @@ use std::{
     },
     time::Duration,
 };
-type Provision = WifiProvisioner<ProcessNetworkManagerCli>;
+#[path = "carlink_follow.rs"]
+mod carlink_follow;
+use carlink_follow::CarlinkFollow;
+type Provision = Box<dyn crate::host_backends::StationBackend>;
 /// The admin page opens Bluetooth pairing for ten minutes.
 pub const PAIRING_SECONDS: u32 = 600;
 enum Operation {
@@ -106,49 +109,6 @@ fn receiver_event(
 fn likely_iphone(device: &BondedDevice) -> bool {
     device.iap2 || device.phone_class || device.name.to_lowercase().contains("iphone")
 }
-/// The Carlink link left the head unit's network: it went down, its session ended (oxp-relay then
-/// leaves the network and exits) or the child stopped. Errors and PIN timeouts alone leave the link
-/// up; the status shows them, and a real departure follows when they end the session.
-fn carlink_link_left(event: &serde_json::Value) -> bool {
-    (event["type"] == "link" && event["state"] == "lost")
-        || event["type"] == "receiver-stopped"
-        || (event["type"] == "state"
-            && matches!(
-                event["state"].as_str(),
-                Some("ended" | "disconnected" | "Ended" | "Disconnected")
-            ))
-}
-// This mailbox contains only public link data; credentials stay in the worker's override.
-#[derive(Default)]
-struct CarlinkFollow {
-    target: Option<String>,
-    changed: Option<std::time::Instant>,
-    generation: u64,
-}
-impl CarlinkFollow {
-    fn observe(&mut self, event: &serde_json::Value, interface: &str) {
-        let target = if event["type"] == "link" && event["state"] == "joined" {
-            if event["network"]["interface"] != interface {
-                return;
-            }
-            let Some(ssid) = event["network"]["ssid"].as_str() else {
-                return;
-            };
-            Some(ssid.to_owned())
-        } else if carlink_link_left(event) {
-            None
-        } else {
-            return;
-        };
-        self.target = target;
-        self.changed = Some(std::time::Instant::now());
-        self.generation = self.generation.wrapping_add(1);
-    }
-    fn ready(&self) -> bool {
-        self.changed
-            .is_some_and(|t| t.elapsed() >= Duration::from_millis(750))
-    }
-}
 pub struct LinuxRelayAdmin {
     /// The open pairing window and when it closes, in `auth::monotonic_seconds`.
     pairing: Mutex<Option<(crate::linux_bluetooth::PairingMode, u64)>>,
@@ -157,13 +117,14 @@ pub struct LinuxRelayAdmin {
     /// Secure Connections on, and off only while a pairing window is open.
     secure_connections: Arc<crate::secure_connections::SecureConnections>,
     options: Options,
+    backends: crate::host_backends::HostBackends,
+    capabilities: Arc<crate::host_capabilities::CapabilityCache>,
     settings: Mutex<Settings>,
     state: Arc<PersistentState>,
     events: Arc<JsonEvents>,
     provision: Arc<Mutex<Option<Provision>>>,
     provision_interface: Mutex<String>,
     net_root: std::path::PathBuf,
-    provision_cli: std::path::PathBuf,
     controller: Mutex<Option<Arc<LinuxCarPlayController>>>,
     hotspot_lifetime: Arc<crate::hotspot_lifetime::HotspotLifetime>,
     /// BlueZ changes for every controller's Bluetooth waits; the bus listener outlives them.
@@ -202,20 +163,24 @@ impl LinuxRelayAdmin {
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
     ) -> Result<Self> {
+        let backends = crate::host_backends::HostBackends::linux(
+            &options,
+            Arc::new(ProcessCommandRunner::new()),
+            events.clone(),
+        );
         let provision = match std::fs::read_to_string(format!(
             "/sys/class/net/{}/address",
             options.wifi_interface
         )) {
-            Ok(mac) => Some(WifiProvisioner::new(
-                ProcessNetworkManagerCli::default(),
-                options.wifi_interface.clone(),
+            Ok(mac) => Some(backends.station.saved(
+                &options.wifi_interface,
                 mac.trim(),
                 &options.state_dir,
             )?),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(e),
         };
-        let admin = Self::with_optional_provisioner(options, state, events, provision)?;
+        let admin = Self::with_host_backends(options, state, events, provision, backends)?;
         // Without BlueZ changes the controller's Bluetooth waits only poll.
         let signals = crate::linux_bluetooth::BluezSignals::new(admin.events.clone());
         if let Err(e) = admin.bluetooth_wake.listen(&signals) {
@@ -230,15 +195,30 @@ impl LinuxRelayAdmin {
         options: Options,
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
-        provision: Provision,
+        provision: WifiProvisioner<ProcessNetworkManagerCli>,
     ) -> Result<Self> {
-        Self::with_optional_provisioner(options, state, events, Some(provision))
+        Self::with_optional_provisioner(options, state, events, Some(Box::new(provision)))
     }
+    #[cfg(test)]
     fn with_optional_provisioner(
         options: Options,
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
         provision: Option<Provision>,
+    ) -> Result<Self> {
+        let backends = crate::host_backends::HostBackends::linux(
+            &options,
+            Arc::new(ProcessCommandRunner::new()),
+            events.clone(),
+        );
+        Self::with_host_backends(options, state, events, provision, backends)
+    }
+    fn with_host_backends(
+        options: Options,
+        state: Arc<PersistentState>,
+        events: Arc<JsonEvents>,
+        provision: Option<Provision>,
+        backends: crate::host_backends::HostBackends,
     ) -> Result<Self> {
         let input = Arc::new(DiPlayInput::with_plugins(
             events.clone(),
@@ -276,25 +256,33 @@ impl LinuxRelayAdmin {
         let selection = crate::linux_bluetooth::AdapterSelection(
             options.host_profile.profile.bluetooth_adapter.clone(),
         );
-        let sc_selection = selection.clone();
+        let capabilities = Arc::new(crate::host_capabilities::CapabilityCache::new(
+            Arc::new(ProcessCommandRunner::new()),
+            "/".into(),
+            selection.clone(),
+        ));
+        let sc_backend = backends.bluetooth.clone();
         let secure_connections = Arc::new(
             crate::secure_connections::SecureConnections::new(
                 Arc::new(ProcessCommandRunner::new()),
                 events.clone(),
             )
-            .with_adapter_index(Arc::new(move || sc_selection.index()))
+            .with_control(backends.bluetooth.clone())
+            .with_adapter_index(Arc::new(move || {
+                sc_backend
+                    .selected_adapter()
+                    .and_then(|a| crate::host_profile::adapter_name_index(&a.name))
+            }))
             .with_policy(options.host_profile.profile.secure_connections),
         );
         Ok(Self {
             pairing: Mutex::new(None),
-            pairing_backend: Arc::new(
-                crate::linux_bluetooth::BluezPairing::new(events.clone())
-                    .with_adapter_selection(selection),
-            ),
+            pairing_backend: backends.bluetooth.pairing(),
+            backends,
+            capabilities,
             secure_connections,
             provision_interface: Mutex::new(options.wifi_interface.clone()),
             net_root: "/sys/class/net".into(),
-            provision_cli: "nmcli".into(),
             options,
             settings: Mutex::new(settings),
             state,
@@ -354,11 +342,8 @@ impl LinuxRelayAdmin {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
                 Err(e) => return Err(e),
             };
-            *provision = Some(WifiProvisioner::new(
-                ProcessNetworkManagerCli {
-                    executable: self.provision_cli.clone(),
-                },
-                options.wifi_interface,
+            *provision = Some(self.backends.station.saved(
+                &options.wifi_interface,
                 mac.trim(),
                 &options.state_dir,
             )?);
@@ -432,73 +417,54 @@ impl LinuxRelayAdmin {
     }
     fn start_supervisor(&self) -> Result<()> {
         let o = self.effective_options()?;
+        if !o.shared_carlink_radio() {
+            self.reconcile_carlink_network()?;
+        }
         self.input.set_plugins_enabled(o.settings.plugins);
-        let mut addresses = crate::linux_hotspot::interface_addresses()?
+        let addresses = crate::linux_hotspot::interface_addresses()?
             .into_iter()
             .filter(|(_, a, _)| !a.is_loopback())
             .map(|(_, a, _)| a)
             .collect::<Vec<_>>();
-        addresses.push(std::net::Ipv4Addr::new(10, 78, 0, 1));
         let occupied = crate::linux_hotspot::interface_addresses()?
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
             .collect::<Vec<_>>();
-        if let Ok(a) = HotspotAddressPolicy::select_subnet(&occupied) {
-            addresses.push(a);
-        }
-        let carlink = if o.settings.output != "web" {
-            Some(CarlinkSettings {
-                ble: if o.settings.carlink_link == "ble" {
-                    Some(BleCarlinkSettings {
-                        adapter: crate::linux_bluetooth::AdapterSelection(
-                            o.host_profile.profile.bluetooth_adapter.clone(),
-                        )
-                        .clink_adapter(),
-                        interface: o.wifi_interface.clone(),
-                        address: o.settings.carlink_address.clone(),
-                        id: self.state.identity()?.pairing_id.clone(),
-                        band: crate::linux_hotspot::supports_5ghz(
-                            &ProcessCommandRunner::new(),
-                            &o.wifi_interface,
-                        ) as u8,
-                    })
-                } else {
-                    None
-                },
-                head_unit: o
-                    .settings
-                    .carlink_head_unit
-                    .parse()
-                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED),
-                local: o
-                    .settings
-                    .carlink_local
-                    .parse()
-                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED),
-                pin: o.settings.carlink_pin.clone(),
-                ports: o.settings.carlink_ports.clone(),
-            })
+        let ble = o.settings.output != "web" && o.settings.carlink_link == "ble";
+        let ble_adapter = if ble {
+            self.backends
+                .bluetooth
+                .selected_adapter()
+                .map(|a| a.name)
+                .or_else(|| {
+                    o.host_profile
+                        .profile
+                        .bluetooth_adapter
+                        .as_deref()
+                        .and_then(crate::host_profile::adapter_name_index)
+                        .map(|n| format!("hci{n}"))
+                })
         } else {
             None
         };
-        let settings = SupervisorSettings {
-            binary: o.oxp_relay,
-            socket: o.stream_socket,
-            web_port: if o.settings.output == "carlink" {
-                0
-            } else {
-                o.settings.receiver_port
-            },
-            plugins: o.settings.plugins.then(|| crate::plugins::OutputPlugins {
-                root: o.plugins_root.clone(),
-                enabled: o.settings.plugins_enabled.clone(),
-            }),
-            web_root: o.web_root,
-            state_dir: o.state_dir,
-            addresses,
-            pairing: o.settings.require_pairing_code,
-            carlink,
+        let pairing_id = if ble {
+            self.state.identity()?.pairing_id.clone()
+        } else {
+            String::new()
         };
+        let station_5ghz = ble
+            && crate::linux_hotspot::supports_5ghz(
+                &ProcessCommandRunner::new(),
+                o.carlink_interface(),
+            );
+        let settings = crate::supervisor_settings::supervisor_settings(
+            &o,
+            addresses,
+            &occupied,
+            pairing_id,
+            ble_adapter,
+            station_5ghz,
+        );
         *self.carlink.lock().unwrap() = AdminCarlink {
             state: "waiting".into(),
             ..Default::default()
@@ -509,6 +475,7 @@ impl LinuxRelayAdmin {
             self.options.state_dir.clone(),
             self.events.clone(),
         );
+        let shared_radio = o.shared_carlink_radio();
         let follow = self.follow.clone();
         let interface = o.wifi_interface.clone();
         let stream = self.stream.clone();
@@ -528,21 +495,13 @@ impl LinuxRelayAdmin {
             } else if event["type"] == "receiver-stopped" {
                 stream.receiver_stopped();
             }
-            let mut carlink = follow.lock().unwrap();
-            if event["type"] == "link"
-                && event["state"] == "joined"
-                && event["network"]["interface"] == interface
-                && carlink.target.as_deref() != event["network"]["ssid"].as_str()
-            {
-                timeline_events.follow_over("link-joined");
-            }
-            carlink.observe(&event, &interface);
-            // The link owns the radio from now on. Until the debounced follow-over stops the old
-            // controller, its retries must not bring an AP up on the link's interface.
-            if carlink.target.is_some() {
-                hotspot.hold_for_carlink(true);
-            }
-            drop(carlink);
+            follow.lock().unwrap().apply(
+                &event,
+                &interface,
+                shared_radio,
+                &timeline_events,
+                &hotspot,
+            );
             event_sink(event);
         });
         let mut supervisor = RelaySupervisor::new(settings, self.child_factory.clone(), event_sink)
@@ -551,109 +510,15 @@ impl LinuxRelayAdmin {
         *self.supervisor.lock().unwrap() = Some(supervisor);
         Ok(())
     }
-    fn reconcile_carlink_network(&self) -> Result<()> {
-        if self.provision.lock().unwrap().is_none() {
-            return Ok(());
-        }
-        let (target, generation) = {
-            let follow = self.follow.lock().unwrap();
-            if !follow.ready() {
-                return Ok(());
-            }
-            (follow.target.clone(), follow.generation)
-        };
-        let current = self
+    fn carplay_options(&self) -> Result<Options> {
+        let mut options = self.effective_options()?;
+        if let Some(network) = self
             .network_override
             .lock()
             .unwrap()
-            .as_ref()
-            .map(|n| n.ssid.clone());
-        if current == target {
-            let mut follow = self.follow.lock().unwrap();
-            if follow.generation == generation {
-                follow.changed = None;
-                if target.is_none() {
-                    self.hotspot_lifetime.hold_for_carlink(false);
-                    let held = self
-                        .provision
-                        .lock()
-                        .unwrap()
-                        .as_mut()
-                        .unwrap()
-                        .hold_for_carlink(false);
-                    drop(follow);
-                    if held {
-                        self.operation(Operation::Initialize)?;
-                    }
-                }
-            }
-            return Ok(());
-        }
-        // Hold the provisioner even if reading the secret fails; never reconnect home here.
-        if target.is_some() {
-            self.provision
-                .lock()
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .hold_for_carlink(true);
-        }
-        let network = match target
-            .as_ref()
-            .map(|ssid| {
-                self.provision
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .unwrap()
-                    .carlink_network(ssid)
-            })
-            .transpose()
+            .clone()
+            .filter(|_| options.shared_carlink_radio())
         {
-            Ok(network) => network,
-            Err(error) => {
-                // Do not let the old controller retry its hotspot while Carlink owns the radio.
-                // tick remains blocked until the target credentials have been resolved.
-                self.stop_controller();
-                let mut follow = self.follow.lock().unwrap();
-                if follow.generation == generation {
-                    follow.changed = Some(std::time::Instant::now());
-                }
-                return Err(error);
-            }
-        };
-        let mut follow = self.follow.lock().unwrap();
-        if follow.generation != generation {
-            return Ok(());
-        }
-        *self.network_override.lock().unwrap() = network;
-        follow.changed = None;
-        drop(follow);
-        // Publish the resolved target before stopping; tick shares the lifecycle lock.
-        self.events.follow_over("controller-stop");
-        self.stop_controller();
-        if target.is_none() {
-            self.events.follow_over("link-left");
-            {
-                // A newer join keeps the radio held until its own follow-over settles.
-                let follow = self.follow.lock().unwrap();
-                if follow.target.is_none() {
-                    self.hotspot_lifetime.hold_for_carlink(false);
-                }
-            }
-            self.provision
-                .lock()
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .hold_for_carlink(false);
-            self.operation(Operation::Initialize)?;
-        }
-        Ok(())
-    }
-    fn carplay_options(&self) -> Result<Options> {
-        let mut options = self.effective_options()?;
-        if let Some(network) = self.network_override.lock().unwrap().clone() {
             options.settings.network_mode = "shared-wifi".into();
             options.settings.shared_wifi_networks = vec![network];
         }
@@ -898,6 +763,11 @@ impl LinuxRelayAdmin {
         self.tick_wake.1.notify_all();
     }
     pub fn tick(&self) -> Result<()> {
+        if self.capabilities.is_started() {
+            let options = self.effective_options()?;
+            self.capabilities
+                .refresh(&options.wifi_interface, options.carlink_interface());
+        }
         let Ok(_lifecycle) = self.lifecycle.try_lock() else {
             return Ok(());
         };
@@ -928,7 +798,7 @@ impl LinuxRelayAdmin {
         if self.provision.lock().unwrap().is_none() {
             return Ok(());
         }
-        {
+        if self.effective_options()?.shared_carlink_radio() {
             let follow = self.follow.lock().unwrap();
             let current = self.network_override.lock().unwrap();
             if follow
@@ -971,13 +841,14 @@ impl LinuxRelayAdmin {
         let platform = Arc::new(
             LinuxWirelessPlatform::new(
                 options,
-                Arc::new(ProcessCommandRunner::new()),
+                self.backends.clone(),
                 self.state.identity()?,
                 self.state.pairings()?,
                 self.sink.clone(),
                 self.events.clone(),
                 self.input.clone(),
             )
+            .with_capabilities(self.capabilities.clone())
             .with_hotspot_lifetime(self.hotspot_lifetime.clone())
             .with_bluetooth_wake(self.bluetooth_wake.clone())
             .with_secure_connections(self.secure_connections.clone())
@@ -1119,6 +990,7 @@ pub fn settings_schema() -> Vec<Section> {
         ("requirePairingCode", "bool"),
         ("output", "choice"),
         ("carlinkLink", "choice"),
+        ("carlinkInterface", "text"),
         ("carlinkAddress", "text"),
         ("carlinkHeadUnit", "text"),
         ("carlinkLocal", "text"),
@@ -1137,7 +1009,12 @@ pub fn settings_schema() -> Vec<Section> {
         ),
         hint_key: matches!(
             key,
-            "output" | "carlinkLink" | "carlinkAddress" | "carlinkHeadUnit" | "carlinkLocal"
+            "output"
+                | "carlinkLink"
+                | "carlinkInterface"
+                | "carlinkAddress"
+                | "carlinkHeadUnit"
+                | "carlinkLocal"
         )
         .then(|| format!("hint.field.{key}")),
         options: match key {
@@ -1185,7 +1062,7 @@ pub fn settings_schema() -> Vec<Section> {
                 key: "carlinkLink".into(),
                 equals: vec!["ble".into()],
             }),
-            "carlinkLink" => Some(VisibleWhen {
+            "carlinkLink" | "carlinkInterface" => Some(VisibleWhen {
                 key: "output".into(),
                 equals: vec!["carlink".into(), "both".into()],
             }),
@@ -1346,12 +1223,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             .effective_options()
             .unwrap_or_else(|_| self.options.clone());
         let wifi = self.wifi_status();
-        let devices = LinuxBluetooth::new(Arc::new(ProcessCommandRunner::new()), None, None)
-            .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
-                options.host_profile.profile.bluetooth_adapter.clone(),
-            ))
-            .devices()
-            .unwrap_or_default();
+        let devices = self.backends.bluetooth.devices().unwrap_or_default();
         let now = crate::admin::auth::monotonic_seconds();
         let wall_now = crate::platform::wall_clock().as_secs();
         let pairing_remaining = self
@@ -1443,18 +1315,17 @@ impl RelayAdmin for LinuxRelayAdmin {
             name: crate::branding::DEVICE_NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
             host: "openxplay-linux.local".into(),
+            host_capabilities: self.capabilities.get(),
             host_profile: Some(AdminHostProfile {
                 model: options.host_profile.profile.model.clone(),
                 profile_path: options.host_profile.path.clone(),
                 profile_loaded: options.host_profile.loaded,
                 profile_error: options.host_profile.error.clone(),
-                bluetooth_adapter: crate::linux_bluetooth::AdapterSelection(
-                    options.host_profile.profile.bluetooth_adapter.clone(),
-                )
-                .resolved()
-                .map(|a| AdminBluetoothAdapter {
-                    name: a.name,
-                    address: a.address,
+                bluetooth_adapter: self.backends.bluetooth.selected_adapter().map(|a| {
+                    AdminBluetoothAdapter {
+                        name: a.name,
+                        address: a.address,
+                    }
                 }),
                 wifi_interface: options.wifi_interface.clone(),
                 wifi_present: self.wifi_present(&options.wifi_interface),
@@ -1584,6 +1455,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                     || next.output != current.output
                     || next.require_pairing_code != current.require_pairing_code
                     || next.receiver_port != current.receiver_port
+                    || next.carlink_interface != current.carlink_interface
                     || next.carlink_link != current.carlink_link
                     || next.carlink_address != current.carlink_address
                     || next.carlink_head_unit != current.carlink_head_unit
@@ -1730,10 +1602,8 @@ impl RelayAdmin for LinuxRelayAdmin {
     }
     fn phones(&self) -> Vec<AdminPhone> {
         let choice = self.effective_options().ok().and_then(|o| o.iphone);
-        LinuxBluetooth::new(Arc::new(ProcessCommandRunner::new()), None, None)
-            .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
-                self.options.host_profile.profile.bluetooth_adapter.clone(),
-            ))
+        self.backends
+            .bluetooth
             .devices()
             .unwrap_or_default()
             .into_iter()
@@ -1835,6 +1705,88 @@ mod tests {
         )
     }
     #[test]
+    fn separate_carlink_radio_ignores_link_events_and_releases_an_old_follow() {
+        let (a, dir) = fake();
+        let joined = serde_json::json!({"type":"link","state":"joined","network":{"ssid":"DIRECT-Car","interface":"wlan1"}});
+        a.follow
+            .lock()
+            .unwrap()
+            .apply(&joined, "wlan0", false, &a.events, &a.hotspot_lifetime);
+        assert!(a.follow.lock().unwrap().target.is_none());
+        assert!(a.carplay_options().unwrap().shared_carlink_radio());
+        assert!(!a.status().network.following_carlink);
+        a.settings.lock().unwrap().carlink_interface = "wlan1".into();
+        let old = serde_json::json!({"type":"link","state":"joined","network":{"ssid":"DIRECT-Car","interface":"wlan0"}});
+        // A previous single-radio follow must also be released when the setting changes.
+        a.follow
+            .lock()
+            .unwrap()
+            .apply(&old, "wlan0", true, &a.events, &a.hotspot_lifetime);
+        *a.network_override.lock().unwrap() = Some(SharedWifiNetwork {
+            ssid: "DIRECT-Car".into(),
+            password: "password".into(),
+        });
+        assert_eq!(
+            a.carplay_options().unwrap().settings.network_mode,
+            "device-hotspot"
+        );
+        a.reconcile_carlink_network().unwrap();
+        assert!(a.follow.lock().unwrap().target.is_none());
+        assert!(a.network_override.lock().unwrap().is_none());
+        assert!(!a.status().network.following_carlink);
+        // A normal single-radio event still enters the same debounced mailbox.
+        a.settings.lock().unwrap().carlink_interface.clear();
+        a.follow
+            .lock()
+            .unwrap()
+            .apply(&old, "wlan0", true, &a.events, &a.hotspot_lifetime);
+        assert_eq!(
+            a.follow.lock().unwrap().target.as_deref(),
+            Some("DIRECT-Car")
+        );
+        assert!(!a.follow.lock().unwrap().ready());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn admin_status_reads_the_capability_cache_without_probing() {
+        struct FailedProbe(std::sync::atomic::AtomicUsize);
+        impl CommandRunner for FailedProbe {
+            fn run(&self, _: &[String], timeout: Duration) -> Result<CommandResult> {
+                assert!(timeout <= Duration::from_secs(3));
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(std::io::Error::other("unavailable"))
+            }
+        }
+        let (mut a, dir) = fake();
+        assert!(serde_json::to_value(a.status())
+            .unwrap()
+            .get("hostCapabilities")
+            .is_none());
+        let runner = Arc::new(FailedProbe(Default::default()));
+        Arc::get_mut(&mut a).unwrap().capabilities =
+            Arc::new(crate::host_capabilities::CapabilityCache::new(
+                runner.clone(),
+                dir.clone(),
+                Default::default(),
+            ));
+        a.capabilities.initiated("wlan0", "wlan1");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while a.capabilities.get().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let count = runner.0.load(Ordering::SeqCst);
+        let status = serde_json::to_value(a.status()).unwrap();
+        assert_eq!(status["hostCapabilities"]["wifi"]["present"], false);
+        assert_eq!(status["hostCapabilities"]["carlink"]["interface"], "wlan1");
+        assert!(status["hostCapabilities"]["bluetooth"].is_null());
+        a.status();
+        assert_eq!(runner.0.load(Ordering::SeqCst), count);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn missing_wifi_keeps_admin_available_and_starts_once_when_it_appears() {
         let (mut a, dir) = fake();
         let outputs = Arc::new(OutputFake::default());
@@ -1842,7 +1794,10 @@ mod tests {
             let a = Arc::get_mut(&mut a).unwrap();
             a.child_factory = outputs.clone();
             a.net_root = dir.join("net");
-            a.provision_cli = "/usr/bin/true".into();
+            a.backends.station = crate::host_backends::station_with_cli(
+                Arc::new(ProcessCommandRunner::new()),
+                "/usr/bin/true".into(),
+            );
             *a.provision.lock().unwrap() = None;
         }
         a.start_supervisor().unwrap();
@@ -2198,7 +2153,7 @@ case "$*" in
 esac
 "#).unwrap();
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-            *a.provision.lock().unwrap() = Some(
+            *a.provision.lock().unwrap() = Some(Box::new(
                 WifiProvisioner::new(
                     ProcessNetworkManagerCli { executable: script },
                     "wlan0".into(),
@@ -2206,7 +2161,7 @@ esac
                     &dir,
                 )
                 .unwrap(),
-            );
+            ));
             {
                 let mut settings = a.settings.lock().unwrap();
                 settings.network_mode = mode.into();

@@ -11,7 +11,7 @@ mod branding;
 mod mdns_host;
 #[path = "../src/provision.rs"]
 mod provision;
-use openxplay_relay::{boot_timing, platform, plugins, settings};
+use openxplay_relay::{boot_timing, host_capabilities, platform, plugins, settings};
 #[path = "../src/supervisor.rs"]
 mod supervisor;
 use admin::auth::*;

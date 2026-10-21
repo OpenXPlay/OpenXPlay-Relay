@@ -182,3 +182,33 @@ it('renders status without a host profile as before on either relay', () => {
     }
   }
 });
+
+it('shows host AP restrictions and Bluetooth capability unknowns only when supplied', () => {
+  const status = fixture();
+  expect(diagnosticsView(status, en)).not.toContain('This host');
+  status.hostCapabilities = {
+    wifi: { interface: 'wlan0', phy: 'phy0', present: true, capabilities: { modes: ['managed', 'AP'], ap: true, station: true,
+      combinations: [{ apStation: true, channels: 1 }], channels: [
+        { frequency: 5180, channel: 36, disabled: false, noIr: false, radar: false },
+        { frequency: 5200, channel: 40, disabled: false, noIr: true, radar: false },
+        { frequency: 5260, channel: 52, disabled: false, noIr: false, radar: true },
+        { frequency: 5220, channel: 44, disabled: true, noIr: false, radar: false },
+      ] } },
+    carlink: { interface: '<wlan1>', phy: null, present: false, capabilities: null },
+    regulatory: { global: '00', phy0: 'US' }, adapters: [], selectedAdapter: 'hci0',
+    bluetooth: { brEdr: true, le: true, secureConnections: false }, rfcomm: null,
+    tools: { nmcli: { present: true, version: '1.30.0' }, dnsmasq: { present: false, version: null } },
+  };
+  const html = diagnosticsView(status, en);
+  expect(html).toContain('This host');
+  expect(html).toContain('AP+station: 1 channel(s)');
+  expect(html).toContain('5 GHz AP channels</dt><dd>36</dd>');
+  expect(html).toContain('phy0: US');
+  expect(html).toContain('BR/EDR: Yes · LE: Yes · Secure Connections: No');
+  expect(html).toContain('RFCOMM</dt><dd>Unknown');
+  expect(html).toContain('Missing tools</dt><dd>dnsmasq');
+  expect(html).toContain('&lt;wlan1&gt;');
+  expect(html).not.toContain('<wlan1>');
+  expect(diagnosticsView(status, zh)).toContain('本机能力');
+  expect(diagnosticsView(status, zh)).toContain('监管国家代码');
+});
