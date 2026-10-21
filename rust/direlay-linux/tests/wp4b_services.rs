@@ -236,10 +236,22 @@ fn private_address_matrix() {
         assert!(!private_address(ip.parse().unwrap()), "{ip}");
     }
 }
+#[test]
+fn status_without_host_profile_preserves_the_hostname() {
+    let mut json = serde_json::to_value(FakeAdmin.status()).unwrap();
+    json.as_object_mut().unwrap().remove("hostProfile");
+    let status: AdminStatus = serde_json::from_value(json).unwrap();
+    assert_eq!(status.host, "openxplay-linux.local");
+    assert!(status.host_profile.is_none());
+    let json = serde_json::to_value(status).unwrap();
+    assert_eq!(json["host"], "openxplay-linux.local");
+    assert!(json.get("hostProfile").is_none());
+}
+
 struct FakeAdmin;
 impl RelayAdmin for FakeAdmin {
     fn status(&self) -> AdminStatus {
-        serde_json::from_value(json!({"platform":"linux","name":"OpenXPlay Linux","version":"0.1.0","host":"openxplay-linux.local","adminUrl":"https://openxplay-linux.local:6975/","receiverUrls":["https://openxplay-linux.local:8443/"],"state":"idle","running":false,"autoStartPaused":false,"iphone":{"name":null,"reason":"none"},"network":{"mode":"shared-wifi","wifi":null},"output":"web","carlink":null,"notices":[],"wifiProvisioning":true})).unwrap()
+        serde_json::from_value(json!({"platform":"linux","name":"OpenXPlay Linux","version":"0.1.0","host":"openxplay-linux.local","hostProfile":{"model":null,"profilePath":"/etc/openxplay/host.json","profileLoaded":false,"profileError":null,"bluetoothAdapter":null,"wifiInterface":"wlan0","wifiPresent":true,"secureConnections":"pairing-off"},"adminUrl":"https://openxplay-linux.local:6975/","receiverUrls":["https://openxplay-linux.local:8443/"],"state":"idle","running":false,"autoStartPaused":false,"iphone":{"name":null,"reason":"none"},"network":{"mode":"shared-wifi","wifi":null},"output":"web","carlink":null,"notices":[],"wifiProvisioning":true})).unwrap()
     }
     fn settings(&self) -> AdminSettings {
         serde_json::from_value(json!({"schema":[{"id":"advanced","titleKey":"section.advanced","fields":[{"key":"wifiChannel","type":"number","labelKey":"field.wifiChannel","min":1,"max":14}]}],"values":{"wifiChannel":6,"plugins":false,"pluginsEnabled":[]},"installedPlugins":[{"id":"org.openxplay.pet","name":{"en":"Pet","zh-CN":"宠物"},"version":"1.0.0","license":"MIT AND CC-BY-NC-SA-4.0","icon":null,"nonCommercialAssets":true}]})).unwrap()
@@ -1174,6 +1186,7 @@ fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
     let mut settings = supervisor_settings();
     settings.carlink = Some(supervisor::CarlinkSettings {
         ble: Some(supervisor::BleCarlinkSettings {
+            adapter: None,
             interface: "wlan1".into(),
             address: Some("AA:BB:CC:DD:EE:FF".into()),
             id: "stable-id".into(),
@@ -1184,9 +1197,19 @@ fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
         pin: Some("1234".into()),
         ports: BTreeMap::new(),
     });
+    assert!(!settings.arguments().iter().any(|s| s == "--clink-adapter"));
+    settings
+        .carlink
+        .as_mut()
+        .unwrap()
+        .ble
+        .as_mut()
+        .unwrap()
+        .adapter = Some("hci2".into());
     let args = settings.arguments();
     let text: Vec<_> = args.iter().map(|s| s.to_str().unwrap()).collect();
     for (key, value) in [
+        ("--clink-adapter", "hci2"),
         ("--clink-link", "ble"),
         ("--clink-interface", "wlan1"),
         ("--clink-name", branding::DEVICE_NAME),
@@ -1366,6 +1389,7 @@ fn supervisor_trust_policy_and_single_user_attempt() {
     settings.state_dir = dir.clone();
     settings.carlink = Some(supervisor::CarlinkSettings {
         ble: Some(supervisor::BleCarlinkSettings {
+            adapter: None,
             interface: "wlan0".into(),
             address: None,
             id: "relay".into(),

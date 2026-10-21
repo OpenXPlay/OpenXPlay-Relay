@@ -24,7 +24,7 @@ pub const SWITCH_TIMEOUT: Duration = Duration::from_secs(3);
 pub const RETRY_INITIAL: Duration = Duration::from_secs(2);
 pub const RETRY_MAX: Duration = Duration::from_secs(30);
 
-/// The index N of the adapter `hciN` to switch; `None` when unknown, which falls back to 0.
+/// The index N of the selected adapter `hciN`; `None` means it is not present yet.
 pub type AdapterIndex = Arc<dyn Fn() -> Option<u16> + Send + Sync>;
 
 /// The `btmgmt` command for one switch. BlueZ 5.55 `btmgmt` quits before the controller answers
@@ -104,6 +104,8 @@ pub struct SecureConnections {
     runner: Arc<dyn CommandRunner>,
     events: Arc<JsonEvents>,
     index: AdapterIndex,
+    managed: bool,
+    require_adapter: bool,
     retry_delay: (Duration, Duration),
     state: Mutex<State>,
     changed: Condvar,
@@ -120,6 +122,8 @@ impl SecureConnections {
             runner,
             events,
             index: Arc::new(|| None),
+            managed: true,
+            require_adapter: false,
             retry_delay: (RETRY_INITIAL, RETRY_MAX),
             state: Mutex::default(),
             changed: Condvar::new(),
@@ -129,9 +133,14 @@ impl SecureConnections {
             subscription: Mutex::new(None),
         }
     }
-    /// Where the adapter index comes from (default: always 0).
+    /// Uses the selected adapter index, waiting when none is present (standalone default: 0).
     pub fn with_adapter_index(mut self, index: AdapterIndex) -> Self {
+        self.require_adapter = true;
         self.index = index;
+        self
+    }
+    pub fn with_policy(mut self, policy: crate::host_profile::SecureConnectionsPolicy) -> Self {
+        self.managed = policy == crate::host_profile::SecureConnectionsPolicy::PairingOff;
         self
     }
     /// The first delay and the cap of the retries after a failed switch.
@@ -142,6 +151,9 @@ impl SecureConnections {
     /// Applies the policy now and again whenever `wake` reports a ready adapter, on a worker
     /// thread: startup and BlueZ signals never wait for `btmgmt`.
     pub fn start(self: &Arc<Self>, wake: Option<&Arc<BluetoothWake>>) -> Result<()> {
+        if !self.managed {
+            return Ok(());
+        }
         {
             let mut s = self.state.lock().unwrap();
             if s.started || s.closed {
@@ -167,6 +179,9 @@ impl SecureConnections {
     }
     /// Asks the worker to apply the policy; never blocks.
     pub fn request(&self, reason: &str) {
+        if !self.managed {
+            return;
+        }
         let mut s = self.state.lock().unwrap();
         if s.closed || s.unsupported {
             return;
@@ -176,6 +191,9 @@ impl SecureConnections {
     }
     /// Opens a pairing window: SC is off until it closes. Waits at most one switch.
     pub fn open_window(self: &Arc<Self>) -> PairingWindow {
+        if !self.managed {
+            return PairingWindow { policy: None };
+        }
         self.state.lock().unwrap().windows += 1;
         self.apply("pairing");
         PairingWindow {
@@ -259,13 +277,23 @@ impl SecureConnections {
     }
     /// One switch, with the `switching` lock held.
     fn set(&self, enable: bool, reason: &str) -> bool {
-        let index = (self.index)().unwrap_or(0);
-        let outcome = match self
-            .runner
-            .run(&switch_command(index, enable), SWITCH_TIMEOUT)
-        {
-            Ok(r) => verify(r.exit_code, &r.output, enable),
-            Err(e) => Err(Failure::Failed(e.to_string())),
+        if !self.managed {
+            return true;
+        }
+        let selected = (self.index)();
+        let index = selected.unwrap_or(0);
+        let outcome = if self.require_adapter && selected.is_none() {
+            Err(Failure::Failed(
+                "selected Bluetooth adapter unavailable".into(),
+            ))
+        } else {
+            match self
+                .runner
+                .run(&switch_command(index, enable), SWITCH_TIMEOUT)
+            {
+                Ok(r) => verify(r.exit_code, &r.output, enable),
+                Err(e) => Err(Failure::Failed(e.to_string())),
+            }
         };
         let action = word(enable);
         let mut s = self.state.lock().unwrap();

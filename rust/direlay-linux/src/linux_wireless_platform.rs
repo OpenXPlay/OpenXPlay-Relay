@@ -63,7 +63,14 @@ impl LinuxWirelessPlatform {
             runner.clone(),
             options.iphone.clone(),
             options.rfcomm_channel,
-        );
+        )
+        .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
+            options.host_profile.profile.bluetooth_adapter.clone(),
+        ));
+        let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
+            Duration::from_secs(options.host_profile.profile.hotspot_down_gap_seconds),
+            None,
+        ));
         Self {
             options,
             runner,
@@ -74,7 +81,7 @@ impl LinuxWirelessPlatform {
             input,
             bluetooth,
             session,
-            hotspot_lifetime: Arc::default(),
+            hotspot_lifetime,
             bluetooth_wake: None,
             secure_connections: None,
             planned_ssid: Mutex::new(None),
@@ -269,7 +276,12 @@ impl WirelessPlatform for LinuxWirelessPlatform {
     fn start_pairing(&self) -> Result<Option<Arc<dyn CloseResource>>> {
         match self.options.pair_seconds {
             Some(n) => {
-                let mut mode = PairingMode::new(n, self.events.clone());
+                let mut mode = PairingMode::new(n, self.events.clone()).with_backend(Arc::new(
+                    crate::linux_bluetooth::BluezPairing::new(self.events.clone())
+                        .with_adapter_selection(crate::linux_bluetooth::AdapterSelection(
+                            self.options.host_profile.profile.bluetooth_adapter.clone(),
+                        )),
+                ));
                 if let Some(policy) = &self.secure_connections {
                     mode = mode.with_secure_connections(policy.clone());
                 }

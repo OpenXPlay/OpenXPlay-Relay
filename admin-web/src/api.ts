@@ -18,6 +18,7 @@ export interface PairedDevice { name: string; connected: boolean; iphone: boolea
 export interface VideoStatus { codec: string; reason: string; codecString?: string | null; width?: number | null; height?: number | null }
 // One browser on the car screen: its latest receiver-info and the most recent per-second stats, oldest first.
 // Linux device-support contract (UFI003 Bluetooth guard); absent where no guard runs.
+export interface HostProfile { model: string | null; profilePath: string; profileLoaded: boolean; profileError: string | null; bluetoothAdapter: { name: string; address: string } | null; wifiInterface: string; wifiPresent: boolean; secureConnections: 'pairing-off' | 'untouched' }
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 export interface Status {
@@ -28,7 +29,7 @@ export interface Status {
   video?: VideoStatus; receivers?: ReceiverReport[]; bluetoothGuard?: BluetoothGuard;
   hotspot?: { hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;
-  platform: 'android' | 'linux'; name: string; version: string; host: string; adminUrl: string; receiverUrls: string[];
+  platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; adminUrl: string; receiverUrls: string[];
   state: 'idle' | 'waiting' | 'connecting' | 'active' | 'reconnecting'; running: boolean; autoStartPaused: boolean;
   iphone: { name: string | null; reason: string }; network: { mode: string; wifi: string | null; followingCarlink?: boolean };
   output: string; carlink: CarlinkStatus | null; notices: string[];

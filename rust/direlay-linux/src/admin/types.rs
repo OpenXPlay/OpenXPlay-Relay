@@ -49,6 +49,8 @@ pub struct AdminStatus {
     pub name: String,
     pub version: String,
     pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_profile: Option<AdminHostProfile>,
     pub admin_url: String,
     pub receiver_urls: Vec<String>,
     pub state: String,
@@ -480,4 +482,23 @@ mod backoff_tests {
         assert_eq!(status.next_attempt, None);
         assert!(status.detail.is_empty());
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminHostProfile {
+    pub model: Option<String>,
+    pub profile_path: std::path::PathBuf,
+    pub profile_loaded: bool,
+    pub profile_error: Option<String>,
+    pub bluetooth_adapter: Option<AdminBluetoothAdapter>,
+    pub wifi_interface: String,
+    pub wifi_present: bool,
+    pub secure_connections: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdminBluetoothAdapter {
+    pub name: String,
+    pub address: String,
 }

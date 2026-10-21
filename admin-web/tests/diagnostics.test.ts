@@ -4,7 +4,7 @@
 
 import { expect, it, vi } from 'vitest';
 import { browserLabel, codecSupport, copyText, diagnosticsView, gpuLabel, liveLine, liveStats, receiverReport, receiverSummary, videoLine, videoView, windowLine } from '../src/diagnostics';
-import { devicesView, statusView } from '../src/views';
+import { addressesView, devicesView, statusView } from '../src/views';
 import { homeView } from '../src/logic';
 import { translate } from '../src/i18n';
 import { mockReceivers, previewStatus } from '../dev-server';
@@ -144,4 +144,41 @@ it('always lists the Bluetooth guard in the developer section', () => {
   expect(html).toContain('&lt;reset failed&gt;');
   expect(diagnosticsView({ ...status, bluetoothGuard: { ...status.bluetoothGuard, lastError: null } }, zh)).toContain('<dt>恢复次数</dt><dd>2</dd>');
   expect(diagnosticsView({ ...status, bluetoothGuard: undefined }, en)).not.toContain('<h3>Bluetooth</h3>');
+});
+
+it('shows the host model, selected adapter and unmanaged SC policy in both languages', () => {
+  const status = fixture();
+  status.hostProfile = { model: 'Phicomm N1', profilePath: '/etc/openxplay/host.json', profileLoaded: true, profileError: null,
+    bluetoothAdapter: { name: 'hci2', address: 'AA:BB:CC:DD:EE:FF' }, wifiInterface: 'wlan1', wifiPresent: false, secureConnections: 'untouched' };
+  for (const t of [en, zh]) {
+    const html = diagnosticsView(status, t);
+    expect(html).toContain('Phicomm N1');
+    expect(html).toContain('hci2 · AA:BB:CC:DD:EE:FF');
+    expect(html).toContain(t('host.unmanaged'));
+    expect(addressesView(status, false, t)).toContain(t('host.wifiMissing', { interface: 'wlan1' }));
+    expect(addressesView(status, false, t)).toContain('role="alert"');
+  }
+  status.hostProfile.wifiPresent = true;
+  expect(addressesView(status, false, en)).not.toContain('role="alert"');
+  status.hostProfile.model = '<script>';
+  expect(diagnosticsView(status, en)).toContain('&lt;script&gt;');
+});
+
+it('renders status without a host profile as before on either relay', () => {
+  for (const platform of ['android', 'linux'] as const) {
+    const status = fixture();
+    status.platform = platform;
+    status.host = `openxplay-${platform}.local`;
+    expect(status.hostProfile).toBeUndefined();
+    for (const t of [en, zh]) {
+      const diagnostics = diagnosticsView(status, t);
+      expect(diagnostics).toContain(`<h3>${t('diag.video')}</h3>`);
+      for (const key of ['host.model', 'host.bluetooth', 'host.sc']) {
+        expect(diagnostics).not.toContain(`<dt>${t(key)}</dt>`);
+      }
+      const addresses = addressesView(status, false, t);
+      expect(addresses).toContain(status.host);
+      expect(addresses).not.toContain('role="alert"');
+    }
+  }
 });

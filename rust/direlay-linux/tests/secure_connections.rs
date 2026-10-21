@@ -198,7 +198,7 @@ fn a_pairing_window_turns_it_off_and_its_end_restores_it() {
     // Off before the adapter becomes discoverable.
     assert_eq!(h.sequence(), ["sc off", "discoverable 1"]);
     assert_eq!(h.policy.enabled(), Some(false));
-    wait("window end", || h.sequence().len() == 4);
+    wait("window end", || h.events_named("pairing-ended").len() == 1);
     // Not pairable any more before SC is back on.
     assert_eq!(
         h.sequence(),
@@ -443,4 +443,41 @@ fn a_connection_waits_for_a_switch_in_progress_but_not_for_a_retry() {
     policy.wait_settled(SWITCH_TIMEOUT);
     assert!(started.elapsed() < Duration::from_millis(100));
     policy.close("relay-stop");
+}
+
+#[test]
+fn untouched_never_switches_at_start_pairing_reset_or_shutdown() {
+    let runner = Arc::new(Btmgmt::default());
+    let events = Arc::new(JsonEvents::new(Arc::new(|_| {})));
+    let policy = Arc::new(
+        SecureConnections::new(runner.clone(), events)
+            .with_adapter_index(Arc::new(|| {
+                panic!("untouched must not look up the btmgmt index")
+            }))
+            .with_policy(host_profile::SecureConnectionsPolicy::Untouched),
+    );
+    let wake = Arc::new(BluetoothWake::default());
+    policy.start(Some(&wake)).unwrap();
+    let window = policy.open_window();
+    wake.publish(&BluetoothChange::AdapterReady);
+    policy.request("adapter-ready");
+    window.close("test");
+    policy.close("shutdown");
+    assert_eq!(policy.enabled(), None);
+    assert!(runner.sequence.lock().unwrap().is_empty());
+}
+
+#[test]
+fn an_absent_selected_adapter_never_switches_the_default_adapter() {
+    let runner = Arc::new(Btmgmt::default());
+    let policy = Arc::new(
+        SecureConnections::new(runner.clone(), Arc::new(JsonEvents::new(Arc::new(|_| {}))))
+            .with_adapter_index(Arc::new(|| None)),
+    );
+    policy.start(None).unwrap();
+    policy.wait_settled(SWITCH_TIMEOUT);
+    let window = policy.open_window();
+    window.close("test");
+    policy.close("shutdown");
+    assert!(runner.sequence.lock().unwrap().is_empty());
 }
