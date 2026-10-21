@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-20
 
 use crate::{
+    linux_bluetooth::{select_adapter, AdapterInfo},
     platform::{command, spawn_worker, CommandRunner},
     wifi_capabilities::{parse_phy, PhyCapabilities},
 };
@@ -202,6 +203,7 @@ pub fn probe(
     carlink: &str,
     selection: &crate::linux_bluetooth::AdapterSelection,
     socket: &dyn Fn() -> std::io::Result<()>,
+    adapter_source: &dyn Fn() -> Option<Vec<AdapterInfo>>,
 ) -> HostCapabilities {
     let wifi = probe_wifi(runner, root, wifi);
     let carlink = if carlink == wifi.interface {
@@ -209,60 +211,24 @@ pub fn probe(
     } else {
         probe_wifi(runner, root, carlink)
     };
-    // bluetoothctl talks to BlueZ; hci names come from its addresses in sysfs.
-    let adapters = run(runner, &["bluetoothctl", "list"]).map(|list| {
-        list.lines()
-            .filter_map(|line| {
-                let mut words = line.split_whitespace();
-                if words.next()? != "Controller" {
-                    return None;
-                }
-                let address = words.next()?.to_string();
-                let alias = words
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .trim_end_matches(" [default]")
-                    .to_string();
-                let name = std::fs::read_dir(root.join("sys/class/bluetooth"))
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Result::ok)
-                    .find_map(|e| {
-                        let a = std::fs::read_to_string(e.path().join("address")).ok()?;
-                        a.trim()
-                            .eq_ignore_ascii_case(&address)
-                            .then(|| e.file_name().to_string_lossy().into_owned())
-                    })
-                    .unwrap_or(alias);
-                let powered = run(runner, &["bluetoothctl", "show", &address]).and_then(|s| {
-                    s.lines().find_map(|l| {
-                        l.trim().strip_prefix("Powered: ").and_then(|s| match s {
-                            "yes" => Some(true),
-                            "no" => Some(false),
-                            _ => None,
-                        })
-                    })
-                });
-                Some(BluetoothAdapter {
-                    name,
-                    address,
-                    powered,
-                })
+    let adapters = adapter_source().map(|entries| {
+        entries
+            .into_iter()
+            .map(|a| BluetoothAdapter {
+                name: a.name,
+                address: a.address,
+                powered: a.powered,
             })
             .collect::<Vec<_>>()
     });
     let selected_adapter = adapters.as_ref().and_then(|adapters| {
-        adapters
-            .iter()
-            .filter(|a| {
-                crate::host_profile::adapter_name_index(&a.name).is_some()
-                    && selection.0.as_ref().is_none_or(|wanted| {
-                        wanted.eq_ignore_ascii_case(&a.name)
-                            || wanted.eq_ignore_ascii_case(&a.address)
-                    })
-            })
-            .min_by_key(|a| crate::host_profile::adapter_name_index(&a.name))
-            .map(|a| a.name.clone())
+        select_adapter(
+            selection.0.as_deref(),
+            adapters
+                .iter()
+                .map(|a| (a.name.as_str(), a.address.as_str())),
+        )
+        .map(str::to_string)
     });
     let bluetooth = selected_adapter
         .as_deref()
@@ -381,6 +347,7 @@ impl CapabilityCache {
                     &carlink,
                     &cache.selection,
                     &rfcomm_socket,
+                    &crate::linux_bluetooth::adapters,
                 );
                 cache.state.lock().unwrap().result = Some(result);
             }),
@@ -411,9 +378,7 @@ mod tests {
                 ["iw", "phy", "phy0", "info"] => "Supported interface modes:\n * AP\n * managed\nBand 1:\n * 2437 MHz [6] (20.0 dBm)",
                 ["iw", "phy", "phy1", "info"] => " * 5180 MHz [36] (no IR)",
                 ["iw", "reg", "get"] => "global\ncountry 00: DFS-UNSET\nphy#1 (self-managed)\ncountry US: DFS-FCC",
-                ["bluetoothctl", "list"] => "Controller AA:BB:CC:DD:EE:FF Relay [default]",
-                ["bluetoothctl", "show", _] => " Powered: yes",
-                ["sh", "-c", "exec btmgmt --index 1 info <&1"] => "hci1: Primary controller\n supported settings: powered br/edr le secure-conn\n current settings: powered le",
+                ["sh", "-c", "exec btmgmt --index 0 info <&1" | "exec btmgmt --index 1 info <&1"] => "hci1: Primary controller\n supported settings: powered br/edr le secure-conn\n current settings: powered le",
                 ["nmcli", "--version"] => "nmcli tool, version 1.30.0\n",
                 _ => return Err(std::io::Error::other("unavailable")),
             };
@@ -423,19 +388,31 @@ mod tests {
             })
         }
     }
+    #[derive(Default)]
+    struct Recording {
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+    impl CommandRunner for Recording {
+        fn run(&self, args: &[String], timeout: Duration) -> std::io::Result<CommandResult> {
+            self.calls.lock().unwrap().push(args.to_vec());
+            Fake(AtomicUsize::new(0)).run(args, timeout)
+        }
+    }
+    fn adapter(name: &str, address: &str) -> AdapterInfo {
+        AdapterInfo {
+            name: name.into(),
+            address: address.into(),
+            powered: Some(true),
+        }
+    }
     fn root() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "capabilities-{}",
             crate::admin::auth::random_hex(8).unwrap()
         ));
-        for dir in ["sys/class/net/wlan0", "sys/class/bluetooth/hci1", "usr/bin"] {
+        for dir in ["sys/class/net/wlan0", "usr/bin"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
-        std::fs::write(
-            root.join("sys/class/bluetooth/hci1/address"),
-            "AA:BB:CC:DD:EE:FF\n",
-        )
-        .unwrap();
         root
     }
     #[test]
@@ -491,6 +468,7 @@ mod tests {
             "wlan1",
             &Default::default(),
             &|| Ok(()),
+            &|| Some(vec![adapter("hci1", "AA:BB:CC:DD:EE:FF")]),
         );
         assert_eq!(snapshot.wifi.present, Some(true));
         assert_eq!(snapshot.carlink.present, Some(false));
@@ -503,6 +481,93 @@ mod tests {
         assert_eq!(snapshot.regulatory["phy1"], "US");
         let unknown = probe_wifi(&runner, &root, "missing");
         assert!(unknown.phy.is_none() && unknown.capabilities.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn bluez_adapter_without_sysfs_address_runs_btmgmt() {
+        let root = root();
+        assert!(!root.join("sys/class/bluetooth").exists());
+        let runner = Recording::default();
+        let snapshot = probe(
+            &runner,
+            &root,
+            "wlan0",
+            "wlan0",
+            &Default::default(),
+            &|| Ok(()),
+            &|| Some(vec![adapter("hci0", "AA:BB:CC:DD:EE:00")]),
+        );
+        assert_eq!(snapshot.selected_adapter.as_deref(), Some("hci0"));
+        let features = snapshot.bluetooth.unwrap();
+        assert!(features.br_edr && features.le && features.secure_connections);
+        assert_eq!(snapshot.adapters.unwrap()[0].name, "hci0");
+        let calls = runner.calls.lock().unwrap();
+        assert!(calls.contains(&crate::secure_connections::info_command(0)));
+        assert!(!calls.iter().any(|args| args[0] == "bluetoothctl"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn probe_adapter_selection_is_numeric_and_never_falls_back() {
+        let root = root();
+        for reversed in [false, true] {
+            let mut entries = vec![
+                adapter("hci10", "AA:BB:CC:DD:EE:10"),
+                adapter("hci2", "AA:BB:CC:DD:EE:02"),
+            ];
+            if reversed {
+                entries.reverse();
+            }
+            for (configured, expected) in [
+                (None, Some("hci2")),
+                (Some("aa:bb:cc:dd:ee:10"), Some("hci10")),
+                (Some("HCI10"), Some("hci10")),
+                (Some("hci0"), None),
+            ] {
+                let runner = Recording::default();
+                let snapshot = probe(
+                    &runner,
+                    &root,
+                    "wlan0",
+                    "wlan0",
+                    &crate::linux_bluetooth::AdapterSelection(configured.map(str::to_string)),
+                    &|| Ok(()),
+                    &|| Some(entries.clone()),
+                );
+                assert_eq!(snapshot.selected_adapter.as_deref(), expected);
+                let calls = runner.calls.lock().unwrap();
+                if let Some(name) = expected {
+                    let index = crate::host_profile::adapter_name_index(name).unwrap();
+                    assert!(calls.contains(&crate::secure_connections::info_command(index)));
+                } else {
+                    assert!(snapshot.bluetooth.is_none());
+                    assert!(!calls.iter().any(|args| args[0] == "sh"));
+                }
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn unavailable_adapter_source_leaves_bluetooth_unknown() {
+        let root = root();
+        let runner = Recording::default();
+        let snapshot = probe(
+            &runner,
+            &root,
+            "wlan0",
+            "wlan0",
+            &Default::default(),
+            &|| Ok(()),
+            &|| None,
+        );
+        assert!(snapshot.adapters.is_none());
+        assert!(snapshot.selected_adapter.is_none());
+        assert!(snapshot.bluetooth.is_none());
+        assert!(!runner
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|args| args[0] == "sh"));
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
