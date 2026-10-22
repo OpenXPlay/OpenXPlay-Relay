@@ -18,11 +18,14 @@ cache=${OPENXPLAY_RELAY_CACHE:-/var/cache/openxplay/relay}
 unit=openxplay-relay.service
 wait_active=${OPENXPLAY_RELAY_UPDATE_TIMEOUT:-60}
 settle=${OPENXPLAY_RELAY_UPDATE_SETTLE:-15}
+wait_lock=${OPENXPLAY_RELAY_UPDATE_LOCK_TIMEOUT:-180}
 keep=3
 want_sha=
 export LC_ALL=C DEBIAN_FRONTEND=noninteractive
 say() { echo "openxplay-relay-update: $*"; }
-fail() { echo "OXP-STAGE relay failed: $*" >&2; exit 1; }
+fail() { echo "OXP-STAGE relay failed: $*" >&2; trap - 0; exit 1; }
+# Also report unexpected command failures and shell errors from set -eu.
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then fail "update exited with status $rc"; fi' 0
 sum() { sha256sum "$1" | cut -d' ' -f1; }
 installed() { dpkg-query -W -f='${Status} ${Version}' openxplay-relay 2>/dev/null | awk '$3 == "installed" {print $4}'; }
 cached() { printf '%s/openxplay-relay_%s_arm64.deb' "$cache" "$1"; }
@@ -49,7 +52,41 @@ healthy() {
     sleep "$settle"
     [ "$(prop ActiveState)" = active ] && [ "$(prop MainPID)" = "$pid" ] && [ "$(prop NRestarts)" = "$restarts" ]
 }
-install_deb() { dpkg --force-confdef --force-confold -i "$1"; }
+dpkg_busy() {
+    # lslocks comes with Debian's essential util-linux package and sees dpkg's POSIX locks.
+    # The lock files normally exist even when idle; never remove or flock them.
+    locks=$(lslocks --noheadings --raw --output PATH) || fail 'cannot inspect dpkg locks'
+    lock_reason=$(printf '%s\n' "$locks" | grep -m 1 -E '^/var/lib/dpkg/lock(-frontend)?$' || :)
+    [ -n "$lock_reason" ]
+}
+wait_dpkg() {
+    if ! "$lock_waiting"; then
+        echo "OXP-STAGE relay waiting: dpkg is busy ($lock_reason)"
+        lock_waiting=true
+    fi
+    [ "$(uptime_s)" -lt "$lock_deadline" ] || fail 'dpkg is locked by another process'
+    sleep 1
+}
+install_deb() {
+    lock_deadline=$(($(uptime_s) + wait_lock))
+    lock_waiting=false
+    while :; do
+        while dpkg_busy; do wait_dpkg; done
+        # Keep stdout live on fd 3; capture stderr to recognize a lock taken after the check.
+        if dpkg_error=$(dpkg --force-confdef --force-confold -i "$1" 2>&1 >&3); then
+            [ -z "$dpkg_error" ] || printf '%s\n' "$dpkg_error" >&2
+            return 0
+        else
+            dpkg_status=$?
+        fi
+        if ! printf '%s\n' "$dpkg_error" | grep -Eq '^dpkg: error: dpkg (frontend|database) lock (is|was) locked by '; then
+            printf '%s\n' "$dpkg_error" >&2
+            return "$dpkg_status"
+        fi
+        lock_reason='another dpkg process'
+        wait_dpkg
+    done
+} 3>&1
 # Highest cached version strictly below $1 (or below everything if $1 is empty).
 previous_of() {
     best=
@@ -72,8 +109,8 @@ prune() {
 mode=install
 while [ "$#" -gt 0 ]; do
     case "$1" in
-    --keep) keep=$2; shift 2 ;;
-    --sha256) want_sha=$2; shift 2 ;;
+    --keep) [ "$#" -ge 2 ] || fail '--keep needs a number'; keep=$2; shift 2 ;;
+    --sha256) [ "$#" -ge 2 ] || fail '--sha256 needs a hash'; want_sha=$2; shift 2 ;;
     --rollback) mode=rollback; shift ;;
     --list) mode=list; shift ;;
     -*) fail "unknown option $1" ;;
@@ -82,6 +119,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ "$(id -u)" -eq 0 ] || fail 'run as root'
 case "$keep" in ''|*[!0-9]*) fail '--keep needs a number' ;; esac
+case "$wait_lock" in ''|*[!0-9]*) fail 'OPENXPLAY_RELAY_UPDATE_LOCK_TIMEOUT needs a number' ;; esac
 mkdir -p "$cache"; chmod 0700 "$cache"
 
 if [ "$mode" = list ]; then
@@ -118,16 +156,22 @@ fallback=
 if [ -n "$old" ] && [ "$old" != "$new" ] && [ -f "$(cached "$old")" ]; then fallback=$(cached "$old"); fi
 [ -n "$fallback" ] || say "no cached package of the current version ${old:-none}: no automatic rollback"
 say "installing $new (current: ${old:-none})"
-if install_deb "$target" && healthy; then
-    prune
-    echo "OXP-STAGE relay ok version=$new previous=${old:-none}"
-    exit 0
+if install_deb "$target"; then
+    if healthy; then
+        prune
+        echo "OXP-STAGE relay ok version=$new previous=${old:-none}"
+        exit 0
+    fi
+    failure="relay $new did not come up"
+else
+    failure="dpkg failed for $new"
 fi
-[ -n "$fallback" ] || fail "relay $new did not come up and there is nothing to roll back to"
-say "relay $new did not come up; reinstalling $old"
+[ -n "$fallback" ] || fail "$failure and there is nothing to roll back to"
+say "$failure; reinstalling $old"
 install_deb "$fallback" || fail "rollback to $old failed"
 healthy || fail "relay not healthy after rolling back to $old"
 # A later --rollback must never pick the build that just failed.
 rm -f "$target"
 echo "OXP-STAGE relay rolled-back version=$old failed=$new"
+trap - 0
 exit 2
