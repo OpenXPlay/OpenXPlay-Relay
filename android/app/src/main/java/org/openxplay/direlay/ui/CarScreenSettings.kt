@@ -5,8 +5,11 @@ package org.openxplay.direlay.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,9 +21,11 @@ import kotlinx.coroutines.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
+import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 
 private data class DetectedCarScreen(val screen: ScreenDataKey, val records: List<WindowSizeRecord>, val receiver: org.json.JSONObject?)
-@Composable fun CarScreenSettings(draft: RelaySettings, runtime: RelayRuntime, change: (RelaySettings) -> Unit) {
+@Composable fun CarScreenSettings(draft: RelaySettings, runtime: RelayRuntime,
+    openTrustedHttps: () -> Unit = {}, openOutput: () -> Unit = {}, change: (RelaySettings) -> Unit) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     var models by remember { mutableStateOf<CarModels?>(null) }
@@ -75,6 +80,8 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
             }
         }
     }
+    if (car.brand == "tesla" || draft.teslaBrowser != TeslaBrowserMode.OFF)
+        TeslaBrowserSettings(draft, runtime, openTrustedHttps, openOutput, change)
     CollapsibleCard("canvas", stringResource(R.string.car_saved_canvas), savedCanvas?.let { "${it.profile.width} × ${it.profile.height}" } ?: none) {
         savedCanvas?.let { saved ->
             Text(stringResource(R.string.car_canvas_size, saved.profile.width, saved.profile.height, saved.profile.density))
@@ -119,5 +126,63 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
                 Toast.makeText(context, copied, Toast.LENGTH_SHORT).show()
             }
         }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.car_copy)) }
+    }
+}
+
+@Composable private fun TeslaBrowserSettings(draft: RelaySettings, runtime: RelayRuntime,
+    openTrustedHttps: () -> Unit, openOutput: () -> Unit, change: (RelaySettings) -> Unit) {
+    val name by runtime.publicName.view.collectAsState()
+    val options = listOf(
+        TeslaBrowserMode.OFF to RadioOption(R.string.tesla_off, R.string.tesla_intro),
+        TeslaBrowserMode.VIRTUAL_NAME to RadioOption(R.string.tesla_virtual_name, R.string.tesla_virtual_name_hint),
+        TeslaBrowserMode.PUBLIC_ADDRESS to RadioOption(R.string.tesla_public_address, R.string.tesla_public_address_hint),
+        TeslaBrowserMode.TESLAMIRROR to RadioOption(R.string.tesla_mirror, R.string.tesla_virtual_name_hint),
+        TeslaBrowserMode.TESLA_ANDROID to RadioOption(R.string.tesla_android, R.string.tesla_public_address_hint))
+    CollapsibleCard("tesla", stringResource(R.string.tesla_title),
+        stringResource(options.first { it.first == draft.teslaBrowser }.second.title), initiallyExpanded = true) {
+        Hint(stringResource(R.string.tesla_intro))
+        Column(Modifier.selectableGroup()) {
+            options.forEach { (mode, option) ->
+                RadioOptionRow(option, draft.teslaBrowser == mode,
+                    supportingText = if (mode == TeslaBrowserMode.OFF) ""
+                        else stringResource(option.supporting, draft.copy(teslaBrowser = mode).teslaAddress().orEmpty())) {
+                    change(draft.copy(teslaBrowser = mode))
+                }
+            }
+        }
+        val address = draft.teslaAddress()
+        if (address != null) {
+            if (TeslaAddressPolicy.needsAndroid13Warning(Build.VERSION.SDK_INT, address))
+                Hint(stringResource(R.string.tesla_address_android13))
+            CollapsibleCard("teslaAddress", stringResource(R.string.tesla_address), address) {
+                val phoneAddresses = runtime.ipv4 - listOfNotNull(runtime.teslaAddress?.address).toSet()
+                SettingField(stringResource(R.string.tesla_address), address,
+                    R.string.tesla_address_invalid.takeUnless { TeslaAddressPolicy.valid(address, phoneAddresses) }) {
+                    change(when (draft.teslaBrowser) {
+                        TeslaBrowserMode.OFF -> draft
+                        TeslaBrowserMode.VIRTUAL_NAME -> draft.copy(teslaVirtualAddress = it)
+                        TeslaBrowserMode.PUBLIC_ADDRESS -> draft.copy(teslaPublicAddress = it)
+                        TeslaBrowserMode.TESLAMIRROR -> draft.copy(teslaMirrorAddress = it)
+                        TeslaBrowserMode.TESLA_ANDROID -> draft.copy(teslaAndroidAddress = it)
+                    })
+                }
+            }
+            Hint(stringResource(R.string.tesla_requirements))
+            if (draft.carlinkOutput && !draft.bothOutputs) {
+                Hint(stringResource(R.string.tesla_needs_browser))
+                TextButton(onClick = openOutput, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.tesla_open_output))
+                }
+            }
+            if (!runtime.settingsStore.wireless(draft)) Hint(stringResource(R.string.tesla_needs_wireless))
+            if (draft.wirelessNetwork.choice == WirelessNetworkChoice.EXISTING_WIFI)
+                Hint(stringResource(R.string.tesla_needs_phone_network))
+            if (draft.teslaBrowser.usesTrustedName && !name.hasTrustedNameConfiguration()) {
+                Hint(stringResource(R.string.tesla_needs_name))
+                TextButton(onClick = openTrustedHttps, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.tesla_open_name))
+                }
+            }
+        }
     }
 }

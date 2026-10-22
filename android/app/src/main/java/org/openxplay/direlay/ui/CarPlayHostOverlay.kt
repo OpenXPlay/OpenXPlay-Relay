@@ -37,8 +37,7 @@ private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySna
     val selection = iphoneSelection(settings.iphoneAddress)
     val name = iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name
     val addresses = carIpv4.toList()
-    val urls = receiverUrls.filterNot { it.contains("://localhost:") }
-        .filter { url -> addresses.any { url.contains("://$it:") } }
+    val urls = headUnitUrls()
     val failures = status.failures
     val carlinkOn = settings.carlinkOutput || settings.bothOutputs
     val failedCarlink = carlinkOn && carlinkFailed
@@ -53,9 +52,10 @@ private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySna
         failure = failures.isNotEmpty() || failedCarlink || webReason != null,
         iphoneSelection = selection, webReason = webReason, webListening = serverState.startsWith("TLS enabled"),
         carNetworkAvailable = addresses.isNotEmpty(),
-        problems = homeProblems(failures, failedCarlink, carlinkDetail, carlinkError, webReason, serverState)),
+        problems = homeProblems(failures, failedCarlink, carlinkDetail, carlinkError, webReason, serverState,
+            teslaFailure = teslaFailure)),
         name, urls, stopped = autoStartGate.paused,
-        publicNameUrl = publicNameUrl(), carIpv4 = addresses,
+        publicNameUrl = publicNameUrl(), carIpv4 = addresses, teslaUrl = teslaUrl(),
         carlinkState = carlinkStateLabel(carlinkState, carlinkFailed, carlinkPins.pending != null),
         carlinkWindow = carlinkDisplay?.let { HostOverlaySize(it.widthPx, it.heightPx) },
         canvas = screen.first.substringBefore(" · "), screenWidthMm = carPlayScreenWidthMm,
@@ -152,7 +152,7 @@ private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySna
                                 ?: row.value, row.monospace)
                         }
                         if (section.title == R.string.host_head_unit_address) {
-                            ReceiverAddresses(value.receiverUrls) { clipboard.setText(AnnotatedString(it)) }
+                            ReceiverAddresses(value.receiverUrls, { clipboard.setText(AnnotatedString(it)) }, value.teslaUrl)
                             value.browserHint?.let { Hint(stringResource(it)) }
                         }
                     }

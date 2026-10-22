@@ -44,6 +44,8 @@ data class PublicNameView(val configured: Boolean = false, val enabled: Boolean 
     val name: String = "", val tokenSet: Boolean = false, val agreeTerms: Boolean = false, val revision: Long = 0,
     val providers: Map<DnsProviderId, PublicNameProviderView> = DnsProviderId.entries.associateWith { PublicNameProviderView() })
 
+fun PublicNameView.hasTrustedNameConfiguration(): Boolean = enabled && provider != null && name.isNotBlank() && tokenSet && agreeTerms
+
 /** A settings-screen change; an empty [token] keeps the chosen provider's saved one. */
 class PublicNameEdit(val enabled: Boolean, val provider: DnsProviderId?, val name: String, val token: String, val agreeTerms: Boolean) {
     override fun toString() = "PublicNameEdit(enabled=$enabled, provider=${provider?.key}, name=$name)"
@@ -104,6 +106,7 @@ class PublicNameService(
     private val worker: PublicNameWorker = ExecutorWorker(),
     private val sleep: (Long) -> Unit = Thread::sleep,
     private val random: Random = SecureRandom(),
+    private val addressOverride: () -> String? = { null },
 ) : AutoCloseable {
     private val mutableStatus = MutableStateFlow(PublicNameStatus(PublicNameState.OFF))
     val status: StateFlow<PublicNameStatus> = mutableStatus.asStateFlow()
@@ -144,7 +147,7 @@ class PublicNameService(
     /** Called by the runtime's network tick; only a changed address starts an attempt. */
     fun refreshAddress() {
         if (!active) return
-        val chosen = PublicNamePolicy.chooseAddress(addressSource())
+        val chosen = targetAddress()
         if (chosen == address) return
         address = chosen
         // The name points at the old address until the update; stop offering it at once.
@@ -152,6 +155,8 @@ class PublicNameService(
         if (chosen != null) resetBackoff.set(true)
         trigger()
     }
+
+    private fun targetAddress(): String? = addressOverride() ?: PublicNamePolicy.chooseAddress(addressSource())
 
     /** Validates and saves the settings screen's fields; returns per-key problems instead of saving. */
     fun save(edit: PublicNameEdit): List<ConfigError> {
@@ -267,7 +272,7 @@ class PublicNameService(
         active = true
         internet.watch(::networkAvailable)
         certificates.serveAcme(config.name.ifEmpty { null })
-        val target = PublicNamePolicy.chooseAddress(addressSource())
+        val target = targetAddress()
         address = target
         if (!config.complete) { set(null, PublicNameStatus(PublicNameState.INCOMPLETE, config.name.ifEmpty { null })); return }
         val key = key(config)
@@ -460,11 +465,12 @@ class PublicNameService(
         private const val TAG = "OpenXPlay Relay"
 
         fun create(context: Context, certificates: AcmeCertificates, version: String,
+            addressOverride: () -> String? = { null },
             addressSource: () -> Collection<AddressCandidate>): PublicNameService {
             val store = PublicNameStore(context.noBackupFilesDir)
             val http = UrlConnectionHttp(UrlConnectionHttp.userAgent(version))
             return PublicNameService(store, certificates, { dnsProvider(it, http) }, AcmeIssuer(http, store, UdpTxtLookup()),
-                AndroidInternetAccess(context.applicationContext), addressSource)
+                AndroidInternetAccess(context.applicationContext), addressSource, addressOverride = addressOverride)
         }
     }
 }

@@ -19,6 +19,9 @@ import org.openxplay.direlay.settings.StartupPermissions
 import org.openxplay.direlay.settings.RelaySettingsStore
 import org.openxplay.direlay.identity.IdentityStore
 import org.openxplay.direlay.tls.TlsStore
+import org.openxplay.direlay.network.TeslaAddressVpnService
+import org.openxplay.direlay.network.phoneIpv4Addresses
+import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import com.shilapi.xcertplay.AirPlayPersistence
 import org.openxplay.direlay.bridge.DiPlayInput
@@ -324,6 +327,43 @@ class RelayRuntime(private val context: Context,
         private set
     @Volatile var receiverUrls: List<String> = emptyList()
         private set
+    private val teslaSession = TeslaAddressSession(TeslaAddressVpnService.controller(context.applicationContext))
+    val teslaAddress: TeslaAddress? get() = teslaSession.active
+    val teslaFailure: String? get() = teslaSession.failure
+
+    fun teslaActivation(settings: RelaySettings, wireless: Boolean = settingsStore.wireless(settings)) =
+        teslaBrowserActivation(settings.teslaBrowser, wireless, settings.wirelessNetwork.choice,
+            publicName.view.value.hasTrustedNameConfiguration(), settings.carlinkOutput, settings.bothOutputs)
+
+    fun needsVpnConsent(settings: RelaySettings, wireless: Boolean = settingsStore.wireless(settings)): Boolean =
+        !wireless || teslaActivation(settings, wireless) == TeslaBrowserActivation.READY
+
+    fun prepareTeslaAddress(settings: RelaySettings, wireless: Boolean) {
+        teslaSession.prepare(settings, wireless)
+        publicName.refreshAddress()
+    }
+
+    fun stopTeslaAddress() {
+        try { setup.execute { teslaSession.stop(); publicName.refreshAddress() } }
+        catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
+    private fun refreshTeslaAddress() {
+        val settings = settingsStore.snapshot.value ?: return
+        val before = teslaAddress
+        teslaSession.tick(autoStartSessions.tracker.running, settings, settingsStore.wireless(settings),
+            publicName.view.value.hasTrustedNameConfiguration(), ::phoneIpv4Addresses)
+        if (before != teslaAddress) {
+            publicName.refreshAddress()
+            runCatching { updateWebTls() }.onFailure { Log.w("OpenXPlay Relay", "Tesla TLS update failed", it) }
+        }
+    }
+
+    private fun webTlsAddresses(): Set<String> {
+        val settings = settingsStore.snapshot.value
+        val addresses = if (settings == null) carIpv4 else teslaTlsAddresses(carIpv4, settings.teslaBrowser, settings.teslaAddress().orEmpty())
+        return addresses + listOfNotNull(teslaAddress?.takeIf { it.mode != TeslaBrowserMode.OFF && !it.mode.usesTrustedName }?.address)
+    }
     @Volatile var localPreview = false
         private set
     @Volatile var playCarPlayAudio = false
@@ -466,7 +506,8 @@ class RelayRuntime(private val context: Context,
     /** Trusted HTTPS with a free domain name; off by default, and then it requests nothing and serves nothing new. */
     val publicName = org.openxplay.direlay.publicname.PublicNameService.create(context.applicationContext,
         org.openxplay.direlay.publicname.TlsStoreCertificates(tlsStore),
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()) { publicNameCandidates() }
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
+        addressOverride = { teslaAddress?.let { teslaPublishedAddress(it.mode, it.address) } }) { publicNameCandidates() }
 
     init {
         prepareCarPlay()
@@ -495,7 +536,7 @@ class RelayRuntime(private val context: Context,
         setup.scheduleWithFixedDelay({
             try {
                 ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
-                if (tlsStore.ensureDefault(carIpv4, adminHosts())) updateWebTls()
+                if (tlsStore.ensureDefault(webTlsAddresses(), adminHosts())) updateWebTls()
                 publicName.refreshAddress()
             }
             catch (_: Exception) { /* Retain the last interface snapshot. */ }
@@ -506,6 +547,7 @@ class RelayRuntime(private val context: Context,
     private val sessionTick = setup.scheduleWithFixedDelay({
         refreshNetworkReadings()
         autoStartSessions.refresh()
+        refreshTeslaAddress()
         sessionController.observeNetworkSession(autoStartSessions.tracker.running,
             status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
         // A session start or stop can block or release Carlink without a settings change.
@@ -625,7 +667,11 @@ class RelayRuntime(private val context: Context,
         automaticEnabled = requested.autoStartWhenReady
         val vehicleEnabled = requested.vehicleInformation
         collectVehicle = vehicleEnabled || sampleVehicleData
-        try { setup.execute { configureVehicle(vehicleEnabled); configureCarlink() } }
+        try { setup.execute {
+            configureVehicle(vehicleEnabled); configureCarlink()
+            refreshTeslaAddress()
+            publicName.refreshAddress()
+        } }
         catch (_: java.util.concurrent.RejectedExecutionException) { }
         val settings = requested
         localPreview = settings.localPreview
@@ -883,7 +929,7 @@ class RelayRuntime(private val context: Context,
     }
 
     private fun updateWebTls() {
-        web?.updateTls(tlsStore.webContext(carIpv4, adminHosts()))
+        web?.updateTls(tlsStore.webContext(webTlsAddresses(), adminHosts()))
     }
 
     private fun refreshWebTls() {
@@ -901,13 +947,14 @@ class RelayRuntime(private val context: Context,
         val port = configuredWebPort ?: TlsStore.port(true)
         try {
             carIpv4 = ipv4Addresses(includeIphoneLink = false)
-            val ssl = tlsStore.webContext(carIpv4, adminHosts())
+            val ssl = tlsStore.webContext(webTlsAddresses(), adminHosts())
             val root = installReceiver()
             val settings = settingsStore.awaitSnapshot()
             val plugins = if (!settings.plugins) null else runCatching {
                 org.openxplay.direlay.plugins.RelayPlugins.configuration(settings, bundledPlugins.root(), context.filesDir)
             }.onFailure { Log.w("OpenXPlay Relay", "Plugin packages unavailable", it) }.getOrNull()
             val output = WebOutput(WebOutputConfig(
+                // Includes the local Tesla TUN address; no interface-specific listener is needed.
                 bindAddress = "0.0.0.0", port = port, sslContext = ssl,
                 staticAssetRoot = root.toPath(), plugins = plugins, displaySettings = settingsStore, viewArea = viewAreaPort,
                 sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay",
@@ -1004,6 +1051,26 @@ class RelayRuntime(private val context: Context,
     /** The head-unit page under the public name, while its certificate is valid and the name points at this relay. */
     fun publicNameUrl(): String? = publicName.status.value.trustedName?.let { "https://$it:${configuredWebPort ?: TlsStore.port(true)}/" }
 
+    fun teslaUrl(): String? {
+        if (!webEnabled || !serverState.startsWith("TLS enabled")) return null
+        val active = teslaAddress ?: return null
+        val host = if (active.mode.usesTrustedName)
+            publicName.status.value.takeIf { it.address == active.address }?.trustedName
+        else active.address
+        if (host == null) return null
+        return "https://$host:${configuredWebPort ?: TlsStore.port(true)}/"
+    }
+
+    /** One ordering for Home and the running page, including a Wi-Fi Direct-only Tesla session. */
+    fun headUnitUrls(): List<String> {
+        val car = carIpv4
+        val activeAddress = teslaAddress?.address
+        val urls = receiverUrls.filterNot { it.contains("://localhost:") || activeAddress != null && it.contains("://$activeAddress:") }
+            .filter { url -> car.any { url.contains("://$it:") } }
+        val tesla = teslaUrl()
+        return (listOfNotNull(tesla, publicNameUrl()?.takeIf { urls.isNotEmpty() || tesla != null }) + urls).distinct()
+    }
+
     /**
      * The car-facing addresses, each marked when it sits on this phone's own hotspot: a tethering
      * interface is no network of ConnectivityManager (Android 15 may list it as a local-only network).
@@ -1050,6 +1117,7 @@ class RelayRuntime(private val context: Context,
             if (closed) return
             closed = true
             keepAlive.update(false)
+            teslaSession.close()
             sharedWifiConnectivity.unregisterNetworkCallback(sharedWifiCallback)
             publicName.close()
             adminService.close()

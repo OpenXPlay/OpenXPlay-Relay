@@ -22,6 +22,7 @@ fun settingsErrors(value: RelaySettings, wireless: Boolean, allowEmptySharedWifi
     }
     if (value.carlinkDeviceName.isBlank() || value.carlinkDeviceName.toByteArray(Charsets.UTF_8).size > 128 ||
         value.carlinkDeviceName.any { Character.isISOControl(it) }) put("name", R.string.settings_name_error)
+    value.teslaAddress()?.let { if (!TeslaAddressPolicy.valid(it)) put("teslaAddress", R.string.tesla_address_invalid) }
     if (isEmpty() && runCatching { value.validate(wireless, allowEmptySharedWifi) }.isFailure) put("advanced", R.string.settings_advanced_error)
 }
 // Incomplete network setup stays durable after a policy switch; Start still requires valid credentials.
@@ -46,6 +47,9 @@ fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (
         if (settingsSaveErrors(candidate, wireless(candidate)).isNotEmpty()) add(page)
     }
     check("settings/output", saved.copy(carlinkDeviceName = value.carlinkDeviceName))
+    check("settings/car", saved.copy(teslaBrowser = value.teslaBrowser,
+        teslaVirtualAddress = value.teslaVirtualAddress, teslaPublicAddress = value.teslaPublicAddress,
+        teslaMirrorAddress = value.teslaMirrorAddress, teslaAndroidAddress = value.teslaAndroidAddress))
     val network = saved.copy(connectionMode = value.connectionMode, wirelessNetwork = value.wirelessNetwork)
     if (settingsErrors(network, wireless(network)).isNotEmpty()) add("settings/connection/network")
     check("developer/video", saved.copy(displayMode = value.displayMode, display = value.display, fps = value.fps))
