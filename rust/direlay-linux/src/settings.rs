@@ -97,6 +97,20 @@ impl Default for Settings {
         }
     }
 }
+fn persist_loaded_settings(dir: &Path, bytes: &[u8]) {
+    // Loading must also work with a read-only state directory.
+    let result = if std::fs::metadata(dir).is_ok_and(|m| m.permissions().readonly()) {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "State directory is read-only",
+        ))
+    } else {
+        private_state_file(&dir.join("settings.json"), bytes)
+    };
+    if let Err(e) = result {
+        eprintln!("Could not persist loaded settings: {e}");
+    }
+}
 impl Settings {
     pub fn load(dir: &Path) -> Result<Self> {
         Self::load_with_defaults(dir, &Self::default())
@@ -153,10 +167,7 @@ impl Settings {
                 let s: Self = serde_json::from_value(value)?;
                 s.validate()?;
                 if let Some(migrated) = migrated {
-                    private_state_file(
-                        &dir.join("settings.json"),
-                        &serde_json::to_vec_pretty(&migrated)?,
-                    )?;
+                    persist_loaded_settings(dir, &serde_json::to_vec_pretty(&migrated)?);
                 }
                 Ok(s)
             }
@@ -164,10 +175,10 @@ impl Settings {
                 let mut s = defaults.clone();
                 s.car_bluetooth_audio = true;
                 s.car_bluetooth_audio_defaulted = true;
-                private_state_file(
-                    &dir.join("settings.json"),
+                persist_loaded_settings(
+                    dir,
                     br#"{"carBluetoothAudio":true,"carBluetoothAudioDefaulted":true}"#,
-                )?;
+                );
                 Ok(s)
             }
             Err(e) => Err(e),
@@ -251,7 +262,7 @@ impl Settings {
         if !["off", "5", "15"].contains(&self.video_stats.as_str()) {
             return Err(invalid("Invalid videoStats"));
         }
-        if self.receiver_port < 1024 || self.receiver_port == 6975 {
+        if self.receiver_port == 0 || self.receiver_port == 6975 {
             return Err(invalid("Invalid receiverPort"));
         }
         let mut ids = std::collections::BTreeSet::new();
@@ -376,8 +387,47 @@ mod tests {
                 receiver_port: port,
                 ..defaults.clone()
             };
-            assert_eq!(s.validate().is_ok(), port >= 1024 && port != 6975);
+            assert_eq!(s.validate().is_ok(), port != 0 && port != 6975);
         }
+    }
+    #[test]
+    fn low_receiver_port_still_loads() {
+        let dir = std::env::temp_dir().join(format!(
+            "settings-low-port-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), br#"{"receiverPort":443}"#).unwrap();
+        assert_eq!(Settings::load(&dir).unwrap().receiver_port, 443);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn read_only_state_keeps_migration_and_fresh_defaults_in_memory() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "settings-read-only-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let original = br#"{"carBluetoothAudio":false,"receiverPort":443}"#;
+        std::fs::write(&path, original).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let migrated = Settings::load(&dir).unwrap();
+        assert!(migrated.car_bluetooth_audio && migrated.car_bluetooth_audio_defaulted);
+        assert_eq!(migrated.receiver_port, 443);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let fresh = Settings::load(&dir).unwrap();
+        assert!(fresh.car_bluetooth_audio && fresh.car_bluetooth_audio_defaulted);
+        assert!(!path.exists());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn bluetooth_audio_migration_runs_once_and_fresh_defaults_are_true() {

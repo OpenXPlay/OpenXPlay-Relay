@@ -453,6 +453,7 @@ pub struct RelaySupervisor {
     connect: Arc<AtomicBool>,
     restart: Arc<AtomicBool>,
     band_backoff: CarlinkBackoff,
+    hevc_disabled: Arc<AtomicBool>,
 }
 impl RelaySupervisor {
     pub fn new(
@@ -472,11 +473,17 @@ impl RelaySupervisor {
             connect: Arc::new(AtomicBool::new(false)),
             restart: Arc::new(AtomicBool::new(false)),
             band_backoff: CarlinkBackoff::default(),
+            hevc_disabled: Arc::new(AtomicBool::new(false)),
         }
     }
     /// Shares the band backoff with earlier and later supervisors of the same relay.
     pub fn with_carlink_backoff(mut self, backoff: CarlinkBackoff) -> Self {
         self.band_backoff = backoff;
+        self
+    }
+    /// Keeps the codec fallback across supervisor replacements within one service run.
+    pub fn with_hevc_disabled(mut self, disabled: Arc<AtomicBool>) -> Self {
+        self.hevc_disabled = disabled;
         self
     }
     pub fn set_restart_policy(&mut self, policy: RestartPolicy) {
@@ -524,6 +531,7 @@ impl RelaySupervisor {
         let linking = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
         let band_backoff = self.band_backoff.clone();
+        let hevc_disabled = self.hevc_disabled.clone();
         let child_events: EventSink = Arc::new({
             let events = events.clone();
             let fragment = fragment.clone();
@@ -533,9 +541,18 @@ impl RelaySupervisor {
             let auto_reconnect = settings.carlink.as_ref().is_none_or(|c| c.auto_reconnect);
             let linking = linking.clone();
             let band_backoff = band_backoff.clone();
+            let hevc_disabled = hevc_disabled.clone();
+            let hevc_auto = settings.carlink.as_ref().is_some_and(|c| c.hevc == "auto");
             move |event| {
                 if event["type"] == "diagnostic" {
                     if let Some(message) = event["message"].as_str() {
+                        if message.starts_with("codec mismatch expected=H265")
+                            && hevc_auto
+                            && !hevc_disabled.swap(true, Ordering::AcqRel)
+                        {
+                            eprintln!("oxp-relay: H.265 codec mismatch; restarting with Carlink H.265 off until settings change or service restart");
+                            restart.store(true, Ordering::Release);
+                        }
                         if message.starts_with("oxp-relay:") {
                             eprintln!("{message}");
                         } else {
@@ -630,10 +647,16 @@ impl RelaySupervisor {
                     let started = Instant::now();
                     remove_stale_socket(&settings.socket);
                     restart.store(false, Ordering::Release);
+                    let mut launch = settings.clone();
+                    if hevc_disabled.load(Ordering::Acquire) {
+                        if let Some(carlink) = launch.carlink.as_mut() {
+                            carlink.hevc = "off".into();
+                        }
+                    }
                     let arguments = if backing_off {
-                        SupervisorSettings { carlink: None, ..settings.clone() }.arguments()
+                        SupervisorSettings { carlink: None, ..launch }.arguments()
                     } else {
-                        settings.launch_arguments(attempt)
+                        launch.launch_arguments(attempt)
                     };
                     // Reset session observations before the child can emit its first event.
                     events(json!({"type":"receiver-starting"}));
@@ -859,6 +882,44 @@ mod band_tests {
     }
     fn band_failure() -> Value {
         json!({"type":"link","state":"lost","reason":"head_unit_band_unsupported:5180"})
+    }
+
+    #[test]
+    fn codec_mismatch_disables_hevc_once_until_settings_rebuild() {
+        let mut f = Fixture::new("hevc-mismatch", 0);
+        f.trust();
+        let backoff = CarlinkBackoff::default();
+        let mut relay = f.supervisor(&backoff);
+        relay.start().unwrap();
+        let (args, sink) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        let has_hevc = |args: &[OsString], value: &str| {
+            args.windows(2)
+                .any(|a| a[0] == "--clink-hevc" && a[1] == value)
+        };
+        assert!(has_hevc(&args, "auto"));
+        sink(json!({"type":"diagnostic","message":"unrelated diagnostic"}));
+        assert!(f.spawns.recv_timeout(Duration::from_millis(30)).is_err());
+        let mismatch =
+            json!({"type":"diagnostic","message":"codec mismatch expected=H265 actual=Some(H264)"});
+        sink(mismatch.clone());
+        let (args, sink) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        sink(mismatch.clone());
+        assert!(f.spawns.recv_timeout(Duration::from_millis(30)).is_err());
+        relay.connect_carlink();
+        let (args, _) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        relay.stop();
+        // Settings changes replace the supervisor and re-evaluate the configured HEVC policy.
+        f.settings.carlink.as_mut().unwrap().name = "Changed name".into();
+        let mut relay = f.supervisor(&backoff);
+        relay.start().unwrap();
+        let (args, sink) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "auto"));
+        sink(mismatch);
+        let (args, _) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        relay.stop();
     }
 
     #[test]

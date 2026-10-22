@@ -138,6 +138,7 @@ pub struct LinuxRelayAdmin {
     supervisor: Mutex<Option<RelaySupervisor>>,
     /// Outlives the supervisors that output changes, Start and Restart replace.
     carlink_backoff: Mutex<CarlinkBackoff>,
+    carlink_hevc_disabled: Arc<AtomicBool>,
     child_factory: Arc<dyn ChildFactory>,
     input: Arc<DiPlayInput>,
     stream: Arc<StreamConnection>,
@@ -338,6 +339,7 @@ impl LinuxRelayAdmin {
             operation_worker: Mutex::new(None),
             supervisor: Mutex::new(None),
             carlink_backoff: Mutex::default(),
+            carlink_hevc_disabled: Arc::new(AtomicBool::new(false)),
             child_factory: Arc::new(ProcessChildFactory),
             input,
             stream: Arc::new(stream),
@@ -574,7 +576,8 @@ impl LinuxRelayAdmin {
             event_sink(event);
         });
         let mut supervisor = RelaySupervisor::new(settings, self.child_factory.clone(), event_sink)
-            .with_carlink_backoff(self.carlink_backoff.lock().unwrap().clone());
+            .with_carlink_backoff(self.carlink_backoff.lock().unwrap().clone())
+            .with_hevc_disabled(self.carlink_hevc_disabled.clone());
         supervisor.start()?;
         *self.supervisor.lock().unwrap() = Some(supervisor);
         Ok(())
@@ -680,6 +683,7 @@ impl LinuxRelayAdmin {
                 if let Some(mut supervisor) = self.supervisor.lock().unwrap().take() {
                     supervisor.stop();
                 }
+                self.carlink_hevc_disabled.store(false, Ordering::Release);
                 if let Some(network) = network {
                     self.operation(*network)?;
                 }
@@ -1280,6 +1284,7 @@ pub fn settings_schema() -> Vec<Section> {
                 "output"
                     | "carlinkAutoReconnect"
                     | "carlinkReconnectOnResize"
+                    | "carlinkHevc"
                     | "hotspotChannel"
                     | "carlinkLink"
                     | "carlinkInterface"
@@ -1390,7 +1395,7 @@ pub fn settings_schema() -> Vec<Section> {
         min: match key {
             "hotspotChannel" => Some(0.0),
             "rfcommChannel" => Some(1.0),
-            "receiverPort" => Some(1024.0),
+            "receiverPort" => Some(1.0),
             _ => None,
         },
         max: match key {
@@ -1857,7 +1862,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                 let mode_changed = next.network_mode != current.network_mode;
                 let networks_changed = next.shared_wifi_networks != current.shared_wifi_networks;
                 let network_update = mode_changed || networks_changed;
-                let outputs_changed = next.plugins != current.plugins
+                let outputs_changed = picture.video_codec
+                    != self.input.display_settings().video_codec
+                    || next.plugins != current.plugins
                     || next.plugins_enabled != current.plugins_enabled
                     || next.output != current.output
                     || next.require_pairing_code != current.require_pairing_code
@@ -2204,7 +2211,7 @@ mod tests {
             .receiver_urls
             .iter()
             .all(|url| url.contains(":9443/")));
-        for port in [1023, 6975, 65536] {
+        for port in [0, 6975, 65536] {
             assert!(matches!(
                 a.update(
                     serde_json::json!({"receiverPort":port})
@@ -4223,6 +4230,51 @@ esac
         Arc::get_mut(a).unwrap().child_factory = Arc::new(LinkFake(Mutex::new(tx)));
         rx
     }
+    #[test]
+    fn video_codec_change_rebuilds_output_and_re_evaluates_hevc() {
+        let (mut a, dir) = fake();
+        let children = link_children(&mut a);
+        a.settings.lock().unwrap().output = "carlink".into();
+        a.desired.store(false, Ordering::Release);
+        trust_carlink(&dir);
+        a.start_supervisor().unwrap();
+        let (args, sink) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        let has_hevc = |args: &[std::ffi::OsString], value: &str| {
+            args.windows(2)
+                .any(|a| a[0] == "--clink-hevc" && a[1] == value)
+        };
+        assert!(has_hevc(&args, "auto"));
+        sink(
+            serde_json::json!({"type":"diagnostic","message":"codec mismatch expected=H265 actual=Some(H264)"}),
+        );
+        let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        a.supervisor.lock().unwrap().take().unwrap().stop();
+        a.start_supervisor().unwrap();
+        let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        let rx = a.operation_rx.lock().unwrap().take().unwrap();
+        for (codec, expected) in [("h264", "off"), ("auto", "auto")] {
+            assert!(matches!(
+                a.update(
+                    serde_json::json!({"videoCodec":codec})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                ),
+                AdminUpdate::AppliedNow
+            ));
+            a.response_sent();
+            let op = rx.try_recv().unwrap();
+            assert!(matches!(op, Operation::Outputs(None)));
+            a.operation(op).unwrap();
+            let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(has_hevc(&args, expected));
+        }
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn window_and_view_events_reconnect_both_outputs_once_and_blacklist_unchanged_window() {
         let (mut a, dir) = fake();
