@@ -33,7 +33,7 @@ export interface Wireless {
   mode: 'concurrent' | 'single-radio' | 'unknown';
   station24: boolean | null; ap24: boolean | null; station5: boolean | null; ap5: boolean | null;
   apStation: boolean | null; apStationChannels: number | null; p2pClient: boolean | null; ap5Channels: number[] | null;
-  hotspot: { band: '2.4' | '5'; channel: number; configuredBand: HotspotBand; configuredChannel: number; reason: string | null };
+  hotspot: { band: '2.4' | '5'; autoBand: '2.4' | '5'; channel: number; configuredBand: HotspotBand; configuredChannel: number; reason: string | null };
 }
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
@@ -49,13 +49,14 @@ export interface Status {
   video?: VideoStatus; receivers?: ReceiverReport[]; bluetoothGuard?: BluetoothGuard;
   hotspot?: { hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;
-  platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; hostCapabilities?: HostCapabilities; adminUrl: string; receiverUrls: string[];
+  platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; hostCapabilities?: HostCapabilities; adminUrl: string; adminUrls?: string[]; receiverUrls: string[];
   state: 'idle' | 'waiting' | 'connecting' | 'active' | 'reconnecting'; running: boolean; autoStartPaused: boolean;
   iphone: { name: string | null; reason: string }; network: { mode: string; wifi: string | null; followingCarlink?: boolean };
   output: string; carlink: CarlinkStatus | null; notices: string[]; publicName?: PublicNameStatus; wireless?: Wireless;
 }
 export interface Phone { id: string; name: string; kind: 'phone' | 'car' | 'other'; connected: boolean; likelyIphone: boolean; selected: boolean }
 export interface Update { ok: boolean; applied: 'now' | 'next-start' }
+export interface PublicNameImport { ok: true; provider: string; name: string }
 export class ApiError extends Error {
   constructor(public status: number, public key: string, public errors: Record<string, string> = {}, public retryAfter = 60) { super(key); }
 }
@@ -96,6 +97,7 @@ export const api = {
   // Receiver diagnostics are large and change every second; only the developer section asks for them.
   status: (diagnostics = false) => request<Status>(diagnostics ? '/status?diagnostics=1' : '/status'),
   settings: () => request<Settings>('/settings'),
+  publicNameImport: (content: string) => request<PublicNameImport>('/public-name/import', 'POST', { content }, false),
   save: (values: Values) => request<Update>('/settings', 'PUT', values, false),
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),

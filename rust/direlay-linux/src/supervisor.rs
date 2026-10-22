@@ -38,6 +38,7 @@ pub struct BleCarlinkSettings {
 /// A certificate for the head-unit page from PEM files (the trusted-HTTPS name's).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PemTls {
+    pub name: String,
     pub cert: PathBuf,
     pub key: PathBuf,
 }
@@ -52,7 +53,7 @@ pub struct SupervisorSettings {
     pub addresses: Vec<Ipv4Addr>,
     pub pairing: bool,
     pub carlink: Option<CarlinkSettings>,
-    /// Serve this certificate instead of the self-signed one, while both files exist.
+    /// Serve this certificate for its SNI name while both files exist.
     pub pem_tls: Option<PemTls>,
 }
 impl SupervisorSettings {
@@ -75,20 +76,22 @@ impl SupervisorSettings {
                 "--web-bind".into(),
                 "0.0.0.0".into(),
             ];
-            match pem {
-                Some(pem) => args.extend([
+            if let Some(pem) = pem {
+                args.extend([
                     "--tls-cert".into(),
                     pem.cert.as_os_str().into(),
                     "--tls-key".into(),
                     pem.key.as_os_str().into(),
-                ]),
-                None => args.extend([
-                    "--tls-self-signed".into(),
-                    self.state_dir.join("receiver-tls").into_os_string(),
-                    "--tls-san".into(),
-                    "openxplay-linux.local".into(),
-                ]),
+                    "--tls-name".into(),
+                    pem.name.clone().into(),
+                ]);
             }
+            args.extend([
+                "--tls-self-signed".into(),
+                self.state_dir.join("receiver-tls").into_os_string(),
+                "--tls-san".into(),
+                "openxplay-linux.local".into(),
+            ]);
             args
         };
         args.extend([
@@ -100,11 +103,7 @@ impl SupervisorSettings {
         let mut ips = self.addresses.clone();
         ips.sort();
         ips.dedup();
-        // oxp-relay takes --tls-san only with --tls-self-signed.
-        for ip in ips
-            .into_iter()
-            .filter(|_| self.web_port != 0 && pem.is_none())
-        {
+        for ip in ips.into_iter().filter(|_| self.web_port != 0) {
             args.extend(["--tls-san".into(), ip.to_string().into()]);
         }
         if self.pairing && self.web_port != 0 {
@@ -958,6 +957,7 @@ mod tls_tests {
         assert_eq!(strings(settings(&dir).arguments()), legacy);
         // Configured but missing files (removed, or never issued) change nothing either.
         let pem = PemTls {
+            name: "myrelay.duckdns.org".into(),
             cert: dir.join("public-name/cert.pem"),
             key: dir.join("public-name/key.pem"),
         };
@@ -970,16 +970,19 @@ mod tls_tests {
         std::fs::write(&pem.cert, "chain").unwrap();
         std::fs::write(&pem.key, "key").unwrap();
         let args = strings(with.arguments());
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--tls-cert", &format!("{state}/public-name/cert.pem")]));
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--tls-key", &format!("{state}/public-name/key.pem")]));
-        assert!(!args
-            .iter()
-            .any(|a| a == "--tls-self-signed" || a == "--tls-san"));
-        assert!(args.windows(2).any(|w| w == ["--web-port", "8443"]));
+        let mut expected: Vec<String> = legacy.iter().map(|s| s.to_string()).collect();
+        expected.splice(
+            8..8,
+            [
+                "--tls-cert".into(),
+                format!("{state}/public-name/cert.pem"),
+                "--tls-key".into(),
+                format!("{state}/public-name/key.pem"),
+                "--tls-name".into(),
+                "myrelay.duckdns.org".into(),
+            ],
+        );
+        assert_eq!(args, expected);
         // Carlink-only children take no TLS options at all.
         let carlink = SupervisorSettings {
             web_port: 0,

@@ -23,6 +23,15 @@ use std::{
     time::Duration,
 };
 pub const MAX_BODY: usize = 16_384;
+// A 16 KiB file can expand sixfold when wrapped as a JSON string.
+const MAX_IMPORT_BODY: usize = crate::public_name::config::MAX_BYTES * 6 + 1024;
+fn body_limit(path: &str) -> usize {
+    if path.split('?').next() == Some("/api/v0/public-name/import") {
+        MAX_IMPORT_BODY
+    } else {
+        MAX_BODY
+    }
+}
 pub const MAX_HEADERS: usize = 8_192;
 pub const DEFAULT_PORT: u16 = 6975;
 const COOKIE: &str = "oxp_admin";
@@ -137,7 +146,7 @@ impl AdminServer {
         if !auth::private_address(request.peer) {
             return Response::error(403, "error.request");
         }
-        if request.body.len() > MAX_BODY {
+        if request.body.len() > body_limit(&request.path) {
             return Response::error(413, "error.request");
         }
         let path = request.path.split('?').next().unwrap_or("");
@@ -258,6 +267,21 @@ impl AdminServer {
                 }
             }
             ("GET", "/settings") => Response::json(200, json!(self.admin.settings())),
+            ("POST", "/public-name/import") => {
+                use crate::public_name::service::ImportError;
+                let Some(content) = string("content") else {
+                    return Response::json(422, json!({"errors":{"file":"not-json"}}));
+                };
+                match self.admin.public_name_import(content) {
+                    Ok((provider, name)) => {
+                        Response::json(200, json!({"ok":true,"provider":provider,"name":name}))
+                    }
+                    Err(ImportError::Invalid(errors)) => {
+                        Response::json(422, json!({"errors":errors}))
+                    }
+                    Err(ImportError::Storage) => Response::error(500, "error.request"),
+                }
+            }
             ("GET", "/phones") => Response::json(200, json!(self.admin.phones())),
             ("PUT", "/settings") => match self.admin.update(body) {
                 AdminUpdate::AppliedNow => Response::json(200, json!({"ok":true,"applied":"now"})),
@@ -531,7 +555,7 @@ pub fn read_request(input: &mut impl Read, peer: IpAddr) -> Result<Request, u16>
         .transpose()
         .map_err(|_| 400u16)?
         .unwrap_or(0);
-    if length > MAX_BODY {
+    if length > body_limit(first[1]) {
         return Err(413);
     }
     let mut body = vec![0; length];
@@ -611,24 +635,51 @@ impl rustls::server::ResolvesServerCert for SniResolver {
 pub fn tls_config(state: &Path, addresses: &[Ipv4Addr]) -> io::Result<Arc<rustls::ServerConfig>> {
     tls_config_with(state, addresses, &NamedCertificate::default())
 }
+/// Oldest entries come first. Keep the current requirements and evict older extras at the cap.
+fn accumulated_sans(previous: &[String], names: &[String], addresses: &[Ipv4Addr]) -> Vec<String> {
+    let needed_names: Vec<_> = names.iter().take(8).cloned().collect();
+    let needed_addresses: Vec<_> = addresses.iter().take(16).map(ToString::to_string).collect();
+    let accumulate = |required: &[String], is_address: bool, cap: usize| {
+        let mut entries = Vec::new();
+        for entry in previous
+            .iter()
+            .filter(|s| s.parse::<IpAddr>().is_ok() == is_address)
+            .chain(required)
+        {
+            if !entries.contains(entry) {
+                entries.push(entry.clone());
+            }
+        }
+        while entries.len() > cap {
+            let index = entries.iter().position(|s| !required.contains(s)).unwrap();
+            entries.remove(index);
+        }
+        entries
+    };
+    let mut sans = accumulate(&needed_names, false, 8);
+    sans.extend(accumulate(&needed_addresses, true, 16));
+    sans
+}
 /// [`tls_config`] that also serves `named` for its own name.
 pub fn tls_config_with(
     state: &Path,
     addresses: &[Ipv4Addr],
     named: &NamedCertificate,
 ) -> io::Result<Arc<rustls::ServerConfig>> {
-    let mut sans = vec!["openxplay-linux.local".into(), "localhost".into()];
-    sans.extend(addresses.iter().map(ToString::to_string));
-    sans.sort();
-    sans.dedup();
+    let names = vec!["openxplay-linux.local".into(), "localhost".into()];
     let path = state.join("admin-tls.json");
     let saved = match fs::read(&path) {
         Ok(b) => Some(serde_json::from_slice::<SavedTls>(&b)?),
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
+    let sans = accumulated_sans(
+        saved.as_ref().map_or(&[], |s| s.sans.as_slice()),
+        &names,
+        addresses,
+    );
     let saved = match saved {
-        Some(s) if s.sans == sans => {
+        Some(s) if s.sans.len() == sans.len() && sans.iter().all(|name| s.sans.contains(name)) => {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
             s
@@ -704,6 +755,61 @@ mod sni_tests {
         pki_types::{CertificateDer, ServerName, UnixTime},
         DigitallySignedStruct, SignatureScheme,
     };
+    #[test]
+    fn accumulating_identity_keeps_covered_sans_and_adds_the_hotspot_address() {
+        let state =
+            std::env::temp_dir().join(format!("admin-sans-{}", auth::random_hex(8).unwrap()));
+        let path = state.join("admin-tls.json");
+        let lan = Ipv4Addr::new(192, 168, 1, 2);
+        let hotspot = Ipv4Addr::new(10, 77, 0, 1);
+        tls_config(&state, &[lan]).unwrap();
+        let original = fs::read(&path).unwrap();
+        tls_config(&state, &[]).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original);
+        tls_config(&state, &[hotspot]).unwrap();
+        let updated = fs::read(&path).unwrap();
+        assert_ne!(updated, original);
+        let saved: SavedTls = serde_json::from_slice(&updated).unwrap();
+        for san in [
+            "localhost",
+            "openxplay-linux.local",
+            "192.168.1.2",
+            "10.77.0.1",
+        ] {
+            assert!(saved.sans.contains(&san.into()));
+        }
+        tls_config(&state, &[hotspot, lan]).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), updated);
+        fs::remove_dir_all(state).unwrap();
+    }
+    #[test]
+    fn accumulating_sans_evict_the_oldest_extras_at_separate_caps() {
+        let names = vec!["openxplay-linux.local".into(), "localhost".into()];
+        let mut previous = names.clone();
+        previous.extend((0..8).map(|i| format!("old-{i}.local")));
+        previous.extend((1..=16).map(|i| format!("192.168.1.{i}")));
+        let addresses = [Ipv4Addr::new(192, 168, 1, 1), Ipv4Addr::new(10, 77, 0, 1)];
+        let sans = accumulated_sans(&previous, &names, &addresses);
+        assert_eq!(
+            sans.iter().filter(|s| s.parse::<IpAddr>().is_err()).count(),
+            8
+        );
+        assert_eq!(
+            sans.iter().filter(|s| s.parse::<IpAddr>().is_ok()).count(),
+            16
+        );
+        for name in names {
+            assert!(sans.contains(&name));
+        }
+        for address in addresses {
+            assert!(sans.contains(&address.to_string()));
+        }
+        assert!(!sans.contains(&"old-0.local".into()));
+        assert!(!sans.contains(&"old-1.local".into()));
+        assert!(sans.contains(&"old-2.local".into()));
+        assert!(!sans.contains(&"192.168.1.2".into()));
+        assert!(sans.contains(&"192.168.1.3".into()));
+    }
     /// Accepts any certificate and remembers the leaf it was shown.
     #[derive(Debug, Default)]
     struct Recorder(Mutex<Option<Vec<u8>>>);

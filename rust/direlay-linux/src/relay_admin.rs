@@ -504,6 +504,7 @@ impl LinuxRelayAdmin {
         );
         let served = self.public_name.served();
         settings.pem_tls = served.as_ref().map(|s| PemTls {
+            name: s.name.clone(),
             cert: s.cert.clone(),
             key: s.key.clone(),
         });
@@ -800,6 +801,15 @@ impl LinuxRelayAdmin {
         addresses.dedup();
         Ok(addresses)
     }
+    /// TLS also covers the CarPlay-facing address, which mDNS intentionally leaves out.
+    pub fn admin_addresses(&self) -> Result<Vec<std::net::Ipv4Addr>> {
+        let mut addresses = self.host_addresses()?;
+        if let Some(address) = self.head_unit_address() {
+            addresses.retain(|a| *a != address);
+            addresses.insert(0, address);
+        }
+        Ok(addresses)
+    }
     /// Waits up to `timeout` before the next [`Self::tick`]; a finished admin operation ends the
     /// wait early. The startup network initialisation is one: the controller then starts at once.
     pub fn wait_for_tick(&self, timeout: Duration) {
@@ -1048,6 +1058,29 @@ fn public_name_url(
         .split_once('#')
         .map_or(String::new(), |(_, f)| format!("#{f}"));
     Some(format!("https://{name}:{port}/{fragment}"))
+}
+fn admin_urls(
+    status: &crate::public_name::PublicNameStatus,
+    head_unit: Option<std::net::Ipv4Addr>,
+    hosts: &[std::net::Ipv4Addr],
+) -> Vec<String> {
+    let mut urls = Vec::new();
+    if let Some(name) = status.trusted_name.as_ref().filter(|_| {
+        head_unit.is_some_and(|a| status.address.as_deref() == Some(a.to_string().as_str()))
+    }) {
+        urls.push(format!("https://{name}:6975/"));
+    }
+    for address in head_unit.into_iter().chain(hosts.iter().copied()) {
+        let url = format!("https://{address}:6975/");
+        if !urls.contains(&url) {
+            urls.push(url);
+        }
+    }
+    let local = "https://openxplay-linux.local:6975/".to_string();
+    if !urls.contains(&local) {
+        urls.push(local);
+    }
+    urls
 }
 fn carlink_pin_path(state: &std::path::Path) -> std::path::PathBuf {
     state.join("carlink/pin")
@@ -1417,6 +1450,12 @@ pub fn update_settings(
     }
 }
 impl RelayAdmin for LinuxRelayAdmin {
+    fn public_name_import(
+        &self,
+        content: &str,
+    ) -> std::result::Result<(String, String), crate::public_name::service::ImportError> {
+        self.public_name.import(content)
+    }
     fn response_failed(&self) {
         self.pending
             .lock()
@@ -1454,6 +1493,8 @@ impl RelayAdmin for LinuxRelayAdmin {
         let selection =
             crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
         let following_carlink = self.network_override.lock().unwrap().is_some();
+        let head_unit = self.head_unit_address();
+        let host_addresses = self.host_addresses().unwrap_or_default();
         let controller = self.controller.lock().unwrap();
         let stage = controller.as_ref().map(|c| c.stage()).unwrap_or_else(|| {
             if wifi.setup_hotspot {
@@ -1588,6 +1629,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .into(),
             }),
             admin_url: "https://openxplay-linux.local:6975/".into(),
+            admin_urls: admin_urls(&public_name, head_unit, &host_addresses),
             receiver_urls,
             state: stage,
             running: controller.is_some(),
@@ -2130,7 +2172,7 @@ mod tests {
                 "preset":{"id":"phicomm-n1","label":"Phicomm N1","source":"detected","detected":"phicomm-n1"},
                 "mode":"concurrent","station24":true,"ap24":true,"station5":true,"ap5":true,
                 "apStation":true,"apStationChannels":1,"p2pClient":true,"ap5Channels":[36,40,44,48,149,153,157,161,165],
-                "hotspot":{"band":"5","channel":36,"configuredBand":"auto","configuredChannel":0,"reason":null}
+                "hotspot":{"band":"5","autoBand":"5","channel":36,"configuredBand":"auto","configuredChannel":0,"reason":null}
             })
         );
         a.status();
@@ -4214,6 +4256,7 @@ esac
         assert!(a.action("public-name-renew").is_ok());
         assert!(a.action("public-name-remove").is_ok());
         assert!(!dir.join("public-name.json").exists());
+        assert!(!dir.join("public-name/providers.json").exists());
         assert_eq!(a.status().public_name.unwrap().state, "off");
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -4242,6 +4285,247 @@ esac
             ..ready
         };
         assert_eq!(public_name_url(&untrusted, &urls, 8443), None);
+    }
+    #[test]
+    fn provider_switches_and_empty_tokens_keep_each_saved_setup() {
+        let (a, dir) = fake();
+        let update = |value: serde_json::Value| {
+            assert!(matches!(
+                a.update(value.as_object().unwrap().clone()),
+                AdminUpdate::AppliedNow
+            ))
+        };
+        let token = "a1b2c3d4-0000-0000-0000-000000000000";
+        update(
+            serde_json::json!({"publicNameProvider":"duckdns","publicName":"duck.duckdns.org","publicNameToken":token}),
+        );
+        update(serde_json::json!({"publicNameProvider":"dynv6"}));
+        assert_eq!(a.settings().values["publicName"], "");
+        assert_eq!(a.settings().values["publicNameTokenSet"], false);
+        update(serde_json::json!({"publicName":"dyn.dynv6.net","publicNameToken":"dyn-token"}));
+        for (provider, name, saved_token) in [
+            ("duckdns", "duck.duckdns.org", token),
+            ("dynv6", "dyn.dynv6.net", "dyn-token"),
+        ] {
+            update(serde_json::json!({"publicNameProvider":provider,"publicNameToken":""}));
+            let values = a.settings().values;
+            assert_eq!(values["publicName"], name);
+            assert_eq!(values["publicNameTokenSet"], true);
+            assert_eq!(
+                values["publicNameProviders"][provider],
+                serde_json::json!({"name":name,"tokenSet":true})
+            );
+            let (active, _) = crate::public_name::config::load(&dir.join("public-name.json"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(active.provider.unwrap().id(), provider);
+            assert_eq!(active.token.as_deref(), Some(saved_token));
+            assert!(!serde_json::to_string(&values)
+                .unwrap()
+                .contains(saved_token));
+        }
+        assert!(matches!(
+            a.update(
+                serde_json::json!({"publicNameProviders":{}})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::Errors(_)
+        ));
+        // Deleting the active file by hand also forgets both providers and the account.
+        std::fs::write(dir.join("public-name/account.key"), "key").unwrap();
+        std::fs::remove_file(dir.join("public-name.json")).unwrap();
+        assert_eq!(
+            a.settings().values["publicNameProviders"],
+            serde_json::json!({"duckdns":{"name":"","tokenSet":false},"dynv6":{"name":"","tokenSet":false}})
+        );
+        assert!(!dir.join("public-name").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn admin_addresses_put_the_trusted_name_and_head_unit_first() {
+        let head: std::net::Ipv4Addr = "10.77.0.1".parse().unwrap();
+        let hosts = [
+            "192.168.1.2".parse().unwrap(),
+            head,
+            "192.168.1.2".parse().unwrap(),
+        ];
+        let ready = crate::public_name::PublicNameStatus {
+            state: "ready".into(),
+            trusted_name: Some("a.duckdns.org".into()),
+            address: Some(head.to_string()),
+            ..Default::default()
+        };
+        let fallback = vec![
+            "https://10.77.0.1:6975/",
+            "https://192.168.1.2:6975/",
+            "https://openxplay-linux.local:6975/",
+        ];
+        let mut expected = vec!["https://a.duckdns.org:6975/"];
+        expected.extend(fallback.iter().copied());
+        assert_eq!(admin_urls(&ready, Some(head), &hosts), expected);
+        let not_ready = crate::public_name::PublicNameStatus {
+            trusted_name: None,
+            ..ready.clone()
+        };
+        assert_eq!(admin_urls(&not_ready, Some(head), &hosts), fallback);
+        let mismatch = crate::public_name::PublicNameStatus {
+            address: Some("10.78.0.1".into()),
+            ..ready.clone()
+        };
+        assert_eq!(admin_urls(&mismatch, Some(head), &hosts), fallback);
+        let local_name = crate::public_name::PublicNameStatus {
+            trusted_name: Some("openxplay-linux.local".into()),
+            ..ready.clone()
+        };
+        assert_eq!(
+            admin_urls(&local_name, Some(head), &hosts),
+            [
+                "https://openxplay-linux.local:6975/",
+                "https://10.77.0.1:6975/",
+                "https://192.168.1.2:6975/",
+            ]
+        );
+        assert_eq!(
+            admin_urls(&ready, None, &[]),
+            ["https://openxplay-linux.local:6975/"]
+        );
+        let renewing = crate::public_name::PublicNameStatus {
+            state: "error".into(),
+            ..ready
+        };
+        assert_eq!(admin_urls(&renewing, Some(head), &hosts), expected);
+    }
+    #[test]
+    fn public_name_import_route_validates_auth_errors_size_and_activates_the_provider() {
+        use crate::admin::{
+            auth::{AdminAuth, FileAuthStore},
+            server::{read_request, AdminServer, AdminServerConfig, Request},
+        };
+        let (a, dir) = fake();
+        let server = AdminServer::new(
+            a.clone(),
+            AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap(),
+            AdminServerConfig::new(dir.clone(), dir.clone(), vec![]),
+        );
+        let request = |path: &str, body: serde_json::Value, cookie: &str| Request {
+            method: "POST".into(),
+            path: path.into(),
+            peer: "10.77.0.2".parse().unwrap(),
+            headers: BTreeMap::from([
+                ("content-type".into(), "application/json".into()),
+                ("x-openxplay-admin".into(), "1".into()),
+                ("cookie".into(), cookie.into()),
+            ]),
+            body: serde_json::to_vec(&body).unwrap(),
+        };
+        let path = "/api/v0/public-name/import";
+        assert_eq!(
+            server
+                .route(&request(path, serde_json::json!({"content":"{}"}), ""), 1)
+                .status,
+            401
+        );
+        let login = server.route(
+            &request(
+                "/api/v0/login",
+                serde_json::json!({"password":"openxplay"}),
+                "",
+            ),
+            1,
+        );
+        let cookie = login.headers["Set-Cookie"].split(';').next().unwrap();
+        let mut no_csrf = request(path, serde_json::json!({"content":"{}"}), cookie);
+        no_csrf.headers.remove("x-openxplay-admin");
+        assert_eq!(server.route(&no_csrf, 2).status, 403);
+        let token = "a1b2c3d4-0000-0000-0000-000000000000";
+        let valid = serde_json::json!({"version":1,"provider":"duckdns","name":"a.duckdns.org","token":token,"agreeLetsEncryptTerms":true}).to_string();
+        let import = |content: &str| {
+            server.route(
+                &request(path, serde_json::json!({"content":content}), cookie),
+                2,
+            )
+        };
+        let response = import(&valid);
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response.body).unwrap(),
+            serde_json::json!({"ok":true,"provider":"duckdns","name":"a.duckdns.org"})
+        );
+        let before = std::fs::read(dir.join("public-name.json")).unwrap();
+        for (content, key, code) in [
+            ("{}".into(), "version", "missing"),
+            ("{\"version\":2}".into(), "version", "bad-version"),
+            (
+                "{\"version\":1,\"provider\":\"other\"}".into(),
+                "provider",
+                "invalid",
+            ),
+            (
+                "{\"version\":1,\"nmae\":\"x\"}".into(),
+                "nmae",
+                "unknown-key",
+            ),
+            ("[1]".into(), "file", "not-json"),
+            ("not json".into(), "file", "not-json"),
+            (
+                " ".repeat(crate::public_name::config::MAX_BYTES + 1),
+                "file",
+                "too-large",
+            ),
+        ] {
+            let response = import(&content);
+            assert_eq!(response.status, 422);
+            let errors: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+            assert_eq!(errors["errors"][key], code);
+            assert_eq!(std::fs::read(dir.join("public-name.json")).unwrap(), before);
+        }
+        // The JSON wrapper may exceed 16 KiB; the cap is on the decoded UTF-8 file text.
+        let padded = format!(
+            "{valid}{}",
+            " ".repeat(crate::public_name::config::MAX_BYTES - valid.len())
+        );
+        let wrapped = request(path, serde_json::json!({"content":padded}), cookie);
+        assert!(wrapped.body.len() > crate::admin::server::MAX_BODY);
+        let mut wire = format!(
+            "POST {path} HTTP/1.1\r\nHost: relay\r\nContent-Length: {}\r\n\r\n",
+            wrapped.body.len()
+        )
+        .into_bytes();
+        wire.extend_from_slice(&wrapped.body);
+        assert_eq!(
+            read_request(&mut wire.as_slice(), wrapped.peer)
+                .unwrap()
+                .body,
+            wrapped.body
+        );
+        assert_eq!(server.route(&wrapped, 2).status, 200);
+        let dynv6 = serde_json::json!({"version":1,"provider":"dynv6","name":"b.dynv6.net","token":"dyn-secret"}).to_string();
+        let response = import(&dynv6);
+        assert_eq!(response.status, 200);
+        let values = a.settings().values;
+        assert_eq!(values["publicNameProvider"], "dynv6");
+        assert_eq!(values["publicName"], "b.dynv6.net");
+        assert_eq!(
+            values["publicNameProviders"]["duckdns"]["name"],
+            "a.duckdns.org"
+        );
+        assert_eq!(values["publicNameProviders"]["dynv6"]["tokenSet"], true);
+        assert!(!String::from_utf8(response.body)
+            .unwrap()
+            .contains("dyn-secret"));
+        let (active, _) = crate::public_name::config::load(&dir.join("public-name.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            active.provider,
+            Some(crate::public_name::config::Provider::Dynv6)
+        );
+        assert_eq!(active.token.as_deref(), Some("dyn-secret"));
+        a.public_name.remove().unwrap();
+        assert!(!dir.join("public-name").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 

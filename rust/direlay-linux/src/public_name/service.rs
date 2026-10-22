@@ -13,7 +13,7 @@ use super::{
     local_dns,
     providers::{self, Endpoints, ProviderClient, ProviderError},
     schedule,
-    store::{ErrorRecord, Meta, Store},
+    store::{self, ErrorRecord, Meta, Store},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -199,6 +199,10 @@ pub struct PublicNameService {
     inner: Arc<Inner>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
+pub enum ImportError {
+    Invalid(BTreeMap<String, String>),
+    Storage,
+}
 impl PublicNameService {
     pub fn new(state_dir: &Path, network: Network) -> Self {
         let inner = Arc::new(Inner {
@@ -265,25 +269,75 @@ impl PublicNameService {
     }
     /// The admin page's values; the token never leaves the relay.
     pub fn admin_values(&self) -> Map<String, Value> {
-        self.inner.reload(false);
-        config::admin_values(self.inner.shared.lock().unwrap().config.as_ref())
+        let _files = self.inner.files.lock().unwrap();
+        self.inner.reload_locked(false);
+        let active = self.inner.shared.lock().unwrap().config.clone();
+        let mut values = config::admin_values(active.as_ref());
+        let providers = self
+            .inner
+            .store
+            .providers(active.as_ref())
+            .unwrap_or_default();
+        values.insert(
+            "publicNameProviders".into(),
+            store::provider_values(&providers),
+        );
+        values
     }
     /// Applies the admin page's partial update and writes the file.
     pub fn update(&self, values: &Map<String, Value>) -> Result<(), BTreeMap<String, String>> {
         let files = self.inner.files.lock().unwrap();
         self.inner.reload_locked(false);
-        let current = self.inner.shared.lock().unwrap().config.clone();
-        let next = config::apply_admin(current.as_ref(), values)?;
-        crate::admin::auth::private_file(&self.inner.path, &next.to_json()).map_err(|_| {
+        let mut current = self.inner.shared.lock().unwrap().config.clone();
+        let storage_error = || {
             values
                 .keys()
                 .map(|k| (k.clone(), "error.request".to_string()))
                 .collect::<BTreeMap<_, _>>()
-        })?;
+        };
+        let providers = self
+            .inner
+            .store
+            .providers(current.as_ref())
+            .map_err(|_| storage_error())?;
+        if let Some(provider) = values
+            .get("publicNameProvider")
+            .and_then(Value::as_str)
+            .and_then(Provider::parse)
+        {
+            if current.as_ref().and_then(|c| c.provider) != Some(provider) {
+                let setup = providers.get(provider.id()).cloned().unwrap_or_default();
+                let base = current.get_or_insert_with(|| Config {
+                    enabled: false,
+                    ..Default::default()
+                });
+                base.provider = Some(provider);
+                base.name = (!setup.name.is_empty()).then_some(setup.name);
+                base.token = (!setup.token.is_empty()).then_some(setup.token);
+            }
+        }
+        let next = config::apply_admin(current.as_ref(), values)?;
+        self.inner.save_config(&next).map_err(|_| storage_error())?;
         self.inner.reload_locked(false);
         drop(files);
         self.inner.wake.notify_all();
         Ok(())
+    }
+    /// Uses the hand-written file parser, including its size cap and per-key error codes.
+    pub fn import(&self, content: &str) -> Result<(String, String), ImportError> {
+        let config = config::parse(content.as_bytes());
+        if !config.errors.is_empty() {
+            return Err(ImportError::Invalid(config.errors));
+        }
+        let files = self.inner.files.lock().unwrap();
+        self.inner.reload_locked(false);
+        self.inner
+            .save_config(&config)
+            .map_err(|_| ImportError::Storage)?;
+        self.inner.reload_locked(false);
+        drop(files);
+        self.inner.wake.notify_all();
+        Ok((config.provider.unwrap().id().into(), config.name.unwrap()))
     }
     /// Runs just before the CarPlay hotspot is activated with `address` (device-hotspot mode):
     /// the head unit then resolves the name to it locally, also without internet.
@@ -456,6 +510,14 @@ impl Dns01 for ProviderDns<'_> {
 }
 
 impl Inner {
+    /// Called with `files` held: retain the other provider before activating this setup.
+    fn save_config(&self, config: &Config) -> std::io::Result<()> {
+        let active = self.shared.lock().unwrap().config.clone();
+        let mut providers = self.store.providers(active.as_ref())?;
+        store::remember_provider(&mut providers, config);
+        self.store.save_providers(&providers)?;
+        crate::admin::auth::private_file(&self.path, &config.to_json())
+    }
     /// Re-reads the file when it changed (or `force`). Without a file, everything kept for the
     /// name is deleted: removing `public-name.json` by hand removes the certificate too.
     fn reload(&self, force: bool) {
@@ -480,6 +542,9 @@ impl Inner {
         };
         if loaded.is_none() && self.store.exists() {
             let _ = self.store.remove_all();
+        }
+        if let Some((config, _)) = &loaded {
+            let _ = self.store.providers(Some(config));
         }
         let mut shared = self.shared.lock().unwrap();
         let (config, stamp) = match loaded {

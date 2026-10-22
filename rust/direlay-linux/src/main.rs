@@ -465,10 +465,11 @@ pub fn run() -> Result<()> {
     let mut admin_config = crate::admin::AdminServerConfig::new(
         options.state_dir.clone(),
         options.admin_root.clone(),
-        addresses.clone(),
+        admin.admin_addresses()?,
     );
     // Trusted HTTPS: the admin page also answers its public name with that certificate.
     admin_config.named = admin.admin_certificate();
+    let mut previous_admin = admin_config.addresses.clone();
     let server = Arc::new(crate::admin::AdminServer::new(
         admin.clone(),
         auth,
@@ -498,9 +499,13 @@ pub fn run() -> Result<()> {
         // early, so the controller starts without waiting for the next tick.
         admin.wait_for_tick(Duration::from_millis(250));
         admin.tick()?;
+        let admin_addresses = admin.admin_addresses()?;
+        if admin_addresses != previous_admin {
+            http.update_addresses(&admin_addresses)?;
+            previous_admin = admin_addresses;
+        }
         let addresses = admin.host_addresses()?;
         if addresses != previous {
-            http.update_addresses(&addresses)?;
             if addresses.is_empty() {
                 mdns.take();
             } else if let Some(host) = &mdns {

@@ -18,7 +18,7 @@ function choice(key: string, values: string[], extra: Partial<Field> = {}): Fiel
 }
 const when = (key: string, ...equals: Value[]) => ({ key, equals });
 // Trusted HTTPS as the Linux relay describes it (public-name.json); the token never comes back.
-const PUBLIC_NAME_OFF = { publicNameEnabled: false, publicNameProvider: '', publicName: '', publicNameToken: '', publicNameTokenSet: false, publicNameAgreeTerms: false };
+const PUBLIC_NAME_OFF = { publicNameEnabled: false, publicNameProvider: '', publicName: '', publicNameToken: '', publicNameTokenSet: false, publicNameAgreeTerms: false, publicNameProviders: { duckdns: { name: '', tokenSet: false }, dynv6: { name: '', tokenSet: false } } };
 function publicNameSection(): Section {
   const shown = { visibleWhen: when('publicNameEnabled', true) };
   return { id: 'publicName', titleKey: 'publicName.title', fields: [
@@ -41,7 +41,7 @@ function mockWireless(values: Settings['values']): Wireless {
   return {
     preset: { id, label: labels[id], source: values.devicePreset === 'auto' ? 'detected' : 'settings', detected: 'phicomm-n1' },
     mode: 'concurrent', station24: true, ap24: true, station5: true, ap5: true, apStation: true, apStationChannels: 1, p2pClient: true, ap5Channels,
-    hotspot: { band, channel: inBand && capable ? configuredChannel : band === '2.4' ? 6 : 36, configuredBand, configuredChannel,
+    hotspot: { band, autoBand: id === 'msm8916' ? '2.4' : '5', channel: inBand && capable ? configuredChannel : band === '2.4' ? 6 : 36, configuredBand, configuredChannel,
       reason: configuredChannel && !(inBand && capable) ? inBand ? 'channel-not-ap-capable' : 'channel-not-in-band' : null },
   };
 }
@@ -149,6 +149,7 @@ export function mockApi(linux = false): Plugin {
   const sessions = new Set<string>();
   const attempts = new Map<string, { count: number; until: number }>();
   const settings = mockSettings(linux);
+  const publicProviders = new Map<string, { name: string; token: string }>();
   const currentSsid = () => String(settings.values.networkMode) === 'shared-wifi' ? wifiClient.ssid : null;
   const redactNetworks = () => {
     settings.values.sharedWifiNetworks = (settings.values.sharedWifiNetworks as SavedNetwork[]).map(item => ({ ssid: item.ssid, hasPassword: !!sharedPasswords.get(item.ssid), current: item.ssid === currentSsid() }));
@@ -185,7 +186,7 @@ export function mockApi(linux = false): Plugin {
       if (method !== 'GET') {
         try {
           let raw = '';
-          for await (const chunk of req) { raw += chunk.toString(); if (raw.length > 16384) return send(413, { error: 'error.request' }); }
+          for await (const chunk of req) { raw += chunk.toString(); if (Buffer.byteLength(raw) > (linux && path === '/public-name/import' ? 16384 * 6 + 1024 : 16384)) return send(413, { error: 'error.request' }); }
           body = JSON.parse(raw || '{}');
           if (!body || Array.isArray(body) || typeof body !== 'object') throw new Error();
         } catch { return send(400, { error: 'error.request' }); }
@@ -249,6 +250,33 @@ export function mockApi(linux = false): Plugin {
       if (path === '/logout' && method === 'POST') {
         if (token) sessions.delete(token); res.setHeader('Set-Cookie', 'direlay=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return send(200, { ok: true });
       }
+      if (linux && path === '/public-name/import' && method === 'POST') {
+        const content = body.content;
+        const errors: Record<string, string> = {};
+        let config: Record<string, unknown> = {};
+        if (typeof content !== 'string') errors.file = 'not-json';
+        else if (Buffer.byteLength(content) > 16384) errors.file = 'too-large';
+        else try {
+          config = JSON.parse(content);
+          if (!config || Array.isArray(config) || typeof config !== 'object') throw new Error();
+        } catch { errors.file = 'not-json'; }
+        if (!errors.file) {
+          for (const key of Object.keys(config)) if (!['version', 'enabled', 'provider', 'name', 'token', 'agreeLetsEncryptTerms', 'acme'].includes(key)) errors[key] = 'unknown-key';
+          for (const key of ['version', 'provider', 'name', 'token']) if (!(key in config)) errors[key] = 'missing';
+          if ('version' in config && config.version !== 1) errors.version = 'bad-version';
+          if ('provider' in config && !['duckdns', 'dynv6'].includes(String(config.provider))) errors.provider = 'invalid';
+          if ('name' in config && (typeof config.name !== 'string' || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(config.name) || (config.provider === 'duckdns' && !/^[a-z0-9-]+\.duckdns\.org$/i.test(config.name)))) errors.name = 'invalid';
+          if ('token' in config && (typeof config.token !== 'string' || !/^[!-~]{1,256}$/.test(config.token) || (config.provider === 'duckdns' && !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(config.token)))) errors.token = 'invalid';
+          for (const key of ['enabled', 'agreeLetsEncryptTerms']) if (key in config && typeof config[key] !== 'boolean') errors[key] = 'invalid';
+          if ('acme' in config && !['production', 'staging'].includes(String(config.acme))) errors.acme = 'invalid';
+        }
+        if (Object.keys(errors).length) return send(422, { errors });
+        const provider = String(config.provider); const name = String(config.name).toLowerCase();
+        publicProviders.set(provider, { name, token: String(config.token) });
+        Object.assign(settings.values, { publicNameProvider: provider, publicName: name, publicNameToken: '', publicNameTokenSet: true, publicNameEnabled: config.enabled ?? true, publicNameAgreeTerms: config.agreeLetsEncryptTerms ?? false });
+        settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name, tokenSet: true } };
+        return send(200, { ok: true, provider, name });
+      }
       if (path === '/settings' && method === 'GET') return send(200, settings);
       if (path === '/phones' && method === 'GET') return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id })));
       if (path === '/settings' && method === 'PUT') {
@@ -267,7 +295,7 @@ export function mockApi(linux = false): Plugin {
           if (linux && field.type === 'number' && value === '') continue;
           if (field.type === 'bool' ? typeof value !== 'boolean' : field.type === 'number' ? typeof value !== 'number' : typeof value !== 'string') errors[key] = 'error.invalid';
           else if (field.type === 'number' && (Number(value) < field.min! || Number(value) > field.max!)) errors[key] = 'error.range';
-          else if (field.type === 'choice' && !field.options?.some(option => option.value === value)) errors[key] = 'error.invalid';
+          else if (field.type === 'choice' && !(key === 'publicNameProvider' && value === '') && !field.options?.some(option => option.value === value)) errors[key] = 'error.invalid';
           else if (field.type === 'phone' && value !== 'auto' && !phones.some(phone => phone.id === value)) errors[key] = 'error.invalid';
           else if (key === 'hotspotPassword' && String(value).length < 8) errors[key] = 'error.invalid';
           else if (['hotspotSsid', 'carlinkName'].includes(key) && !String(value).trim()) errors[key] = 'error.required';
@@ -285,6 +313,17 @@ export function mockApi(linux = false): Plugin {
           }
           sharedPasswords = new Map(next.map(item => [item.ssid, item.password ?? sharedPasswords.get(item.ssid) ?? '']));
           body.sharedWifiNetworks = next.map(item => ({ ssid: item.ssid, hasPassword: !!sharedPasswords.get(item.ssid), current: item.ssid === (preview && !networkChanged ? wifiClient.ssid : currentSsid()) }));
+        }
+        if (linux && typeof body.publicNameProvider === 'string' && body.publicNameProvider !== settings.values.publicNameProvider) {
+          const saved = publicProviders.get(body.publicNameProvider);
+          settings.values.publicName = saved?.name ?? ''; settings.values.publicNameTokenSet = !!saved?.token;
+        }
+        const provider = String(body.publicNameProvider ?? settings.values.publicNameProvider ?? '');
+        if (linux && provider && Object.keys(body).some(key => key.startsWith('publicName'))) {
+          const saved = publicProviders.get(provider);
+          const setup = { name: String(body.publicName ?? settings.values.publicName ?? '').trim().toLowerCase(), token: String(body.publicNameToken || saved?.token || '') };
+          publicProviders.set(provider, setup);
+          settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name: setup.name, tokenSet: !!setup.token } };
         }
         // An empty token keeps the saved one; a token is never stored where GET /settings returns it.
         if (typeof body.publicNameToken === 'string') { if (body.publicNameToken !== '') settings.values.publicNameTokenSet = true; body.publicNameToken = ''; }
@@ -318,6 +357,7 @@ export function mockApi(linux = false): Plugin {
           ...(linux ? { publicName: mockPublicName(settings.values), wireless: mockWireless(settings.values) } : {}),
         };
         if (status.publicName?.state === 'ready') status.receiverUrls = [`https://${status.publicName.name}:8443/`, ...status.receiverUrls];
+        if (linux) status.adminUrls = [...(status.publicName?.trustedName ? [`https://${status.publicName.trustedName}:6975/`] : []), `https://${status.hostAddresses![0].ipv4}:6975/`, status.adminUrl];
         const result = preview ? previewStatus(status, previewState) : status;
         if (preview && networkChanged) {
           result.network = status.network; result.hotspot = status.hotspot; result.wifiClient = wifiClient; result.hostAddresses = status.hostAddresses;
@@ -331,7 +371,7 @@ export function mockApi(linux = false): Plugin {
       if (path === '/actions/pair-iphone' && method === 'POST') { if (!pairingDeadline || pairingDeadline <= Date.now() / 1000) pairingDeadline = Date.now() / 1000 + 600; return send(200, { ok: true }); }
       if (linux && path === '/actions/cancel-pairing' && method === 'POST') { pairingDeadline = null; return send(200, { ok: true }); }
       if (linux && path === '/actions/public-name-renew' && method === 'POST') return send(200, { ok: true });
-      if (linux && path === '/actions/public-name-remove' && method === 'POST') { Object.assign(settings.values, PUBLIC_NAME_OFF); return send(200, { ok: true }); }
+      if (linux && path === '/actions/public-name-remove' && method === 'POST') { publicProviders.clear(); Object.assign(settings.values, PUBLIC_NAME_OFF); return send(200, { ok: true }); }
       if (path.startsWith('/actions/') && method === 'POST') {
         const name = path.split('/').pop();
         if (!['start', 'stop', 'restart', 'regenerate-pairing-code'].includes(name!)) return send(404, { error: 'error.request' });

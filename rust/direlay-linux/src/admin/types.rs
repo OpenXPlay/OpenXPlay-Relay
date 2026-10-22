@@ -56,6 +56,8 @@ pub struct AdminStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wireless: Option<AdminWireless>,
     pub admin_url: String,
+    #[serde(default)]
+    pub admin_urls: Vec<String>,
     pub receiver_urls: Vec<String>,
     pub state: String,
     pub running: bool,
@@ -438,6 +440,12 @@ pub trait RelayAdmin: Send + Sync + 'static {
     fn settings(&self) -> AdminSettings;
     fn update(&self, values: Values) -> AdminUpdate;
     fn action(&self, name: &str) -> AdminResult;
+    fn public_name_import(
+        &self,
+        _content: &str,
+    ) -> Result<(String, String), crate::public_name::service::ImportError> {
+        Err(crate::public_name::service::ImportError::Storage)
+    }
     fn carlink_connect(&self, _pin: Option<&str>) -> AdminResult {
         Err("error.action".into())
     }

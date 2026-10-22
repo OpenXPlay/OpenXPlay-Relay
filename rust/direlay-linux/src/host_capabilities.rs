@@ -290,6 +290,7 @@ pub struct CapabilityCache {
     state: Mutex<CacheState>,
     wifi: Mutex<BTreeMap<String, WifiCapabilities>>,
     hotspot: Mutex<Option<(String, crate::device_preset::HotspotResolution)>>,
+    hotspot_changes: Mutex<std::collections::BTreeSet<String>>,
     runner: Arc<dyn CommandRunner>,
     root: PathBuf,
     selection: crate::linux_bluetooth::AdapterSelection,
@@ -304,6 +305,7 @@ impl CapabilityCache {
             state: Mutex::default(),
             wifi: Mutex::default(),
             hotspot: Mutex::default(),
+            hotspot_changes: Mutex::default(),
             runner,
             root,
             selection,
@@ -333,6 +335,11 @@ impl CapabilityCache {
         interface: &str,
         hotspot: crate::device_preset::HotspotResolution,
     ) {
+        if let Some(message) = hotspot.change_message() {
+            if self.hotspot_changes.lock().unwrap().insert(message.clone()) {
+                eprintln!("{message}");
+            }
+        }
         *self.hotspot.lock().unwrap() = Some((interface.into(), hotspot));
     }
     pub fn hotspot(&self, interface: &str) -> Option<crate::device_preset::HotspotResolution> {
@@ -468,6 +475,38 @@ mod tests {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         root
+    }
+    #[test]
+    fn hotspot_changes_are_logged_once_per_distinct_resolution() {
+        let root = root();
+        let cache = CapabilityCache::new(
+            Arc::new(Fake(AtomicUsize::new(0))),
+            root.clone(),
+            crate::linux_bluetooth::AdapterSelection::default(),
+        );
+        let phy = crate::wifi_capabilities::parse_phy(include_str!(
+            "../tests/fixtures/iw-phy-ufi003.txt"
+        ));
+        let replaced = crate::device_preset::resolve_hotspot("5", 36, "generic", Some(&phy));
+        let expected =
+            "Wi-Fi hotspot: configured 5 GHz channel 36 -> 2.4 GHz channel 6 (no-5ghz-ap)";
+        assert_eq!(replaced.change_message().as_deref(), Some(expected));
+        for _ in 0..3 {
+            cache.record_hotspot("wlan0", replaced.clone());
+        }
+        let mut fallback = replaced.clone();
+        fallback.reason = Some("ap-start-failed".into());
+        for _ in 0..2 {
+            cache.record_hotspot("wlan0", fallback.clone());
+        }
+        cache.record_hotspot("wlan0", replaced);
+        cache.record_hotspot(
+            "wlan0",
+            crate::device_preset::resolve_hotspot("auto", 0, "generic", None),
+        );
+        assert_eq!(cache.hotspot_changes.lock().unwrap().len(), 2);
+        assert!(cache.hotspot_changes.lock().unwrap().contains(expected));
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn regulatory_features_and_rfcomm_unknowns() {

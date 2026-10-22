@@ -92,10 +92,25 @@ pub fn select(root: &Path, requested: &str, source: &str) -> PresetSelection {
 #[serde(rename_all = "camelCase")]
 pub struct HotspotResolution {
     pub band: String,
+    pub auto_band: String,
     pub channel: u8,
     pub configured_band: String,
     pub configured_channel: u8,
     pub reason: Option<String>,
+}
+impl HotspotResolution {
+    pub fn change_message(&self) -> Option<String> {
+        let reason = self.reason.as_ref()?;
+        let configured = if self.configured_band == "auto" {
+            "Automatic".into()
+        } else {
+            format!("{} GHz", self.configured_band)
+        };
+        Some(format!(
+            "Wi-Fi hotspot: configured {configured} channel {} -> {} GHz channel {} ({reason})",
+            self.configured_channel, self.band, self.channel
+        ))
+    }
 }
 /// Resolves preferences without starting an AP or probing the host.
 pub fn resolve_hotspot(
@@ -105,15 +120,21 @@ pub fn resolve_hotspot(
     phy: Option<&PhyCapabilities>,
 ) -> HotspotResolution {
     let summary = WifiSummary::from_phy(phy);
+    let automatic = preset(preset_id).band.unwrap_or_else(|| {
+        // Unprobed hardware keeps the historical 5 GHz/channel 36 attempt and start-failure fallback.
+        if summary.ap5 == Some(false) {
+            "2.4"
+        } else {
+            "5"
+        }
+    });
+    let auto_band = if automatic == "5" && summary.ap5 == Some(false) {
+        "2.4"
+    } else {
+        automatic
+    };
     let mut band = if configured_band == "auto" {
-        preset(preset_id).band.unwrap_or_else(|| {
-            // Unprobed hardware keeps the historical 5 GHz/channel 36 attempt and start-failure fallback.
-            if summary.ap5 == Some(false) {
-                "2.4"
-            } else {
-                "5"
-            }
-        })
+        automatic
     } else {
         configured_band
     };
@@ -153,6 +174,7 @@ pub fn resolve_hotspot(
     };
     HotspotResolution {
         band: band.into(),
+        auto_band: auto_band.into(),
         channel,
         configured_band: configured_band.into(),
         configured_channel,
@@ -358,6 +380,10 @@ mod tests {
             );
             assert_eq!(resolved.configured_band, band);
             assert_eq!(resolved.configured_channel, channel);
+            assert_eq!(
+                resolved.auto_band,
+                resolve_hotspot("auto", channel, preset, phy).band
+            );
         }
     }
     #[test]

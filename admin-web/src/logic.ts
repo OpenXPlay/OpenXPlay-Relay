@@ -108,7 +108,8 @@ export function developerPreference(search: string, read: () => string | null): 
 
 // Navigation links, collapsed menus and modal dialogs are outside the resting Home button budget.
 export function homeButtonCount(status: Status, defaultPassword = false): number {
-  return 1 + (homeView(status, undefined, defaultPassword).action ? 1 : 0) + (addressViews(status, false).length ? 3 : 0);
+  const adminUrls = status.platform === 'linux' ? status.adminUrls : undefined;
+  return 1 + (homeView(status, undefined, defaultPassword).action ? 1 : 0) + (addressViews(status, false).length ? adminUrls ? 2 : 3 : 0) + (adminUrls?.length ?? 0);
 }
 
 export function savedNetworks(settings: Settings): SavedNetwork[] { return Array.isArray(settings.values.sharedWifiNetworks) ? settings.values.sharedWifiNetworks as SavedNetwork[] : []; }

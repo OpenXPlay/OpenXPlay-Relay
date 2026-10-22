@@ -14,8 +14,8 @@ export function validateHotspot(ssid: string, password: string): string {
 const esc = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 export function hotspotBandSelect(wireless: Wireless | undefined, t: Translate): string {
   const band = wireless?.hotspot.configuredBand ?? 'auto';
-  const automatic = wireless ? t('hotspot.automatic', {
-    band: t(`option.hotspotBand.${wireless.preset.id === 'msm8916' || wireless.ap5 === false ? '2.4' : '5'}`), preset: t(`option.devicePreset.${wireless.preset.id}`),
+  const automatic = wireless?.hotspot.autoBand ? t('hotspot.automatic', {
+    band: t(`option.hotspotBand.${wireless.hotspot.autoBand}`), preset: t(`option.devicePreset.${wireless.preset.id}`),
   }) : t('option.hotspotBand.auto');
   return `<label for="hotspot-band">${t('field.hotspotBand')}</label><select id="hotspot-band"${wireless?.ap5 === false ? ' aria-describedby="hotspot-band-hint"' : ''}>${['auto', '2.4', '5'].map(value => `<option value="${value}"${value === band ? ' selected' : ''}${value === '5' && wireless?.ap5 === false ? ' disabled' : ''}>${esc(value === 'auto' ? automatic : t(`option.hotspotBand.${value}`))}</option>`).join('')}</select>${wireless?.ap5 === false ? `<p id="hotspot-band-hint" class="muted">${t('hotspot.no5')}</p>` : ''}`;
 }

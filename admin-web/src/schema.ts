@@ -3,7 +3,9 @@
 // Created by riko chen on 2026-10-15
 
 export interface SavedNetwork { ssid: string; hasPassword?: boolean; current?: boolean; password?: string }
-export type Value = string | number | boolean | null | SavedNetwork[] | string[];
+export interface PublicNameProvider { name: string; tokenSet: boolean }
+export type PublicNameProviders = Record<string, PublicNameProvider>;
+export type Value = string | number | boolean | null | SavedNetwork[] | string[] | PublicNameProviders;
 export type Values = Record<string, Value>;
 export type Illustration = 'wifi-direct' | 'phone-hotspot' | 'device-hotspot' | 'shared-wifi';
 export interface Option { value: Value; labelKey: string; hintKey?: string; illustration?: Illustration }

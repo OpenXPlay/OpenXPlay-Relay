@@ -18,7 +18,7 @@ import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkV
 import { icon } from './icons';
 import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
-import { publicNamePanel } from './public-name';
+import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let language: Language = defaultLanguage(navigator.language);
@@ -53,7 +53,9 @@ let dismissedPin: number | null = null;
 let pairingBusy = false;
 let pairingError = '';
 let publicNameBusy = false;
-let publicNameMessage = '';
+let publicNameMessage: PublicNameMessage = '';
+let publicNameDrafts = new PublicNameDrafts();
+let publicNameWrite: Promise<unknown> | null = null;
 let reportCopied: { client: string; key: string; until: number } | null = null;
 const copied = new Map<string, { key: string; until: number }>();
 const phoneNames = new Map<string, string>();
@@ -77,6 +79,7 @@ function resetSession(next: SessionState) {
   epoch++;
   for (const item of pending.values()) clearTimeout(item.timer);
   needsRestart = false; pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null; publicNameBusy = false; publicNameMessage = '';
+  publicNameDrafts = new PublicNameDrafts(); publicNameWrite = null;
   document.querySelectorAll('dialog').forEach(dialog => { dialog.close(); dialog.remove(); });
   session = next; actionBusy = false; render();
 }
@@ -245,6 +248,12 @@ function renderPublicName() {
   el.innerHTML = publicNamePanel(status, settings, publicNameBusy, publicNameMessage, t, language);
   document.getElementById('public-name-renew')?.addEventListener('click', () => void publicNameAction('public-name-renew'));
   document.getElementById('public-name-remove')?.addEventListener('click', confirmRemovePublicName);
+  document.getElementById('public-name-import')?.addEventListener('click', () => document.getElementById('public-name-file')?.click());
+  document.getElementById('public-name-file')?.addEventListener('change', event => {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (file) void importPublicName(file);
+  });
+  document.querySelectorAll<HTMLInputElement>('[data-section="publicName"] .field input, [data-section="publicName"] .field button').forEach(input => { input.disabled = publicNameBusy; });
   if (focused) (document.getElementById(focused) ?? document.getElementById(fieldId('publicNameEnabled')))?.focus();
 }
 async function publicNameAction(name: 'public-name-renew' | 'public-name-remove') {
@@ -252,6 +261,8 @@ async function publicNameAction(name: 'public-name-renew' | 'public-name-remove'
   const current = epoch;
   publicNameBusy = true; publicNameMessage = ''; renderPublicName();
   try {
+    if (name === 'public-name-remove') await settlePublicNameWrite();
+    else await publicNameWrite?.catch(() => {});
     await api.action(name);
     const [nextStatus, nextSettings] = await Promise.all([fetchStatus(), name === 'public-name-remove' ? api.settings() : Promise.resolve(null)]);
     if (current !== epoch) return;
@@ -259,10 +270,31 @@ async function publicNameAction(name: 'public-name-renew' | 'public-name-remove'
     if (nextSettings) {
       // The file is gone: unsaved edits of its fields go with it, others stay.
       for (const [key, item] of [...pending]) { if (key.startsWith('publicName')) { clearTimeout(item.timer); pending.delete(key); feedback.delete(key); } else nextSettings.values[key] = item.value; }
-      settings = nextSettings; publicNameBusy = false; render(); document.getElementById(fieldId('publicNameEnabled'))?.focus();
+      publicNameDrafts = new PublicNameDrafts(); settings = nextSettings; publicNameBusy = false; render(); document.getElementById(fieldId('publicNameEnabled'))?.focus();
     }
   } catch (error) { if (current === epoch) publicNameMessage = errorKey(error); }
   finally { if (current === epoch) { publicNameBusy = false; renderPublicName(); } }
+}
+async function settlePublicNameWrite() {
+  for (const [key, item] of [...pending]) if (key.startsWith('publicName')) { clearTimeout(item.timer); pending.delete(key); feedback.delete(key); }
+  await publicNameWrite?.catch(() => {});
+}
+async function importPublicName(file: File) {
+  if (publicNameBusy) return;
+  const current = epoch;
+  publicNameBusy = true; publicNameMessage = ''; renderPublicName();
+  try {
+    await publicNameWrite?.catch(() => {});
+    const imported = await importPublicNameFile(file);
+    const [nextStatus, nextSettings] = await Promise.all([fetchStatus(), api.settings()]);
+    if (current !== epoch) return;
+    await settlePublicNameWrite();
+    for (const [key, item] of pending) nextSettings.values[key] = item.value;
+    publicNameDrafts.imported(imported.provider, nextSettings.values); settings = nextSettings; status = nextStatus;
+    publicNameMessage = imported; render();
+  } catch (error) {
+    if (current === epoch) publicNameMessage = error instanceof ApiError && Object.keys(error.errors).length ? { errors: error.errors } : errorKey(error);
+  } finally { if (current === epoch) { publicNameBusy = false; renderPublicName(); } }
 }
 function confirmRemovePublicName() {
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'public-name-remove-title');
@@ -442,7 +474,8 @@ function fieldMarkup(field: Field): string {
   }).join('') ?? ''}</div></fieldset>`;
   else if (field.type === 'phone') control = `<label for="${id}">${label}</label><button ${attributes} class="picker-button" aria-haspopup="dialog">${icon('smartphone')}<span>${value === 'auto' ? t('ui.automatic') : esc(phoneNames.get(String(value)) ?? value)}</span>${icon('chevron-down')}</button>`;
   else control = `<label for="${id}">${label}</label><div class="input-row"><input ${attributes} type="${field.type === 'secret' ? 'password' : field.type}" value="${esc(value)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${field.type === 'secret' && settings!.values[`${field.key}Set`] === true ? `placeholder="${esc(t(`${field.labelKey}Saved`))}"` : ''}>${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button>` : ''}</div>`;
-  return `<div class="field" data-field="${esc(field.key)}">${control}${['output', 'transport'].includes(field.key) ? connectionConstraint(status?.platform, t) : ''}<p class="muted hint" id="${id}-hint">${field.hintKey ? esc(t(field.hintKey)) : ''}</p><p id="${id}-result" class="field-result ${invalid ? 'error' : ''}" role="status" aria-live="polite">${feedback.has(field.key) ? esc(t(feedback.get(field.key)!)) : ''}</p></div>`;
+  const hint = field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
+  return `<div class="field" data-field="${esc(field.key)}">${control}${['output', 'transport'].includes(field.key) ? connectionConstraint(status?.platform, t) : ''}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result ${invalid ? 'error' : ''}" role="status" aria-live="polite">${feedback.has(field.key) ? esc(t(feedback.get(field.key)!)) : ''}</p></div>`;
 }
 function bindField(field: Field) {
   const el = document.getElementById(fieldId(field.key))!;
@@ -651,6 +684,20 @@ function updateVisibility() {
 }
 function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
+  if (field.key.startsWith('publicName')) {
+    if (publicNameBusy) return;
+    if (field.key === 'publicNameProvider') publicNameDrafts.select(String(value), settings!.values);
+    else {
+      settings!.values[field.key] = value;
+      if (field.key === 'publicName' || field.key === 'publicNameToken') publicNameDrafts.edit(String(settings!.values.publicNameProvider ?? ''), settings!.values);
+    }
+    // One serialized save submits the selected provider and its fields together.
+    queueValue(fields().find(f => f.key === 'publicNameProvider')!, settings!.values.publicNameProvider);
+    if (field.key === 'publicNameProvider') {
+      render(); document.querySelector<HTMLInputElement>(`input[name="${fieldId(field.key)}"]:checked`)?.focus();
+    }
+    return;
+  }
   if (field.key === 'transport' && needsUsbConfirmation(status?.platform, settings!.values.transport, value)) {
     if (!window.confirm(t('confirm.transport.usb.android'))) { render(); return; }
   }
@@ -674,22 +721,32 @@ function queueValue(field: Field, value: Value) {
 }
 async function save(key: string) {
   const item = pending.get(key); if (!item || item.busy || session !== 'ready' || handoff) return;
+  if (key.startsWith('publicName') && publicNameBusy) { item.timer = setTimeout(() => void save(key), 2000); return; }
   if (switching) { item.timer = setTimeout(() => void save(key), 2000); return; }
   item.busy = true; const revision = item.revision; const current = epoch;
+  const submitted = key === 'publicNameProvider' ? publicNameSubmission(settings!.values) : null;
   try {
-    const response = await api.save({ [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
+    const write = api.save(submitted ?? { [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
+    if (submitted) publicNameWrite = write;
+    const response = await write;
     if (current !== epoch) return;
+    if (submitted && settings) {
+      publicNameDrafts.saved(submitted, settings.values);
+      const token = document.getElementById(fieldId('publicNameToken')) as HTMLInputElement | null;
+      if (token) { token.value = String(settings.values.publicNameToken ?? ''); token.placeholder = settings.values.publicNameTokenSet ? t('publicName.tokenSaved') : ''; }
+      for (const field of fields().filter(f => f.key.startsWith('publicName'))) result(field.key, 'ui.saved');
+    }
     if (revision === item.revision) { pending.delete(key); needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
-    // A saved token is never shown again; the field then reads "Token saved".
-    if (key === 'publicNameToken' && item.value !== '' && settings) settings.values.publicNameTokenSet = true;
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {
       if (error instanceof NetworkError) result(key, 'ui.unsaved');
       else { pending.delete(key); result(key, error instanceof ApiError ? error.errors[key] ?? error.key : 'error.request'); }
+      if (submitted && error instanceof ApiError) for (const [field, message] of Object.entries(error.errors)) result(field, message);
     }
   } finally {
     item.busy = false;
+    if (submitted && current === epoch) publicNameWrite = null;
     if (pending.get(key) === item && current === epoch) item.timer = setTimeout(() => void save(key), revision === item.revision ? 2000 : 450);
   }
 }
@@ -793,6 +850,7 @@ async function tick() {
           networkAnnouncement = joinError ? '' : t('net.switched', { mode: t(next.network.mode === 'shared-wifi' ? 'net.shared' : 'net.hotspot') });
           settings = await api.settings();
           for (const [key, item] of pending) settings.values[key] = item.value;
+          if (pending.has('publicNameProvider')) publicNameDrafts.select(String(settings.values.publicNameProvider), settings.values);
           switching = null; render(); document.getElementById('network-switch')?.focus();
         } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); } }
     }

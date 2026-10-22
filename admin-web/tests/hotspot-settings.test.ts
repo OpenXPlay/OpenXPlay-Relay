@@ -15,7 +15,7 @@ const wireless = (): Wireless => ({
   preset: { id: 'phicomm-n1', label: 'Phicomm N1', source: 'detected', detected: 'phicomm-n1' },
   mode: 'concurrent', station24: true, ap24: true, station5: true, ap5: true,
   apStation: true, apStationChannels: 1, p2pClient: true, ap5Channels: [36, 40, 44, 48, 149, 153, 157, 161, 165],
-  hotspot: { band: '5', channel: 36, configuredBand: 'auto', configuredChannel: 0, reason: null },
+  hotspot: { band: '5', autoBand: '5', channel: 36, configuredBand: 'auto', configuredChannel: 0, reason: null },
 });
 it('validates UTF-8 name bytes and printable ASCII password boundaries', () => {
   for (const name of ['', 'a'.repeat(33), '中'.repeat(11)]) expect(validateHotspot(name, 'abcdefghij')).toBe('error.hotspotSsid');
@@ -62,7 +62,7 @@ it('renders the Linux band select with preset defaults and only disables known u
     expect(html).toContain(t('hotspot.automatic', { band: '5 GHz', preset: t('option.devicePreset.phicomm-n1') }));
     expect(html).toContain('value="auto" selected');
     expect(html).not.toContain(' disabled');
-    w.ap5 = false; w.station5 = false; w.preset.id = 'msm8916'; w.hotspot.configuredBand = '2.4';
+    w.hotspot.autoBand = '2.4'; w.ap5 = false; w.station5 = false; w.preset.id = 'msm8916'; w.hotspot.configuredBand = '2.4';
     const limited = hotspotForm('Relay', t, w);
     expect(limited).toContain('value="5" disabled');
     expect(limited).toContain('value="2.4" selected');
@@ -83,6 +83,14 @@ it('shows the station band hint only for a Linux radio known to lack 5 GHz', () 
     expect(stationBandHint({ platform: 'linux' }, t)).toBe('');
     expect(stationBandHint({ platform: 'android' }, t)).toBe('');
   }
+});
+it('uses the resolved automatic band even when a preset or capability shortcut would disagree', () => {
+  const t = (key: string, parameters?: Record<string, string | number>) => translate('en', key, parameters);
+  const w = wireless();
+  w.hotspot.autoBand = '2.4';
+  expect(hotspotForm('Relay', t, w)).toContain(t('hotspot.automatic', { band: '2.4 GHz', preset: t('option.devicePreset.phicomm-n1') }));
+  w.preset.id = 'msm8916'; w.hotspot.autoBand = '5';
+  expect(hotspotForm('Relay', t, w)).toContain(t('hotspot.automatic', { band: '5 GHz', preset: t('option.devicePreset.msm8916') }));
 });
 it('keeps the preset visible to users and the Android hotspot band in its original developer section', () => {
   for (const developer of [true, false]) {

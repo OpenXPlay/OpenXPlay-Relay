@@ -5,13 +5,17 @@
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Connect, ViteDevServer } from 'vite';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mockApi, mockPublicName, mockSettings, previewStatus } from '../dev-server';
 import { addressViews, homeButtonCount, publicNameUrl, settingsViews } from '../src/logic';
-import { hasPublicName, publicNameConfigured, publicNameFileErrors, publicNameLine, publicNamePanel, TERMS_URL } from '../src/public-name';
+import { PublicNameDrafts, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, publicNameMessageLines, PUBLIC_NAME_MAX_BYTES, hasPublicName, publicNameConfigured, publicNameFileErrors, publicNameLine, publicNamePanel, TERMS_URL } from '../src/public-name';
 import { addressesView } from '../src/views';
 import { translate, type Language } from '../src/i18n';
 import type { PublicNameStatus, Status } from '../src/api';
+import { api } from '../src/api';
+import type { PublicNameProviders } from '../src/schema';
+import { createHash } from 'node:crypto';
+afterEach(() => vi.unstubAllGlobals());
 
 const en = (key: string, parameters?: Record<string, string | number>) => translate('en', key, parameters);
 const zh = (key: string, parameters?: Record<string, string | number>) => translate('zh-CN', key, parameters);
@@ -103,6 +107,116 @@ it('renders the panel with the agreement link, Request certificate now and Remov
   expect(on).toContain(en('error.request'));
   // Escaped: a CA detail never becomes markup.
   expect(publicNamePanel(status({ state: 'error', error: 'acme-rejected', errorDetail: '<b>x</b>' }), settings, false, '', en, 'en')).toContain('&lt;b&gt;x&lt;/b&gt;');
+  for (const state of ['off', 'incomplete', 'waiting-network', 'updating-address', 'requesting-certificate', 'ready'] as const) {
+    expect(publicNamePanel(status({ state }), settings, false, '', en, 'en')).not.toContain('public-name-renew');
+  }
+});
+
+it('keeps independent provider drafts, saved flags and newer edits across a completed save', () => {
+  const values = mockSettings(true).values;
+  values.publicNameProviders = { duckdns: { name: 'duck.duckdns.org', tokenSet: true }, dynv6: { name: 'dyn.dynv6.net', tokenSet: false } };
+  const drafts = new PublicNameDrafts();
+  drafts.select('duckdns', values);
+  expect(values).toMatchObject({ publicName: 'duck.duckdns.org', publicNameToken: '', publicNameTokenSet: true });
+  values.publicName = 'typed.duckdns.org'; values.publicNameToken = 'typed-duck'; drafts.edit('duckdns', values);
+  const submitted = publicNameSubmission(values);
+  drafts.select('dynv6', values);
+  expect(values).toMatchObject({ publicName: 'dyn.dynv6.net', publicNameToken: '', publicNameTokenSet: false });
+  values.publicName = 'typed.dynv6.net'; values.publicNameToken = 'typed-dyn'; drafts.edit('dynv6', values);
+  expect(publicNameSubmission(values)).toMatchObject({ publicNameProvider: 'dynv6', publicName: 'typed.dynv6.net', publicNameToken: 'typed-dyn' });
+  drafts.select('duckdns', values);
+  expect(values).toMatchObject({ publicName: 'typed.duckdns.org', publicNameToken: 'typed-duck', publicNameTokenSet: true });
+  values.publicName = 'newer.duckdns.org'; drafts.edit('duckdns', values);
+  drafts.saved(submitted, values);
+  expect(values).toMatchObject({ publicName: 'newer.duckdns.org', publicNameToken: '', publicNameTokenSet: true });
+  drafts.select('dynv6', values);
+  expect(values).toMatchObject({ publicName: 'typed.dynv6.net', publicNameToken: 'typed-dyn', publicNameTokenSet: false });
+  const dynSubmitted = publicNameSubmission(values);
+  values.publicNameToken = 'newer-token'; drafts.edit('dynv6', values);
+  drafts.saved(dynSubmitted, values);
+  expect(values.publicNameToken).toBe('newer-token');
+  drafts.select('duckdns', values);
+  drafts.saved(publicNameSubmission(values), values);
+  expect(values).toMatchObject({ publicName: 'newer.duckdns.org', publicNameToken: '', publicNameTokenSet: true });
+  // Untouched providers follow saved changes, while edited providers retain their drafts.
+  (values.publicNameProviders as PublicNameProviders).duckdns.name = 'updated.duckdns.org';
+  drafts.select('duckdns', values);
+  expect(values.publicName).toBe('updated.duckdns.org');
+  drafts.select('dynv6', values);
+  expect(values.publicNameToken).toBe('newer-token');
+  drafts.imported('duckdns', values);
+  expect(values.publicName).toBe('updated.duckdns.org');
+  drafts.select('dynv6', values);
+  expect(values.publicNameToken).toBe('newer-token');
+});
+
+it('shows the provider guidance, name examples and safe external links in both languages', () => {
+  for (const language of ['en', 'zh-CN'] as const) for (const provider of ['duckdns', 'dynv6']) {
+    const t = (key: string) => translate(language, key);
+    const values = { publicNameProvider: provider };
+    const html = publicNameGuidance(values, t, language);
+    expect(html).toContain(provider === 'duckdns' ? 'href="https://www.duckdns.org/"' : 'href="https://dynv6.com/"');
+    expect(html).toContain(`href="https://openxplay.org/${language === 'en' ? 'en/' : ''}trusted-https"`);
+    expect(html.match(/target="_blank" rel="noopener"/g)).toHaveLength(2);
+    expect(html).toContain(t(`publicName.open.${provider}`));
+    expect(html).toContain(t('publicName.guide'));
+    expect(html).toContain(provider === 'duckdns' ? 'GitHub' : 'HTTP');
+    expect(t(publicNameNameHint(values))).toContain(provider === 'duckdns' ? 'myrelay.duckdns.org' : 'myrelay.dynv6.net');
+  }
+  expect(publicNameGuidance({ publicNameProvider: '' }, en, 'en')).toBe('');
+});
+
+it('reads the selected file in the browser, sends content once and reports success and every file error', async () => {
+  const content = '{"version":1,"token":"private"}';
+  const imported = { ok: true as const, provider: 'dynv6', name: 'myrelay.dynv6.net' };
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(imported)));
+  vi.stubGlobal('fetch', fetcher);
+  const text = vi.fn().mockResolvedValue(content);
+  expect(await importPublicNameFile({ size: PUBLIC_NAME_MAX_BYTES, text })).toEqual(imported);
+  expect(text).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenCalledWith('/api/v0/public-name/import', expect.objectContaining({ method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-OpenXPlay-Admin': '1' }, body: JSON.stringify({ content }) }));
+  for (const [t, language] of [[en, 'en'], [zh, 'zh-CN']] as const) {
+    const lines = publicNameMessageLines(imported, t);
+    expect(lines).toEqual([language === 'en' ? 'Imported: dynv6, myrelay.dynv6.net' : '已导入：dynv6，myrelay.dynv6.net']);
+    const html = publicNamePanel(status(), mockSettings(true), false, imported, t, language);
+    expect(html).toContain(lines[0]);
+    expect(html).toContain('accept=".json"');
+    expect(html).toContain(t('publicName.import'));
+    const errors = Object.fromEntries(['missing', 'invalid', 'unknown-key', 'bad-version', 'too-large', 'not-json'].map(code => [code, code]));
+    const messages = publicNameMessageLines({ errors }, t);
+    expect(messages).toHaveLength(6);
+    for (const code of Object.keys(errors)) expect(messages).toContain(t('publicName.fileError', { key: code, problem: t(`publicName.file.${code}`) }));
+  }
+  fetcher.mockClear(); text.mockClear();
+  await expect(importPublicNameFile({ size: PUBLIC_NAME_MAX_BYTES + 1, text })).rejects.toMatchObject({ errors: { file: 'too-large' } });
+  expect(text).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ errors: { token: 'invalid', nmae: 'unknown-key' } }), { status: 422 }));
+  await expect(api.publicNameImport(content)).rejects.toMatchObject({ errors: { token: 'invalid', nmae: 'unknown-key' } });
+  fetcher.mockRejectedValue(new Error('lost response')); fetcher.mockClear();
+  await expect(api.publicNameImport(content)).rejects.toBeInstanceOf(Error);
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it('renders the ordered Linux admin URLs with copy buttons and preserves the Android page', () => {
+  const base = status(undefined, ['https://192.168.1.78:8443/']);
+  const adminUrls = ['https://myrelay.duckdns.org:6975/', 'https://10.77.0.1:6975/', 'https://192.168.1.78:6975/', 'https://openxplay-linux.local:6975/'];
+  for (const t of [en, zh]) {
+    const html = addressesView({ ...base, platform: 'linux', adminUrls }, false, t);
+    expect(html.match(/class="address-row admin-address"/g)).toHaveLength(4);
+    expect(html).toContain(t('home.adminPage'));
+    for (const url of adminUrls) { expect(html).toContain(`data-copy="${url}"`); expect(html).toContain(`href="${url}" target="_blank" rel="noopener"`); }
+    expect(adminUrls.map(url => html.indexOf(`href="${url}"`))).toEqual([...adminUrls.map(url => html.indexOf(`href="${url}"`))].sort((a, b) => a - b));
+    expect(homeButtonCount({ ...base, platform: 'linux', adminUrls })).toBe(homeButtonCount({ ...base, platform: 'linux' }) + adminUrls.length - 1);
+    const android = { ...base, platform: 'android' as const, publicName: undefined, adminUrls: undefined };
+    expect(publicNamePanel(android, mockSettings(), false, '', t, 'en')).toBe('');
+    expect(hasPublicName(mockSettings())).toBe(false);
+    const original = addressesView(android, false, t);
+    expect(original).toContain(t('ui.admin'));
+    expect(original).not.toContain(t('home.adminPage'));
+    expect(addressesView({ ...android, adminUrls }, false, t)).toBe(original);
+    // Golden markup from the Android-shaped page before the Linux address-list extension.
+    expect(createHash('sha256').update(original).digest('hex')).toBe(t === en ? '2b67903e1c45b0052b4f831fcec72717c65d6dcb2b25894920aef073437dc552' : 'def560b45bb81e21e6af4caadeb1c850d265a885621263c4863d6cc358fbe3db');
+  }
 });
 
 it('lists the name first on Home while ready and keeps the IP as fallback, within the button budget', () => {
@@ -168,4 +282,27 @@ it('the Linux mock saves field by field, keeps the token secret and removes the 
   expect((await call('/status')).data.publicName).toEqual({ state: 'off' });
   expect((await call('/settings')).data.values).toMatchObject({ publicNameEnabled: false, publicNameTokenSet: false, publicName: '' });
   expect(mockPublicName({ publicNameEnabled: true, publicNameProvider: 'dynv6', publicName: 'fail.dynv6.net', publicNameTokenSet: true, publicNameAgreeTerms: true }, 0)).toMatchObject({ state: 'error', error: 'acme-rejected' });
+});
+
+it('the Linux mock retains both providers and activates an imported setup without exposing tokens', async () => {
+  const call = relay();
+  await call('/login', 'POST', { password: 'openxplay' });
+  const token = 'a1b2c3d4-0000-0000-0000-000000000000';
+  await call('/settings', 'PUT', { publicNameProvider: 'duckdns', publicName: 'a.duckdns.org', publicNameToken: token });
+  await call('/settings', 'PUT', { publicNameProvider: 'dynv6' });
+  expect((await call('/settings')).data.values).toMatchObject({ publicName: '', publicNameTokenSet: false });
+  const content = JSON.stringify({ version: 1, provider: 'dynv6', name: 'B.dynv6.net', token: 'dyn-secret', agreeLetsEncryptTerms: true });
+  expect((await call('/public-name/import', 'POST', { content })).data).toEqual({ ok: true, provider: 'dynv6', name: 'b.dynv6.net' });
+  const values = (await call('/settings')).data.values;
+  expect(values).toMatchObject({ publicNameProvider: 'dynv6', publicName: 'b.dynv6.net', publicNameToken: '', publicNameTokenSet: true, publicNameProviders: { duckdns: { name: 'a.duckdns.org', tokenSet: true }, dynv6: { name: 'b.dynv6.net', tokenSet: true } } });
+  expect(JSON.stringify(values)).not.toContain('dyn-secret');
+  expect(JSON.stringify(values)).not.toContain(token);
+  await call('/settings', 'PUT', { publicNameProvider: 'duckdns', publicNameToken: '' });
+  expect((await call('/settings')).data.values).toMatchObject({ publicName: 'a.duckdns.org', publicNameTokenSet: true });
+  expect((await call('/public-name/import', 'POST', { content: 'not json' })).data).toEqual({ errors: { file: 'not-json' } });
+  expect((await call('/public-name/import', 'POST', { content: content.replace('"version":1', '"version":2') })).data).toEqual({ errors: { version: 'bad-version' } });
+  expect((await call('/public-name/import', 'POST', { content: JSON.stringify({ ...JSON.parse(content), typo: 1 }) })).data).toEqual({ errors: { typo: 'unknown-key' } });
+  expect((await call('/public-name/import', 'POST', { content: ' '.repeat(16385) })).data).toEqual({ errors: { file: 'too-large' } });
+  await call('/actions/public-name-remove', 'POST');
+  expect((await call('/settings')).data.values.publicNameProviders).toEqual({ duckdns: { name: '', tokenSet: false }, dynv6: { name: '', tokenSet: false } });
 });
