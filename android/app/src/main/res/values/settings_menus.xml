@@ -10,7 +10,6 @@
     <string name="menu_video">Video</string>
     <string name="menu_connection_outputs">Connection and outputs</string>
     <string name="menu_identity">Identity and certificates</string>
-    <string name="menu_https_maintenance">Certificate management</string>
     <string name="menu_on">On</string>
     <string name="menu_off">Off</string>
     <string name="menu_startup_summary">Automatic: %1$s · Boot: %2$s</string>

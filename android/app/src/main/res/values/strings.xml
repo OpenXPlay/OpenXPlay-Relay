@@ -585,8 +585,18 @@
     <string name="public_name_summary">Open the head-unit page without a certificate warning, using a free domain name.</string>
     <string name="public_name_enabled">Use a free domain name</string>
     <string name="public_name_provider">DNS provider</string>
+    <string name="public_name_per_provider">Each provider keeps its own name and token. Switching shows what is saved for it.</string>
+    <string name="public_name_hint_duckdns">Sign in at duckdns.org (from mainland China, use a GitHub account), add a name, then copy the token at the top of the page. Enter the full name, such as myrelay.duckdns.org. This token can change every name in the account, so keep it like a password.</string>
+    <string name="public_name_hint_dynv6">Sign up at dynv6.com with an email address, create a zone ending in .dynv6.net, then create an HTTP token on the Keys page, limited to this zone if you can. Enter the full name, such as myrelay.dynv6.net.</string>
+    <string name="public_name_open_duckdns">Open DuckDNS</string>
+    <string name="public_name_open_dynv6">Open dynv6</string>
+    <string name="public_name_guide">Setup guide on openxplay.org</string>
+    <string name="public_name_url_duckdns" translatable="false">https://www.duckdns.org/</string>
+    <string name="public_name_url_dynv6" translatable="false">https://dynv6.com/</string>
+    <string name="public_name_guide_url">https://openxplay.org/en/trusted-https</string>
     <string name="public_name_name">Domain name</string>
-    <string name="public_name_name_hint">For example myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_duckdns">For example myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_dynv6">For example myrelay.dynv6.net</string>
     <string name="public_name_token">Token</string>
     <string name="public_name_token_hint">Copy it from your provider account. It stays on this relay.</string>
     <string name="public_name_token_saved">Token saved</string>
@@ -623,7 +633,7 @@
     <string name="public_name_problem_not_json">not a JSON object</string>
     <string name="public_name_name_invalid">Enter the full domain name. DuckDNS names end in .duckdns.org.</string>
     <string name="public_name_token_invalid">This token does not fit the chosen provider.</string>
-    <string name="public_name_remove_confirm">Remove the domain name, the token and the certificate from this relay? The address stays at the provider.</string>
+    <string name="public_name_remove_confirm">Remove every provider’s name and token, and the certificate, from this relay? The address records at the providers stay.</string>
     <string name="home_problem_connection">Connection</string>
     <string name="home_problem_carplay">CarPlay connection</string>
     <string name="home_problem_carlink">Carlink</string>

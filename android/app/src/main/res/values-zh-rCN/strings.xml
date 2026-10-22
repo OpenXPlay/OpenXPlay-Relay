@@ -579,8 +579,16 @@
     <string name="public_name_summary">用免费域名，让车机打开网页时不再出现证书警告。</string>
     <string name="public_name_enabled">使用免费域名</string>
     <string name="public_name_provider">域名服务商</string>
+    <string name="public_name_per_provider">每个服务商的域名和 Token 分开保存，切换时会显示对应服务商已保存的内容。</string>
+    <string name="public_name_hint_duckdns">在 duckdns.org 登录（中国大陆建议用 GitHub 账号），添加一个域名，再复制页面顶部的 token。域名要填完整，例如 myrelay.duckdns.org。这个 Token 能修改账号下的所有域名，请像密码一样保管。</string>
+    <string name="public_name_hint_dynv6">在 dynv6.com 用邮箱注册，新建一个以 .dynv6.net 结尾的 zone（域名），再到 Keys 页面新建一个 HTTP Token，最好限定只能管理这个 zone。域名要填完整，例如 myrelay.dynv6.net。</string>
+    <string name="public_name_open_duckdns">打开 DuckDNS 官网</string>
+    <string name="public_name_open_dynv6">打开 dynv6 官网</string>
+    <string name="public_name_guide">查看 OpenXPlay 官网教程</string>
+    <string name="public_name_guide_url">https://openxplay.org/trusted-https</string>
     <string name="public_name_name">域名</string>
-    <string name="public_name_name_hint">例如 myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_duckdns">例如 myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_dynv6">例如 myrelay.dynv6.net</string>
     <string name="public_name_token">Token</string>
     <string name="public_name_token_hint">从服务商账号中复制，只保存在这台中继上。</string>
     <string name="public_name_token_saved">已保存 Token</string>
@@ -616,7 +624,7 @@
     <string name="public_name_problem_not_json">不是 JSON 对象</string>
     <string name="public_name_name_invalid">请输入完整域名。DuckDNS 域名以 .duckdns.org 结尾。</string>
     <string name="public_name_token_invalid">这个 Token 与所选服务商不符。</string>
-    <string name="public_name_remove_confirm">要从这台中继移除域名、Token 和证书吗？服务商那里的地址记录保持不变。</string>
+    <string name="public_name_remove_confirm">要从这台中继移除所有服务商的域名和 Token，以及证书吗？服务商那里的地址记录保持不变。</string>
     <string name="home_problem_connection">连接</string>
     <string name="home_problem_carplay">CarPlay 连接</string>
     <string name="home_problem_carlink">Carlink</string>

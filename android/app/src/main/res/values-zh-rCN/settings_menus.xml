@@ -10,7 +10,6 @@
     <string name="menu_video">视频</string>
     <string name="menu_connection_outputs">连接与输出</string>
     <string name="menu_identity">身份与证书</string>
-    <string name="menu_https_maintenance">证书管理</string>
     <string name="menu_on">开启</string>
     <string name="menu_off">关闭</string>
     <string name="menu_startup_summary">自动启动：%1$s · 开机启动：%2$s</string>
