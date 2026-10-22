@@ -53,6 +53,8 @@ pub struct AdminStatus {
     pub host_profile: Option<AdminHostProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_capabilities: Option<crate::host_capabilities::HostCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wireless: Option<AdminWireless>,
     pub admin_url: String,
     pub receiver_urls: Vec<String>,
     pub state: String,
@@ -70,6 +72,14 @@ pub struct AdminStatus {
     /// Trusted HTTPS with a free domain name; absent where the relay has no such feature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_name: Option<crate::public_name::PublicNameStatus>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminWireless {
+    pub preset: crate::device_preset::PresetSelection,
+    #[serde(flatten)]
+    pub summary: crate::wifi_capabilities::WifiSummary,
+    pub hotspot: crate::device_preset::HotspotResolution,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -435,7 +445,7 @@ pub trait RelayAdmin: Send + Sync + 'static {
         Err("error.action".into())
     }
     fn phones(&self) -> Vec<AdminPhone>;
-    fn hotspot_update(&self, _ssid: &str, _password: &str) -> AdminResult {
+    fn hotspot_update(&self, _ssid: &str, _password: &str, _band: Option<&str>) -> AdminResult {
         Err("error.action".into())
     }
     /// Latest receiver-info and recent stats per browser, as `[{client, idleSeconds, info, stats}]`.

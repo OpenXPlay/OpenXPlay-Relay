@@ -26,10 +26,12 @@ pub struct Settings {
     pub plugins: bool,
     pub plugins_enabled: Vec<String>,
     pub network_mode: String,
+    pub device_preset: String,
     pub shared_wifi_networks: Vec<SharedWifiNetwork>,
     pub wifi_interface: String,
     pub carlink_interface: String,
     pub hotspot_channel: u8,
+    pub hotspot_band: String,
     pub iphone: Option<String>,
     pub rfcomm_channel: Option<u8>,
     pub receiver_port: u16,
@@ -54,10 +56,12 @@ impl Default for Settings {
             plugins: false,
             plugins_enabled: Vec::new(),
             network_mode: "device-hotspot".into(),
+            device_preset: "auto".into(),
             shared_wifi_networks: Vec::new(),
             wifi_interface: "wlan0".into(),
             carlink_interface: String::new(),
-            hotspot_channel: 36,
+            hotspot_channel: 0,
+            hotspot_band: "auto".into(),
             iphone: None,
             rfcomm_channel: None,
             receiver_port: 8443,
@@ -83,6 +87,12 @@ impl Settings {
             Ok(b) => {
                 let mut value: serde_json::Value = serde_json::from_slice(&b)?;
                 if let Some(object) = value.as_object_mut() {
+                    object
+                        .entry("devicePreset")
+                        .or_insert_with(|| defaults.device_preset.clone().into());
+                    object
+                        .entry("networkMode")
+                        .or_insert_with(|| defaults.network_mode.clone().into());
                     let ssid = object.remove("wifiSsid");
                     let password = object.remove("wifiPassword");
                     if !object.contains_key("sharedWifiNetworks") {
@@ -147,10 +157,18 @@ impl Settings {
         {
             return Err(invalid("Invalid Carlink interface"));
         }
-        if !(1..=14).contains(&self.hotspot_channel) && !(32..=177).contains(&self.hotspot_channel)
+        if !crate::device_preset::valid_selection(&self.device_preset) {
+            return Err(invalid("Invalid devicePreset"));
+        }
+        if !["auto", "2.4", "5"].contains(&self.hotspot_band.as_str()) {
+            return Err(invalid("Invalid hotspotBand"));
+        }
+        if self.hotspot_channel != 0
+            && !(1..=14).contains(&self.hotspot_channel)
+            && !(32..=177).contains(&self.hotspot_channel)
         {
             return Err(invalid(
-                "Preferred Wi-Fi channel must be in 1..14 or 32..177",
+                "Preferred Wi-Fi channel must be 0 (automatic), in 1..14 or 32..177",
             ));
         }
         if self

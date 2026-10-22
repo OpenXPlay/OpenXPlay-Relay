@@ -27,6 +27,14 @@ export interface HostCapabilities {
   bluetooth: { brEdr: boolean; le: boolean; secureConnections: boolean } | null; rfcomm: boolean | null;
   tools: Record<string, { present: boolean | null; version: string | null }>;
 }
+export type HotspotBand = 'auto' | '2.4' | '5';
+export interface Wireless {
+  preset: { id: string; label: string; source: string; detected: string };
+  mode: 'concurrent' | 'single-radio' | 'unknown';
+  station24: boolean | null; ap24: boolean | null; station5: boolean | null; ap5: boolean | null;
+  apStation: boolean | null; apStationChannels: number | null; p2pClient: boolean | null; ap5Channels: number[] | null;
+  hotspot: { band: '2.4' | '5'; channel: number; configuredBand: HotspotBand; configuredChannel: number; reason: string | null };
+}
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
@@ -44,7 +52,7 @@ export interface Status {
   platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; hostCapabilities?: HostCapabilities; adminUrl: string; receiverUrls: string[];
   state: 'idle' | 'waiting' | 'connecting' | 'active' | 'reconnecting'; running: boolean; autoStartPaused: boolean;
   iphone: { name: string | null; reason: string }; network: { mode: string; wifi: string | null; followingCarlink?: boolean };
-  output: string; carlink: CarlinkStatus | null; notices: string[]; publicName?: PublicNameStatus;
+  output: string; carlink: CarlinkStatus | null; notices: string[]; publicName?: PublicNameStatus; wireless?: Wireless;
 }
 export interface Phone { id: string; name: string; kind: 'phone' | 'car' | 'other'; connected: boolean; likelyIphone: boolean; selected: boolean }
 export interface Update { ok: boolean; applied: 'now' | 'next-start' }
@@ -83,7 +91,7 @@ export const api = {
   password: (current: string, next: string) => request('/password', 'POST', { current, new: next }, false),
   networks: () => request<WifiNetwork[]>('/wifi/networks'),
   wifi: (ssid: string, password?: string) => request('/wifi', 'PUT', { ssid, ...(password === undefined ? {} : { password }) }, false),
-  hotspot: (ssid: string, password: string) => request('/hotspot', 'PUT', { ssid, password }, false),
+  hotspot: (ssid: string, password: string, band?: HotspotBand) => request('/hotspot', 'PUT', { ssid, password, ...(band === undefined ? {} : { band }) }, false),
   logout: () => request('/logout', 'POST'),
   // Receiver diagnostics are large and change every second; only the developer section asks for them.
   status: (diagnostics = false) => request<Status>(diagnostics ? '/status?diagnostics=1' : '/status'),

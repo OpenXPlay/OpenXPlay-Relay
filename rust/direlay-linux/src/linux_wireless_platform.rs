@@ -48,7 +48,7 @@ impl LinuxWirelessPlatform {
         input.initialize_video_state(&options.state_dir);
         let session = input.configure_session();
         let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
-            Duration::from_secs(options.host_profile.profile.hotspot_down_gap_seconds),
+            Duration::from_secs(options.hotspot_down_gap_seconds()),
             None,
         ));
         Self {
@@ -214,11 +214,27 @@ impl WirelessPlatform for LinuxWirelessPlatform {
             Ok(self.observe_hotspot(manager))
         } else {
             let hotspot = self.hotspot_lifetime.create(|| {
+                let wifi = self
+                    .capabilities
+                    .as_ref()
+                    .map(|c| c.wifi(&self.options.wifi_interface));
+                let root = self
+                    .capabilities
+                    .as_ref()
+                    .map_or(std::path::Path::new("/"), |c| c.root());
+                let preset = self.options.device_preset(root);
+                let hotspot = crate::device_preset::resolve_hotspot(
+                    &self.options.settings.hotspot_band,
+                    self.options.wifi_channel,
+                    &preset.id,
+                    wifi.as_ref().and_then(|w| w.capabilities.as_ref()),
+                );
                 self.observe_hotspot(self.backends.access_point.access_point(
                     crate::host_backends::AccessPointConfig {
                         state_dir: self.options.state_dir.clone(),
                         interface: self.options.wifi_interface.clone(),
-                        channel: self.options.wifi_channel,
+                        hotspot,
+                        capabilities: self.capabilities.clone(),
                         provisioning: self.provisioning.clone(),
                         before_activation: self.before_activation.clone(),
                     },

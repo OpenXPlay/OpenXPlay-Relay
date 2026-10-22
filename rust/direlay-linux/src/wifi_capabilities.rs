@@ -14,6 +14,9 @@ pub struct Channel {
     pub radar: bool,
 }
 impl Channel {
+    pub fn two_ghz(&self) -> bool {
+        (2400..=2500).contains(&self.frequency)
+    }
     pub fn five_ghz(&self) -> bool {
         (4900..5900).contains(&self.frequency)
     }
@@ -37,6 +40,75 @@ pub struct PhyCapabilities {
     pub station: bool,
     pub combinations: Vec<Combination>,
     pub channels: Vec<Channel>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WifiSummary {
+    pub mode: String,
+    pub station24: Option<bool>,
+    pub ap24: Option<bool>,
+    pub station5: Option<bool>,
+    pub ap5: Option<bool>,
+    pub ap_station: Option<bool>,
+    pub ap_station_channels: Option<u16>,
+    pub p2p_client: Option<bool>,
+    pub ap5_channels: Option<Vec<u16>>,
+}
+impl WifiSummary {
+    pub fn from_phy(phy: Option<&PhyCapabilities>) -> Self {
+        let Some(phy) = phy else {
+            return Self {
+                mode: "unknown".into(),
+                station24: None,
+                ap24: None,
+                station5: None,
+                ap5: None,
+                ap_station: None,
+                ap_station_channels: None,
+                p2p_client: None,
+                ap5_channels: None,
+            };
+        };
+        let concurrent = phy.combinations.iter().any(|c| c.ap_station);
+        let preferred = [36, 40, 44, 48, 149, 153, 157, 161, 165];
+        let mut channels = phy
+            .channels
+            .iter()
+            .filter(|c| c.five_ghz() && c.access_point())
+            .map(|c| c.channel)
+            .collect::<Vec<_>>();
+        channels.sort_unstable_by_key(|c| {
+            (
+                preferred
+                    .iter()
+                    .position(|p| p == c)
+                    .unwrap_or(preferred.len()),
+                *c,
+            )
+        });
+        channels.dedup();
+        Self {
+            mode: if concurrent {
+                "concurrent"
+            } else {
+                "single-radio"
+            }
+            .into(),
+            station24: Some(phy.channels.iter().any(|c| c.two_ghz() && !c.disabled)),
+            ap24: Some(phy.channels.iter().any(|c| c.two_ghz() && c.access_point())),
+            station5: Some(phy.station_5ghz()),
+            ap5: Some(!channels.is_empty()),
+            ap_station: Some(concurrent),
+            ap_station_channels: phy
+                .combinations
+                .iter()
+                .filter(|c| c.ap_station)
+                .filter_map(|c| c.channels)
+                .max(),
+            p2p_client: Some(phy.modes.iter().any(|m| m == "P2P-client")),
+            ap5_channels: Some(channels),
+        }
+    }
 }
 impl PhyCapabilities {
     pub fn station_5ghz(&self) -> bool {
@@ -62,7 +134,13 @@ impl PhyCapabilities {
     }
     pub fn ap_channel(&self, channel: u8) -> bool {
         self.channels.iter().any(|c| {
-            c.channel == u16::from(channel) && (channel <= 14 || c.five_ghz()) && c.access_point()
+            c.channel == u16::from(channel)
+                && (if channel <= 14 {
+                    c.two_ghz()
+                } else {
+                    c.five_ghz()
+                })
+                && c.access_point()
         })
     }
 }
@@ -194,6 +272,55 @@ pub fn parse_phy(text: &str) -> PhyCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn real_device_summaries_and_unknown_probe() {
+        let n1 = parse_phy(include_str!("../tests/fixtures/iw-phy-n1.txt"));
+        assert_eq!(
+            WifiSummary::from_phy(Some(&n1)),
+            WifiSummary {
+                mode: "concurrent".into(),
+                station24: Some(true),
+                ap24: Some(true),
+                station5: Some(true),
+                ap5: Some(true),
+                ap_station: Some(true),
+                ap_station_channels: Some(1),
+                p2p_client: Some(true),
+                ap5_channels: Some(vec![36, 40, 44, 48, 149, 153, 157, 161, 165]),
+            }
+        );
+        let ufi = parse_phy(include_str!("../tests/fixtures/iw-phy-ufi003.txt"));
+        assert_eq!(
+            WifiSummary::from_phy(Some(&ufi)),
+            WifiSummary {
+                mode: "single-radio".into(),
+                station24: Some(true),
+                ap24: Some(true),
+                station5: Some(false),
+                ap5: Some(false),
+                ap_station: Some(false),
+                ap_station_channels: None,
+                p2p_client: Some(false),
+                ap5_channels: Some(vec![]),
+            }
+        );
+        let unknown = serde_json::to_value(WifiSummary::from_phy(None)).unwrap();
+        assert_eq!(unknown["mode"], "unknown");
+        for (key, value) in unknown.as_object().unwrap() {
+            if key != "mode" {
+                assert!(value.is_null(), "{key}");
+            }
+        }
+    }
+    #[test]
+    fn summary_prefers_common_channels_and_largest_concurrent_channel_count() {
+        let phy = parse_phy(" * 5845 MHz [169]\n * 5220 MHz [44]\n * 5180 MHz [36]\n * 4920 MHz [184]\n * 5180 MHz [36]\n * 5975 MHz [5]\n * 2412 MHz [1] (disabled)\nvalid interface combinations:\n * #{ managed } <= 1, #{ AP } <= 1, total <= 2, #channels <= 1\n * #{ managed } <= 1, #{ AP } <= 1, total <= 2, #channels <= 2\n");
+        let summary = WifiSummary::from_phy(Some(&phy));
+        assert_eq!(summary.ap5_channels, Some(vec![36, 44, 169, 184]));
+        assert_eq!(summary.ap_station_channels, Some(2));
+        assert_eq!(summary.station24, Some(false));
+        assert_eq!(summary.ap24, Some(false));
+    }
     #[test]
     fn bands_flags_and_single_channel_concurrency() {
         let ufi = parse_phy(

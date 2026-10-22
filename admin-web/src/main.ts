@@ -5,13 +5,13 @@
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
 import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
-import { validateHotspot, hotspotForm, restartRequired, restartView } from './hotspot-settings';
+import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
 import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDetails, nearbyNetworksView } from './views';
 import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
 import type { SavedNetwork } from './schema';
-import { api, ApiError, NetworkError, events, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
+import { api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
 import { isVisible, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, translate, type Language } from './i18n';
 import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, canConnectCarlink, validCarlinkPin } from './logic';
@@ -59,7 +59,7 @@ const copied = new Map<string, { key: string; until: number }>();
 const phoneNames = new Map<string, string>();
 const feedback = new Map<string, string>();
 const pending = new Map<string, { value: Value; revision: number; timer?: ReturnType<typeof setTimeout>; busy: boolean }>();
-const fields = () => settings ? settingsViews(settings, developer).flatMap(section => section.fields) : [];
+const fields = () => settings ? settingsViews(settings, developer, status?.platform).flatMap(section => section.fields) : [];
 const fieldId = (key: string) => `field-${encodeURIComponent(key)}`;
 function result(key: string, message: string) {
   feedback.set(key, message);
@@ -133,7 +133,7 @@ function renderReady() {
   document.getElementById('main')!.innerHTML = currentView === 'home' ? '<div id="dashboard"></div>' : `<section aria-label="${t('ui.settings')}"><div id="settings"></div></section>`;
   if (currentView === 'home') { updateDashboard(); return; }
   const container = document.getElementById('settings')!;
-  container.innerHTML = settingsViews(settings!, developer).map(section => `<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : section.id === 'publicName' ? '<div id="public-name-panel"></div>' : '')}</section>`).join('');
+  container.innerHTML = settingsViews(settings!, developer, status!.platform).map(section => `<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : section.id === 'publicName' ? '<div id="public-name-panel"></div>' : '')}</section>`).join('');
   for (const field of fields().filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key))) bindField(field);
   renderNetworkPanel(); renderPairingPanel();
   updateVisibility(); renderPublicName();
@@ -275,7 +275,7 @@ function confirmRemovePublicName() {
 }
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
-  const signature = JSON.stringify([status.video, status.receivers, status.bluetoothGuard, language]);
+  const signature = JSON.stringify([status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, language]);
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   const open = new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-details]')].filter(d => d.open).map(d => d.dataset.details));
@@ -438,7 +438,7 @@ function fieldMarkup(field: Field): string {
   else if (field.type === 'choice') control = `<fieldset ${attributes}><legend>${label}</legend><div class="choices">${field.options?.map((option, i) => {
     const hint = (field.key === 'transport' ? usbTransportHint(status?.platform, option.value) : undefined)
       || option.hintKey || (field.key === 'output' ? `hint.option.output.${option.value}` : undefined);
-    return `<label class="choice"><div class="choice-label"><input type="radio" name="${id}" id="${id}-${i}" value="${esc(option.value)}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''} ${option.value === value ? 'checked' : ''}><span>${esc(t(option.labelKey))}</span></div>${hint ? `<p class="muted">${esc(t(hint))}</p>` : ''}${option.illustration ? topology(option.illustration) : ''}</label>`;
+    return `<label class="choice"><div class="choice-label"><input type="radio" name="${id}" id="${id}-${i}" value="${esc(option.value)}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''} ${option.value === value ? 'checked' : ''}><span>${esc(field.key === 'devicePreset' ? devicePresetLabel(String(option.value), status, t) : t(option.labelKey))}</span></div>${hint ? `<p class="muted">${esc(t(hint))}</p>` : ''}${option.illustration ? topology(option.illustration) : ''}</label>`;
   }).join('') ?? ''}</div></fieldset>`;
   else if (field.type === 'phone') control = `<label for="${id}">${label}</label><button ${attributes} class="picker-button" aria-haspopup="dialog">${icon('smartphone')}<span>${value === 'auto' ? t('ui.automatic') : esc(phoneNames.get(String(value)) ?? value)}</span>${icon('chevron-down')}</button>`;
   else control = `<label for="${id}">${label}</label><div class="input-row"><input ${attributes} type="${field.type === 'secret' ? 'password' : field.type}" value="${esc(value)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${field.type === 'secret' && settings!.values[`${field.key}Set`] === true ? `placeholder="${esc(t(`${field.labelKey}Saved`))}"` : ''}>${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button>` : ''}</div>`;
@@ -494,7 +494,7 @@ function renderRestart() {
 }
 function editHotspot() {
   if (!status?.hotspot) return;
-  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t));
+  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t, status.wireless));
   const name = dialog.querySelector<HTMLInputElement>('#hotspot-name')!;
   const password = dialog.querySelector<HTMLInputElement>('#hotspot-password')!;
   dialog.querySelector('#hotspot-reveal')!.addEventListener('click', event => {
@@ -510,13 +510,14 @@ function editHotspot() {
     password.setAttribute('aria-invalid', String(error === 'error.hotspotPassword'));
     if (error) return;
     const ssid = name.value, secret = password.value;
+    const band = dialog.querySelector<HTMLSelectElement>('#hotspot-band')!.value as HotspotBand;
     const active = status!.network.mode === 'device-hotspot';
     // Keep the form open underneath so Cancel returns to the entered values.
     const confirmation = networkDialog(t('hotspot.confirm'), `<p>${esc(t(active ? 'hotspot.warning' : 'hotspot.later'))}</p><p>${esc(ssid)}</p><p class="error" role="alert"></p><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button data-confirm class="primary">${t('hotspot.apply')}</button></div>`);
     confirmation.dialog.querySelector<HTMLButtonElement>('[data-confirm]')!.addEventListener('click', async event => {
       const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
       try {
-        await api.hotspot(ssid, secret);
+        await api.hotspot(ssid, secret, band);
         status!.hotspot = { ...status!.hotspot!, ssid, password: secret, hasPassword: true };
         confirmation.close(); close();
         networkAnnouncement = t(active ? 'hotspot.reconnecting' : 'ui.saved'); renderNetworkPanel(); void tick();
@@ -528,7 +529,7 @@ function editHotspot() {
 function renderNetworkPanel() {
   const el = document.getElementById('network-panel'); if (!el || !settings || !status || switching) return;
   const v = networkPanelView(status, settings);
-  const signature = JSON.stringify([v, status.network.followingCarlink, status.hotspot, status.wifiControl, networks, networkError, networkAnnouncement, language]);
+  const signature = JSON.stringify([v, status.network.followingCarlink, status.hotspot, status.wireless, status.wifiControl, networks, networkError, networkAnnouncement, language]);
   if (el.dataset.signature === signature) return;
   const focused = el.contains(document.activeElement) ? (document.activeElement as HTMLElement).id : '';
   el.dataset.signature = signature;
@@ -571,7 +572,7 @@ function bindSharedNetworks() {
 function editSharedNetwork(entry: SavedNetwork | null, afterSave?: () => void) {
   if (!settings || !status || (!entry && savedNetworks(settings).length >= 10)) return;
   const connect = !entry && addSavesAndConnects(status);
-  const { dialog, close } = networkDialog(t(entry ? 'net.change' : 'net.add'), `<form><label for="network-name">${t('net.wifiName')}</label><input id="network-name" value="${esc(entry?.ssid ?? '')}" ${entry ? 'readonly' : ''} required autocomplete="off">${!entry && status.platform === 'linux' ? `<p>${t('wifi.only24')}</p>` : ''}${!entry && status.wifiControl ? `<section class="nearby"><div class="nearby-heading"><h3>${t('net.scan')}</h3><button type="button" id="network-refresh" class="icon-button" aria-label="${t('net.refresh')}" title="${t('net.refresh')}">${icon('refresh-cw')}</button></div><p id="network-scan-status" role="status"></p><p class="muted" ${status.wifiScanStale || status.hotspot?.active || status.wifiClient?.setupHotspot ? '' : 'hidden'}>${t('net.stale')}</p><div id="network-scan"></div></section>` : ''}<div id="network-secret"><label for="network-password">${t('net.password')}</label><div class="input-row"><input id="network-password" type="password" autocomplete="new-password" placeholder="${entry?.hasPassword ? t('networks.keep') : ''}"><button type="button" id="network-reveal" class="icon-button" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button></div></div><label class="check-row"><input id="network-open" type="checkbox" ${entry && !entry.hasPassword ? 'checked' : ''}>${t('net.open')}</label><p id="network-error" class="error" role="alert"></p>${connect ? `<p>${t('net.saveConnect')}</p>` : ''}<div class="dialog-actions"><button type="button" data-close>${t('ui.cancel')}</button><button type="submit" class="primary">${t('net.save')}</button></div></form>`);
+  const { dialog, close } = networkDialog(t(entry ? 'net.change' : 'net.add'), `<form><label for="network-name">${t('net.wifiName')}</label><input id="network-name" value="${esc(entry?.ssid ?? '')}" ${entry ? 'readonly' : ''} required autocomplete="off">${!entry ? stationBandHint(status, t) : ''}${!entry && status.wifiControl ? `<section class="nearby"><div class="nearby-heading"><h3>${t('net.scan')}</h3><button type="button" id="network-refresh" class="icon-button" aria-label="${t('net.refresh')}" title="${t('net.refresh')}">${icon('refresh-cw')}</button></div><p id="network-scan-status" role="status"></p><p class="muted" ${status.wifiScanStale || status.hotspot?.active || status.wifiClient?.setupHotspot ? '' : 'hidden'}>${t('net.stale')}</p><div id="network-scan"></div></section>` : ''}<div id="network-secret"><label for="network-password">${t('net.password')}</label><div class="input-row"><input id="network-password" type="password" autocomplete="new-password" placeholder="${entry?.hasPassword ? t('networks.keep') : ''}"><button type="button" id="network-reveal" class="icon-button" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button></div></div><label class="check-row"><input id="network-open" type="checkbox" ${entry && !entry.hasPassword ? 'checked' : ''}>${t('net.open')}</label><p id="network-error" class="error" role="alert"></p>${connect ? `<p>${t('net.saveConnect')}</p>` : ''}<div class="dialog-actions"><button type="button" data-close>${t('ui.cancel')}</button><button type="submit" class="primary">${t('net.save')}</button></div></form>`);
   const name = dialog.querySelector<HTMLInputElement>('#network-name')!;
   const password = dialog.querySelector<HTMLInputElement>('#network-password')!;
   const open = dialog.querySelector<HTMLInputElement>('#network-open')!;

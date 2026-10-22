@@ -184,7 +184,8 @@ export function diagnosticsView(status: Status, t: Translate): string {
   const receivers = (status.receivers ?? []).map((report, index) => receiverCard(report, index, t)).join('');
   const h = status.hostProfile;
   const host = h ? `<dl class="facts"><dt>${t('host.model')}</dt><dd>${esc(h.model ?? '—')}</dd><dt>${t('host.bluetooth')}</dt><dd>${esc(h.bluetoothAdapter ? `${h.bluetoothAdapter.name} · ${h.bluetoothAdapter.address}` : '—')}</dd>${h.secureConnections === 'untouched' ? `<dt>${t('host.sc')}</dt><dd>${t('host.unmanaged')}</dd>` : ''}</dl>` : '';
-  return `${host}${hostCapabilitiesView(status, t)}${bluetoothView(status, t)}<h3>${t('diag.video')}</h3>${video}<h3>${t('diag.receivers')}</h3>${receivers || `<p class="muted">${t('diag.none')}</p>`}`;
+  const wireless = status.platform === 'linux' && status.wireless ? `<h3>${t('wireless.title')}</h3><pre>${esc(JSON.stringify(status.wireless, null, 2))}</pre>` : '';
+  return `${host}${hostCapabilitiesView(status, t)}${wireless}${bluetoothView(status, t)}<h3>${t('diag.video')}</h3>${video}<h3>${t('diag.receivers')}</h3>${receivers || `<p class="muted">${t('diag.none')}</p>`}`;
 }
 export function receiverReport(status: Status, client: string, now = new Date()): string | null {
   const receiver = status.receivers?.find(r => r.client === client);

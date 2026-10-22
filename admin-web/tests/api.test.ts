@@ -101,3 +101,8 @@ it('sends hotspot credentials once and never retries output changes', async () =
   await expect(api.save({ output: 'carlink' })).rejects.toBeInstanceOf(NetworkError);
   expect(fetcher).toHaveBeenCalledOnce();
 });
+it('sends an optional Linux hotspot band with the credentials', async () => {
+  const fetcher = respond({ ok: true });
+  await api.hotspot('Relay car', 'newpass123', '2.4');
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ ssid: 'Relay car', password: 'newpass123', band: '2.4' });
+});

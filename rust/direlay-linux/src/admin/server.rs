@@ -267,9 +267,15 @@ impl AdminServer {
                 AdminUpdate::Errors(errors) => Response::json(422, json!({"errors":errors})),
             },
             ("PUT", "/hotspot") => match (string("ssid"), string("password")) {
+                _ if body
+                    .get("band")
+                    .is_some_and(|b| !matches!(b.as_str(), Some("auto" | "2.4" | "5"))) =>
+                {
+                    Response::error(422, "error.invalid")
+                }
                 (Some(ssid), Some(password)) => {
                     match validate_hotspot_credentials(ssid, password) {
-                        Ok(()) => result(self.admin.hotspot_update(ssid, password)),
+                        Ok(()) => result(self.admin.hotspot_update(ssid, password, string("band"))),
                         Err(key) => Response::error(422, key),
                     }
                 }

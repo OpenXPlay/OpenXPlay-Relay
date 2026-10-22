@@ -32,7 +32,9 @@ export function devicesView(s: Status, _developer: boolean, t: Translate) {
 export function hotspotDetails(s: Status, t: Translate): string {
   if (!s.hotspot) return '';
   const copy = (value: string, label: string) => `<button type="button" class="icon-button" data-copy="${esc(value)}" aria-label="${t('ui.copy')}: ${t(label)}">${icon('copy')}<span class="copy-feedback" role="status" aria-live="polite"></span></button>`;
-  return `<div class="hotspot-details"><span class="muted">${t('net.name')}</span><div class="address-row"><span class="copy-text" tabindex="0">${esc(s.hotspot.ssid)}</span>${copy(s.hotspot.ssid, 'net.name')}</div><span class="muted">${t('net.password')}</span><div class="address-row"><span class="copy-text" data-secret="${esc(s.hotspot.password)}" tabindex="0">••••••••</span><button type="button" class="icon-button" data-secret-toggle aria-pressed="false" aria-label="${t('ui.reveal')}">${icon('eye')}</button>${copy(s.hotspot.password, 'net.password')}</div></div>`;
+  const w = s.platform === 'linux' ? s.wireless : undefined;
+  const wireless = w ? `<p class="muted">${esc(t('hotspot.radio', { band: t(`option.hotspotBand.${w.hotspot.band}`), channel: w.hotspot.channel }))}</p>${w.mode === 'unknown' ? '' : `<p class="muted">${t(`wireless.mode.${w.mode}`)}</p>`}` : '';
+  return `<div class="hotspot-details"><span class="muted">${t('net.name')}</span><div class="address-row"><span class="copy-text" tabindex="0">${esc(s.hotspot.ssid)}</span>${copy(s.hotspot.ssid, 'net.name')}</div><span class="muted">${t('net.password')}</span><div class="address-row"><span class="copy-text" data-secret="${esc(s.hotspot.password)}" tabindex="0">••••••••</span><button type="button" class="icon-button" data-secret-toggle aria-pressed="false" aria-label="${t('ui.reveal')}">${icon('eye')}</button>${copy(s.hotspot.password, 'net.password')}</div>${wireless}</div>`;
 }
 
 export function carlinkConnectView(s: Status, connectPin: string, connectBusy: boolean, carlinkError: string, t: Translate): string {

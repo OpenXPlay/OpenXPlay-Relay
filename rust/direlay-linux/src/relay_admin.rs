@@ -263,7 +263,7 @@ impl LinuxRelayAdmin {
         input.initialize_video_state(&options.state_dir);
         // The AP stays down for a gap before the next one comes up, also across relay restarts.
         let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
-            Duration::from_secs(options.host_profile.profile.hotspot_down_gap_seconds),
+            Duration::from_secs(options.hotspot_down_gap_seconds()),
             Some(
                 options
                     .state_dir
@@ -1157,7 +1157,9 @@ fn public_name_section() -> Section {
 pub fn settings_schema() -> Vec<Section> {
     let fields: Vec<Field> = [
         ("networkMode", "choice"),
+        ("devicePreset", "choice"),
         ("sharedWifiNetworks", "networks"),
+        ("hotspotBand", "choice"),
         ("hotspotChannel", "number"),
         ("iphone", "phone"),
         ("wifiInterface", "text"),
@@ -1185,6 +1187,7 @@ pub fn settings_schema() -> Vec<Section> {
         hint_key: matches!(
             key,
             "output"
+                | "hotspotChannel"
                 | "carlinkLink"
                 | "carlinkInterface"
                 | "carlinkAddress"
@@ -1193,6 +1196,28 @@ pub fn settings_schema() -> Vec<Section> {
         )
         .then(|| format!("hint.field.{key}")),
         options: match key {
+            "devicePreset" => Some(
+                ["auto", "msm8916", "phicomm-n1", "generic"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        value: v.into(),
+                        label_key: format!("option.devicePreset.{v}"),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            ),
+            "hotspotBand" => Some(
+                ["auto", "2.4", "5"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        value: v.into(),
+                        label_key: format!("option.hotspotBand.{v}"),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            ),
             "networkMode" => Some(
                 ["device-hotspot", "shared-wifi"]
                     .into_iter()
@@ -1241,14 +1266,15 @@ pub fn settings_schema() -> Vec<Section> {
                 key: "output".into(),
                 equals: vec!["carlink".into(), "both".into()],
             }),
-            "hotspotChannel" => Some(VisibleWhen {
+            "hotspotChannel" | "hotspotBand" => Some(VisibleWhen {
                 key: "networkMode".into(),
                 equals: vec!["device-hotspot".into()],
             }),
             _ => None,
         },
         min: match key {
-            "hotspotChannel" | "rfcommChannel" => Some(1.0),
+            "hotspotChannel" => Some(0.0),
+            "rfcommChannel" => Some(1.0),
             _ => None,
         },
         max: match key {
@@ -1513,6 +1539,35 @@ impl RelayAdmin for LinuxRelayAdmin {
             version: env!("CARGO_PKG_VERSION").into(),
             host: "openxplay-linux.local".into(),
             host_capabilities: self.capabilities.get(),
+            wireless: Some({
+                let wifi = self.capabilities.cached_wifi(&options.wifi_interface);
+                let phy = wifi.as_ref().and_then(|w| w.capabilities.as_ref());
+                let preset = options.device_preset(self.capabilities.root());
+                let mut hotspot = crate::device_preset::resolve_hotspot(
+                    &options.settings.hotspot_band,
+                    options.wifi_channel,
+                    &preset.id,
+                    phy,
+                );
+                if let Some(active) = self.capabilities.hotspot(&options.wifi_interface) {
+                    let running_ap = !following_carlink
+                        && options.settings.network_mode == "device-hotspot"
+                        && controller.as_ref().and_then(|c| c.hotspot_info()).is_some();
+                    let failed_start = active.reason.as_deref() == Some("ap-start-failed")
+                        && active.configured_band == hotspot.configured_band
+                        && active.configured_channel == hotspot.configured_channel;
+                    if running_ap || failed_start {
+                        hotspot.band = active.band;
+                        hotspot.channel = active.channel;
+                        hotspot.reason = active.reason;
+                    }
+                }
+                AdminWireless {
+                    preset,
+                    summary: crate::wifi_capabilities::WifiSummary::from_phy(phy),
+                    hotspot,
+                }
+            }),
             host_profile: Some(AdminHostProfile {
                 model: options.host_profile.profile.model.clone(),
                 profile_path: options.host_profile.path.clone(),
@@ -1692,6 +1747,8 @@ impl RelayAdmin for LinuxRelayAdmin {
                     || next.rfcomm_channel != current.rfcomm_channel
                     || next.wifi_interface != current.wifi_interface
                     || next.hotspot_channel != current.hotspot_channel
+                    || next.hotspot_band != current.hotspot_band
+                    || next.device_preset != current.device_preset
                     // Read when the controller builds the AirPlay receiver for the iPhone.
                     || next.car_bluetooth_audio != current.car_bluetooth_audio;
                 let network = if network_update {
@@ -1856,10 +1913,23 @@ impl RelayAdmin for LinuxRelayAdmin {
             })
             .collect()
     }
-    fn hotspot_update(&self, ssid: &str, password: &str) -> AdminResult {
+    fn hotspot_update(&self, ssid: &str, password: &str, band: Option<&str>) -> AdminResult {
         crate::linux_hotspot::validate_hotspot_credentials(ssid, password)
             .map_err(str::to_owned)?;
+        if band.is_some_and(|b| !["auto", "2.4", "5"].contains(&b)) {
+            return Err("error.invalid".into());
+        }
         self.defer(Operation::Hotspot)?;
+        if let Some(band) = band {
+            let mut current = self.settings.lock().unwrap();
+            let mut next = current.clone();
+            next.hotspot_band = band.into();
+            if next.save(&self.options.state_dir).is_err() {
+                self.response_failed();
+                return Err("error.request".into());
+            }
+            *current = next;
+        }
         if crate::linux_hotspot::save_hotspot_credentials(&self.options.state_dir, ssid, password)
             .is_err()
         {
@@ -2017,8 +2087,108 @@ mod tests {
         assert_eq!(status["hostCapabilities"]["wifi"]["present"], false);
         assert_eq!(status["hostCapabilities"]["carlink"]["interface"], "wlan1");
         assert!(status["hostCapabilities"]["bluetooth"].is_null());
+        assert_eq!(status["wireless"]["mode"], "unknown");
+        assert!(status["wireless"]["ap5"].is_null());
+        assert_eq!(status["wireless"]["preset"]["id"], "generic");
         a.status();
         assert_eq!(runner.0.load(Ordering::SeqCst), count);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn wireless_status_uses_wifi_interface_and_device_tree_without_a_second_probe() {
+        struct WifiProbe(std::sync::atomic::AtomicUsize);
+        impl CommandRunner for WifiProbe {
+            fn run(&self, args: &[String], _: Duration) -> Result<CommandResult> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                let output = if args.get(1).is_some_and(|a| a == "dev") {
+                    "wiphy 0"
+                } else {
+                    include_str!("../tests/fixtures/iw-phy-n1.txt")
+                };
+                Ok(CommandResult {
+                    exit_code: 0,
+                    output: output.into(),
+                })
+            }
+        }
+        let (mut a, dir) = fake();
+        std::fs::create_dir_all(dir.join("proc/device-tree")).unwrap();
+        std::fs::write(dir.join("proc/device-tree/compatible"), b"phicomm,n1\0").unwrap();
+        let runner = Arc::new(WifiProbe(Default::default()));
+        Arc::get_mut(&mut a).unwrap().capabilities =
+            Arc::new(crate::host_capabilities::CapabilityCache::new(
+                runner.clone(),
+                dir.clone(),
+                Default::default(),
+            ));
+        a.capabilities.wifi("wlan0");
+        let status = serde_json::to_value(a.status()).unwrap();
+        assert_eq!(
+            status["wireless"],
+            serde_json::json!({
+                "preset":{"id":"phicomm-n1","label":"Phicomm N1","source":"detected","detected":"phicomm-n1"},
+                "mode":"concurrent","station24":true,"ap24":true,"station5":true,"ap5":true,
+                "apStation":true,"apStationChannels":1,"p2pClient":true,"ap5Channels":[36,40,44,48,149,153,157,161,165],
+                "hotspot":{"band":"5","channel":36,"configuredBand":"auto","configuredChannel":0,"reason":null}
+            })
+        );
+        a.status();
+        assert_eq!(runner.0.load(Ordering::SeqCst), 2);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn preset_band_and_channel_schema_and_next_start_settings() {
+        let schema = settings_schema();
+        let fields = &schema.iter().find(|s| s.id == "connection").unwrap().fields;
+        let preset = fields.iter().find(|f| f.key == "devicePreset").unwrap();
+        assert_eq!(preset.field_type, "choice");
+        assert!(preset.visible_when.is_none());
+        assert_eq!(
+            preset
+                .options
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|o| o.value.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["auto", "msm8916", "phicomm-n1", "generic"]
+        );
+        let band = fields.iter().find(|f| f.key == "hotspotBand").unwrap();
+        assert_eq!(
+            band.options
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|o| o.value.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["auto", "2.4", "5"]
+        );
+        assert_eq!(band.visible_when.as_ref().unwrap().key, "networkMode");
+        assert_eq!(
+            band.visible_when.as_ref().unwrap().equals,
+            vec![serde_json::json!("device-hotspot")]
+        );
+        let channel = fields.iter().find(|f| f.key == "hotspotChannel").unwrap();
+        assert_eq!(channel.min, Some(0.0));
+        assert_eq!(
+            channel.hint_key.as_deref(),
+            Some("hint.field.hotspotChannel")
+        );
+        let (a, dir) = fake();
+        for values in [
+            serde_json::json!({"hotspotBand":"2.4"}),
+            serde_json::json!({"devicePreset":"msm8916"}),
+        ] {
+            assert!(matches!(
+                a.update(values.as_object().unwrap().clone()),
+                AdminUpdate::NextStart
+            ));
+        }
+        let saved = Settings::load(&dir).unwrap();
+        assert_eq!(saved.hotspot_band, "2.4");
+        assert_eq!(saved.device_preset, "msm8916");
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -2116,6 +2286,7 @@ mod tests {
                 a.options.host_profile.profile.wifi_interface = "wlan7".into();
                 a.options.host_profile.profile.hotspot_channel = 11;
                 a.options.host_profile.profile.hotspot_down_gap_seconds = seconds;
+                a.options.host_profile.profile.hotspot_down_gap_explicit = true;
                 a.options.host_profile.profile.secure_connections =
                     crate::host_profile::SecureConnectionsPolicy::Untouched;
                 a.options.clone()
@@ -2774,12 +2945,16 @@ esac
             serde_json::json!({"ssid":"", "password":"12345678"}),
             serde_json::json!({"ssid":"Relay", "password":"short"}),
             serde_json::json!({"ssid":null,"password":"12345678"}),
+            serde_json::json!({"ssid":"Relay","password":"12345678","band":"6"}),
+            serde_json::json!({"ssid":"Relay","password":"12345678","band":null}),
+            serde_json::json!({"ssid":"Relay","password":"12345678","band":5}),
         ] {
             request.body = serde_json::to_vec(&body).unwrap();
             assert_eq!(server.route(&request, 100).status, 422);
         }
-        request.body = br#"{"ssid":"New Relay","password":"newpass123"}"#.to_vec();
+        request.body = br#"{"ssid":"New Relay","password":"newpass123","band":"2.4"}"#.to_vec();
         assert_eq!(server.route(&request, 100).status, 200);
+        assert_eq!(Settings::load(&dir).unwrap().hotspot_band, "2.4");
         assert_eq!(
             crate::linux_hotspot::hotspot_credentials(&dir).unwrap(),
             ("New Relay".into(), "newpass123".into())
@@ -2800,7 +2975,7 @@ esac
         // In shared mode saving credentials leaves the current controller and AP alone.
         a.settings.lock().unwrap().network_mode = "shared-wifi".into();
         let controller = fake_controller(&a);
-        a.hotspot_update("Later", "laterpass1").unwrap();
+        a.hotspot_update("Later", "laterpass1", None).unwrap();
         a.response_sent();
         a.operation(rx.try_recv().unwrap()).unwrap();
         assert!(Arc::ptr_eq(

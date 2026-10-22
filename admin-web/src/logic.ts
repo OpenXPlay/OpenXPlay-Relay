@@ -82,8 +82,8 @@ export function publicNameUrl(status: Pick<Status, 'publicName' | 'receiverUrls'
   return status.receiverUrls.find(url => { try { return new URL(url).hostname === name; } catch { return false; } }) ?? `https://${name}:${status.receiverPort || 8443}/`;
 }
 const technicalFields = new Set(['wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
-export function settingsViews(settings: Settings, developer: boolean) {
-  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).map(field => {
+export function settingsViews(settings: Settings, developer: boolean, platform?: Status['platform']) {
+  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).filter(f => platform !== 'linux' || f.key !== 'hotspotBand').map(field => {
     if (field.key !== 'networkMode') return field;
     const options = field.options?.filter(o => developer || o.value === 'shared-wifi' || o.value === 'device-hotspot' || o.value === 'wifi-direct').map(option => {
       const mode = option.value === 'wifi-direct' ? 'device-hotspot' : String(option.value);
@@ -91,7 +91,7 @@ export function settingsViews(settings: Settings, developer: boolean) {
     });
     return { ...field, options };
   });
-  const connection = new Set(['iphone', 'networkMode', 'sharedWifiNetworks', 'autoStart', 'bootStart']);
+  const connection = new Set(['iphone', 'networkMode', 'devicePreset', 'sharedWifiNetworks', 'autoStart', 'bootStart']);
   return [
     { id: 'connection', titleKey: 'settings.connection', fields: all.filter(f => connection.has(f.key) && !technicalFields.has(f.key)) },
     { id: 'output', titleKey: 'settings.screen', fields: all.filter(f => !connection.has(f.key) && !technicalFields.has(f.key)) },

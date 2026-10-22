@@ -174,15 +174,6 @@ pub fn phy_info(
 pub fn supports_5ghz(runner: &dyn CommandRunner, interface: &str) -> bool {
     phy_info(runner, interface).is_some_and(|info| info.station_5ghz())
 }
-pub fn access_point_channel(
-    configured: u8,
-    info: Option<&crate::wifi_capabilities::PhyCapabilities>,
-) -> u8 {
-    hotspot_channel(
-        configured,
-        info.is_some_and(|info| info.ap_channel(configured)),
-    )
-}
 /// Parse `iw phy <phy> info` frequency lines such as `* 5180 MHz [36] (20.0 dBm)`.
 pub fn lists_5ghz(iw_phy_info: &str) -> bool {
     crate::wifi_capabilities::parse_phy(iw_phy_info).station_5ghz()
@@ -296,14 +287,6 @@ pub fn device_state(text: &str) -> Option<u32> {
 pub fn device_available(state: u32) -> bool {
     state >= 30
 }
-/// Choose a supported band before asking NetworkManager to create the AP.
-pub fn hotspot_channel(configured: u8, supports_5ghz: bool) -> u8 {
-    if configured > 14 && !supports_5ghz {
-        6
-    } else {
-        configured
-    }
-}
 struct HotspotState {
     connection: Option<String>,
     ready: Option<WirelessHotspotInfo>,
@@ -317,6 +300,10 @@ pub struct LinuxHotspot {
     closed: AtomicBool,
     provisioning: Option<Arc<crate::provision::ProvisioningGate>>,
     before_activation: Option<crate::host_backends::BeforeActivation>,
+    resolution: Option<(
+        Arc<crate::host_capabilities::CapabilityCache>,
+        crate::device_preset::HotspotResolution,
+    )>,
 }
 impl LinuxHotspot {
     pub fn new(
@@ -337,7 +324,16 @@ impl LinuxHotspot {
             closed: AtomicBool::new(false),
             provisioning: None,
             before_activation: None,
+            resolution: None,
         }
+    }
+    pub fn with_resolution(
+        mut self,
+        cache: Arc<crate::host_capabilities::CapabilityCache>,
+        resolution: crate::device_preset::HotspotResolution,
+    ) -> Self {
+        self.resolution = Some((cache, resolution));
+        self
     }
     /// Runs with the AP's address just before its activation, e.g. to give NetworkManager's
     /// shared-mode dnsmasq configuration it reads only when it starts.
@@ -352,8 +348,23 @@ impl LinuxHotspot {
         self
     }
     pub fn start(&self, timeout: Duration) -> Result<WirelessHotspotInfo> {
+        let hotspot = self
+            .resolution
+            .as_ref()
+            .map(|(_, hotspot)| hotspot.clone())
+            .unwrap_or_else(|| {
+                crate::device_preset::resolve_hotspot("auto", self.channel, "generic", None)
+            });
         self.start_requested(
-            &crate::host_backends::AccessPointRequest::saved(self.state_dir.clone(), self.channel),
+            &crate::host_backends::AccessPointRequest::saved(
+                self.state_dir.clone(),
+                if hotspot.band == "5" {
+                    crate::host_backends::WifiBand::Ghz5
+                } else {
+                    crate::host_backends::WifiBand::Ghz2
+                },
+                hotspot.channel,
+            ),
             timeout,
         )
     }
@@ -405,23 +416,11 @@ impl LinuxHotspot {
         );
         self.state.lock().unwrap().connection = Some(id.clone());
         let result = (|| {
-            let info = phy_info(self.runner.as_ref(), &self.interface);
-            let selected = access_point_channel(request.channel, info.as_ref());
-            static FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
-            if selected != request.channel && !FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {
-                let reason = info.as_ref().map_or("radio capabilities unavailable", |p| {
-                    p.ap_channel_reason(request.channel)
-                        .unwrap_or("channel unavailable")
-                });
-                eprintln!(
-                    "Wi-Fi hotspot channel {} cannot host an AP: {reason}; using hotspot channel 6",
-                    request.channel
-                );
+            if let Some((cache, hotspot)) = &self.resolution {
+                cache.record_hotspot(&self.interface, hotspot.clone());
             }
-            let channel = selected.to_string();
-            let band = if selected == request.channel
-                && request.band == crate::host_backends::WifiBand::Ghz5
-            {
+            let channel = request.channel.to_string();
+            let band = if request.band == crate::host_backends::WifiBand::Ghz5 {
                 "a"
             } else {
                 "bg"
@@ -466,6 +465,13 @@ impl LinuxHotspot {
             self.wait_for_provisioning(deadline);
             self.wait_for_device(deadline);
             if cmd(&["nmcli", "connection", "up", "id", &id]).is_err() {
+                if let Some((cache, hotspot)) = &self.resolution {
+                    let mut fallback = hotspot.clone();
+                    fallback.band = "2.4".into();
+                    fallback.channel = 6;
+                    fallback.reason = Some("ap-start-failed".into());
+                    cache.record_hotspot(&self.interface, fallback);
+                }
                 cmd(&[
                     "nmcli",
                     "connection",
@@ -508,6 +514,14 @@ impl LinuxHotspot {
                 access_point_bssid: Some(bssid),
                 interface_name: Some(self.interface.clone()),
             };
+            if let Some((cache, hotspot)) = &self.resolution {
+                let mut actual = cache
+                    .hotspot(&self.interface)
+                    .unwrap_or_else(|| hotspot.clone());
+                actual.channel = info.channel;
+                actual.band = if info.channel > 14 { "5" } else { "2.4" }.into();
+                cache.record_hotspot(&self.interface, actual);
+            }
             self.state.lock().unwrap().ready = Some(info.clone());
             Ok(info)
         })();

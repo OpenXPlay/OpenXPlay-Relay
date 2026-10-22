@@ -8,7 +8,7 @@ import type { SavedNetwork } from './src/schema';
 import { randomUUID } from 'node:crypto';
 import type { Plugin } from 'vite';
 import type { Field, Section, Settings, Value } from './src/schema';
-import type { PublicNameStatus, ReceiverReport, Status, WifiClient } from './src/api';
+import type { PublicNameStatus, ReceiverReport, Status, WifiClient, Wireless } from './src/api';
 
 function field(key: string, type: Field['type'], extra: Partial<Field> = {}): Field {
   return { key, type, labelKey: `field.${key}`, ...extra };
@@ -29,6 +29,22 @@ function publicNameSection(): Section {
     field('publicNameAgreeTerms', 'bool', { labelKey: 'publicName.terms', ...shown }),
   ] };
 }
+function mockWireless(values: Settings['values']): Wireless {
+  const id = String(values.devicePreset === 'auto' ? 'phicomm-n1' : values.devicePreset);
+  const labels: Record<string, string> = { 'phicomm-n1': 'Phicomm N1', msm8916: 'Qualcomm Snapdragon 410 (MSM8916)', generic: 'Generic Linux device' };
+  const configuredBand = values.hotspotBand as Wireless['hotspot']['configuredBand'];
+  const band = configuredBand === 'auto' ? id === 'msm8916' ? '2.4' : '5' : configuredBand;
+  const configuredChannel = Number(values.hotspotChannel);
+  const ap5Channels = [36, 40, 44, 48, 149, 153, 157, 161, 165];
+  const inBand = band === '2.4' ? configuredChannel >= 1 && configuredChannel <= 14 : configuredChannel >= 32;
+  const capable = band === '2.4' ? configuredChannel <= 11 : ap5Channels.includes(configuredChannel);
+  return {
+    preset: { id, label: labels[id], source: values.devicePreset === 'auto' ? 'detected' : 'settings', detected: 'phicomm-n1' },
+    mode: 'concurrent', station24: true, ap24: true, station5: true, ap5: true, apStation: true, apStationChannels: 1, p2pClient: true, ap5Channels,
+    hotspot: { band, channel: inBand && capable ? configuredChannel : band === '2.4' ? 6 : 36, configuredBand, configuredChannel,
+      reason: configuredChannel && !(inBand && capable) ? inBand ? 'channel-not-ap-capable' : 'channel-not-in-band' : null },
+  };
+}
 /** The mock's trusted-HTTPS status: ready once complete; `fail.duckdns.org` shows an error. */
 export function mockPublicName(values: Settings['values'], now = Date.now() / 1000): PublicNameStatus {
   if (values.publicNameEnabled !== true) return { state: 'off' };
@@ -39,16 +55,16 @@ export function mockPublicName(values: Settings['values'], now = Date.now() / 10
 }
 export function mockSettings(linux = false): Settings {
   if (linux) return { schema: [
-    { id: 'connection', titleKey: 'section.connection', fields: [field('iphone', 'phone'), choice('output', ['web', 'carlink', 'both']), field('requirePairingCode', 'bool')] },
+    { id: 'connection', titleKey: 'section.connection', fields: [choice('devicePreset', ['auto', 'msm8916', 'phicomm-n1', 'generic']), choice('hotspotBand', ['auto', '2.4', '5'], { visibleWhen: when('networkMode', 'device-hotspot') }), field('iphone', 'phone'), choice('output', ['web', 'carlink', 'both']), field('requirePairingCode', 'bool')] },
     { id: 'audio', titleKey: 'section.audio', fields: [field('carBluetoothAudio', 'bool', { hintKey: 'hint.field.carBluetoothAudio' })] },
     publicNameSection(),
     { id: 'plugins', titleKey: 'section.plugins', fields: [field('plugins', 'bool', { hintKey: 'hint.plugins' }), field('pluginsEnabled', 'plugins')] },
     { id: 'wifi', titleKey: 'section.wifi', fields: [] },
     { id: 'network', titleKey: 'section.network', fields: [choice('networkMode', ['shared-wifi', 'device-hotspot'], { options: ['shared-wifi', 'device-hotspot'].map(value => ({ value, labelKey: `option.networkMode.${value}`, hintKey: `hint.option.networkMode.${value}`, illustration: value as 'shared-wifi' | 'device-hotspot' })) }), field('sharedWifiNetworks', 'networks')] },
-    { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('wifiChannel', 'number', { min: 1, max: 14 }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
+    { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('hotspotChannel', 'number', { min: 0, max: 177, labelKey: 'field.wifiChannel', hintKey: 'hint.field.hotspotChannel' }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
   ], installedPlugins: [{ id: 'org.openxplay.clock', name: { en: 'Clock', 'zh-CN': '时钟' }, version: '1.0.0', license: 'Apache-2.0 OR MIT', icon: null, nonCommercialAssets: false },
     { id: 'org.openxplay.pet', name: { en: 'Pet', 'zh-CN': '宠物' }, version: '1.0.0', license: '(Apache-2.0 OR MIT) AND CC-BY-NC-SA-4.0', icon: null, nonCommercialAssets: true }],
-  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', wifiChannel: 6, rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: false, ...PUBLIC_NAME_OFF } };
+  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', hotspotChannel: 0, hotspotBand: 'auto', devicePreset: 'auto', rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: false, ...PUBLIC_NAME_OFF } };
   const schema: Section[] = [
     { id: 'connection', titleKey: 'section.connection', fields: [
       field('iphone', 'phone', { hintKey: 'hint.iphone' }), choice('transport', ['wireless', 'usb']),
@@ -196,9 +212,11 @@ export function mockApi(linux = false): Plugin {
       }
       if (linux && path === '/hotspot' && method === 'PUT') {
         if (typeof body.ssid !== 'string' || typeof body.password !== 'string') return send(422, { error: 'error.invalid' });
+        if (body.band !== undefined && !['auto', '2.4', '5'].includes(body.band)) return send(422, { error: 'error.invalid' });
         const error = validateHotspot(body.ssid, body.password);
         if (error) return send(422, { error });
         settings.values.hotspotSsid = body.ssid; settings.values.hotspotPassword = body.password;
+        if (body.band !== undefined) settings.values.hotspotBand = body.band;
         networkChanged = true;
         if (settings.values.networkMode === 'device-hotspot') outageUntil = Date.now() + 2000;
         return send(200, { ok: true });
@@ -297,7 +315,7 @@ export function mockApi(linux = false): Plugin {
           iphone: { name: phone.name, reason: running ? 'connected' : settings.values.iphone === 'auto' ? 'onlyCandidate' : 'selected' },
           network: { mode: String(settings.values.networkMode), wifi: currentSsid() },
           output: String(settings.values.output), carlink: { state: running ? 'connected' : 'idle', detail: '' }, notices,
-          ...(linux ? { publicName: mockPublicName(settings.values) } : {}),
+          ...(linux ? { publicName: mockPublicName(settings.values), wireless: mockWireless(settings.values) } : {}),
         };
         if (status.publicName?.state === 'ready') status.receiverUrls = [`https://${status.publicName.name}:8443/`, ...status.receiverUrls];
         const result = preview ? previewStatus(status, previewState) : status;

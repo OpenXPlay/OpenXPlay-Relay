@@ -21,7 +21,8 @@ pub type BeforeActivation = Arc<dyn Fn(std::net::Ipv4Addr) + Send + Sync>;
 pub struct AccessPointConfig {
     pub state_dir: PathBuf,
     pub interface: String,
-    pub channel: u8,
+    pub hotspot: crate::device_preset::HotspotResolution,
+    pub capabilities: Option<Arc<crate::host_capabilities::CapabilityCache>>,
     pub provisioning: Option<Arc<provision::ProvisioningGate>>,
     pub before_activation: Option<BeforeActivation>,
 }
@@ -42,14 +43,10 @@ pub struct AccessPointRequest {
     pub channel: u8,
 }
 impl AccessPointRequest {
-    pub fn saved(state_dir: PathBuf, channel: u8) -> Self {
+    pub fn saved(state_dir: PathBuf, band: WifiBand, channel: u8) -> Self {
         Self {
             credentials: AccessPointCredentials::Saved(state_dir),
-            band: if channel > 14 {
-                WifiBand::Ghz5
-            } else {
-                WifiBand::Ghz2
-            },
+            band,
             channel,
         }
     }
@@ -231,13 +228,23 @@ impl AccessPointFactory for NetworkManagerBackend {
         linux_hotspot::remove_stale_hotspots(self.runner.as_ref())
     }
     fn access_point(&self, config: AccessPointConfig) -> Arc<dyn WirelessHotspotManager> {
-        let request = AccessPointRequest::saved(config.state_dir.clone(), config.channel);
+        let band = if config.hotspot.band == "5" {
+            WifiBand::Ghz5
+        } else {
+            WifiBand::Ghz2
+        };
+        let request =
+            AccessPointRequest::saved(config.state_dir.clone(), band, config.hotspot.channel);
         let ap = LinuxHotspot::new(
             config.state_dir,
             self.runner.clone(),
             config.interface,
-            config.channel,
+            config.hotspot.channel,
         );
+        let ap = match config.capabilities {
+            Some(cache) => ap.with_resolution(cache, config.hotspot),
+            None => ap,
+        };
         let ap = match config.provisioning {
             Some(gate) => ap.with_provisioning(gate),
             None => ap,

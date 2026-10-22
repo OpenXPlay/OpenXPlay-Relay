@@ -102,6 +102,7 @@ pub mod context;
 
 mod context_route;
 
+pub mod device_preset;
 pub mod host_profile;
 
 pub mod host_backends;

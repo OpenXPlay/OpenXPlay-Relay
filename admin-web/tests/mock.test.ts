@@ -192,9 +192,12 @@ it('validates Linux hotspot edits behind auth and reports the saved credentials'
   expect((await call('/hotspot', 'PUT', credentials, false)).status).toBe(403);
   expect((await call('/hotspot', 'PUT', { ...credentials, ssid: '中'.repeat(11) })).data.error).toBe('error.hotspotSsid');
   expect((await call('/hotspot', 'PUT', { ...credentials, password: 'short' })).data.error).toBe('error.hotspotPassword');
-  expect((await call('/hotspot', 'PUT', credentials)).status).toBe(200);
+  for (const band of ['6', 5, null]) expect((await call('/hotspot', 'PUT', { ...credentials, band })).status).toBe(422);
+  expect((await call('/hotspot', 'PUT', { ...credentials, band: '2.4' })).status).toBe(200);
   const status = (await call('/status')).data;
   expect(status.hotspot).toMatchObject({ ...credentials, hasPassword: true });
+  expect(status.wireless).toMatchObject({ preset: { id: 'phicomm-n1', source: 'detected' }, hotspot: { configuredBand: '2.4', band: '2.4', channel: 6 } });
+  expect((await call('/settings')).data.values.hotspotBand).toBe('2.4');
 });
 it('applies Linux output edits immediately while running', async () => {
   const call = relay(true);
