@@ -24,12 +24,31 @@ class SetupPresentationTest {
         assertNull(setupStep(""))
     }
 
-    @Test fun recommendationsFollowTheOutput() {
-        assertEquals(ConnectionMode.WIRELESS, recommendedConnection(settings))
+    @Test fun wirelessIsRecommendedWithOrWithoutCarlink() {
+        for (mode in ConnectionMode.entries) for (carlink in listOf(false, true)) {
+            assertEquals(ConnectionMode.WIRELESS, recommendedConnection(settings.copy(connectionMode = mode, carlinkOutput = carlink)))
+        }
+        assertEquals(ConnectionMode.WIRELESS, recommendedConnection(settings.copy(bothOutputs = true)))
+    }
+
+    @Test fun networkRecommendationsFollowTheOutput() {
         assertEquals(WirelessNetworkChoice.WIFI_DIRECT, recommendedNetwork(settings))
         val carlink = settings.copy(carlinkOutput = true)
-        assertEquals(ConnectionMode.USB, recommendedConnection(carlink))
         assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, recommendedNetwork(carlink))
+    }
+
+    @Test fun onlySwitchingToUsbFromWirelessNeedsConfirmation() {
+        assertTrue(needsUsbConfirmation(ConnectionMode.WIRELESS, ConnectionMode.USB, lastUsedWireless = false))
+        assertFalse(needsUsbConfirmation(ConnectionMode.USB, ConnectionMode.USB, lastUsedWireless = true))
+        assertFalse(needsUsbConfirmation(ConnectionMode.USB, ConnectionMode.WIRELESS, lastUsedWireless = false))
+        assertFalse(needsUsbConfirmation(ConnectionMode.WIRELESS, ConnectionMode.WIRELESS, lastUsedWireless = true))
+        for (mode in ConnectionMode.entries) for (lastUsedWireless in listOf(false, true))
+            assertFalse(needsUsbConfirmation(mode, ConnectionMode.LAST_USED, lastUsedWireless))
+    }
+
+    @Test fun lastUsedNeedsUsbConfirmationOnlyWhenItResolvesToWireless() {
+        assertTrue(needsUsbConfirmation(ConnectionMode.LAST_USED, ConnectionMode.USB, lastUsedWireless = true))
+        assertFalse(needsUsbConfirmation(ConnectionMode.LAST_USED, ConnectionMode.USB, lastUsedWireless = false))
     }
 
     @Test fun choosingCarlinkLeavesWifiDirectAndReplacesBothOutputs() {

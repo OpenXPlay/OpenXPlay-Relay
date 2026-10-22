@@ -15,6 +15,12 @@ import org.openxplay.direlay.settings.*
 fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) -> Boolean) {
     var draft by state.draft
     var confirmCarlink by remember { mutableStateOf(false) }
+    var confirmUsb by remember { mutableStateOf(false) }
+    if (confirmUsb) UsbConnectionDialog(confirm = {
+        val next = draft.copy(connectionMode = ConnectionMode.USB)
+        draft = CarlinkConnectionPolicy.enabling(draft, next, wireless(next))
+        confirmUsb = false
+    }, dismiss = { confirmUsb = false })
     if (confirmCarlink) AlertDialog(onDismissRequest = { confirmCarlink = false },
         title = { Text(stringResource(R.string.ui_carlink)) },
         text = { Text(stringResource(R.string.carlink_wifi_direct_confirm)) },
@@ -41,7 +47,8 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
     CollapsibleCard("connection", stringResource(R.string.direlay_connection_mode), "${connectionModeSummary(draft)} · ${hotspotSecuritySummary(draft)}", initiallyExpanded = false) {
         Options(ConnectionMode.entries.map { stringResource(when (it) { ConnectionMode.USB -> R.string.direlay_usb; ConnectionMode.WIRELESS -> R.string.direlay_wireless; ConnectionMode.LAST_USED -> R.string.direlay_last_used }) }, ConnectionMode.entries.indexOf(draft.connectionMode)) {
             val next = draft.copy(connectionMode = ConnectionMode.entries[it])
-            draft = CarlinkConnectionPolicy.enabling(draft, next, wireless(next))
+            if (needsUsbConfirmation(draft.connectionMode, next.connectionMode, wireless(draft))) confirmUsb = true
+            else draft = CarlinkConnectionPolicy.enabling(draft, next, wireless(next))
         }
         EditorNumberField(state, "channel", R.string.direlay_hotspot_channel, draft.wirelessNetwork.channel.toString(),
             valid = { text -> text.toIntOrNull()?.let { it == 0 || isManualHotspotChannelCompatible(draft.wirelessNetwork.band, it) } == true }) {

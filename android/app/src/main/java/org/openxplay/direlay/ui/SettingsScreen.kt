@@ -74,6 +74,12 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null) {
     var draft by state.draft
     var confirmCarlink by remember { mutableStateOf(false) }
+    var confirmUsb by remember { mutableStateOf(false) }
+    if (confirmUsb) UsbConnectionDialog(confirm = {
+        val candidate = draft.copy(connectionMode = ConnectionMode.USB)
+        draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
+        confirmUsb = false
+    }, dismiss = { confirmUsb = false })
     val errors = settingsErrors(draft, wireless(draft))
     val invalidPages = state.errorPages(wireless)
     val page = route.substringBefore('#')
@@ -160,7 +166,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     initiallyExpanded = true, targeted = target == "connection" || target == "iphone") {
                     RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
                         val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)
-                        draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
+                        if (needsUsbConfirmation(draft.connectionMode, candidate.connectionMode, wireless(draft))) confirmUsb = true
+                        else draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
                     }
                     AnimatedVisibility(wireless(draft), enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
                         exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {

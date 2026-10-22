@@ -257,7 +257,15 @@
     <string name="option_browser_hint">Show CarPlay in the car’s browser.</string>
     <string name="option_carlink_hint">Experimental: connecting may fail. Show CarPlay in the car’s Carlink app.</string>
     <string name="option_wireless_hint">Connect the iPhone over Bluetooth and Wi-Fi.</string>
-    <string name="option_usb_hint">Connect the iPhone with a USB cable.</string>
+    <string name="option_usb_hint">Not recommended: this phone has to power the iPhone, and only some cables work.</string>
+    <string name="usb_confirm_title">Use a USB cable?</string>
+    <string name="usb_confirm_intro">Wireless is recommended. A USB cable often causes two problems:</string>
+    <string name="usb_confirm_power_title">Power</string>
+    <string name="usb_confirm_power">This phone powers the iPhone through the cable. Its battery drains fast and it may get warm, and it usually can’t charge while the cable is in.</string>
+    <string name="usb_confirm_cable_title">Cable</string>
+    <string name="usb_confirm_cable">With a USB-C to USB-C cable, the iPhone often takes control and this phone can’t see it. Use a USB-C OTG adapter on this phone with a USB-A to USB-C cable, or a USB-C to Lightning cable for a Lightning iPhone. Charge-only cables don’t work, and a loose plug drops CarPlay while you drive.</string>
+    <string name="usb_confirm_use">Use USB anyway</string>
+    <string name="usb_confirm_keep">Keep wireless</string>
     <string name="option_direct_hint">The iPhone connects straight to this phone. The car screen uses this phone\'s normal Wi-Fi, for example the car\'s hotspot.</string>
     <string name="option_hotspot_hint">Turn on this phone\'s hotspot. The iPhone and the car screen both join it.</string>
     <string name="option_wifi_hint">The iPhone, this phone and the car screen join the same Wi-Fi, such as the car\'s hotspot or a travel router.</string>
@@ -389,6 +397,7 @@
     <string name="setup_close">Close the setup guide</string>
     <string name="setup_next">Next</string>
     <string name="setup_recommended">Recommended</string>
+    <string name="setup_not_recommended">Not recommended</string>
     <string name="setup_experimental">Experimental</string>
     <string name="setup_output_title">How should the car show CarPlay?</string>
     <string name="setup_output_hint">Choose what your car already has. You can change it later.</string>
@@ -399,8 +408,8 @@
     <string name="setup_connection_title">How does the iPhone connect to this phone?</string>
     <string name="setup_connection_hint">This phone sits between the iPhone and the car.</string>
     <string name="setup_wireless_hint">Over Bluetooth and Wi-Fi. The iPhone connects by itself when you get in.</string>
-    <string name="setup_usb_hint">With a USB cable between the iPhone and this phone. The steadiest link.</string>
-    <string name="setup_carlink_usb_tip">With Carlink, this phone’s Wi-Fi also talks to the car, so a USB cable is more reliable for the iPhone.</string>
+    <string name="setup_usb_hint">With a USB cable between the iPhone and this phone. This phone has to power the iPhone, and only some cables work.</string>
+    <string name="setup_carlink_hotspot_tip">With Carlink, choose Wireless and use this phone’s hotspot. Keep this phone’s Wi-Fi on as well: it connects to the car.</string>
     <string name="setup_network_title">Which network should wireless CarPlay use?</string>
     <string name="setup_network_hint">The iPhone, this phone and the car screen must be able to reach each other.</string>
     <string name="setup_prepare_title">Get ready</string>

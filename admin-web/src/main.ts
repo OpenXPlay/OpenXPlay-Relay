@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
+import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
 import { validateHotspot, hotspotForm, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
@@ -434,7 +435,11 @@ function fieldMarkup(field: Field): string {
   let control = '';
   if (field.type === 'plugins') control = `<div ${attributes}>${pluginList(settings!, language, t, developer)}</div>`;
   else if (field.type === 'bool') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attributes} type="checkbox" role="switch" ${value ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
-  else if (field.type === 'choice') control = `<fieldset ${attributes}><legend>${label}</legend><div class="choices">${field.options?.map((option, i) => `<label class="choice"><div class="choice-label"><input type="radio" name="${id}" id="${id}-${i}" value="${esc(option.value)}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''} ${option.value === value ? 'checked' : ''}><span>${esc(t(option.labelKey))}</span></div>${(option.hintKey || field.key === 'output') ? `<p class="muted">${esc(t(option.hintKey || `hint.option.output.${option.value}`))}</p>` : ''}${option.illustration ? topology(option.illustration) : ''}</label>`).join('') ?? ''}</div></fieldset>`;
+  else if (field.type === 'choice') control = `<fieldset ${attributes}><legend>${label}</legend><div class="choices">${field.options?.map((option, i) => {
+    const hint = (field.key === 'transport' ? usbTransportHint(status?.platform, option.value) : undefined)
+      || option.hintKey || (field.key === 'output' ? `hint.option.output.${option.value}` : undefined);
+    return `<label class="choice"><div class="choice-label"><input type="radio" name="${id}" id="${id}-${i}" value="${esc(option.value)}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''} ${option.value === value ? 'checked' : ''}><span>${esc(t(option.labelKey))}</span></div>${hint ? `<p class="muted">${esc(t(hint))}</p>` : ''}${option.illustration ? topology(option.illustration) : ''}</label>`;
+  }).join('') ?? ''}</div></fieldset>`;
   else if (field.type === 'phone') control = `<label for="${id}">${label}</label><button ${attributes} class="picker-button" aria-haspopup="dialog">${icon('smartphone')}<span>${value === 'auto' ? t('ui.automatic') : esc(phoneNames.get(String(value)) ?? value)}</span>${icon('chevron-down')}</button>`;
   else control = `<label for="${id}">${label}</label><div class="input-row"><input ${attributes} type="${field.type === 'secret' ? 'password' : field.type}" value="${esc(value)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${field.type === 'secret' && settings!.values[`${field.key}Set`] === true ? `placeholder="${esc(t(`${field.labelKey}Saved`))}"` : ''}>${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button>` : ''}</div>`;
   return `<div class="field" data-field="${esc(field.key)}">${control}${['output', 'transport'].includes(field.key) ? connectionConstraint(status?.platform, t) : ''}<p class="muted hint" id="${id}-hint">${field.hintKey ? esc(t(field.hintKey)) : ''}</p><p id="${id}-result" class="field-result ${invalid ? 'error' : ''}" role="status" aria-live="polite">${feedback.has(field.key) ? esc(t(feedback.get(field.key)!)) : ''}</p></div>`;
@@ -645,6 +650,9 @@ function updateVisibility() {
 }
 function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
+  if (field.key === 'transport' && needsUsbConfirmation(status?.platform, settings!.values.transport, value)) {
+    if (!window.confirm(t('confirm.transport.usb.android'))) { render(); return; }
+  }
   if (field.key === 'output' && needsHotspotConfirmation(status?.platform, settings!.values, value)) {
     if (!window.confirm(t('constraint.carlinkWifiDirectConfirm'))) { render(); return; }
     // The Android API applies the output and safe network mode together.

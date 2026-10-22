@@ -225,7 +225,15 @@
     <string name="option_browser_hint">在车载浏览器中显示 CarPlay。</string>
     <string name="option_carlink_hint">实验性功能，有可能连接失败。在车机的 Carlink 应用中显示 CarPlay。</string>
     <string name="option_wireless_hint">通过蓝牙和 Wi-Fi 连接 iPhone。</string>
-    <string name="option_usb_hint">使用 USB 线缆连接 iPhone。</string>
+    <string name="option_usb_hint">不推荐：这台手机要给 iPhone 供电，而且对数据线有要求。</string>
+    <string name="usb_confirm_title">确定用数据线连接吗？</string>
+    <string name="usb_confirm_intro">建议使用无线连接。用数据线连接常见两个问题：</string>
+    <string name="usb_confirm_power_title">供电</string>
+    <string name="usb_confirm_power">这台手机要通过数据线给 iPhone 供电，耗电快、可能发热，插着线时通常也没法给自己充电。</string>
+    <string name="usb_confirm_cable_title">数据线</string>
+    <string name="usb_confirm_cable">用两头都是 USB-C 的线时，iPhone 常会占用主控，这台手机就识别不到它。可以在这台手机上插一个 USB-C OTG 转接头，再用 USB-A 转 USB-C 线连接 iPhone；Lightning 接口的 iPhone 用 USB-C 转 Lightning 线。只能充电的线不能用，行车中插头松动也会让 CarPlay 断开。</string>
+    <string name="usb_confirm_use">仍然使用数据线</string>
+    <string name="usb_confirm_keep">继续用无线</string>
     <string name="option_direct_hint">iPhone 直接连接此手机；车机屏幕通过此手机的普通 Wi-Fi 连接，例如车机热点。</string>
     <string name="option_hotspot_hint">打开此手机的个人热点，iPhone 和车机屏幕都连接到它。</string>
     <string name="option_wifi_hint">iPhone、此手机和车机屏幕连接同一个 Wi-Fi，例如车机热点或随身 Wi-Fi。</string>
@@ -383,6 +391,7 @@
     <string name="setup_close">关闭设置向导</string>
     <string name="setup_next">下一步</string>
     <string name="setup_recommended">推荐</string>
+    <string name="setup_not_recommended">不推荐</string>
     <string name="setup_experimental">实验性</string>
     <string name="setup_output_title">车机用什么显示 CarPlay？</string>
     <string name="setup_output_hint">选择你的车机上已有的方式，之后随时可以更改。</string>
@@ -393,8 +402,8 @@
     <string name="setup_connection_title">iPhone 怎么连接这台手机？</string>
     <string name="setup_connection_hint">这台手机是 iPhone 和车机之间的中继。</string>
     <string name="setup_wireless_hint">通过蓝牙和 Wi-Fi 连接，上车后 iPhone 会自动连上。</string>
-    <string name="setup_usb_hint">用数据线连接 iPhone 和这台手机，连接最稳定。</string>
-    <string name="setup_carlink_usb_tip">使用 Carlink 时，这台手机的 Wi-Fi 还要连接车机，iPhone 改用数据线连接会更可靠。</string>
+    <string name="setup_usb_hint">用数据线连接 iPhone 和这台手机。这台手机要给 iPhone 供电，而且对数据线有要求。</string>
+    <string name="setup_carlink_hotspot_tip">使用 Carlink 时，请选择无线，并使用这台手机的热点。这台手机的 Wi-Fi 也要保持打开，它要用来连接车机。</string>
     <string name="setup_network_title">无线 CarPlay 用哪种网络？</string>
     <string name="setup_network_hint">iPhone、这台手机和车机屏幕之间需要能互相连通。</string>
     <string name="setup_prepare_title">完成准备</string>
