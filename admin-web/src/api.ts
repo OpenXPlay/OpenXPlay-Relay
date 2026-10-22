@@ -11,6 +11,8 @@ export interface CarlinkStatus {
   trusted?: boolean; state: string; detail: string; lastLostReason?: string | null; lastError?: string | null;
   headUnit?: { address: string; name?: string | null } | null;
   network?: { ssid: string; interface: string } | null;
+  viewSize?: { width: number; height: number } | null;
+  stats?: Record<string, string | number | null> | null; pinIncorrect?: boolean;
   pinRequested?: boolean; pinDeadline?: number | null;
 }
 export interface HostAddress { interface: string; ipv4: string; developerOnly: boolean }
@@ -102,6 +104,6 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
-  action: (name: 'start' | 'stop' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
+  action: (name: 'start' | 'stop' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
   phones: () => request<Phone[]>('/phones'),
 };

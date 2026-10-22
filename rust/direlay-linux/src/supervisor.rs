@@ -20,6 +20,10 @@ use std::{
 pub type EventSink = Arc<dyn Fn(Value) + Send + Sync>;
 #[derive(Clone, Debug)]
 pub struct CarlinkSettings {
+    pub name: String,
+    pub model: String,
+    pub hevc: String,
+    pub auto_reconnect: bool,
     pub ble: Option<BleCarlinkSettings>,
     pub head_unit: Ipv4Addr,
     pub local: Ipv4Addr,
@@ -114,16 +118,20 @@ impl SupervisorSettings {
                 "--state-dir".into(),
                 self.state_dir.join("carlink").into_os_string(),
             ]);
+            args.extend([
+                "--clink-name".into(),
+                c.name.clone().into(),
+                "--clink-model".into(),
+                c.model.clone().into(),
+                "--clink-hevc".into(),
+                c.hevc.clone().into(),
+            ]);
             if let Some(ble) = &c.ble {
                 args.extend([
                     "--clink-link".into(),
                     "ble".into(),
                     "--clink-interface".into(),
                     ble.interface.clone().into(),
-                    "--clink-name".into(),
-                    crate::branding::DEVICE_NAME.into(),
-                    "--clink-model".into(),
-                    crate::branding::MODEL.into(),
                     "--clink-id".into(),
                     ble.id.clone().into(),
                     "--clink-band".into(),
@@ -514,15 +522,34 @@ impl RelaySupervisor {
         let restart = self.restart.clone();
         let fragment = self.pairing_fragment.clone();
         let linking = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
         let band_backoff = self.band_backoff.clone();
         let child_events: EventSink = Arc::new({
             let events = events.clone();
             let fragment = fragment.clone();
             let restart = restart.clone();
             let state_dir = settings.state_dir.clone();
+            let paused = paused.clone();
+            let auto_reconnect = settings.carlink.as_ref().is_none_or(|c| c.auto_reconnect);
             let linking = linking.clone();
             let band_backoff = band_backoff.clone();
             move |event| {
+                if event["type"] == "diagnostic" {
+                    if let Some(message) = event["message"].as_str() {
+                        if message.starts_with("oxp-relay:") {
+                            eprintln!("{message}");
+                        } else {
+                            eprintln!("oxp-relay: {message}");
+                        }
+                    }
+                }
+                if !auto_reconnect
+                    && linking.load(Ordering::Acquire)
+                    && carlink_attempt_failed(&event)
+                {
+                    paused.store(true, Ordering::Release);
+                    restart.store(true, Ordering::Release);
+                }
                 if event["type"] == "pairing-url" {
                     *fragment.lock().unwrap() = event["url"]
                         .as_str()
@@ -569,11 +596,13 @@ impl RelaySupervisor {
                 while !*stop.0.lock().unwrap() {
                     *fragment.lock().unwrap() = None;
                     let attempt = connect.swap(false, Ordering::AcqRel);
+                    if attempt { paused.store(false, Ordering::Release); }
+                    let manual_pause = paused.load(Ordering::Acquire);
                     // Connect lifted the backoff for this one attempt.
                     let backoff = band_backoff
                         .remaining(Instant::now())
                         .filter(|_| !attempt && settings.carlink.is_some());
-                    if let Some(remaining) = backoff.filter(|_| settings.web_port == 0) {
+                    if let Some(remaining) = backoff.filter(|_| settings.web_port == 0 && !manual_pause) {
                         // Carlink only: nothing to serve until the backoff ends or Connect.
                         let (lock, wake) = &*stop;
                         let state = lock.lock().unwrap();
@@ -581,12 +610,12 @@ impl RelaySupervisor {
                         continue;
                     }
                     // With the web receiver in the same child, keep it up without Carlink.
-                    let backing_off = backoff.is_some();
+                    let backing_off = backoff.is_some() || manual_pause;
                     let enabled = settings.carlink.is_some() && !backing_off && (attempt || has_trusted_carlink(&settings.state_dir));
                     linking.store(enabled, Ordering::Release);
-                    if settings.carlink.is_some() && !enabled && !backing_off {
+                    if settings.carlink.is_some() && !enabled && (!backing_off || manual_pause) {
                         if !unpaired_reported {
-                            events(json!({"type":"carlink-unpaired"}));
+                            events(json!({"type":if manual_pause { "carlink-paused" } else { "carlink-unpaired" }}));
                             unpaired_reported = true;
                         }
                         if settings.web_port == 0 {
@@ -606,6 +635,8 @@ impl RelaySupervisor {
                     } else {
                         settings.launch_arguments(attempt)
                     };
+                    // Reset session observations before the child can emit its first event.
+                    events(json!({"type":"receiver-starting"}));
                     match factory.spawn(&settings.binary, &arguments, child_events.clone()) {
                         Ok(mut child) => {
                             running.store(true, Ordering::Relaxed);
@@ -613,10 +644,15 @@ impl RelaySupervisor {
                             loop {
                                 if wait(policy.poll) || restart.load(Ordering::Acquire) { break; }
                                 // The web-only child makes way for Carlink when the backoff ends.
-                                if backing_off && band_backoff.remaining(Instant::now()).is_none() { break; }
+                                if backing_off && !manual_pause && band_backoff.remaining(Instant::now()).is_none() { break; }
                                 match child.exited() {
                                     Ok(false) => {},
-                                    Ok(true) => break,
+                                    Ok(true) => {
+                                        if enabled && settings.carlink.as_ref().is_some_and(|c| !c.auto_reconnect) {
+                                            paused.store(true, Ordering::Release);
+                                        }
+                                        break;
+                                    },
                                     Err(e) => {
                                         events(json!({"type": "receiver-error", "message": e.to_string()}));
                                         break;
@@ -756,6 +792,10 @@ mod band_tests {
                     head_unit: Ipv4Addr::LOCALHOST,
                     local: Ipv4Addr::LOCALHOST,
                     pin: None,
+                    name: crate::branding::DEVICE_NAME.into(),
+                    model: crate::branding::MODEL.into(),
+                    hevc: "auto".into(),
+                    auto_reconnect: true,
                     ports: BTreeMap::new(),
                 }),
             };
@@ -861,6 +901,31 @@ mod band_tests {
     }
 
     #[test]
+    fn manual_reconnect_waits_after_session_end_and_connect_still_works() {
+        for port in [0, 8443] {
+            let mut f = Fixture::new("manual", port);
+            f.settings.carlink.as_mut().unwrap().auto_reconnect = false;
+            f.trust();
+            let mut relay = f.supervisor(&CarlinkBackoff::default());
+            relay.start().unwrap();
+            let (carlink, _, sink) = f.spawned();
+            assert!(carlink);
+            sink(json!({"type":"state","state":"Ended"}));
+            f.stops.recv_timeout(Duration::from_secs(2)).unwrap();
+            if port != 0 {
+                let (carlink, web, _) = f.spawned();
+                assert!(!carlink && web);
+            }
+            assert!(f.spawns.recv_timeout(Duration::from_millis(100)).is_err());
+            relay.connect_carlink();
+            let (carlink, web, _) = f.spawned();
+            assert!(carlink);
+            assert_eq!(web, port != 0);
+            relay.stop();
+        }
+    }
+
+    #[test]
     fn both_outputs_keep_the_web_receiver_during_band_backoff() {
         let f = Fixture::new("both", 8443);
         f.trust();
@@ -924,6 +989,68 @@ mod tls_tests {
         args.into_iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
+    }
+    #[test]
+    fn carlink_name_model_hevc_argument_lists_are_exact_for_both_links() {
+        for ble in [false, true] {
+            let mut settings = settings(Path::new("/state"));
+            settings.web_port = 0;
+            settings.carlink = Some(CarlinkSettings {
+                name: "My 车".into(),
+                model: "Model 1".into(),
+                hevc: "off".into(),
+                auto_reconnect: false,
+                ble: ble.then(|| BleCarlinkSettings {
+                    adapter: None,
+                    interface: "wlan0".into(),
+                    address: None,
+                    id: "id".into(),
+                    band: 1,
+                }),
+                head_unit: Ipv4Addr::new(192, 168, 43, 1),
+                local: Ipv4Addr::new(192, 168, 43, 2),
+                pin: None,
+                ports: BTreeMap::new(),
+            });
+            let mut expected = vec![
+                "--unix",
+                "/tmp/oxp-relay.sock",
+                "--relay-name",
+                crate::branding::DEVICE_NAME,
+                "--relay-version",
+                env!("CARGO_PKG_VERSION"),
+                "--state-dir",
+                "/state/carlink",
+                "--clink-name",
+                "My 车",
+                "--clink-model",
+                "Model 1",
+                "--clink-hevc",
+                "off",
+            ];
+            expected.extend(if ble {
+                vec![
+                    "--clink-link",
+                    "ble",
+                    "--clink-interface",
+                    "wlan0",
+                    "--clink-id",
+                    "id",
+                    "--clink-band",
+                    "1",
+                    "--pin-file",
+                    "/state/carlink/pin",
+                ]
+            } else {
+                vec![
+                    "--clink-head-unit",
+                    "192.168.43.1",
+                    "--clink-local",
+                    "192.168.43.2",
+                ]
+            });
+            assert_eq!(strings(settings.arguments()), expected);
+        }
     }
     #[test]
     fn without_a_trusted_certificate_the_arguments_are_exactly_as_before() {

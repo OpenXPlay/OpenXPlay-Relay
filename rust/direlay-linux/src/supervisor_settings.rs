@@ -23,6 +23,10 @@ pub fn supervisor_settings(
     }
     let carlink = if o.settings.output != "web" {
         Some(CarlinkSettings {
+            name: o.settings.carlink_name.clone(),
+            model: o.settings.carlink_model.clone(),
+            hevc: o.settings.carlink_hevc.clone(),
+            auto_reconnect: o.settings.carlink_auto_reconnect,
             ble: if o.settings.carlink_link == "ble" {
                 Some(BleCarlinkSettings {
                     adapter: ble_adapter,

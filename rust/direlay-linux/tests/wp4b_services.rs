@@ -1018,6 +1018,10 @@ fn nmcli_real_runner_uses_utf8_c_locale_and_argument_vectors() {
 fn supervisor_carlink_arguments() {
     let mut settings = supervisor_settings();
     settings.carlink = Some(supervisor::CarlinkSettings {
+        name: branding::DEVICE_NAME.into(),
+        model: branding::MODEL.into(),
+        hevc: "auto".into(),
+        auto_reconnect: true,
         ble: None,
         head_unit: "192.168.1.10".parse().unwrap(),
         local: "192.168.1.78".parse().unwrap(),
@@ -1189,6 +1193,10 @@ fn provisioning_can_switch_between_client_networks() {
 fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
     let mut settings = supervisor_settings();
     settings.carlink = Some(supervisor::CarlinkSettings {
+        name: branding::DEVICE_NAME.into(),
+        model: branding::MODEL.into(),
+        hevc: "auto".into(),
+        auto_reconnect: true,
         ble: Some(supervisor::BleCarlinkSettings {
             adapter: None,
             interface: "wlan1".into(),
@@ -1392,6 +1400,10 @@ fn supervisor_trust_policy_and_single_user_attempt() {
     let mut settings = supervisor_settings();
     settings.state_dir = dir.clone();
     settings.carlink = Some(supervisor::CarlinkSettings {
+        name: branding::DEVICE_NAME.into(),
+        model: branding::MODEL.into(),
+        hevc: "auto".into(),
+        auto_reconnect: true,
         ble: Some(supervisor::BleCarlinkSettings {
             adapter: None,
             interface: "wlan0".into(),

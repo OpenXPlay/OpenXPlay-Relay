@@ -158,6 +158,9 @@ pub struct AdminCarlink {
     pub head_unit: Option<CarlinkHeadUnit>,
     pub network: Option<CarlinkNetwork>,
     pub trusted: bool,
+    pub view_size: Option<CarlinkViewSize>,
+    pub stats: Option<Value>,
+    pub pin_incorrect: bool,
     #[serde(skip)]
     pub attempt_requested_pin: bool,
     pub pin_requested: bool,
@@ -169,6 +172,11 @@ pub struct AdminCarlink {
     pub pin_deadline: Option<u64>,
     /// Seconds left at response time, so browsers with a wrong clock still count down correctly.
     pub pin_remaining: Option<u64>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarlinkViewSize {
+    pub width: u32,
+    pub height: u32,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CarlinkHeadUnit {
@@ -219,6 +227,23 @@ impl AdminCarlink {
             return;
         }
         match event["type"].as_str().unwrap_or("") {
+            "receiver-starting" => {
+                self.view_size = None;
+                self.stats = None;
+            }
+            "clink-view-size" => {
+                if let Ok(size) = serde_json::from_value::<CarlinkViewSize>(event.clone()) {
+                    if size.width > 0 && size.height > 0 {
+                        self.view_size = Some(size);
+                    }
+                }
+            }
+            "media-stats" => {
+                self.stats = Some(event.clone());
+            }
+            "clink-pin" if event["result"] == "incorrect" => {
+                self.pin_incorrect = true;
+            }
             "link" => {
                 if event["state"] != "lost" {
                     self.next_attempt = None;
@@ -267,6 +292,12 @@ impl AdminCarlink {
                         }
                     }
                 }
+            }
+            "carlink-paused" => {
+                self.state = "paused".into();
+                self.detail = "carlink.manualHint".into();
+                self.next_attempt = None;
+                self.clear_pin();
             }
             "carlink-unpaired" => {
                 self.state = "unpaired".into();

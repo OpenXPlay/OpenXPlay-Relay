@@ -137,9 +137,9 @@ it('uses the Linux settings schema for Linux preview states', async () => {
     const settings = (await call('/settings')).data;
     const keys = settings.schema.flatMap((section: { fields: { key: string }[] }) => section.fields.map(field => field.key));
     expect(keys).toContain('wifiInterface');
-    expect(keys).not.toContain('autoStart');
+    expect(keys).toContain('autoStart');
     expect(keys).not.toContain('bootStart');
-    expect(settings.values).not.toHaveProperty('autoStart');
+    expect(settings.values.autoStart).toBe(true);
     expect(settings.values).not.toHaveProperty('bootStart');
     expect(settings.schema.filter((section: { id: string }) => section.id === 'wifi')).toHaveLength(1);
     expect((await call('/status')).data.platform).toBe('linux');

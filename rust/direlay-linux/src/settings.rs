@@ -37,6 +37,16 @@ pub struct Settings {
     pub receiver_port: u16,
     pub require_pairing_code: bool,
     pub output: String,
+    pub carlink_name: String,
+    pub carlink_model: String,
+    pub carlink_auto_reconnect: bool,
+    pub carlink_reconnect_on_resize: bool,
+    pub carlink_hevc: String,
+    pub auto_start: bool,
+    pub video_stats: String,
+    #[serde(rename = "carPlayViewAreas")]
+    pub car_play_view_areas: bool,
+    pub car_bluetooth_audio_defaulted: bool,
     pub carlink_link: String,
     pub carlink_address: Option<String>,
     pub carlink_head_unit: String,
@@ -67,13 +77,22 @@ impl Default for Settings {
             receiver_port: 8443,
             require_pairing_code: false,
             output: "web".into(),
+            carlink_name: crate::branding::DEVICE_NAME.into(),
+            carlink_model: crate::branding::MODEL.into(),
+            carlink_auto_reconnect: true,
+            carlink_reconnect_on_resize: false,
+            carlink_hevc: "auto".into(),
+            auto_start: true,
+            video_stats: "off".into(),
+            car_play_view_areas: true,
+            car_bluetooth_audio_defaulted: true,
             carlink_link: "ble".into(),
             carlink_address: None,
             carlink_head_unit: "192.168.43.1".into(),
             carlink_local: "192.168.43.2".into(),
             carlink_pin: None,
             carlink_ports: BTreeMap::new(),
-            car_bluetooth_audio: false,
+            car_bluetooth_audio: true,
             unknown: BTreeMap::new(),
         }
     }
@@ -86,6 +105,15 @@ impl Settings {
         match std::fs::read(dir.join("settings.json")) {
             Ok(b) => {
                 let mut value: serde_json::Value = serde_json::from_slice(&b)?;
+                let migrate_audio = value
+                    .as_object()
+                    .is_some_and(|o| !o.contains_key("carBluetoothAudioDefaulted"));
+                if migrate_audio {
+                    value["carBluetoothAudio"] = true.into();
+                    value["carBluetoothAudioDefaulted"] = true.into();
+                }
+                // Persist only the migration, leaving absent profile-derived settings absent.
+                let migrated = migrate_audio.then(|| value.clone());
                 if let Some(object) = value.as_object_mut() {
                     object
                         .entry("devicePreset")
@@ -124,9 +152,24 @@ impl Settings {
                 }
                 let s: Self = serde_json::from_value(value)?;
                 s.validate()?;
+                if let Some(migrated) = migrated {
+                    private_state_file(
+                        &dir.join("settings.json"),
+                        &serde_json::to_vec_pretty(&migrated)?,
+                    )?;
+                }
                 Ok(s)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(defaults.clone()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let mut s = defaults.clone();
+                s.car_bluetooth_audio = true;
+                s.car_bluetooth_audio_defaulted = true;
+                private_state_file(
+                    &dir.join("settings.json"),
+                    br#"{"carBluetoothAudio":true,"carBluetoothAudioDefaulted":true}"#,
+                )?;
+                Ok(s)
+            }
             Err(e) => Err(e),
         }
     }
@@ -194,7 +237,21 @@ impl Settings {
         {
             return Err(invalid("Invalid carlinkAddress"));
         }
-        if self.receiver_port == 0 {
+        for (key, value) in [
+            ("carlinkName", &self.carlink_name),
+            ("carlinkModel", &self.carlink_model),
+        ] {
+            if !(1..=128).contains(&value.len()) || value.chars().any(char::is_control) {
+                return Err(invalid(key));
+            }
+        }
+        if !["auto", "off"].contains(&self.carlink_hevc.as_str()) {
+            return Err(invalid("Invalid carlinkHevc"));
+        }
+        if !["off", "5", "15"].contains(&self.video_stats.as_str()) {
+            return Err(invalid("Invalid videoStats"));
+        }
+        if self.receiver_port < 1024 || self.receiver_port == 6975 {
             return Err(invalid("Invalid receiverPort"));
         }
         let mut ids = std::collections::BTreeSet::new();
@@ -234,6 +291,133 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn linux_car_settings_defaults_validation_and_round_trip() {
+        let defaults = Settings::default();
+        let json = serde_json::to_value(&defaults).unwrap();
+        for (key, value) in [
+            (
+                "carlinkName",
+                serde_json::json!(crate::branding::DEVICE_NAME),
+            ),
+            ("carlinkModel", serde_json::json!(crate::branding::MODEL)),
+            ("carlinkAutoReconnect", serde_json::json!(true)),
+            ("carlinkReconnectOnResize", serde_json::json!(false)),
+            ("carlinkHevc", serde_json::json!("auto")),
+            ("autoStart", serde_json::json!(true)),
+            ("videoStats", serde_json::json!("off")),
+            ("carPlayViewAreas", serde_json::json!(true)),
+            ("carBluetoothAudio", serde_json::json!(true)),
+            ("carBluetoothAudioDefaulted", serde_json::json!(true)),
+            ("receiverPort", serde_json::json!(8443)),
+        ] {
+            assert_eq!(json[key], value, "{key}");
+        }
+        assert_eq!(serde_json::from_str::<Settings>("{}").unwrap(), defaults);
+        for key in ["carlinkName", "carlinkModel"] {
+            for value in [
+                "".to_owned(),
+                "x".repeat(129),
+                "é".repeat(65),
+                "bad\nname".into(),
+                "bad\u{7f}name".into(),
+            ] {
+                let mut v = json.clone();
+                v[key] = value.into();
+                assert!(
+                    serde_json::from_value::<Settings>(v)
+                        .unwrap()
+                        .validate()
+                        .is_err(),
+                    "{key}"
+                );
+            }
+            let mut v = json.clone();
+            v[key] = "é".repeat(64).into();
+            assert!(serde_json::from_value::<Settings>(v)
+                .unwrap()
+                .validate()
+                .is_ok());
+        }
+        for key in [
+            "carlinkAutoReconnect",
+            "carlinkReconnectOnResize",
+            "autoStart",
+            "carPlayViewAreas",
+            "carBluetoothAudioDefaulted",
+        ] {
+            let mut v = json.clone();
+            v[key] = "false".into();
+            assert!(serde_json::from_value::<Settings>(v).is_err());
+        }
+        for (key, values) in [
+            ("carlinkHevc", vec!["auto", "off"]),
+            ("videoStats", vec!["off", "5", "15"]),
+        ] {
+            for value in values.into_iter().chain(["", "ON", "30"]) {
+                let mut v = json.clone();
+                v[key] = value.into();
+                let valid = if key == "carlinkHevc" {
+                    ["auto", "off"].contains(&value)
+                } else {
+                    ["off", "5", "15"].contains(&value)
+                };
+                assert_eq!(
+                    serde_json::from_value::<Settings>(v)
+                        .unwrap()
+                        .validate()
+                        .is_ok(),
+                    valid
+                );
+            }
+        }
+        for port in [0, 80, 1023, 1024, 6975, 8443, 65535] {
+            let s = Settings {
+                receiver_port: port,
+                ..defaults.clone()
+            };
+            assert_eq!(s.validate().is_ok(), port >= 1024 && port != 6975);
+        }
+    }
+    #[test]
+    fn bluetooth_audio_migration_runs_once_and_fresh_defaults_are_true() {
+        let dir = std::env::temp_dir().join(format!(
+            "audio-default-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let fresh = Settings::load(&dir).unwrap();
+        assert!(fresh.car_bluetooth_audio && fresh.car_bluetooth_audio_defaulted);
+        let fresh_file: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(
+            fresh_file,
+            serde_json::json!({"carBluetoothAudio":true,"carBluetoothAudioDefaulted":true})
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        for marker in [None, Some(false), Some(true)] {
+            let mut value = serde_json::json!({"carBluetoothAudio":false});
+            if let Some(marker) = marker {
+                value["carBluetoothAudioDefaulted"] = marker.into();
+            }
+            std::fs::write(
+                dir.join("settings.json"),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+            let settings = Settings::load(&dir).unwrap();
+            assert_eq!(settings.car_bluetooth_audio, marker.is_none());
+            assert_eq!(
+                settings.car_bluetooth_audio_defaulted,
+                marker.unwrap_or(true)
+            );
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(dir.join("settings.json")).unwrap()).unwrap();
+            assert_eq!(saved["carBluetoothAudio"], marker.is_none());
+            assert_eq!(saved["carBluetoothAudioDefaulted"], marker.unwrap_or(true));
+            assert_eq!(Settings::load(&dir).unwrap(), settings);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn legacy_wifi_migrates_and_unknown_fields_survive_a_save() {
         let dir = std::env::temp_dir().join(format!(

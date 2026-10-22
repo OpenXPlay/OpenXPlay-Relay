@@ -14,9 +14,10 @@ import type { SavedNetwork } from './schema';
 import { api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
 import { isVisible, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, translate, type Language } from './i18n';
-import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, canConnectCarlink, validCarlinkPin } from './logic';
+import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
 import { icon } from './icons';
 import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
+import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-stats';
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
 import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
@@ -46,6 +47,7 @@ let epoch = 0;
 let polling = false;
 let actionBusy = false;
 let pageError = '';
+const videoStats = new VideoStatsSnapshot();
 let carlinkError = '';
 let connectPin = '';
 let connectBusy = false;
@@ -78,14 +80,15 @@ events.addEventListener('online', () => { offline = false; banner(); });
 function resetSession(next: SessionState) {
   epoch++;
   for (const item of pending.values()) clearTimeout(item.timer);
+  videoStats.reset();
   needsRestart = false; pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null; publicNameBusy = false; publicNameMessage = '';
   publicNameDrafts = new PublicNameDrafts(); publicNameWrite = null;
   document.querySelectorAll('dialog').forEach(dialog => { dialog.close(); dialog.remove(); });
   session = next; actionBusy = false; render();
 }
 events.addEventListener('unauthorized', () => { if (session === 'ready' && !handoff) resetSession('login'); });
-// Diagnostics only feed the developer section; the pairing deadline moves onto this browser's clock.
-async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(developer), Date.now() / 1000, status?.pairingDeadline ?? null); }
+// Anchor deadlines on this browser's clock; statistics are fetched only when displayed.
+async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(developer || videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
 function errorKey(error: unknown): string { return error instanceof ApiError ? error.key : error instanceof NetworkError ? 'error.network' : 'error.request'; }
 function shell() {
   document.documentElement.lang = language;
@@ -144,6 +147,15 @@ function renderReady() {
   container.insertAdjacentHTML('beforeend', `<section class="card"><h2>${t('settings.about')}</h2><p>${esc(status!.name)}</p><label class="switch-row"><span>${t('settings.developerOptions')}</span><input id="developer-options" type="checkbox" role="switch" ${developer ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>${developer ? `<p>${esc(status!.version)}</p><pre id="developer-state">${esc(status!.state)} · ${esc(status!.iphone.reason)}</pre><button id="developer-start">${t(status!.running ? 'ui.stop' : 'ui.start')}</button>` : ''}</section>`);
   document.getElementById('developer-options')!.addEventListener('change', event => { developer = (event.target as HTMLInputElement).checked; try { localStorage.setItem('openxplay.developer', developer ? '1' : '0'); } catch {} render(); });
   document.getElementById('developer-start')?.addEventListener('click', async () => { try { await api.action(status!.running ? 'stop' : 'start'); void tick(); } catch (e) { pageError = errorKey(e); updateDashboard(); } });
+  if (developer && status?.platform === 'linux' && settings?.schema.some(s => s.fields.some(f => f.key === 'carlinkName'))) {
+    const section = container.querySelector('[data-section="developer"]');
+    section?.insertAdjacentHTML('beforeend', `<button id="clear-saved-head-unit">${t('carlink.clearSaved')}</button><p id="clear-saved-result" role="status"></p>`);
+    document.getElementById('clear-saved-head-unit')?.addEventListener('click', async () => {
+      if (!window.confirm(t('carlink.clearSavedHint'))) return;
+      try { await api.action('clear-saved-head-unit'); document.getElementById('clear-saved-result')!.textContent = t('ui.saved'); }
+      catch (error) { document.getElementById('clear-saved-result')!.textContent = t(errorKey(error)); }
+    });
+  }
   if (developer) {
     const options = settings!.schema.flatMap(s => s.fields).find(f => f.key === 'networkMode')?.options ?? [];
     const section = container.querySelector('[data-section="developer"]') ?? container.appendChild(document.createElement('section'));
@@ -160,9 +172,9 @@ function updateDashboard() {
   if (!el || !status) return;
   const s = status;
   const raw = document.getElementById('developer-state'); if (raw) raw.textContent = `${s.state} · ${s.iphone.reason}`;
-  // Per-second receiver statistics belong to the developer section only.
+  const stats = videoStats.read(s, videoStatsInterval(settings, s.platform), performance.now());
   const { receivers: _receivers, ...summary } = s;
-  const signature = JSON.stringify([summary, developer, language, pageError, carlinkError, connectBusy, actionBusy, homeView(s).seconds > 0, defaultPassword]);
+  const signature = JSON.stringify([summary, stats, developer, language, pageError, carlinkError, connectBusy, actionBusy, homeView(s).seconds > 0, defaultPassword]);
   if (el.dataset.signature === signature) { syncPinDialog(); return; }
   el.dataset.signature = signature;
   const openDetails = [...el.querySelectorAll<HTMLDetailsElement>('.devices details')].map(d => d.open);
@@ -175,7 +187,8 @@ function updateDashboard() {
   const focused = document.activeElement?.id;
   const selection = document.activeElement instanceof HTMLInputElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   const view = homeView(s, undefined, defaultPassword);
-  el.innerHTML = statusView(s, t, defaultPassword) + addressesView(s, developer, t) + devicesView(s, developer, t);
+  el.innerHTML = statusView(s, t, defaultPassword) + addressesView(s, developer, t) + devicesView(s, developer, t) + videoStatsView(stats, t);
+  document.getElementById('home-start')?.addEventListener('click', async () => { try { await api.action('start'); void tick(); } catch (e) { pageError = errorKey(e); updateDashboard(); } });
   document.getElementById('action-result')!.textContent = pageError ? t(pageError) : '';
   const action = document.getElementById('context-action')!;
   if (view.action === 'car') renderCarlink();
@@ -307,7 +320,7 @@ function confirmRemovePublicName() {
 }
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
-  const signature = JSON.stringify([status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, language]);
+  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, language]);
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   const open = new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-details]')].filter(d => d.open).map(d => d.dataset.details));
@@ -426,13 +439,14 @@ function syncPinDialog() {
         await api.carlinkPin(input.value);
         input.value = '';
         if (current === epoch && status?.carlink?.pinDeadline === deadline) {
-          status.carlink.pinRequested = false; status.carlink.pinDeadline = null;
-          carlinkError = ''; close(); updateDashboard();
+          status.carlink.pinRequested = false; status.carlink.pinDeadline = null; status.carlink.pinIncorrect = false;
+          carlinkError = ''; close(); dismissedPin = null; updateDashboard();
         }
       } catch (error) { errorEl.textContent = t(errorKey(error), error instanceof ApiError ? { seconds: error.retryAfter } : undefined); }
       finally { button.disabled = false; }
     });
   }
+  if (carlinkPinError(status?.carlink)) dialog.querySelector('#carlink-pin-error')!.textContent = t(carlinkPinError(status?.carlink));
   dialog.querySelector('#carlink-countdown')!.textContent = t('carlink.countdown', { seconds: view.seconds });
 }
 function confirmForgetCarlink() {
@@ -869,7 +883,7 @@ document.addEventListener('keydown', event => {
   const next = items[Math.max(0, Math.min(items.length - 1, index + direction))];
   if (next) { event.preventDefault(); next.focus(); }
 });
-setInterval(syncPinDialog, 1000);
+setInterval(() => { syncPinDialog(); if (videoStatsInterval(settings, status?.platform)) updateDashboard(); }, 1000);
 createCountdown(() => status?.pairingDeadline, seconds => {
   const time = formatRemaining(seconds);
   const home = document.getElementById('pair-countdown'); if (home) home.textContent = seconds ? t('home.pairCountdown', { time }) : '';

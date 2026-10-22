@@ -30,6 +30,7 @@ enum Operation {
     Restart,
     Forget,
     ForgetCarlink,
+    ClearSavedHeadUnit,
     ConnectCarlink(Option<ArmedPin>),
     Join(String, String),
     /// The startup provisioning: like `Initialize`, but in device-hotspot mode the controller
@@ -71,6 +72,7 @@ fn apply_carlink_event(
                 .is_ok()
             {
                 status.clear_pin();
+                status.pin_incorrect = false;
             }
         }
     }
@@ -261,6 +263,13 @@ impl LinuxRelayAdmin {
             ));
         }
         input.initialize_video_state(&options.state_dir);
+        {
+            let mut display = input.display.lock().unwrap();
+            display.disable_view_areas = !settings.car_play_view_areas;
+            display
+                .resize
+                .set_enabled(settings.carlink_reconnect_on_resize);
+        }
         // The AP stays down for a gap before the next one comes up, also across relay restarts.
         let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
             Duration::from_secs(options.hotspot_down_gap_seconds()),
@@ -318,7 +327,7 @@ impl LinuxRelayAdmin {
             provision_interface: Mutex::new(options.wifi_interface.clone()),
             net_root: "/sys/class/net".into(),
             options,
-            settings: Mutex::new(settings),
+            settings: Mutex::new(settings.clone()),
             state,
             events,
             provision: Arc::new(Mutex::new(provision)),
@@ -336,7 +345,7 @@ impl LinuxRelayAdmin {
             network_override: Mutex::new(None),
             lifecycle: Mutex::new(()),
             sink,
-            desired: AtomicBool::new(true),
+            desired: AtomicBool::new(settings.auto_start),
             operations: tx,
             pending: Mutex::new(HashMap::new()),
             operation_rx: Mutex::new(Some(rx)),
@@ -519,6 +528,14 @@ impl LinuxRelayAdmin {
             self.options.state_dir.clone(),
             self.events.clone(),
         );
+        {
+            let mut display = self.input.display.lock().unwrap();
+            display
+                .resize
+                .set_enabled(o.settings.carlink_reconnect_on_resize);
+            display.disable_view_areas = !o.settings.car_play_view_areas;
+        }
+        let input = self.input.clone();
         let shared_radio = o.shared_carlink_radio();
         let follow = self.follow.clone();
         let interface = o.wifi_interface.clone();
@@ -534,10 +551,18 @@ impl LinuxRelayAdmin {
             if receiver_event(&receivers, &event) {
                 return;
             }
+            if event["type"] == "receiver-starting" {
+                input.display.lock().unwrap().resize.start_session();
+            }
             if event["type"] == "receiver-started" {
                 stream.receiver_started();
             } else if event["type"] == "receiver-stopped" {
                 stream.receiver_stopped();
+            }
+            if event["type"] == "clink-view-size" {
+                if let Ok(size) = serde_json::from_value(event.clone()) {
+                    input.display.lock().unwrap().resize.view_size(size);
+                }
             }
             follow.lock().unwrap().apply(
                 &event,
@@ -705,11 +730,25 @@ impl LinuxRelayAdmin {
                     s.stop();
                 }
                 remove_carlink_pin(&self.options.state_dir)?;
+                if pin.is_some() {
+                    self.carlink.lock().unwrap().pin_incorrect = false;
+                }
                 *self.armed_pin.lock().unwrap() = pin;
                 if let Some(s) = supervisor.as_mut() {
                     s.connect_carlink();
                     s.start()?;
                 }
+            }
+            Operation::ClearSavedHeadUnit => {
+                if self.input.session_active() {
+                    return Err(std::io::Error::other("error.sessionActive"));
+                }
+                let mut display = self.input.display.lock().unwrap();
+                let settings = display.saved.settings();
+                display.saved = crate::display::DisplayState::default();
+                display.saved.set_settings(&settings);
+                display.persist()?;
+                display.freeze();
             }
             Operation::ForgetCarlink => {
                 *self.armed_pin.lock().unwrap() = None;
@@ -889,6 +928,13 @@ impl LinuxRelayAdmin {
     }
     pub fn tick(&self) -> Result<()> {
         self.apply_public_name();
+        let playing = self.carlink.lock().unwrap().state == "playing";
+        if self.input.display.lock().unwrap().resize.reconnect(playing) {
+            // In both mode this also restarts web output; Android reconnects only Carlink.
+            if let Some(supervisor) = self.supervisor.lock().unwrap().as_ref() {
+                supervisor.connect_carlink();
+            }
+        }
         if self.capabilities.is_started() {
             let options = self.effective_options()?;
             self.capabilities
@@ -1199,6 +1245,15 @@ pub fn settings_schema() -> Vec<Section> {
         ("rfcommChannel", "number"),
         ("requirePairingCode", "bool"),
         ("output", "choice"),
+        ("carlinkName", "text"),
+        ("carlinkModel", "text"),
+        ("carlinkAutoReconnect", "bool"),
+        ("carlinkReconnectOnResize", "bool"),
+        ("carlinkHevc", "choice"),
+        ("autoStart", "bool"),
+        ("videoStats", "choice"),
+        ("carPlayViewAreas", "bool"),
+        ("receiverPort", "number"),
         ("carlinkLink", "choice"),
         ("carlinkInterface", "text"),
         ("carlinkAddress", "text"),
@@ -1217,18 +1272,39 @@ pub fn settings_schema() -> Vec<Section> {
                 key
             }
         ),
-        hint_key: matches!(
-            key,
-            "output"
-                | "hotspotChannel"
-                | "carlinkLink"
-                | "carlinkInterface"
-                | "carlinkAddress"
-                | "carlinkHeadUnit"
-                | "carlinkLocal"
-        )
-        .then(|| format!("hint.field.{key}")),
+        hint_key: if key == "autoStart" {
+            Some("hint.field.linuxAutoStart".into())
+        } else {
+            matches!(
+                key,
+                "output"
+                    | "carlinkAutoReconnect"
+                    | "carlinkReconnectOnResize"
+                    | "hotspotChannel"
+                    | "carlinkLink"
+                    | "carlinkInterface"
+                    | "carlinkAddress"
+                    | "carlinkHeadUnit"
+                    | "carlinkLocal"
+            )
+            .then(|| format!("hint.field.{key}"))
+        },
         options: match key {
+            "carlinkHevc" | "videoStats" => Some(
+                (if key == "carlinkHevc" {
+                    vec!["auto", "off"]
+                } else {
+                    vec!["off", "5", "15"]
+                })
+                .into_iter()
+                .map(|v| FieldOption {
+                    value: v.into(),
+                    label_key: format!("option.{key}.{v}"),
+                    hint_key: None,
+                    illustration: None,
+                })
+                .collect(),
+            ),
             "devicePreset" => Some(
                 ["auto", "msm8916", "phicomm-n1", "generic"]
                     .into_iter()
@@ -1295,7 +1371,13 @@ pub fn settings_schema() -> Vec<Section> {
                 key: "carlinkLink".into(),
                 equals: vec!["ble".into()],
             }),
-            "carlinkLink" | "carlinkInterface" => Some(VisibleWhen {
+            "carlinkName"
+            | "carlinkModel"
+            | "carlinkAutoReconnect"
+            | "carlinkReconnectOnResize"
+            | "carlinkHevc"
+            | "carlinkLink"
+            | "carlinkInterface" => Some(VisibleWhen {
                 key: "output".into(),
                 equals: vec!["carlink".into(), "both".into()],
             }),
@@ -1308,11 +1390,13 @@ pub fn settings_schema() -> Vec<Section> {
         min: match key {
             "hotspotChannel" => Some(0.0),
             "rfcommChannel" => Some(1.0),
+            "receiverPort" => Some(1024.0),
             _ => None,
         },
         max: match key {
             "hotspotChannel" => Some(177.0),
             "rfcommChannel" => Some(30.0),
+            "receiverPort" => Some(65535.0),
             _ => None,
         },
     })
@@ -1784,7 +1868,11 @@ impl RelayAdmin for LinuxRelayAdmin {
                     || next.carlink_head_unit != current.carlink_head_unit
                     || next.carlink_local != current.carlink_local
                     || next.carlink_pin != current.carlink_pin
-                    || next.carlink_ports != current.carlink_ports;
+                    || next.carlink_ports != current.carlink_ports
+                    || next.carlink_name != current.carlink_name
+                    || next.carlink_model != current.carlink_model
+                    || next.carlink_hevc != current.carlink_hevc
+                    || next.carlink_auto_reconnect != current.carlink_auto_reconnect;
                 let controller_changed = next.iphone != current.iphone
                     || next.rfcomm_channel != current.rfcomm_channel
                     || next.wifi_interface != current.wifi_interface
@@ -1821,6 +1909,14 @@ impl RelayAdmin for LinuxRelayAdmin {
                 if let Some(operation) = operation {
                     if let Err(error) = self.defer(operation) {
                         return AdminUpdate::Errors(BTreeMap::from([("settings".into(), error)]));
+                    }
+                }
+                {
+                    let mut display = self.input.display.lock().unwrap();
+                    display.resize.set_enabled(next.carlink_reconnect_on_resize);
+                    if next.car_play_view_areas != current.car_play_view_areas {
+                        display.disable_view_areas = !next.car_play_view_areas;
+                        display.settings_since = Some(std::time::Instant::now());
                     }
                 }
                 if picture_changed {
@@ -1886,6 +1982,12 @@ impl RelayAdmin for LinuxRelayAdmin {
             "restart" => self.defer(Operation::Restart),
             "forget-wifi" => self.defer(Operation::Forget),
             "forget-carlink" => self.defer(Operation::ForgetCarlink),
+            "clear-saved-head-unit" => {
+                if self.input.session_active() {
+                    return Err("error.sessionActive".into());
+                }
+                self.defer(Operation::ClearSavedHeadUnit)
+            }
             "public-name-renew" => {
                 self.public_name.renew();
                 Ok(())
@@ -1933,6 +2035,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         )
         .map_err(|_| "error.request".to_string())?;
         status.clear_pin();
+        status.pin_incorrect = false;
         Ok(())
     }
     fn phones(&self) -> Vec<AdminPhone> {
@@ -2051,6 +2154,188 @@ mod tests {
             Arc::new(LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap()),
             dir,
         )
+    }
+    #[test]
+    fn linux_car_settings_schema_and_output_restart() {
+        let (a, dir) = fake();
+        let fields: Vec<_> = settings_schema()
+            .into_iter()
+            .flat_map(|s| s.fields)
+            .collect();
+        for key in [
+            "carlinkName",
+            "carlinkModel",
+            "carlinkAutoReconnect",
+            "carlinkReconnectOnResize",
+            "carlinkHevc",
+            "autoStart",
+            "videoStats",
+            "receiverPort",
+            "carPlayViewAreas",
+        ] {
+            assert!(fields.iter().any(|f| f.key == key), "{key}");
+        }
+        assert!(!fields.iter().any(|f| f.key == "bootStart"));
+        assert_eq!(
+            fields
+                .iter()
+                .find(|f| f.key == "autoStart")
+                .unwrap()
+                .hint_key
+                .as_deref(),
+            Some("hint.field.linuxAutoStart")
+        );
+        let rx = a.operation_rx.lock().unwrap().take().unwrap();
+        for (key, value) in [
+            ("carlinkName", serde_json::json!("Car")),
+            ("carlinkModel", serde_json::json!("Model")),
+            ("carlinkHevc", serde_json::json!("off")),
+            ("carlinkAutoReconnect", serde_json::json!(false)),
+            ("receiverPort", serde_json::json!(9443)),
+        ] {
+            let values = serde_json::Map::from_iter([(key.into(), value)]);
+            assert!(matches!(a.update(values), AdminUpdate::AppliedNow));
+            a.response_sent();
+            assert!(matches!(rx.try_recv().unwrap(), Operation::Outputs(None)));
+        }
+        assert_eq!(a.settings.lock().unwrap().receiver_port, 9443);
+        assert!(a
+            .status()
+            .receiver_urls
+            .iter()
+            .all(|url| url.contains(":9443/")));
+        for port in [1023, 6975, 65536] {
+            assert!(matches!(
+                a.update(
+                    serde_json::json!({"receiverPort":port})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                ),
+                AdminUpdate::Errors(_)
+            ));
+        }
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn auto_start_false_waits_for_the_explicit_start_action() {
+        let (a, dir) = fake();
+        Settings {
+            auto_start: false,
+            ..Default::default()
+        }
+        .save(&dir)
+        .unwrap();
+        let options = a.options.clone();
+        let state = a.state.clone();
+        let events = a.events.clone();
+        drop(a);
+        let mut a = Arc::new(
+            LinuxRelayAdmin::with_optional_provisioner(options, state, events, None).unwrap(),
+        );
+        let _children = link_children(&mut a);
+        assert!(!a.desired.load(Ordering::Acquire));
+        assert!(a.status().auto_start_paused);
+        a.tick().unwrap();
+        assert!(a.controller.lock().unwrap().is_none());
+        a.operation(Operation::Start).unwrap();
+        assert!(a.desired.load(Ordering::Acquire));
+        assert!(!a.status().auto_start_paused);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn clear_saved_head_unit_removes_records_and_rejects_active_sessions() {
+        let (a, dir) = fake();
+        {
+            let mut d = a.input.display.lock().unwrap();
+            d.saved.head_unit = Some(crate::display::HeadUnit {
+                screen: crate::display::Screen {
+                    width: 1920,
+                    height: 1080,
+                    density_dpi: 160,
+                },
+                viewport: None,
+                fullscreen: None,
+                fullscreen_preferred: None,
+            });
+            d.saved.max_macroblocks = Some(10000);
+            d.saved.canvas = crate::display::Size {
+                width: 1920,
+                height: 1080,
+            };
+            let screen = d.saved.head_unit.as_ref().unwrap().screen;
+            d.saved.records.push(crate::display::Record {
+                screen,
+                size: crate::display::Size {
+                    width: 1280,
+                    height: 720,
+                },
+                fullscreen: false,
+                count: 1,
+                last_seen: 1,
+            });
+            d.persist().unwrap();
+        }
+        a.input.state.lock().unwrap().current = Some(1);
+        assert_eq!(
+            a.action("clear-saved-head-unit"),
+            Err("error.sessionActive".into())
+        );
+        a.input.state.lock().unwrap().current = None;
+        a.action("clear-saved-head-unit").unwrap();
+        assert!(a.input.display.lock().unwrap().saved.head_unit.is_some());
+        let rx = a.operation_rx.lock().unwrap().take().unwrap();
+        a.response_sent();
+        a.operation(rx.try_recv().unwrap()).unwrap();
+        let saved = crate::display::DisplayState::load(&dir.join("display.json"));
+        assert!(saved.head_unit.is_none());
+        assert!(saved.records.is_empty());
+        assert_eq!(saved.max_macroblocks, None);
+        assert_eq!(saved.canvas, crate::display::DisplayState::default().canvas);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn carlink_events_expose_view_statistics_and_retryable_incorrect_pin() {
+        let (a, dir) = fake();
+        let mut status = a.carlink.lock().unwrap();
+        status.apply_event(
+            &serde_json::json!({"type":"clink-view-size","width":1814,"height":1200}),
+            10,
+        );
+        let stats = serde_json::json!({"type":"media-stats","sent":5,"dropped":4,"liveFrames":2,"placeholderFrames":3,"droppedFrames":4,"liveBytes":5678,"sendStalls":6,"codec":"H265","width":1450,"height":960});
+        status.apply_event(&stats, 10);
+        assert_eq!(status.stats.as_ref(), Some(&stats));
+        assert_eq!(
+            status.view_size,
+            Some(CarlinkViewSize {
+                width: 1814,
+                height: 1200
+            })
+        );
+        status.apply_event(
+            &serde_json::json!({"type":"clink-pin","result":"incorrect","client":"unit"}),
+            crate::admin::auth::monotonic_seconds(),
+        );
+        assert!(status.pin_incorrect);
+        assert!(!status.pin_requested);
+        status.apply_event(
+            &serde_json::json!({"type":"pin-request"}),
+            crate::admin::auth::monotonic_seconds(),
+        );
+        assert!(status.pin_incorrect && status.pin_requested);
+        drop(status);
+        a.carlink_pin("5678").unwrap();
+        assert!(!a.carlink.lock().unwrap().pin_incorrect);
+        assert_eq!(std::fs::read(carlink_pin_path(&dir)).unwrap(), b"5678");
+        let mut status = a.carlink.lock().unwrap();
+        status.apply_event(&serde_json::json!({"type":"receiver-starting"}), 20);
+        assert!(status.view_size.is_none() && status.stats.is_none());
+        drop(status);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn separate_carlink_radio_ignores_link_events_and_releases_an_old_follow() {
@@ -3245,16 +3530,16 @@ esac
         ));
         assert!(matches!(
             a.update(
-                serde_json::json!({"carBluetoothAudio":true})
+                serde_json::json!({"carBluetoothAudio":false})
                     .as_object()
                     .unwrap()
                     .clone()
             ),
             AdminUpdate::NextStart
         ));
-        assert!(a.settings.lock().unwrap().car_bluetooth_audio);
-        assert_eq!(a.settings().values["carBluetoothAudio"], true);
-        assert!(Settings::load(&dir).unwrap().car_bluetooth_audio);
+        assert!(!a.settings.lock().unwrap().car_bluetooth_audio);
+        assert_eq!(a.settings().values["carBluetoothAudio"], false);
+        assert!(!Settings::load(&dir).unwrap().car_bluetooth_audio);
         std::fs::remove_dir_all(dir).unwrap();
     }
     fn pin_request(a: &LinuxRelayAdmin) {
@@ -3937,6 +4222,46 @@ esac
         let (tx, rx) = std::sync::mpsc::channel();
         Arc::get_mut(a).unwrap().child_factory = Arc::new(LinkFake(Mutex::new(tx)));
         rx
+    }
+    #[test]
+    fn window_and_view_events_reconnect_both_outputs_once_and_blacklist_unchanged_window() {
+        let (mut a, dir) = fake();
+        let children = link_children(&mut a);
+        {
+            let mut s = a.settings.lock().unwrap();
+            s.output = "both".into();
+            s.carlink_reconnect_on_resize = true;
+        }
+        a.desired.store(false, Ordering::Release);
+        trust_carlink(&dir);
+        a.start_supervisor().unwrap();
+        let (_, first) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mut capabilities: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../OpenXPlay-Stream/spec/vectors/wire/capabilities.json"
+        ))
+        .unwrap();
+        capabilities["displays"]["0"]["widthPx"] = 1814.into();
+        capabilities["displays"]["0"]["heightPx"] = 1200.into();
+        capabilities["displays"]["0"]["viewport"] =
+            serde_json::json!({"widthPx":1532,"heightPx":1013});
+        a.input
+            .control(&oxp_wire::Message::Json(capabilities.clone()))
+            .unwrap();
+        first(serde_json::json!({"type":"clink-view-size","width":1814,"height":1200}));
+        first(serde_json::json!({"type":"state","state":"Playing"}));
+        a.tick().unwrap();
+        let (args, second) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(args.iter().any(|a| a == "--clink-name"));
+        assert!(args.iter().any(|a| a == "--web-port"));
+        a.input
+            .control(&oxp_wire::Message::Json(capabilities))
+            .unwrap();
+        second(serde_json::json!({"type":"clink-view-size","width":1814,"height":1200}));
+        second(serde_json::json!({"type":"state","state":"Playing"}));
+        a.tick().unwrap();
+        assert!(children.recv_timeout(Duration::from_millis(150)).is_err());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn admin_restart_closes_the_hotspot_like_start() {

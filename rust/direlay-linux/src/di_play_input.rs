@@ -903,6 +903,9 @@ impl DiPlayInput {
             d.saved.head_unit = None;
         }
         d.connected = true;
+        if let Some(size) = viewport {
+            d.resize.window_size(size);
+        }
         if d.saved.observe(head, limit, now) {
             d.persist()?;
         }

@@ -233,6 +233,9 @@ mod option_tests {
         let configured = crate::Options::parse(&args).unwrap();
         assert_eq!(configured.plugins_root, dir.join("packages"));
         assert!(!configured.settings.plugins);
-        assert!(!dir.exists());
+        // Loading fresh settings persists the one-time Bluetooth-audio default only.
+        assert!(dir.join("settings.json").is_file());
+        assert!(!dir.join("packages").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
