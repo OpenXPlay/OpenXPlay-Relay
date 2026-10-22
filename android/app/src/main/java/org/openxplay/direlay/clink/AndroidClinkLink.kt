@@ -13,6 +13,7 @@ import android.net.wifi.p2p.*
 import android.os.*
 import org.openxplay.stream.clink.*
 import org.openxplay.stream.clink.ble.*
+import org.openxplay.direlay.network.readWifiEnabled
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.UUID
@@ -89,6 +90,9 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         failurePassphrase = ""
         diagnostics.emit(ClinkStage.LINK_START)
         try {
+            diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) {
+                WifiJoinPolicy.withWifi(readWifiEnabled(context)) { Unit }
+            }
             awaitCleanup()
             check(!run.cancelled)
             check(Build.VERSION.SDK_INT >= 29) { "Carlink Wi-Fi join requires Android 10 or later" }
@@ -377,7 +381,10 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             awaitCleanup()
         }
     }
-    private fun join(run: Run, reply: HeadUnitReply): Pair<String, String> {
+    private fun join(run: Run, reply: HeadUnitReply): Pair<String, String> =
+        WifiJoinPolicy.withWifi(readWifiEnabled(context)) { joinWithWifi(run, reply) }
+
+    private fun joinWithWifi(run: Run, reply: HeadUnitReply): Pair<String, String> {
         val reserved = p2pReservation.reservedByCarPlay()
         var method = WifiJoinPolicy.first(Build.VERSION.SDK_INT, p2p != null && !reserved, reply.type)
         diagnostics.emit(ClinkDiagnostic.JoinChoice(method, when {
@@ -392,6 +399,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             catch (failure: Exception) {
                 main { leaveP2p(run) }
                 if (run.cancelled) throw failure
+                WifiJoinPolicy.withWifi(readWifiEnabled(context)) { Unit }
                 method = WifiJoinPolicy.fallback(Build.VERSION.SDK_INT, method)
                 diagnostics.emit(ClinkDiagnostic.JoinChoice(method, ClinkDiagnostic.JoinReason.P2P_FALLBACK))
             }

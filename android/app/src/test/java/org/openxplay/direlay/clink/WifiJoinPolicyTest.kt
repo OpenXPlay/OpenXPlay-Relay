@@ -7,6 +7,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WifiJoinPolicyTest {
+    @Test fun wifiOffFailsBeforeEitherConnectPathAndUnknownDoesNotBlock() {
+        var connections = 0
+        try {
+            WifiJoinPolicy.withWifi(false) { connections++ }
+            fail("Wi-Fi off must stop the join")
+        } catch (failure: ClinkFailure) {
+            assertEquals(ClinkFailureReason.WIFI_OFF, failure.reason)
+            assertEquals("wifi_off", failure.message)
+            assertEquals("wifi_off", ClinkFailures.describe(ClinkStage.WIFI_JOIN, failure).code)
+        }
+        assertEquals(0, connections)
+        assertEquals(1, WifiJoinPolicy.withWifi(true) { ++connections })
+        assertEquals(2, WifiJoinPolicy.withWifi(null) { ++connections })
+    }
+
     @Test fun prefersP2pCredentialsAndFallsBackOnlyOnSupportedAndroid() {
         assertEquals(WifiJoinPolicy.Method.UNSUPPORTED, WifiJoinPolicy.first(28, true))
         assertEquals(WifiJoinPolicy.Method.P2P_CREDENTIALS, WifiJoinPolicy.first(29, true))

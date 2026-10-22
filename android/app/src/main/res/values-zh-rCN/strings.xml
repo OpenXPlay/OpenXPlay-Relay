@@ -612,4 +612,17 @@
     <string name="home_problem_browser">浏览器输出</string>
     <string name="home_problem_web_server">浏览器输出（网页服务器）</string>
     <string name="home_problem_output">中继输出</string>
+
+    <!-- Network readiness and USB role guidance. -->
+    <string name="network_readiness_title">启动前请检查</string>
+    <string name="network_wifi_reminder">Carlink 需要打开本机的 Wi-Fi。</string>
+    <string name="network_hotspot_reminder">请先打开本机热点，再启动连接。</string>
+    <string name="network_wifi_problem">请打开本机的 Wi-Fi。Carlink 通过 Wi-Fi 连接车机，无需手动加入网络，热点也可以保持开启。</string>
+    <string name="network_hotspot_problem">本机热点尚未开启。请打开热点，再重新启动连接。</string>
+    <string name="network_open_wifi">打开 Wi-Fi 设置</string>
+    <string name="network_open_hotspot">打开热点设置</string>
+    <string name="network_start_anyway">仍然启动</string>
+    <string name="home_problem_hotspot">本机热点</string>
+    <string name="home_problem_usb">USB 连接</string>
+    <string name="network_usb_role_problem">本机已通过 USB 连接，但处于设备模式，无法识别 iPhone。此时由另一端（iPhone、电脑或车机接口）充当主机。USB-C 接口的 iPhone 使用双头 USB-C 线时，通常会占据主机角色。请在本机接上 USB-C OTG 转接头（USB-C 转 USB-A），再用 USB-A 转 USB-C 数据线连接 iPhone。如本机有 OTG 开关，请将其打开，然后拔线重插。Lightning 接口的 iPhone 可使用 USB-C 转 Lightning 数据线。</string>
 </resources>

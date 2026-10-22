@@ -5,14 +5,23 @@ package org.openxplay.direlay.ui
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
 
 interface NetworkSettingsOpener { fun open(hotspot: Boolean) }
 class NetworkSettingsLauncher(private val context: Context) : NetworkSettingsOpener {
     override fun open(hotspot: Boolean) {
-        val action = if (hotspot) "android.settings.TETHER_SETTINGS" else Settings.ACTION_WIFI_SETTINGS
-        try { context.startActivity(Intent(action)) }
-        catch (_: android.content.ActivityNotFoundException) { context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
-        catch (_: SecurityException) { context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
+        val actions = if (hotspot) listOf("android.settings.TETHER_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS)
+            else listOfNotNull(if (Build.VERSION.SDK_INT >= 29) Settings.Panel.ACTION_WIFI else null,
+                Settings.ACTION_WIFI_SETTINGS, Settings.ACTION_WIRELESS_SETTINGS)
+        for (action in actions.distinct()) {
+            try {
+                val intent = Intent(action)
+                if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                return
+            } catch (_: android.content.ActivityNotFoundException) { /* Try the next public settings page. */ }
+            catch (_: SecurityException) { /* OEM settings may disallow a specific page. */ }
+        }
     }
 }

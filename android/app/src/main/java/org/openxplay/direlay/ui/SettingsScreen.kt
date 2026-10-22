@@ -100,10 +100,15 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             "settings/output" -> {
                 CollapsibleCard("output", stringResource(R.string.ui_output), outputSummary(draft),
                     initiallyExpanded = true, targeted = target == "output") {
-                    RadioOptions(outputOptions, if (draft.carlinkOutput) 1 else 0) {
-                        val candidate = draft.copy(carlinkOutput = it == 1)
-                        if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmCarlink = true
-                        else draft = candidate
+                    Column(Modifier.selectableGroup()) {
+                        outputOptions.forEachIndexed { index, option ->
+                            RadioOptionRow(option, (if (draft.carlinkOutput) 1 else 0) == index,
+                                extra = if (index == 1) ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) else null) {
+                                val candidate = draft.copy(carlinkOutput = index == 1)
+                                if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmCarlink = true
+                                else draft = candidate
+                            }
+                        }
                     }
                     if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
                     AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
@@ -180,6 +185,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                             RadioOptionRow(networkOption(choice), draft.wirelessNetwork.choice == choice,
                                 extra = {
                                     NetworkDiagram(choice, draft.wirelessNetwork.choice == choice)
+                                    if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
+                                        NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
                                     if (choice == WirelessNetworkChoice.WIFI_DIRECT && !CarlinkConnectionPolicy.wifiDirectAllowed(draft))
                                         Hint(stringResource(R.string.carlink_wifi_direct_constraint))
                                 }, enabled = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)) {

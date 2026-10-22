@@ -223,7 +223,8 @@ import org.openxplay.direlay.settings.*
             !draft.carlinkOutput && !draft.bothOutputs, listOf(stringResource(R.string.setup_recommended))) { choose(false) }
         ChoiceCard(stringResource(R.string.ui_carlink), stringResource(R.string.setup_carlink_hint), R.drawable.symbol_car,
             draft.carlinkOutput && !draft.bothOutputs, listOf(stringResource(R.string.setup_experimental)), carlinkSupported,
-            if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10)) { choose(true) }
+            if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10),
+            extra = { NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) { choose(true) }
     }
     Hint(stringResource(R.string.setup_browser_check_tip))
 }
@@ -263,7 +264,11 @@ import org.openxplay.direlay.settings.*
                 WirelessNetworkChoice.EXISTING_WIFI -> R.drawable.symbol_router
             }, selected == choice, if (choice == recommended) listOf(stringResource(R.string.setup_recommended)) else emptyList(),
                 allowed, if (allowed) null else stringResource(R.string.carlink_wifi_direct_constraint),
-                extra = { NetworkDiagram(choice, selected == choice) }) {
+                extra = {
+                    NetworkDiagram(choice, selected == choice)
+                    if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
+                        NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
+                }) {
                 change(draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice)))
                 if (choice == WirelessNetworkChoice.PHONE_HOTSPOT) revealRequests++
             }

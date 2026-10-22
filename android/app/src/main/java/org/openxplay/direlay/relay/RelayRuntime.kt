@@ -10,6 +10,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import org.openxplay.direlay.network.AndroidNetworkStateReader
+import org.openxplay.direlay.network.NetworkReadings
+import org.openxplay.direlay.network.NetworkReadiness
 import org.openxplay.direlay.clink.*
 import org.openxplay.stream.clink.*
 import org.openxplay.direlay.settings.StartupPermissions
@@ -57,6 +60,13 @@ class RelayRuntime(private val context: Context,
     private val traceCapture = lazy { CarlinkMediaCapture(checkNotNull(context.getExternalFilesDir("carlink-trace"))) }
     val carlinkMediaCapture get() = traceCapture.value
     val settingsStore = RelaySettingsStore(context.applicationContext).also { it.startObserving() }
+    private val networkReader = AndroidNetworkStateReader(context)
+    @Volatile var networkReadings = NetworkReadings()
+        private set
+    fun refreshNetworkReadings(): NetworkReadings = networkReader.read().also { networkReadings = it }
+    fun networkReadiness(settings: RelaySettings, readings: NetworkReadings = networkReadings) =
+        NetworkReadiness.read(CarlinkConnectionPolicy.enabled(settings), settingsStore.wireless(settings),
+            settings.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT, readings)
     private val autoStartBoot = AndroidBootIdentity(context)
     private val autoStartStorage = AndroidAutoStartStorage(context)
     val startRequest: StartRequestGate = ProcessStartRequestGate()
@@ -67,7 +77,7 @@ class RelayRuntime(private val context: Context,
     @Volatile private var negotiatedFps = 60
     val input = DiPlayInput(
         applyFrameRate = { fps -> negotiatedFps = fps; AirPlayPersistence.saveFps(context, fps) },
-        restartCarPlay = { setup.execute { sessionActions.action("restart") } },
+        restartCarPlay = { setup.execute { sessionActions.action("restart", manual = false) } },
         automaticHevc = { settingsStore.snapshot.value?.videoCodec == VideoCodecSetting.AUTO && appliedVideoDecision.codec == VideoCodec.H265 },
     )
     private val bundledPlugins = org.openxplay.direlay.plugins.BundledPlugins(context.applicationContext)
@@ -418,6 +428,10 @@ class RelayRuntime(private val context: Context,
     val tlsStore = TlsStore(context.noBackupFilesDir) { refreshWebTls(); adminService.restartTls() }
     private val sessionController = RelaySessionActions(context.applicationContext, this)
     val sessionActions: RelayActions get() = sessionController
+    val networkStart get() = sessionController.networkStart
+    fun recheckNetworkStart() = sessionController.recheckNetworkStart()
+    fun startAnyway() = sessionController.startAnyway()
+    fun cancelNetworkStart() = sessionController.cancelNetworkStart()
     val adminService = org.openxplay.direlay.admin.RelayAdminService(context.applicationContext, this,
         org.openxplay.direlay.admin.AdminActions { org.openxplay.direlay.admin.AdminResult(sessionActions.action(it)) })
     private fun adminHosts(): Set<String> = listOfNotNull(adminService.advertisedHost).toSet()
@@ -461,7 +475,10 @@ class RelayRuntime(private val context: Context,
     }
 
     private val sessionTick = setup.scheduleWithFixedDelay({
+        refreshNetworkReadings()
         autoStartSessions.refresh()
+        sessionController.observeNetworkSession(autoStartSessions.tracker.running,
+            status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
         // A session start or stop can block or release Carlink without a settings change.
         if (carlinkBlock.sessionChanged(autoStartSessions.tracker.running)) enqueueCarlink()
     }, 0, 500, TimeUnit.MILLISECONDS)
@@ -516,7 +533,7 @@ class RelayRuntime(private val context: Context,
             !codecRestartPending && next.codec != appliedVideoDecision.codec &&
             (immediateCodecChange || codecRestarts.allow(android.os.SystemClock.elapsedRealtime()))) {
             codecRestartPending = true
-            if (sessionActions.action("restart") != null) codecRestartPending = false
+            if (sessionActions.action("restart", manual = false) != null) codecRestartPending = false
             else immediateCodecChange = false
         }
         if (next.codec == appliedVideoDecision.codec) immediateCodecChange = false
@@ -532,7 +549,7 @@ class RelayRuntime(private val context: Context,
             displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)?.screen ?: appliedDisplay?.screen) }
         if (displayRefit.due(android.os.SystemClock.elapsedRealtime(), autoStartSessions.tracker.running,
                 settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null, settings.viewAreas || declaredViewAreas.isNotEmpty()) &&
-            !sessionActions.restarting && !startRequest.pending) sessionActions.action("restart")
+            !sessionActions.restarting && !startRequest.pending) sessionActions.action("restart", manual = false)
     }
     private val displayTick = setup.scheduleWithFixedDelay({ refreshDisplay(); refreshVideoCodec() }, 0, 250, TimeUnit.MILLISECONDS)
 

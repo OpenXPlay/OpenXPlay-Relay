@@ -9,6 +9,8 @@ import org.openxplay.direlay.settings.RelaySettings
 import org.openxplay.direlay.relay.WebStartReason
 import org.openxplay.direlay.relay.WebStartFailure
 import org.openxplay.direlay.relay.RelayFailure
+import org.openxplay.direlay.network.*
+import org.openxplay.direlay.clink.ClinkFailureReason
 import org.openxplay.stream.core.SessionPhase
 import org.openxplay.direlay.vehicle.VehicleTileState
 import org.openxplay.direlay.vehicle.VehicleView
@@ -18,13 +20,32 @@ import org.openxplay.direlay.vehicle.vehicleTileState
 /** No Android services or mutable runtime references enter the presentation mapper. */
 enum class StatusTone { IDLE, PROGRESS, ATTENTION, RUNNING, ERROR }
 enum class SetupAction { PERMISSIONS, IDENTITY, IPHONE, SETTINGS, SHARED_WIFI, CHOOSE_IPHONE }
+internal fun NetworkRequirement.reminder() = when (this) {
+    NetworkRequirement.WIFI -> R.string.network_wifi_reminder
+    NetworkRequirement.HOTSPOT -> R.string.network_hotspot_reminder
+}
+internal fun NetworkRequirement.problem() = when (this) {
+    NetworkRequirement.WIFI -> R.string.network_wifi_problem
+    NetworkRequirement.HOTSPOT -> R.string.network_hotspot_problem
+}
+internal fun NetworkRequirement.settingsLabel() = when (this) {
+    NetworkRequirement.WIFI -> R.string.network_open_wifi
+    NetworkRequirement.HOTSPOT -> R.string.network_open_hotspot
+}
+internal fun networkChoiceReminder(requirement: NetworkRequirement, readings: NetworkReadings): Int? =
+    requirement.reminder().takeIf { when (requirement) {
+        NetworkRequirement.WIFI -> readings.wifi == null
+        NetworkRequirement.HOTSPOT -> readings.hotspot == null
+    } }
 data class SetupItem(val text: Int, val actionLabel: Int, val action: SetupAction)
-/** Null text selects the localized generic error when no specific message is available. */
-data class HomeProblem(val title: Int, val text: String? = null, val detail: String? = null)
+/** Without text or a text resource, use the localized generic error. */
+data class HomeProblem(val title: Int, val text: String? = null, val detail: String? = null,
+    val textResource: Int? = null, val action: NetworkRequirement? = null)
 data class HomePresentation(val headline: Int, val subline: Int, val tone: StatusTone,
     val mode: List<ModeRow>, val checklist: List<SetupItem>, val canStart: Boolean, val running: Boolean,
     val checking: Boolean = false, val sublineArguments: List<String> = emptyList(),
-    val problems: List<HomeProblem> = emptyList())
+    val problems: List<HomeProblem> = emptyList(), val hints: List<HomeProblem> = emptyList(),
+    val reminders: List<Int> = emptyList())
 data class HomeSnapshot(
     val settings: RelaySettings, val wireless: Boolean, val permissionsReady: Boolean,
     val identityReady: Boolean, val checking: Boolean = false, val validSettings: Boolean = true,
@@ -33,6 +54,8 @@ data class HomeSnapshot(
     val sharedWifiReady: Boolean = true, val currentWifi: String? = null,
     val webReason: WebStartReason? = null, val webListening: Boolean = false, val carNetworkAvailable: Boolean = true,
     val problems: List<HomeProblem> = emptyList(),
+    val networkReadiness: NetworkReadiness = NetworkReadiness(),
+    val manualNetworkReminders: Set<NetworkRequirement> = emptySet(), val usbRoleProblem: Boolean = false,
 )
 
 fun connectionSummary(mode: List<ModeRow>, carlinkState: Int?, label: (Int) -> String): String =
@@ -61,8 +84,13 @@ fun carlinkStateLabel(state: String, failed: Boolean, awaitingPin: Boolean): Int
 
 /** Runtime values are copied by the Activity; this mapper has no services or mutable runtime references. */
 fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDetail: String,
-    carlinkError: String?, webReason: WebStartReason?, serverState: String): List<HomeProblem> = buildList {
+    carlinkError: String?, webReason: WebStartReason?, serverState: String,
+    readiness: NetworkReadiness = NetworkReadiness()): List<HomeProblem> = buildList {
+    val joinCodes = ClinkFailureReason.entries.filter { it.name.startsWith("P2P_") || it.name.startsWith("WIFI_") }.map { it.code }
+    val carlinkFailure = carlinkFailed || failures.any { it.outputId in setOf("clink", "carlink") }
+    val wifiProblem = carlinkFailure && (readiness.wifi == Readiness.PROBLEM || carlinkFailed && carlinkDetail in joinCodes)
     failures.forEach { failure ->
+        if (wifiProblem && failure.outputId in setOf("clink", "carlink")) return@forEach
         add(HomeProblem(when (failure.outputId) {
             null -> R.string.home_problem_carplay
             "clink", "carlink" -> R.string.home_problem_carlink
@@ -70,12 +98,21 @@ fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDe
             else -> R.string.home_problem_output
         }, failure.text))
     }
-    if (carlinkFailed) {
-        if (carlinkDetail.isNotBlank()) add(HomeProblem(R.string.home_problem_carlink, carlinkDetail))
-        if (!carlinkError.isNullOrBlank() && carlinkError != carlinkDetail)
-            add(HomeProblem(R.string.home_problem_carlink, carlinkError))
-        if (carlinkDetail.isBlank() && carlinkError.isNullOrBlank()) add(HomeProblem(R.string.home_problem_carlink))
+    if (carlinkFailed || wifiProblem) {
+        if (wifiProblem) add(HomeProblem(R.string.home_problem_carlink,
+            detail = (listOfNotNull(carlinkDetail.takeIf { it.isNotBlank() }, carlinkError?.takeIf { it.isNotBlank() }) +
+                failures.filter { it.outputId in setOf("clink", "carlink") }.map { it.text }).distinct().joinToString("\n"),
+            textResource = R.string.network_wifi_problem, action = NetworkRequirement.WIFI))
+        else {
+            if (carlinkDetail.isNotBlank()) add(HomeProblem(R.string.home_problem_carlink, carlinkDetail))
+            if (!carlinkError.isNullOrBlank() && carlinkError != carlinkDetail)
+                add(HomeProblem(R.string.home_problem_carlink, carlinkError))
+            if (carlinkDetail.isBlank() && carlinkError.isNullOrBlank()) add(HomeProblem(R.string.home_problem_carlink))
+        }
     }
+    if ((carlinkFailure || failures.any { it.outputId == null }) && readiness.hotspot == Readiness.PROBLEM)
+        add(HomeProblem(R.string.home_problem_hotspot, textResource = R.string.network_hotspot_problem,
+            action = NetworkRequirement.HOTSPOT))
     if (webReason != null) add(HomeProblem(R.string.home_problem_web_server,
         serverState.takeIf { it.isNotBlank() }, webReason.toString()))
 }
@@ -132,5 +169,9 @@ fun presentHome(value: HomeSnapshot): HomePresentation {
     return HomePresentation(headline, subline, tone, modeRows(value.settings, value.wireless),
         checklist, ready && iphoneReady, running, value.checking,
         if (webReason?.failure == WebStartFailure.PORT_BUSY) listOf(webReason.port.toString()) else emptyList(),
-        if (tone == StatusTone.ERROR) value.problems.ifEmpty { listOf(HomeProblem(R.string.home_problem_connection)) } else emptyList())
+        if (tone == StatusTone.ERROR) value.problems.ifEmpty { listOf(HomeProblem(R.string.home_problem_connection)) } else emptyList(),
+        if (running && !active && !value.wireless && value.usbRoleProblem) listOf(HomeProblem(R.string.home_problem_usb,
+            detail = "USB_STATE: connected=true, host_connected=false; USB devices=[]", textResource = R.string.network_usb_role_problem)) else emptyList(),
+        if (tone == StatusTone.PROGRESS) (value.manualNetworkReminders intersect value.networkReadiness.unknown)
+            .map { it.reminder() } else emptyList())
 }

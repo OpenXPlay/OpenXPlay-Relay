@@ -619,4 +619,17 @@
     <string name="home_problem_browser">Browser output</string>
     <string name="home_problem_web_server">Browser output (web server)</string>
     <string name="home_problem_output">Relay output</string>
+
+    <!-- Network readiness and USB role guidance. -->
+    <string name="network_readiness_title">Before you start</string>
+    <string name="network_wifi_reminder">Carlink needs this phone’s Wi-Fi turned on.</string>
+    <string name="network_hotspot_reminder">Turn on this phone’s hotspot before you start.</string>
+    <string name="network_wifi_problem">Turn on this phone’s Wi-Fi. Carlink connects to the car over Wi-Fi; you do not need to join a network, and the hotspot can stay on.</string>
+    <string name="network_hotspot_problem">This phone’s hotspot is off. Turn on the hotspot, then start again.</string>
+    <string name="network_open_wifi">Open Wi-Fi settings</string>
+    <string name="network_open_hotspot">Open hotspot settings</string>
+    <string name="network_start_anyway">Start anyway</string>
+    <string name="home_problem_hotspot">Phone hotspot</string>
+    <string name="home_problem_usb">USB connection</string>
+    <string name="network_usb_role_problem">This phone is connected over USB as a device, so it cannot see the iPhone. The other end (an iPhone, computer or car port) is acting as the host. A USB-C iPhone on a USB-C to USB-C cable usually takes control. Use a USB-C OTG adapter (USB-C to USB-A) on this phone, then a USB-A to USB-C cable to the iPhone. If this phone has an OTG switch, turn it on, then unplug and plug in again. For a Lightning iPhone, use a USB-C to Lightning cable.</string>
 </resources>

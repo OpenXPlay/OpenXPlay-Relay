@@ -15,6 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import org.openxplay.direlay.network.NetworkRequirement
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -31,7 +33,8 @@ import org.openxplay.direlay.R
     val ms = if (LocalRelayMotion.current) 220 else 0
     val state = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, tween(ms), label = "problem expansion")
-    val text = listOfNotNull(problem.text ?: stringResource(R.string.ui_error), problem.detail).joinToString("\n")
+    val context = LocalContext.current
+    val text = listOfNotNull(problem.textResource?.let { stringResource(it) } ?: problem.text ?: stringResource(R.string.ui_error), problem.detail).joinToString("\n")
     Column(Modifier.fillMaxWidth().heightIn(min = 64.dp)
         .semantics { stateDescription = state }.clickable(role = Role.Button) { expanded = !expanded }
         .animateContentSize(tween(ms)).padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -44,6 +47,10 @@ import org.openxplay.direlay.R
         } else {
             Text(text.replace('\n', ' '), style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+        }
+        problem.action?.let { action ->
+            TextButton(onClick = { NetworkSettingsLauncher(context).open(action == NetworkRequirement.HOTSPOT) },
+                modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(action.settingsLabel())) }
         }
     }
 }

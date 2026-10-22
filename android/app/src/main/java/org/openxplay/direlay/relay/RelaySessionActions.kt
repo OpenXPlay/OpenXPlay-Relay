@@ -16,13 +16,14 @@ import com.shilapi.xcertplay.DiPlaySessionService
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.openxplay.direlay.settings.StartupPermissions
 import org.openxplay.direlay.settings.CarlinkConnectionPolicy
+import org.openxplay.direlay.network.ManualNetworkStart
 import org.openxplay.direlay.storage.MaterialStatus
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 interface RelayActions {
     val restarting: Boolean
-    fun action(name: String): String?
+    fun action(name: String, manual: Boolean = true): String?
     fun start(manual: Boolean = false): String?
 }
 /** Shared command path for local buttons and browser actions; Android consent remains local. */
@@ -33,19 +34,23 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         private set
     @Volatile private var closed = false
     @Volatile private var generation = 0L
-    @Synchronized override fun action(name: String): String? = when (name) {
-        "start" -> start(manual = true)
+    val networkStart = ManualNetworkStart()
+    private var manualRestart = false
+    @Synchronized override fun action(name: String, manual: Boolean): String? = when (name) {
+        "start" -> start(manual)
         "stop" -> {
+            networkStart.cancel()
             restarting = false
             generation++
             runtime.autoStartSessions.pause("Stop requested")
             stop(); null
         }
         "restart" -> {
-            if (runtime.startRequest.pending || restarting) "error.conflict" else {
+            if (runtime.startRequest.pending || restarting || networkStart.pending != null) "error.conflict" else {
                 runtime.displayRestarted()
                 runtime.autoStartSessions.tracker.restarting()
                 restarting = true
+                manualRestart = manual
                 stop()
                 awaitStopped(System.nanoTime() + TimeUnit.SECONDS.toNanos(15))
                 null
@@ -63,12 +68,46 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             runtime.autoStartSessions.refresh()
             if (!runtime.autoStartSessions.tracker.running) {
                 restarting = false
-                start()
+                start(manualRestart)
             } else if (System.nanoTime() < deadline) awaitStopped(deadline)
             else { restarting = false; runtime.status.inputFailed(IllegalStateException("Restart timed out")) }
         }, 250, TimeUnit.MILLISECONDS)
     }
     @Synchronized override fun start(manual: Boolean): String? {
+        if (networkStart.pending != null) return "error.conflict"
+        return startChecked(manual)
+    }
+
+    @Synchronized fun cancelNetworkStart() {
+        networkStart.cancel()
+        runtime.autoStartSessions.pause("Start cancelled")
+    }
+
+    @Synchronized fun observeNetworkSession(running: Boolean, active: Boolean) = networkStart.observeSession(running, active)
+
+    @Synchronized private fun startFailed(failure: Throwable) {
+        networkStart.cancel()
+        runtime.status.inputFailed(failure)
+    }
+
+    @Synchronized fun startAnyway(): String? {
+        if (!networkStart.accept()) return "error.conflict"
+        return startAfterNetworkAccepted()
+    }
+
+    private fun startAfterNetworkAccepted(): String? = startChecked(manual = true, networkAccepted = true).also {
+        if (it != null) networkStart.cancel()
+    }
+
+    /** Called only while the relay screen is resumed, including after returning from Settings. */
+    @Synchronized fun recheckNetworkStart(): String? {
+        if (networkStart.pending == null) return null
+        val settings = runtime.settingsStore.awaitSnapshot()
+        val readiness = runtime.networkReadiness(settings, runtime.refreshNetworkReadings())
+        return if (networkStart.recheck(readiness)) startAfterNetworkAccepted() else null
+    }
+
+    private fun startChecked(manual: Boolean, networkAccepted: Boolean = false): String? {
         if (closed || runtime.startRequest.pending) return "error.conflict"
         if (manual) runtime.autoStartSessions.resume("Start requested")
         runtime.autoStartSessions.refresh()
@@ -90,6 +129,16 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         if (runCatching { settings.validate(wireless) }.isFailure) return "error.invalid"
         val sharedWifi = if (wireless && settings.wirelessNetwork.choice == org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI)
             runtime.currentSharedWifi(settings) ?: return "error.sharedWifi" else null
+        if (!networkAccepted && !networkStart.request(manual,
+                runtime.networkReadiness(settings, runtime.refreshNetworkReadings()))) {
+            main.post {
+                try {
+                    context.startActivity(Intent(context, org.openxplay.direlay.RelayActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                } catch (failure: RuntimeException) { startFailed(failure) }
+            }
+            return null
+        }
         if (!runtime.startRequest.begin()) return "error.conflict"
         val launchGeneration = ++generation
         try {
@@ -102,13 +151,13 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             main.post {
                 try {
                     if (!closed && launchGeneration == generation) context.startActivity(Intent(context, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                } catch (failure: RuntimeException) { runtime.status.inputFailed(failure) }
+                } catch (failure: RuntimeException) { startFailed(failure) }
                 finally { runtime.startRequest.finish() }
             }
         } catch (failure: Exception) {
-            runtime.startRequest.finish(); runtime.status.inputFailed(failure); return "error.conflict"
+            runtime.startRequest.finish(); startFailed(failure); return "error.conflict"
         }
         return null
     }
-    override fun close() { closed = true; generation++; restarting = false; worker.shutdownNow() }
+    @Synchronized override fun close() { closed = true; generation++; restarting = false; networkStart.cancel(); worker.shutdownNow() }
 }

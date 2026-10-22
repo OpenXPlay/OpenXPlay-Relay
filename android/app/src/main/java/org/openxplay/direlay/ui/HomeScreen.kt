@@ -32,13 +32,16 @@ import androidx.compose.ui.unit.sp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.clink.DialogPinProvider
 import org.openxplay.direlay.clink.PinSheetState
+import org.openxplay.direlay.network.NetworkReadings
+import org.openxplay.direlay.network.NetworkReadiness
 import org.openxplay.direlay.vehicle.*
 
 data class HomeContent(val presentation: HomePresentation, val addresses: List<String>,
     val ip: String, val wifi: String, val deviceName: String, val automatic: Boolean,
     val carlink: Boolean, val both: Boolean, val carlinkState: Int, val pending: DialogPinProvider.Request?,
     val busy: Boolean = false, val onWifi: Boolean = false, val vehicle: VehicleView = VehicleView(),
-    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null)
+    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null,
+    val networkReadings: NetworkReadings = NetworkReadings(), val networkStart: NetworkReadiness? = null)
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -199,7 +202,9 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                     } else {
                         value.iphoneName?.takeIf { it.isNotBlank() }?.let { Text(stringResource(R.string.ui_iphone_name, it)) }
                     }
+                    state.hints.forEach { problem -> key(problem) { HomeProblemRow(problem) } }
                     Hint(if (subline == R.string.ui_iphone_pairing) stringResource(subline, value.deviceName) else stringResource(subline, *arguments.toTypedArray()))
+                    state.reminders.forEach { Hint(stringResource(it)) }
                 }
             }
         }
