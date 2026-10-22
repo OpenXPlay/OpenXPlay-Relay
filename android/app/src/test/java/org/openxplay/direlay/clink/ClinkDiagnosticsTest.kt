@@ -127,4 +127,36 @@ class ClinkDiagnosticsTest {
             ClinkDiagnostic.JoinChoice(WifiJoinPolicy.Method.NETWORK_SPECIFIER,
                 ClinkDiagnostic.JoinReason.CARPLAY_RESERVED).line())
     }
+    @Test fun stepFactsExposeOnlyStructuredValues() {
+        val lines = listOf(
+            ClinkDiagnostic.GattConnection(133, false) to "gatt_connection status=133 state=disconnected",
+            ClinkDiagnostic.GattConnection(0, true) to "gatt_connection status=0 state=connected",
+            ClinkDiagnostic.GattServices(5) to "gatt_services status=5",
+            ClinkDiagnostic.Mtu(512, 0) to "ble_mtu mtu=512 status=0",
+            ClinkDiagnostic.Mtu(null, null) to "ble_mtu result=none",
+            ClinkDiagnostic.Characteristics(true, false, null) to "ble_characteristics request=found reply=missing notify=skipped",
+            ClinkDiagnostic.Characteristics(false, true, false) to "ble_characteristics request=missing reply=found notify=refused",
+            ClinkDiagnostic.Characteristics(true, true, true) to "ble_characteristics request=found reply=found notify=ok",
+            ClinkDiagnostic.Cccd(ClinkDiagnostic.CccdResult.FAILED, 3) to "ble_cccd result=failed status=3",
+            ClinkDiagnostic.Cccd(ClinkDiagnostic.CccdResult.REFUSED) to "ble_cccd result=refused",
+            ClinkDiagnostic.Cccd(ClinkDiagnostic.CccdResult.SUCCESS) to "ble_cccd result=success",
+            ClinkDiagnostic.BleWrite(7) to "ble_write status=7",
+            ClinkDiagnostic.BleWrite(null) to "ble_write result=refused",
+            ClinkDiagnostic.ReplyInvalid("bytes=32 fragments=2 error=missing_ssid") to
+                "ble_reply_invalid bytes=32 fragments=2 error=missing_ssid")
+        lines.forEach { (event, line) -> assertEquals(line, event.line()) }
+        val codes = mapOf(ClinkFailureReason.BLE_DISCOVERY to "ble_discovery_failed",
+            ClinkFailureReason.BLE_SERVICE_MISSING to "ble_service_missing",
+            ClinkFailureReason.BLE_SUBSCRIBE to "ble_subscribe_failed", ClinkFailureReason.BLE_CCCD to "ble_cccd_failed",
+            ClinkFailureReason.BLE_WRITE to "ble_write_failed", ClinkFailureReason.BLE_REPLY_INVALID to "ble_reply_invalid",
+            ClinkFailureReason.BLE_VERIFY_TIMEOUT to "ble_verify_timeout", ClinkFailureReason.BLE_EXCHANGE to "ble_exchange_failed")
+        codes.forEach { (reason, code) -> assertEquals(code, ClinkFailures.describe(ClinkStage.BLE_EXCHANGE, ClinkFailure(reason)).code) }
+    }
+    @Test fun invalidReplyDiagnosticRejectsFreeText() {
+        for (text in listOf("private password", "bytes=1 error=private-password", "error=secret\nbytes=1", "error=", "")) {
+            try { ClinkDiagnostic.ReplyInvalid(text); fail("Accepted free text") }
+            catch (_: IllegalArgumentException) { }
+        }
+    }
+
 }

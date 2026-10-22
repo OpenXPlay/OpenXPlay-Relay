@@ -39,6 +39,7 @@ private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySna
     val addresses = carIpv4.toList()
     val urls = headUnitUrls()
     val failures = status.failures
+    val carPlayError = carPlayDiagnostics.error
     val carlinkOn = settings.carlinkOutput || settings.bothOutputs
     val failedCarlink = carlinkOn && carlinkFailed
     val webReason = serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs }
@@ -49,11 +50,12 @@ private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySna
         carlinkStatistics, carlinkVideoDecision, carlinkDisplay)
     return HostOverlaySnapshot(HomeSnapshot(settings, settingsStore.wireless(settings),
         permissionsReady = true, identityReady = true, phase = status.session?.phase, started = true,
-        failure = failures.isNotEmpty() || failedCarlink || webReason != null,
+        failure = failures.isNotEmpty() || failedCarlink || webReason != null || carPlayError != null,
         iphoneSelection = selection, webReason = webReason, webListening = serverState.startsWith("TLS enabled"),
         carNetworkAvailable = addresses.isNotEmpty(),
         problems = homeProblems(failures, failedCarlink, carlinkDetail, carlinkError, webReason, serverState,
-            teslaFailure = teslaFailure)),
+            teslaFailure = teslaFailure, carlinkTrail = carlinkErrorTrail, carlinkErrorAt = carlinkErrorAt,
+            carPlayError = carPlayError)),
         name, urls, stopped = autoStartGate.paused,
         publicNameUrl = publicNameUrl(), carIpv4 = addresses, teslaUrl = teslaUrl(),
         carlinkState = carlinkStateLabel(carlinkState, carlinkFailed, carlinkPins.pending != null),

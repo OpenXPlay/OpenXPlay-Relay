@@ -88,6 +88,17 @@ class RelayRuntime(private val context: Context,
     fun installedPlugins() = runCatching {
         org.openxplay.direlay.plugins.RelayPlugins.installed(bundledPlugins.root())
     }.getOrDefault(emptyList())
+    val carPlayDiagnostics = CarPlayDiagnostics(secrets = {
+        buildList {
+            settingsStore.snapshot.value?.let {
+                add(it.remoteToken)
+                add(it.wirelessNetwork.manualPassphrase)
+                addAll(it.wirelessNetwork.sharedWifiNetworks.map { network -> network.passphrase })
+            }
+            add(AirPlayPersistence.loadManualHotspotPassphrase(context))
+            add(AirPlayPersistence.loadExistingWifiPassphrase(context))
+        }
+    })
     val pluginContext = org.openxplay.direlay.plugins.PluginContextObserver(input::context)
     @Volatile private var configuredPlugins: Pair<Boolean, List<String>> = false to emptyList()
 
@@ -384,6 +395,13 @@ class RelayRuntime(private val context: Context,
     @Volatile var carlinkDetail = ""
         private set
     @Volatile var carlinkFailed = false
+        private set
+    private val carlinkTrail = StepTrail()
+    // The running attempt's failure code; a kept error shows its own code until this attempt fails too.
+    @Volatile private var carlinkAttemptDetail = ""
+    @Volatile var carlinkErrorTrail: List<String> = emptyList()
+        private set
+    @Volatile var carlinkErrorAt: Long? = null
         private set
     @Volatile var carlinkError: String? = null
         private set
@@ -700,7 +718,7 @@ class RelayRuntime(private val context: Context,
         keepAlive.update(RelayKeepAlivePolicy.needed(!closed, webEnabled, settings.carlinkOutput || settings.bothOutputs))
     }
 
-    fun reconnectCarlink() { status.clearFailure(); enqueueCarlink(true) }
+    fun reconnectCarlink() { status.clearFailure(); carPlayDiagnostics.clear(); enqueueCarlink(true) }
 
     fun cancelCarlinkPairing() {
         carlinkPins.cancel()
@@ -752,9 +770,11 @@ class RelayRuntime(private val context: Context,
             if (carlinkRetiring) return
         }
         carlinkRestartPending = false
-        carlinkDetail = ""
-        carlinkFailed = false
-        carlinkError = null
+        if (!requested.enabled || carlinkError == null) {
+            carlinkDetail = ""
+            carlinkFailed = false
+            carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null
+        }
         carlinkFailureRedactor = { it }
         carlinkVideoDetail = ""
         carlinkVideoFailed = false
@@ -773,7 +793,11 @@ class RelayRuntime(private val context: Context,
         }
         val trace = CarlinkTraceRecorder.select(settings.carlinkTrace) { carlinkTraceRecorder }
         val diagnostics = TracingClinkDiagnostics(ClinkDiagnostics { event ->
-            if (event is ClinkDiagnostic.Failure) carlinkDetail = event.code
+            carlinkTrail.record(event.line(), event == ClinkStage.LINK_START, System.currentTimeMillis(), System.nanoTime())
+            if (event is ClinkDiagnostic.Failure) {
+                carlinkAttemptDetail = event.code
+                if (carlinkError == null) carlinkDetail = event.code
+            }
             clinkDiagnostics.emit(event)
         }, trace, { if (traceRecorder.isInitialized()) carlinkTraceRecorder.session else 0 })
         val reservation = AirPlayP2pReservation(context)
@@ -806,7 +830,7 @@ class RelayRuntime(private val context: Context,
                     // A reconnected session clears the previous failure shown on the status screens.
                     if (state == ClinkState.PLAYING) {
                         carlinkBackoff.succeeded()
-                        carlinkError = null
+                        carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null
                         carlinkFailed = carlinkVideoFailed
                         carlinkDetail = carlinkVideoDetail
                     }
@@ -829,6 +853,9 @@ class RelayRuntime(private val context: Context,
                     android.util.Log.w("DiRelayCarlink", "session error ${root.javaClass.simpleName}$code at " +
                         root.stackTrace.take(8).joinToString(" < ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" })
                     sessionDiagnostics.error(error)
+                    carlinkDetail = carlinkAttemptDetail.ifBlank { carlinkDetail }
+                    carlinkErrorTrail = carlinkTrail.snapshot()
+                    carlinkErrorAt = System.currentTimeMillis()
                     val rejected = generateSequence(error) { it.cause }.any { it.message in setOf("auth_rejected", "auth_pin_proof_failed") }
                     if (rejected) carlinkPins.reject(::reconnectCarlink)
                     else carlinkPins.cancel()
@@ -870,9 +897,11 @@ class RelayRuntime(private val context: Context,
                 decision.mode == VideoCompatibility.Mode.TRANSCODE -> "Transcoding $source → $target for the head unit"
                 else -> "Video passthrough"
             }
-            carlinkFailed = carlinkVideoFailed
-            carlinkDetail = carlinkVideoDetail
-            if (!carlinkVideoFailed) carlinkError = null
+            if (carlinkError == null || carlinkState == ClinkState.PLAYING.name) {
+                carlinkFailed = carlinkVideoFailed
+                carlinkDetail = carlinkVideoDetail
+                if (!carlinkVideoFailed) { carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null }
+            }
             Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
         }, observeCapabilities = { caps ->
             val screen = caps?.displays?.get(org.openxplay.stream.core.ScreenId.MAIN)
@@ -915,6 +944,7 @@ class RelayRuntime(private val context: Context,
         val settings = settingsStore.snapshot.value ?: return
         if (closed || !settings.carlinkAutoReconnect || !(settings.carlinkOutput || settings.bothOutputs)) return
         val delay = carlinkBackoff.next()
+        carlinkTrail.record(ClinkDiagnostic.Retry(delay).line(), false, System.currentTimeMillis(), System.nanoTime())
         clinkDiagnostics.emit(ClinkDiagnostic.Retry(delay))
         try { setup.schedule({ if (carlinkEnded && !closed) configureCarlink(true) }, delay, java.util.concurrent.TimeUnit.MILLISECONDS) }
         catch (_: java.util.concurrent.RejectedExecutionException) { }

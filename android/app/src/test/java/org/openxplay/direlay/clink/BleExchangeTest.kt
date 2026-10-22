@@ -11,11 +11,12 @@ class BleExchangeTest {
     private class FakeGatt : BleExchange.Gatt {
         val calls = mutableListOf<String>()
         var accepted = true
+        var cccdAccepted = true
         var payload: ByteArray? = null
         override fun requestMtu(size: Int): Boolean { calls += "mtu:$size"; return accepted }
         override fun discover(): Boolean { calls += "discover"; return accepted }
         override fun subscribeLocally(): Boolean { calls += "local-subscribe"; return accepted }
-        override fun subscribeCccd(): Boolean { calls += "cccd"; return accepted }
+        override fun subscribeCccd(): Boolean { calls += "cccd"; return accepted && cccdAccepted }
         override fun write(payload: ByteArray): Boolean { calls += "write"; this.payload = payload; return accepted }
         var unchanged = true
         override fun requestUnchanged(): Boolean { calls += "verify"; return unchanged }
@@ -54,7 +55,7 @@ class BleExchangeTest {
         assertEquals(0, replies)
         exchange.written(true)
         assertEquals(1, replies)
-        exchange.indication(reply); exchange.fail()
+        exchange.indication(reply); exchange.fail(BleExchange.Reason.DISCONNECTED)
         assertEquals(1, replies)
     }
     @Test fun refusalMalformedReplyAndDisconnectFinishOnce() {
@@ -69,7 +70,7 @@ class BleExchangeTest {
             exchange.services(failure != 1); exchange.descriptorWritten(true)
             if (failure == 2) { exchange.written(true); exchange.indication("invalid".toByteArray()) }
             if (failure == 3) exchange.written(false)
-            exchange.fail(); exchange.fail()
+            exchange.fail(BleExchange.Reason.DISCONNECTED); exchange.fail(BleExchange.Reason.DISCONNECTED)
             assertEquals(1, completions)
         }
     }
@@ -153,7 +154,7 @@ class BleExchangeTest {
                 2 -> exchange.services(false)
             }
             exchange.indication(reply)
-            assertEquals(listOf(BleExchange.Reason.FAILED), outcome.reasons)
+            assertEquals(listOf(listOf(BleExchange.Reason.VERIFY_TIMEOUT, BleExchange.Reason.WRITE, BleExchange.Reason.DISCOVERY)[case]), outcome.reasons)
             assertEquals(1002, outcome.policy.choice("car").requestType)
         }
         // A failed write still counts as a rejection once the service is confirmed gone.
@@ -227,7 +228,7 @@ class BleExchangeTest {
     @Test fun failedConnectionCanBeRetriedWithFreshMachine() {
         val gatt = FakeGatt()
         var failures = 0
-        BleExchange(gatt, phone) { _, _ -> failures++ }.fail()
+        BleExchange(gatt, phone) { _, _ -> failures++ }.fail(BleExchange.Reason.DISCONNECTED)
         var success = false
         val retry = BleExchange(gatt, phone) { value, _ -> success = value != null }
         retry.connected(); retry.mtu(true); retry.services(true); retry.descriptorWritten(true); retry.written(true); retry.indication(reply)
@@ -244,7 +245,7 @@ class BleExchangeTest {
             exchange.connected(); exchange.mtu(true); exchange.services(true)
             if (submitted) exchange.descriptorWritten(true)
             exchange.serviceRemoved()
-            assertEquals(if (submitted) BleExchange.Reason.REQUEST_REJECTED else BleExchange.Reason.FAILED, reason)
+            assertEquals(if (submitted) BleExchange.Reason.REQUEST_REJECTED else BleExchange.Reason.SERVICE_MISSING, reason)
             assertEquals(if (submitted) 1001 else 1002, policy.choice("car").requestType)
         }
     }
@@ -255,8 +256,73 @@ class BleExchangeTest {
                 policy.rejected("car", policy.choice("car"))
         }
         exchange.connected(); exchange.mtu(true); exchange.services(true); exchange.descriptorWritten(true)
-        exchange.fail()
+        exchange.fail(BleExchange.Reason.DISCONNECTED)
         assertEquals(1002, policy.choice("car").requestType)
+    }
+
+    @Test fun everyFailureSiteHasASpecificReason() {
+        fun check(reason: BleExchange.Reason, action: (BleExchange, FakeGatt) -> Unit) {
+            var failure: BleExchange.Failure? = null
+            val gatt = FakeGatt()
+            val exchange = BleExchange(gatt, phone) { _, error -> failure = error as BleExchange.Failure }
+            action(exchange, gatt)
+            assertEquals(reason, failure?.reason)
+        }
+        check(BleExchange.Reason.DISCOVERY) { e, g -> e.connected(); g.accepted = false; e.mtu(true) }
+        check(BleExchange.Reason.DISCOVERY) { e, _ -> e.connected(); e.mtu(true); e.services(false) }
+        check(BleExchange.Reason.SUBSCRIBE) { e, g -> e.connected(); e.mtu(true); g.accepted = false; e.services(true) }
+        check(BleExchange.Reason.SERVICE_MISSING) { e, _ -> e.serviceRemoved() }
+        check(BleExchange.Reason.CCCD) { e, _ -> e.connected(); e.mtu(true); e.services(true); e.descriptorWritten(false) }
+        check(BleExchange.Reason.CCCD) { e, g -> e.connected(); e.mtu(true); g.cccdAccepted = false; e.services(true) }
+        check(BleExchange.Reason.DISCOVERY) { e, g -> e.connected(); e.mtu(true); g.accepted = false; e.serviceChanged() }
+    }
+    @Test fun writeAndRediscoveryRefusalsAreSpecific() {
+        fun check(reason: BleExchange.Reason, action: (BleExchange, FakeGatt) -> Unit) {
+            var actual: BleExchange.Reason? = null
+            val g = FakeGatt()
+            val e = BleExchange(g, phone) { _, error -> actual = (error as BleExchange.Failure).reason }
+            e.connected(); e.mtu(true); e.services(true)
+            action(e, g)
+            assertEquals(reason, actual)
+        }
+        check(BleExchange.Reason.WRITE) { e, g -> g.accepted = false; e.descriptorWritten(true) }
+        check(BleExchange.Reason.WRITE) { e, _ -> e.descriptorWritten(true); e.written(false) }
+        check(BleExchange.Reason.DISCOVERY) { e, g -> e.serviceChanged(); g.accepted = false; e.descriptorWritten(true) }
+        check(BleExchange.Reason.DISCOVERY) { e, g -> e.descriptorWritten(true); e.written(true); g.accepted = false; e.serviceChanged() }
+        check(BleExchange.Reason.DISCOVERY) { e, g -> e.descriptorWritten(true); e.serviceChanged(); g.accepted = false; e.written(true) }
+        check(BleExchange.Reason.WRITE) { e, _ -> e.descriptorWritten(true); e.serviceChanged(); e.written(false); e.indication(reply) }
+        check(BleExchange.Reason.DISCONNECTED) { e, _ -> e.fail(BleExchange.Reason.DISCONNECTED) }
+    }
+    @Test fun invalidReplyDetailsNeverContainReplyContent() {
+        val secret = "known-private-passphrase"
+        val invalid = String(reply).replace("12345678", secret).replace("\"ssid\":\"DIRECT-Car\",", "").toByteArray()
+        for (bytes in listOf(invalid, "password=$secret".toByteArray(), ByteArray(4097) { 65 })) {
+            var failure: BleExchange.Failure? = null
+            val e = BleExchange(FakeGatt(), phone) { _, error -> failure = error as BleExchange.Failure }
+            e.connected(); e.mtu(true); e.services(true); e.descriptorWritten(true); e.written(true)
+            e.indication(bytes)
+            assertEquals(BleExchange.Reason.REPLY_INVALID, failure?.reason)
+            val detail = failure!!.detail!!
+            assertTrue(detail.matches(Regex("bytes=[0-9]+ fragments=1 error=[A-Za-z0-9_]+")))
+            assertFalse(detail.contains(secret))
+            assertFalse(detail.contains("DIRECT-Car"))
+            if (bytes === invalid) assertTrue(detail.endsWith("error=missing_ssid"))
+        }
+    }
+
+    @Test fun replyFramingAndFragmentLimitsHaveSafeDetails() {
+        val inputs = listOf(
+            listOf("{]".toByteArray()),
+            listOf(("{".repeat(18)).toByteArray()),
+            List(129) { " ".toByteArray() })
+        for (parts in inputs) {
+            var failure: BleExchange.Failure? = null
+            val e = BleExchange(FakeGatt(), phone) { _, error -> failure = error as BleExchange.Failure }
+            e.connected(); e.mtu(true); e.services(true); e.descriptorWritten(true)
+            parts.forEach(e::indication)
+            assertEquals(BleExchange.Reason.REPLY_INVALID, failure?.reason)
+            assertTrue(failure!!.detail!!.matches(Regex("bytes=[0-9]+ fragments=[0-9]+ error=IllegalArgumentException")))
+        }
     }
 
 }

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-22 -->
+<resources>
+    <string name="error_details">详细信息</string>
+    <string name="error_copy">复制</string>
+    <string name="error_collapse">收起</string>
+    <string name="error_copied">已复制</string>
+    <string name="error_time">时间：%1$s</string>
+    <string name="error_explain_ble_unavailable">这台手机的蓝牙已关闭或不可用。</string>
+    <string name="error_explain_ble_timeout">蓝牙没有找到运行 Carlink 的车机。请在车机上打开 Carlink 并保持在前台。</string>
+    <string name="error_explain_ble_scan_failed">Android 无法开始蓝牙扫描。</string>
+    <string name="error_explain_gatt_connect_failed">已找到车机，但蓝牙连接失败或中途断开。</string>
+    <string name="error_explain_gatt_services_failed">蓝牙已连接，但读取车机的服务失败。</string>
+    <string name="error_explain_ble_service_missing">车机没有提供 Carlink 蓝牙服务：车机上的 Carlink 可能已关闭、在后台，或版本不受支持。</string>
+    <string name="error_explain_ble_subscribe_failed">车机的 Carlink 服务不完整，或 Android 拒绝订阅它的回复。</string>
+    <string name="error_explain_ble_cccd_failed">车机拒绝了回复订阅。</string>
+    <string name="error_explain_ble_cccd_timeout">车机没有及时确认回复订阅。</string>
+    <string name="error_explain_ble_write_failed">车机没有接受中继发出的连接请求。</string>
+    <string name="error_explain_ble_request_rejected">车机拒绝了连接请求。</string>
+    <string name="error_explain_ble_reply_invalid">无法读取车机的回复。</string>
+    <string name="error_explain_ble_verify_timeout">交换过程中车机更新了蓝牙服务，没有及时完成。</string>
+    <string name="error_explain_ble_exchange_timeout">车机 15 秒内没有完成蓝牙交换。</string>
+    <string name="error_explain_ble_exchange_failed">与车机的蓝牙交换失败。</string>
+    <string name="error_explain_hotspot_not_ready">无线 CarPlay 使用的热点没有及时就绪。</string>
+    <string name="error_explain_hotspot_configuration">无线 CarPlay 使用的热点没有开启，或当前设置无法使用。请打开热点，或检查网络设置。</string>
+    <string name="error_explain_first_tcp_timeout">iPhone 已通过蓝牙接受 CarPlay，但没有及时通过 Wi-Fi 连上。</string>
+    <string name="error_explain_bluetooth_unusable">这台手机发出的蓝牙连接到不了 iPhone。请关闭再打开蓝牙，或重启手机。</string>
+</resources>

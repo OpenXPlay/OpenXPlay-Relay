@@ -9,6 +9,7 @@ import org.openxplay.direlay.settings.RelaySettings
 import org.openxplay.direlay.relay.WebStartReason
 import org.openxplay.direlay.relay.WebStartFailure
 import org.openxplay.direlay.relay.RelayFailure
+import org.openxplay.direlay.relay.CarPlayError
 import org.openxplay.direlay.network.*
 import org.openxplay.direlay.clink.ClinkFailureReason
 import org.openxplay.stream.core.SessionPhase
@@ -40,7 +41,8 @@ internal fun networkChoiceReminder(requirement: NetworkRequirement, readings: Ne
 data class SetupItem(val text: Int, val actionLabel: Int, val action: SetupAction)
 /** Without text or a text resource, use the localized generic error. */
 data class HomeProblem(val title: Int, val text: String? = null, val detail: String? = null,
-    val textResource: Int? = null, val action: NetworkRequirement? = null, val arguments: List<String> = emptyList())
+    val textResource: Int? = null, val action: NetworkRequirement? = null, val arguments: List<String> = emptyList(),
+    val atMillis: Long? = null)
 data class HomePresentation(val headline: Int, val subline: Int, val tone: StatusTone,
     val mode: List<ModeRow>, val checklist: List<SetupItem>, val canStart: Boolean, val running: Boolean,
     val checking: Boolean = false, val sublineArguments: List<String> = emptyList(),
@@ -85,38 +87,61 @@ fun carlinkStateLabel(state: String, failed: Boolean, awaitingPin: Boolean): Int
 /** Runtime values are copied by the Activity; this mapper has no services or mutable runtime references. */
 fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDetail: String,
     carlinkError: String?, webReason: WebStartReason?, serverState: String,
-    readiness: NetworkReadiness = NetworkReadiness(), teslaFailure: String? = null): List<HomeProblem> = buildList {
+    readiness: NetworkReadiness = NetworkReadiness(), teslaFailure: String? = null,
+    carlinkTrail: List<String> = emptyList(), carlinkErrorAt: Long? = null,
+    carPlayError: CarPlayError? = null): List<HomeProblem> = buildList {
     if (teslaFailure != null) add(HomeProblem(R.string.tesla_title,
         textResource = R.string.tesla_address_failed, arguments = listOf(teslaFailure)))
+    carPlayError?.let { add(HomeProblem(R.string.home_problem_carplay, it.text,
+        detail = it.trail.joinToString("\n"), textResource = carPlayFailureExplanation(it.code), atMillis = it.atMillis)) }
     val joinCodes = ClinkFailureReason.entries.filter { it.name.startsWith("P2P_") || it.name.startsWith("WIFI_") }.map { it.code }
     val carlinkFailure = carlinkFailed || failures.any { it.outputId in setOf("clink", "carlink") }
     val wifiProblem = carlinkFailure && (readiness.wifi == Readiness.PROBLEM || carlinkFailed && carlinkDetail in joinCodes)
     failures.forEach { failure ->
-        if (wifiProblem && failure.outputId in setOf("clink", "carlink")) return@forEach
+        if (failure.outputId in setOf("clink", "carlink")) return@forEach
+        if (failure.outputId == null && failure.text == carPlayError?.text) return@forEach
         add(HomeProblem(when (failure.outputId) {
             null -> R.string.home_problem_carplay
             "clink", "carlink" -> R.string.home_problem_carlink
             "web" -> R.string.home_problem_browser
             else -> R.string.home_problem_output
-        }, failure.text))
+        }, failure.text, atMillis = failure.atMillis.takeIf { it != 0L }))
     }
-    if (carlinkFailed || wifiProblem) {
-        if (wifiProblem) add(HomeProblem(R.string.home_problem_carlink,
-            detail = (listOfNotNull(carlinkDetail.takeIf { it.isNotBlank() }, carlinkError?.takeIf { it.isNotBlank() }) +
-                failures.filter { it.outputId in setOf("clink", "carlink") }.map { it.text }).distinct().joinToString("\n"),
-            textResource = R.string.network_wifi_problem, action = NetworkRequirement.WIFI))
-        else {
-            if (carlinkDetail.isNotBlank()) add(HomeProblem(R.string.home_problem_carlink, carlinkDetail))
-            if (!carlinkError.isNullOrBlank() && carlinkError != carlinkDetail)
-                add(HomeProblem(R.string.home_problem_carlink, carlinkError))
-            if (carlinkDetail.isBlank() && carlinkError.isNullOrBlank()) add(HomeProblem(R.string.home_problem_carlink))
+    if (carlinkFailure) {
+        val outputErrors = failures.filter { it.outputId in setOf("clink", "carlink") }
+        val error = carlinkError?.takeIf { it.isNotBlank() } ?: outputErrors.firstOrNull()?.text
+        // While Carlink is healthy the detail holds video status text, not a failure code.
+        val code = carlinkDetail.takeIf { carlinkFailed && it.isNotBlank() }
+        val text = when {
+            error == null -> code
+            code != null && error.lineSequence().first() != code -> "$code\n$error"
+            else -> error
         }
+        val otherErrors = outputErrors.map { it.text }.filter { it != error }.distinct().joinToString("\n")
+        val trail = carlinkTrail.joinToString("\n")
+        val at = carlinkErrorAt ?: outputErrors.firstOrNull()?.atMillis?.takeIf { it != 0L }
+        if (wifiProblem) add(HomeProblem(R.string.home_problem_carlink,
+            detail = listOf((listOfNotNull(code, carlinkError?.takeIf { it.isNotBlank() }) +
+                outputErrors.map { it.text }).distinct().joinToString("\n"), trail)
+                .filter { it.isNotBlank() }.joinToString("\n\n"),
+            textResource = R.string.network_wifi_problem, action = NetworkRequirement.WIFI, atMillis = at))
+        else add(HomeProblem(R.string.home_problem_carlink, text,
+            listOf(otherErrors, trail).filter { it.isNotBlank() }.joinToString("\n\n").takeIf { it.isNotBlank() },
+            carlinkFailureExplanation((code ?: error.orEmpty()).lineSequence().first()), atMillis = at))
     }
     if ((carlinkFailure || failures.any { it.outputId == null }) && readiness.hotspot == Readiness.PROBLEM)
         add(HomeProblem(R.string.home_problem_hotspot, textResource = R.string.network_hotspot_problem,
             action = NetworkRequirement.HOTSPOT))
     if (webReason != null) add(HomeProblem(R.string.home_problem_web_server,
         serverState.takeIf { it.isNotBlank() }, webReason.toString()))
+}
+
+fun carPlayFailureExplanation(code: String?): Int? = when (code) {
+    "hotspot_not_ready" -> R.string.error_explain_hotspot_not_ready
+    "hotspot_configuration" -> R.string.error_explain_hotspot_configuration
+    "first_tcp_timeout" -> R.string.error_explain_first_tcp_timeout
+    "bluetooth_unusable" -> R.string.error_explain_bluetooth_unusable
+    else -> null
 }
 
 fun presentHome(value: HomeSnapshot): HomePresentation {
@@ -177,4 +202,23 @@ fun presentHome(value: HomeSnapshot): HomePresentation {
                 detail = "USB_STATE: connected=true, host_connected=false; USB devices=[]", textResource = R.string.network_usb_role_problem)) else emptyList()),
         if (tone == StatusTone.PROGRESS) (value.manualNetworkReminders intersect value.networkReadiness.unknown)
             .map { it.reminder() } else emptyList())
+}
+
+fun carlinkFailureExplanation(code: String): Int? = when (code) {
+    "ble_unavailable" -> R.string.error_explain_ble_unavailable
+    "ble_timeout" -> R.string.error_explain_ble_timeout
+    "ble_scan_failed" -> R.string.error_explain_ble_scan_failed
+    "gatt_connect_failed" -> R.string.error_explain_gatt_connect_failed
+    "gatt_services_failed", "ble_discovery_failed" -> R.string.error_explain_gatt_services_failed
+    "ble_service_missing" -> R.string.error_explain_ble_service_missing
+    "ble_subscribe_failed" -> R.string.error_explain_ble_subscribe_failed
+    "ble_cccd_failed" -> R.string.error_explain_ble_cccd_failed
+    "ble_cccd_timeout" -> R.string.error_explain_ble_cccd_timeout
+    "ble_write_failed" -> R.string.error_explain_ble_write_failed
+    "ble_request_rejected" -> R.string.error_explain_ble_request_rejected
+    "ble_reply_invalid" -> R.string.error_explain_ble_reply_invalid
+    "ble_verify_timeout" -> R.string.error_explain_ble_verify_timeout
+    "ble_exchange_timeout" -> R.string.error_explain_ble_exchange_timeout
+    "ble_exchange_failed" -> R.string.error_explain_ble_exchange_failed
+    else -> null
 }

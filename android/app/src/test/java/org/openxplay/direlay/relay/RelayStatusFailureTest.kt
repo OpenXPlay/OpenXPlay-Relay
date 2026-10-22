@@ -9,7 +9,7 @@ import org.openxplay.stream.core.*
 
 class RelayStatusFailureTest {
     @Test fun keepsTenNewestInputAndOutputFailures() {
-        val status = RelayStatus()
+        val status = RelayStatus(wallClock = { 0L })
         assertNull(status.failure)
         repeat(12) { index ->
             if (index % 2 == 0) status.inputFailed(IllegalStateException("failure $index"))
@@ -23,7 +23,7 @@ class RelayStatusFailureTest {
     }
 
     @Test fun identicalTextsMergeAndBecomeNewestWithoutChangingPreviousSnapshots() {
-        val status = RelayStatus()
+        val status = RelayStatus(wallClock = { 0L })
         status.inputFailed(IllegalStateException("connection closed"))
         val previous = status.failures
         status.outputFailed("web", IllegalStateException("listener failed"))
@@ -36,7 +36,7 @@ class RelayStatusFailureTest {
     }
 
     @Test fun clearsOnExplicitResetAndNewSessionButNotSameSessionPhaseChangesOrClose() {
-        val status = RelayStatus()
+        val status = RelayStatus(wallClock = { 0L })
         fun session(id: Long, phase: SessionPhase) =
             status.onSession(SessionState(SessionId(id), phase), SessionConfig(emptyMap()))
         session(1, SessionPhase.CONNECTING)
@@ -62,4 +62,16 @@ class RelayStatusFailureTest {
         status.inputFailed(IllegalStateException("", IllegalArgumentException("remote failure: test-secret")))
         assertEquals("Input: IllegalStateException\nCaused by: remote failure: [redacted]", status.failure)
     }
+    @Test fun recordsWallTimeAndMergedFailureKeepsNewestTime() {
+        var now = 123L
+        val status = RelayStatus(wallClock = { now })
+        status.inputFailed(IllegalStateException("failed"))
+        val previous = status.failures
+        now = 456L
+        status.inputFailed(IllegalArgumentException("failed"))
+        assertEquals(1, status.failures.size)
+        assertEquals(456L, status.failures.single().atMillis)
+        assertEquals(123L, previous.single().atMillis)
+    }
+
 }

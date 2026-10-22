@@ -20,8 +20,8 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
         fun requestUnchanged(): Boolean
     }
     enum class State { CONNECTING, MTU, SERVICES, SUBSCRIBING, REDISCOVERING, WRITING, REPLY, VERIFYING, DONE }
-    enum class Reason { FAILED, CCCD_TIMEOUT, REQUEST_REJECTED }
-    class Failure(val reason: Reason) : IllegalStateException(reason.name)
+    enum class Reason { DISCOVERY, SERVICE_MISSING, SUBSCRIBE, CCCD, WRITE, REPLY_INVALID, VERIFY_TIMEOUT, DISCONNECTED, CCCD_TIMEOUT, REQUEST_REJECTED }
+    class Failure(val reason: Reason, val detail: String? = null) : IllegalStateException(reason.name)
     var state = State.CONNECTING
         private set
     private var earlyReply: HeadUnitReply? = null
@@ -40,22 +40,23 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
         if (state != State.MTU) return
         // A refused MTU still permits Android's long characteristic write.
         state = State.SERVICES
-        if (!gatt.discover()) fail()
+        if (!gatt.discover()) fail(Reason.DISCOVERY)
     }
     fun services(success: Boolean) {
         if (state == State.VERIFYING) {
             if (!verifyDiscovering) return
             when {
-                !success -> fail()
+                !success -> fail(Reason.DISCOVERY)
                 !gatt.requestUnchanged() -> fail(Reason.REQUEST_REJECTED)
-                writeFailed -> fail()
+                writeFailed -> fail(Reason.WRITE)
                 // The head unit re-published its database: continue with the same request.
                 else -> state = resume
             }
             return
         }
         if (state != State.SERVICES) return
-        if (!success || !gatt.subscribeLocally()) { fail(); return }
+        if (!success) { fail(Reason.DISCOVERY); return }
+        if (!gatt.subscribeLocally()) { fail(Reason.SUBSCRIBE); return }
         if (legacy) writeRequest() else {
             state = State.SUBSCRIBING
             if (!gatt.subscribeCccd()) descriptorWritten(false)
@@ -64,11 +65,11 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
     fun descriptorWritten(success: Boolean) {
         if (state == State.REDISCOVERING) {
             state = State.SERVICES
-            if (!gatt.discover()) fail()
+            if (!gatt.discover()) fail(Reason.DISCOVERY)
             return
         }
         if (state != State.SUBSCRIBING) return
-        if (success) writeRequest() else fail()
+        if (success) writeRequest() else fail(Reason.CCCD)
     }
     fun cccdTimeout() {
         if (state == State.SUBSCRIBING || state == State.REDISCOVERING) fail(Reason.CCCD_TIMEOUT)
@@ -86,18 +87,18 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
             return
         }
         state = State.SERVICES
-        if (!gatt.discover()) fail()
+        if (!gatt.discover()) fail(Reason.DISCOVERY)
     }
     fun serviceRemoved() {
         when (state) {
             State.VERIFYING -> if (verifyDiscovering) fail(Reason.REQUEST_REJECTED)
             State.WRITING, State.REPLY -> if (earlyReply == null) fail(Reason.REQUEST_REJECTED)
-            else -> fail()
+            else -> fail(Reason.SERVICE_MISSING)
         }
     }
     /** The bounded rediscovery did not finish: unconfirmed, so a plain failure rather than a rejection. */
     fun verifyTimeout() {
-        if (state == State.VERIFYING) fail()
+        if (state == State.VERIFYING) fail(Reason.VERIFY_TIMEOUT)
     }
     private fun verify() {
         resume = state
@@ -108,11 +109,11 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
     }
     private fun rediscover() {
         verifyDiscovering = true
-        if (!gatt.discover()) fail()
+        if (!gatt.discover()) fail(Reason.DISCOVERY)
     }
     private fun writeRequest() {
         state = State.WRITING
-        if (!gatt.write(phone.copyOf())) fail()
+        if (!gatt.write(phone.copyOf())) fail(Reason.WRITE)
     }
     fun written(success: Boolean) {
         if (state == State.VERIFYING && resume == State.WRITING && !verifyDiscovering) {
@@ -122,7 +123,7 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
             return
         }
         if (state != State.WRITING) return
-        if (!success) { fail(); return }
+        if (!success) { fail(Reason.WRITE); return }
         state = State.REPLY
         earlyReply?.let { finish(it) }
     }
@@ -137,11 +138,15 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
             val reply = BleCodec.headUnitReply(accumulated)
             if (state == State.VERIFYING) {
                 // A complete reply shows the head unit accepted the request.
-                if (writeFailed) { fail(); return }
+                if (writeFailed) { fail(Reason.WRITE); return }
                 state = resume
             }
             if (state == State.WRITING) earlyReply = reply else finish(reply)
-        } catch (_: Exception) { fail() }
+        } catch (error: Exception) {
+            val code = error.message?.takeIf { it.matches(Regex("[a-z0-9_]{3,64}")) }
+                ?: error.javaClass.simpleName.takeIf { it.matches(Regex("[A-Za-z0-9_]+")) } ?: "Throwable"
+            finishFailure(Reason.REPLY_INVALID, "bytes=${replyBytes.size()} fragments=$fragments error=$code")
+        }
     }
     // Frame before UTF-8 decoding: indications can split JSON strings and multibyte characters.
     private fun completeJson(bytes: ByteArray): Boolean {
@@ -174,10 +179,11 @@ internal class BleExchange(private val gatt: Gatt, private val phone: ByteArray,
         }
         return finished
     }
-    fun fail(reason: Reason = Reason.FAILED) {
+    fun fail(reason: Reason) = finishFailure(reason, null)
+    private fun finishFailure(reason: Reason, detail: String?) {
         if (state == State.DONE) return
         state = State.DONE
-        complete(null, Failure(reason))
+        complete(null, Failure(reason, detail))
     }
     private fun finish(reply: HeadUnitReply) {
         state = State.DONE

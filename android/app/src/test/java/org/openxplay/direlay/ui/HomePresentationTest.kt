@@ -93,10 +93,8 @@ class HomePresentationTest {
         assertEquals(listOf(
             HomeProblem(R.string.home_problem_carplay, "Input: CarPlay start failed\nCaused by: connection reset"),
             HomeProblem(R.string.home_problem_browser, "web: Video output closed"),
-            HomeProblem(R.string.home_problem_carlink, "clink: Socket closed"),
             HomeProblem(R.string.home_problem_output, "other-output: Output failed"),
-            HomeProblem(R.string.home_problem_carlink, "auth_rejected"),
-            HomeProblem(R.string.home_problem_carlink, listenerError),
+            HomeProblem(R.string.home_problem_carlink, "auth_rejected\n$listenerError", "clink: Socket closed"),
             HomeProblem(R.string.home_problem_web_server, webError, reason.toString())), result.problems)
         assertEquals(R.string.ui_web_port_busy, result.subline)
         assertEquals(listOf("9443"), result.sublineArguments)
@@ -259,4 +257,76 @@ class HomePresentationTest {
         assertTrue(unreadable.checklist.contains(SetupItem(R.string.shared_wifi_unreadable, R.string.shared_wifi_use, SetupAction.SHARED_WIFI)))
         assertTrue(presentHome(ready.copy(sharedWifiReady = true)).canStart)
     }
+    @Test fun carlinkRowCarriesExplanationRawTextTrailAndTime() {
+        val trail = listOf("12:00:00.000 link_start", "+1.000s ble_write status=3")
+        val error = "ble_write_failed\nCaused by: WRITE"
+        val row = homeProblems(listOf(RelayFailure("clink", "duplicate")), true,
+            "ble_write_failed", error, null, "", carlinkTrail = trail, carlinkErrorAt = 123L).single()
+        assertEquals(error, row.text)
+        assertEquals(R.string.error_explain_ble_write_failed, row.textResource)
+        assertEquals("duplicate\n\n" + trail.joinToString("\n"), row.detail)
+        assertEquals(123L, row.atMillis)
+        assertEquals(R.string.error_explain_ble_write_failed,
+            homeProblems(emptyList(), true, "", error, null, "").single().textResource)
+        assertEquals(456L, homeProblems(listOf(RelayFailure(null, "Input: failed", 456L)),
+            false, "", null, null, "").single().atMillis)
+        assertNull(homeProblems(listOf(RelayFailure(null, "Input: failed")), false, "", null, null, "").single().atMillis)
+    }
+    @Test fun healthyCarlinkStatusTextIsNotShownAsTheFailure() {
+        val row = homeProblems(listOf(RelayFailure("clink", "clink: Socket closed")), false,
+            "Video passthrough", null, null, "").single()
+        assertEquals("clink: Socket closed", row.text)
+        assertNull(row.textResource)
+        assertNull(row.detail)
+    }
+    @Test fun differentCarlinkErrorsAreAllKept() {
+        val row = homeProblems(listOf(RelayFailure("clink", "clink: Socket closed")), true,
+            "ble_service_missing", "ble_service_missing\nCaused by: SERVICE_MISSING", null, "",
+            carlinkTrail = listOf("12:00:00.000 link_start")).single()
+        assertEquals("ble_service_missing\nCaused by: SERVICE_MISSING", row.text)
+        assertEquals(R.string.error_explain_ble_service_missing, row.textResource)
+        assertEquals("clink: Socket closed\n\n12:00:00.000 link_start", row.detail)
+    }
+    @Test fun wifiDetailsIncludeTrailAfterABlankLine() {
+        val row = homeProblems(emptyList(), true, "wifi_off", "wifi_off\nCaused by: WIFI_OFF", null, "",
+            carlinkTrail = listOf("12:00:00.000 link_start"), carlinkErrorAt = 123L).single()
+        assertEquals(R.string.network_wifi_problem, row.textResource)
+        assertTrue(row.detail!!.endsWith("\n\n12:00:00.000 link_start"))
+        assertEquals(123L, row.atMillis)
+    }
+    @Test fun knownBleFailuresHaveExplanationsAndOtherCodesDoNot() {
+        val codes = listOf("ble_unavailable", "ble_timeout", "ble_scan_failed", "gatt_connect_failed",
+            "gatt_services_failed", "ble_discovery_failed", "ble_service_missing", "ble_subscribe_failed",
+            "ble_cccd_failed", "ble_cccd_timeout", "ble_write_failed", "ble_request_rejected", "ble_reply_invalid",
+            "ble_verify_timeout", "ble_exchange_timeout", "ble_exchange_failed")
+        codes.forEach { assertNotNull(it, carlinkFailureExplanation(it)) }
+        assertEquals(carlinkFailureExplanation("gatt_services_failed"), carlinkFailureExplanation("ble_discovery_failed"))
+        assertNull(carlinkFailureExplanation("unknown"))
+        assertNull(carlinkFailureExplanation("ble_write_failed extra"))
+    }
+
+    @Test fun carPlayFailureCarriesItsExplanationTrailTimeAndPrecedesHostFailures() {
+        val error = org.openxplay.direlay.relay.CarPlayError("connection failed", "first_tcp_timeout",
+            listOf("12:00:00.000 status=DiscoveringMfi", "+1.000s status=Failed"), 123L)
+        val rows = homeProblems(listOf(RelayFailure(null, "connection failed"),
+            RelayFailure(null, "different host failure"), RelayFailure("web", "connection failed")),
+            false, "", null, null, "", carPlayError = error)
+        assertEquals(3, rows.size)
+        assertEquals(HomeProblem(R.string.home_problem_carplay, error.text, error.trail.joinToString("\n"),
+            R.string.error_explain_first_tcp_timeout, atMillis = 123L), rows.first())
+        assertEquals("different host failure", rows[1].text)
+        assertEquals(R.string.home_problem_browser, rows[2].title)
+        val home = presentHome(ready.copy(failure = true, problems = rows))
+        assertEquals(StatusTone.ERROR, home.tone)
+        assertEquals(rows, home.problems)
+    }
+    @Test fun knownCarPlayStartupFailuresHaveLocalizedExplanations() {
+        assertEquals(R.string.error_explain_hotspot_not_ready, carPlayFailureExplanation("hotspot_not_ready"))
+        assertEquals(R.string.error_explain_hotspot_configuration, carPlayFailureExplanation("hotspot_configuration"))
+        assertEquals(R.string.error_explain_first_tcp_timeout, carPlayFailureExplanation("first_tcp_timeout"))
+        assertEquals(R.string.error_explain_bluetooth_unusable, carPlayFailureExplanation("bluetooth_unusable"))
+        assertNull(carPlayFailureExplanation(null))
+        assertNull(carPlayFailureExplanation("unknown"))
+    }
+
 }

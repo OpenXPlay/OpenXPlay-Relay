@@ -47,9 +47,28 @@ sealed interface ClinkDiagnostic {
     data class BleRequest(val type: Int, val legacy: Boolean) : ClinkDiagnostic {
         override fun line() = "ble_request type=$type subscription=${if (legacy) "legacy" else "cccd"}"
     }
-    enum class CccdResult { SUCCESS, FAILED, TIMEOUT }
-    data class Cccd(val result: CccdResult) : ClinkDiagnostic {
-        override fun line() = "ble_cccd result=${result.name.lowercase()}"
+    enum class CccdResult { SUCCESS, FAILED, TIMEOUT, REFUSED }
+    data class Cccd(val result: CccdResult, val status: Int? = null) : ClinkDiagnostic {
+        override fun line() = "ble_cccd result=${result.name.lowercase()}" + (status?.let { " status=$it" } ?: "")
+    }
+    data class GattConnection(val status: Int, val connected: Boolean) : ClinkDiagnostic {
+        override fun line() = "gatt_connection status=$status state=${if (connected) "connected" else "disconnected"}"
+    }
+    data class GattServices(val status: Int) : ClinkDiagnostic {
+        override fun line() = "gatt_services status=$status"
+    }
+    data class Mtu(val mtu: Int?, val status: Int?) : ClinkDiagnostic {
+        override fun line() = if (mtu == null) "ble_mtu result=none" else "ble_mtu mtu=$mtu status=$status"
+    }
+    data class Characteristics(val request: Boolean, val reply: Boolean, val notify: Boolean?) : ClinkDiagnostic {
+        override fun line() = "ble_characteristics request=${if (request) "found" else "missing"} reply=${if (reply) "found" else "missing"} notify=${when (notify) { true -> "ok"; false -> "refused"; null -> "skipped" }}"
+    }
+    data class BleWrite(val status: Int?) : ClinkDiagnostic {
+        override fun line() = status?.let { "ble_write status=$it" } ?: "ble_write result=refused"
+    }
+    data class ReplyInvalid(val detail: String) : ClinkDiagnostic {
+        init { require(detail.matches(Regex("[a-z]+=[A-Za-z0-9_]+( [a-z]+=[A-Za-z0-9_]+)*"))) }
+        override fun line() = "ble_reply_invalid $detail"
     }
     data class ServiceChanged(val state: String) : ClinkDiagnostic {
         override fun line() = "ble_service_changed state=$state"
@@ -77,6 +96,9 @@ internal enum class ClinkFailureReason(val code: String) {
     BLE_TIMEOUT("ble_timeout"), BLE_UNAVAILABLE("ble_unavailable"), BLE_SCAN("ble_scan_failed"),
     GATT_CONNECT("gatt_connect_failed"), GATT_SERVICES("gatt_services_failed"),
     BLE_REQUEST_REJECTED("ble_request_rejected"), BLE_CCCD_TIMEOUT("ble_cccd_timeout"),
+    BLE_DISCOVERY("ble_discovery_failed"), BLE_SERVICE_MISSING("ble_service_missing"),
+    BLE_SUBSCRIBE("ble_subscribe_failed"), BLE_CCCD("ble_cccd_failed"), BLE_WRITE("ble_write_failed"),
+    BLE_REPLY_INVALID("ble_reply_invalid"), BLE_VERIFY_TIMEOUT("ble_verify_timeout"),
     BLE_EXCHANGE("ble_exchange_failed"), BLE_EXCHANGE_TIMEOUT("ble_exchange_timeout"),
     P2P_ERROR("wifi_join_p2p_error"), P2P_UNSUPPORTED("wifi_join_p2p_unsupported"),
     P2P_BUSY("wifi_join_p2p_busy"), P2P_UNKNOWN("wifi_join_p2p_unknown"),
