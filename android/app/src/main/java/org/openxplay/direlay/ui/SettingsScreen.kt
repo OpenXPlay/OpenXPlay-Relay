@@ -131,7 +131,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 }
             }
             "settings/car" -> {
-                if (runtime != null) CarScreenSettings(draft, runtime) { draft = it }
+                if (runtime != null) CarScreenSettings(draft, runtime, { open("settings/access/publicName") }) { draft = it }
             }
             "settings/picture" -> {
                 CollapsibleCard("resolution", stringResource(R.string.picture_resolution), resolutionSummary(draft),
@@ -268,7 +268,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         options.forEachIndexed { index, option -> RadioOptionRow(option, index == selected) { select(index) } }
     }
 }
-@Composable fun RadioOptionRow(option: RadioOption, selected: Boolean, extra: @Composable (() -> Unit)? = null, enabled: Boolean = true, select: () -> Unit) {
+@Composable fun RadioOptionRow(option: RadioOption, selected: Boolean, extra: @Composable (() -> Unit)? = null,
+    enabled: Boolean = true, supportingText: String? = null, select: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
         .selectable(enabled = enabled, selected = selected, role = Role.RadioButton, onClick = select).padding(vertical = 12.dp),
         // With a diagram below, the radio button stays level with the title instead of the row centre.
@@ -276,7 +277,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         RadioButton(selected = selected, enabled = enabled, onClick = null, modifier = Modifier.padding(horizontal = 12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(stringResource(option.title), style = MaterialTheme.typography.bodyLarge)
-            Text(stringResource(option.supporting), style = MaterialTheme.typography.bodyMedium,
+            val supporting = supportingText ?: stringResource(option.supporting)
+            if (supporting.isNotEmpty()) Text(supporting, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             extra?.invoke()
         }

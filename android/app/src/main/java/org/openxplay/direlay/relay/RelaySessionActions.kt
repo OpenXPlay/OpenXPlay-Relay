@@ -59,6 +59,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         else -> "error.invalid"
     }
     private fun stop() {
+        runtime.stopTeslaAddress()
         runtime.input.expectStop()
         context.startService(Intent(context, DiPlaySessionService::class.java).setAction(DiPlaySessionService.ACTION_STOP))
     }
@@ -124,7 +125,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         val permissions = StartupPermissions.required(Build.VERSION.SDK_INT, wireless,
             settings.wirelessNetwork.choice.mode, AirPlayPersistence.loadLocationReportingEnabled(context), settings.carlinkOutput || settings.bothOutputs)
         if (permissions.any { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) return "error.conflict"
-        if (!wireless && VpnService.prepare(context) != null) return "error.conflict"
+        if (runtime.needsVpnConsent(settings, wireless) && VpnService.prepare(context) != null) return "error.conflict"
         if (settings.mfiTarget == MfiTarget.LOCAL && runtime.identityStore.status() != MaterialStatus.Installed) return "error.conflict"
         if (runCatching { settings.validate(wireless) }.isFailure) return "error.invalid"
         val sharedWifi = if (wireless && settings.wirelessNetwork.choice == org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI)
@@ -148,6 +149,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             runtime.prepareCarPlay(chooseVideoCodec = true)
             runtime.prepareCarPlayScreen(settings)
             runtime.prepareCarPlayFrameRate()
+            runtime.prepareTeslaAddress(settings, wireless)
             main.post {
                 try {
                     if (!closed && launchGeneration == generation) context.startActivity(Intent(context, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

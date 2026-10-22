@@ -15,6 +15,8 @@ import org.openxplay.direlay.publicname.PublicNamePolicy.HOUR
 import org.openxplay.direlay.publicname.PublicNamePolicy.MINUTE
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.openxplay.direlay.settings.TeslaBrowserMode
+import org.openxplay.direlay.settings.teslaPublishedAddress
 import java.security.PrivateKey
 import java.security.cert.X509Certificate
 import java.util.Random
@@ -34,6 +36,8 @@ class PublicNameServiceTest {
     private val issuer = FakeIssuer()
     private val internet = FakeInternet()
     private var addresses = listOf(AddressCandidate("10.0.0.7", false), AddressCandidate("192.168.43.1", true))
+    private var teslaMode = TeslaBrowserMode.OFF
+    private var activeTeslaAddress: String? = null
     private lateinit var store: PublicNameStore
     private lateinit var service: PublicNameService
 
@@ -110,7 +114,8 @@ class PublicNameServiceTest {
     @Before fun create() {
         store = PublicNameStore(temporary.newFolder())
         service = PublicNameService(store, certificates, { provider }, issuer, internet, { addresses }, { now }, worker,
-            sleep = { now += it }, random = Random(7))
+            sleep = { now += it }, random = Random(7),
+            addressOverride = { teslaPublishedAddress(teslaMode, activeTeslaAddress) })
     }
 
     private fun runQueued() { while (worker.queue.isNotEmpty()) worker.queue.removeFirst().run() }
@@ -166,6 +171,44 @@ class PublicNameServiceTest {
         assertEquals(name, certificates.served)
         assertEquals("the 12 h check", now + 12 * HOUR, worker.next()!!.at)
         assertEquals(listOf(start), store.record().orders(name))
+    }
+
+    @Test fun virtualTeslaAddressIsPublishedOnlyAfterActivationAndNormalAddressReturnsOnStopOrModeChange() {
+        configure()
+        teslaMode = TeslaBrowserMode.VIRTUAL_NAME
+        service.refreshAddress(); runQueued()
+        assertEquals(listOf("address 192.168.43.1"), provider.events)
+        activeTeslaAddress = "100.88.0.1"
+        service.refreshAddress()
+        assertNull(status.trustedName)
+        runQueued()
+        assertEquals("address 100.88.0.1", provider.events.last())
+        assertEquals("100.88.0.1", status.address)
+        assertEquals(name, status.trustedName)
+        activeTeslaAddress = null
+        service.refreshAddress(); runQueued()
+        assertEquals("address 192.168.43.1", provider.events.last())
+        activeTeslaAddress = "100.88.0.2"
+        service.refreshAddress(); runQueued()
+        assertEquals("address 100.88.0.2", provider.events.last())
+        teslaMode = TeslaBrowserMode.PUBLIC_ADDRESS
+        activeTeslaAddress = "3.3.3.1"
+        service.refreshAddress(); runQueued()
+        assertEquals("address 192.168.43.1", provider.events.last())
+        val count = provider.events.size
+        teslaMode = TeslaBrowserMode.OFF
+        service.refreshAddress(); runQueued()
+        assertEquals(count, provider.events.size)
+        assertEquals(1, issuer.replaced.size)
+    }
+
+    @Test fun aCompleteEnabledNameIsRequiredButIssuingItsCertificateIsNotAnActivationPrerequisite() {
+        val view = PublicNameView(configured = true, enabled = true, provider = DnsProviderId.DUCKDNS,
+            name = name, tokenSet = true, agreeTerms = true)
+        assertTrue(view.hasTrustedNameConfiguration())
+        for (incomplete in listOf(view.copy(enabled = false), view.copy(provider = null),
+            view.copy(name = ""), view.copy(tokenSet = false), view.copy(agreeTerms = false)))
+            assertFalse(incomplete.hasTrustedNameConfiguration())
     }
 
     @Test fun addressIsRepublishedOnlyWhenItChangesOrAfter24Hours() {

@@ -20,6 +20,36 @@ class CarModelsTest {
     private fun models() = CarModels.parse(RuntimeEnvironment.getApplication().assets.open("car-models.json").bufferedReader().use { it.readText() })
     private val selected = CarSelection("xpeng", model = "g6-2023")
     private val screen = ScreenDataKey(2401, 1201, 280)
+    @Test fun teslaModelsHaveBothNamesAndNoUnmeasuredBrowserScreens() {
+        val catalog = models()
+        val brand = requireNotNull(catalog.brand(CarSelection("tesla")))
+        assertEquals("tesla", catalog.brands.last().id)
+        assertEquals("Tesla", brand.name(Locale.ENGLISH))
+        assertEquals("特斯拉", brand.name(Locale.SIMPLIFIED_CHINESE))
+        val expected = linkedMapOf(
+            "model-3-2017" to ("Model 3 (2017–2023)" to "Model 3（2017–2023 款）"),
+            "model-3-2024" to ("Model 3 (2024 and later)" to "Model 3 焕新版（2024 款起）"),
+            "model-y-2020" to ("Model Y (2020–2024)" to "Model Y（2020–2024 款）"),
+            "model-y-2025" to ("Model Y (2025 and later)" to "Model Y 焕新版（2025 款起）"),
+            "model-y-l-2025" to ("Model Y L" to "Model Y L"),
+            "model-s-2021" to ("Model S (2021 and later)" to "Model S（2021 款起）"),
+            "model-s-2012" to ("Model S (2012–2020)" to "Model S（2012–2020 款）"),
+            "model-x-2021" to ("Model X (2021 and later)" to "Model X（2021 款起）"),
+            "model-x-2015" to ("Model X (2015–2020)" to "Model X（2015–2020 款）"),
+            "cybertruck-2023" to ("Cybertruck" to "Cybertruck"))
+        assertEquals(expected.keys.toList(), brand.models.map { it.id })
+        expected.forEach { (id, names) ->
+            val selection = CarSelection("tesla", model = id)
+            assertEquals(selection, selection.normalized())
+            val model = requireNotNull(catalog.model(selection))
+            assertEquals(names.first, model.name(Locale.ENGLISH))
+            assertEquals(names.second, model.name(Locale.SIMPLIFIED_CHINESE))
+            assertTrue(model.screens.isEmpty())
+        }
+        assertEquals(CarSelection("tesla"), CarSelection("tesla", model = "unknown").normalized())
+        assertEquals(CarSelection("tesla", model = "other", modelText = "Custom"),
+            CarSelection("tesla", model = "other", modelText = " Custom ").normalized())
+    }
     @Test fun packagedAssetHasLocalizedNamesAndObservedSizes() {
         val models = models()
         val brand = requireNotNull(models.brand(selected))

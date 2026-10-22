@@ -22,6 +22,16 @@ class AdminSettingsMappingTest {
         listOf("direlay", "diplay", "xcertplay_airplay").forEach { context.getSharedPreferences(it, 0).edit().clear().commit() }
         return RelaySettingsStore(context).use { it.load() }
     }
+    @Test fun teslaSettingsRemainNativeAndSurviveUnrelatedAdminEdits() {
+        val before = initial().copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS,
+            teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2")
+        assertFalse(AdminSettingsMapping.schema.flatMap { it.fields }.any { it.key.startsWith("tesla") })
+        assertFalse(AdminSettingsMapping.values(before).keys.any { it.startsWith("tesla") })
+        assertEquals(before.copy(autoStartOnBoot = true),
+            AdminSettingsMapping.update(before, mapOf("bootStart" to true), true).settings)
+        for (key in listOf("teslaBrowser", "teslaVirtualAddress", "teslaPublicAddress"))
+            assertNull(AdminSettingsMapping.update(before, mapOf(key to "3.3.3.3"), true).settings)
+    }
     @Test fun allSupportedSettingsRoundTripWithoutLosingNativeFields() {
         val original = initial().copy(videoStats = VideoStatsWindow.SECONDS_15)
         for (network in WirelessNetworkChoice.entries) for (mode in DisplayMode.entries) for (output in listOf("web", "carlink", "both")) {

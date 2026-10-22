@@ -12,6 +12,21 @@ import org.openxplay.direlay.R
 class SettingsAutoSaveTest {
     private val initial = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
         30, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
+    @Test fun teslaEditsApplyOnNextStartAndInvalidAddressesBelongToTheCarPage() {
+        for (chosen in listOf(initial.copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS),
+            initial.copy(teslaBrowser = TeslaBrowserMode.VIRTUAL_NAME), initial.copy(teslaVirtualAddress = "100.88.0.2"),
+            initial.copy(teslaPublicAddress = "3.3.3.2"))) {
+            assertEquals(SettingsNotice.NEXT_START, settingsNotice(initial, chosen, false))
+            assertEquals(SettingsNotice.NEXT_START, settingsNotice(initial, chosen, true))
+        }
+        val invalid = initial.copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS, teslaPublicAddress = "10.0.0.1")
+        assertEquals(mapOf("teslaAddress" to R.string.tesla_address_invalid), settingsSaveErrors(invalid, true))
+        assertEquals(setOf("settings/car"), settingsInvalidPages(invalid, initial) { true })
+        val published = mutableListOf<RelaySettings>()
+        val saver = SettingsAutoSave(initial, published::add)
+        assertFalse(saver.apply(invalid, true))
+        assertTrue(saver.apply(invalid.copy(teslaBrowser = TeslaBrowserMode.OFF), true))
+    }
     @Test fun validChangesPublishImmediatelyAndIdenticalDraftsDoNotPublish() {
         val published = mutableListOf<RelaySettings>()
         val saver = SettingsAutoSave(initial, published::add)

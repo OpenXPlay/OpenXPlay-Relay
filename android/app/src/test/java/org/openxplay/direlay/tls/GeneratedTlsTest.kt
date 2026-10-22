@@ -9,6 +9,8 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.openxplay.direlay.SyntheticIdentity
 import org.openxplay.direlay.storage.MaterialStatus
+import org.openxplay.direlay.settings.TeslaBrowserMode
+import org.openxplay.direlay.settings.teslaTlsAddresses
 import java.io.File
 import java.security.KeyStore
 import java.security.cert.X509Certificate
@@ -23,6 +25,23 @@ class GeneratedTlsTest {
             File(root, "tls-generated/certificate.p12").inputStream().use { keys.load(it, password) }
             return keys.getCertificate("relay") as X509Certificate
         } finally { password.fill('\u0000') }
+    }
+    @Test fun publicTeslaAddressIsCoveredAndSurvivesStoppingAndRestartingWithoutRegeneration() {
+        val root = temporary.newFolder()
+        val store = TlsStore(root)
+        val car = setOf("192.168.43.1")
+        for (mode in listOf(TeslaBrowserMode.OFF, TeslaBrowserMode.VIRTUAL_NAME))
+            assertEquals(car, teslaTlsAddresses(car, mode, "3.3.3.1"))
+        val covered = teslaTlsAddresses(car, TeslaBrowserMode.PUBLIC_ADDRESS, "3.3.3.1")
+        assertTrue(store.ensureDefault(covered))
+        assertTrue(certificate(root).subjectAlternativeNames.any { it[0] == 7 && it[1] == "3.3.3.1" })
+        val first = store.fingerprint()
+        assertFalse(TlsStore(root).ensureDefault(car))
+        assertFalse(TlsStore(root).ensureDefault(covered))
+        assertEquals(first, store.fingerprint())
+        assertTrue(store.ensureDefault(teslaTlsAddresses(car, TeslaBrowserMode.PUBLIC_ADDRESS, "3.3.3.2")))
+        assertTrue(certificate(root).subjectAlternativeNames.any { it[0] == 7 && it[1] == "3.3.3.2" })
+        assertFalse(store.ensureDefault(covered))
     }
     @Test fun certificateIsSelfSignedP256WithEveryAddressAndLocalhostSan() {
         val root = temporary.newFolder()

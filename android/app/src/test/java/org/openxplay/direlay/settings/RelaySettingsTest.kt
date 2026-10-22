@@ -27,6 +27,36 @@ class RelaySettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
+    @Test fun teslaDefaultsAndEveryModeAndAddressRoundTripInRelayPreferences() {
+        RelaySettingsStore(context).use { store ->
+            val initial = store.load()
+            assertEquals(TeslaBrowserMode.OFF, initial.teslaBrowser)
+            assertEquals("100.88.0.1", initial.teslaVirtualAddress)
+            assertEquals("3.3.3.1", initial.teslaPublicAddress)
+            for (mode in TeslaBrowserMode.entries) {
+                val chosen = initial.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",
+                    car = CarSelection("tesla", model = "model-y-2025"))
+                store.save(chosen)
+                assertEquals(chosen, store.load())
+                val preferences = context.getSharedPreferences("direlay", 0)
+                assertEquals(mode.name, preferences.getString("teslaBrowser", null))
+                assertEquals("100.88.0.2", preferences.getString("teslaVirtualAddress", null))
+                assertEquals("3.3.3.2", preferences.getString("teslaPublicAddress", null))
+            }
+            assertNotEquals(initial, initial.copy(teslaVirtualAddress = "100.88.0.2"))
+            assertNotEquals(initial, initial.copy(teslaPublicAddress = "3.3.3.2"))
+        }
+    }
+
+    @Test fun teslaValidationRejectsASelectedPhoneAddressAndAllowsSwitchingOff() {
+        val chosen = store.load().copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS)
+        assertThrows(IllegalArgumentException::class.java) { chosen.validate(wireless = false, phoneAddresses = setOf("3.3.3.1")) }
+        assertThrows(IllegalArgumentException::class.java) { chosen.copy(teslaPublicAddress = "192.168.1.9").validate(wireless = false) }
+        chosen.copy(teslaBrowser = TeslaBrowserMode.OFF, teslaPublicAddress = "invalid").validate(wireless = false)
+        context.getSharedPreferences("direlay", 0).edit().putString("teslaBrowser", "future-mode").commit()
+        assertEquals(TeslaBrowserMode.OFF, store.load().teslaBrowser)
+    }
+
     private fun developerOptions(change: (DeveloperOverrides) -> DeveloperOverrides) {
         RelaySettingsStore(context).use { store ->
             store.saveDeveloperOverrides(change(store.developerOverrides.value))
