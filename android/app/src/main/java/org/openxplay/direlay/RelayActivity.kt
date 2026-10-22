@@ -58,6 +58,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     @Volatile private var resumed = false
     private val starting get() = runtime.startRequest.pending
     private var requestingPermissions = false
+    private var manualStartAfterVpn = false
     /** A pairing permission request or "make visible" dialog is on screen; its answer is still to come. */
     private var pairingInFlight = false
     private var bootAutoStart = false
@@ -89,6 +90,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         bootAutoStart = savedInstanceState?.getBoolean("bootAutoStart")
             ?: intent.getBooleanExtra(EXTRA_AUTO_START, false)
         requestingPermissions = savedInstanceState?.getBoolean("requestingPermissions") ?: false
+        manualStartAfterVpn = savedInstanceState?.getBoolean("manualStartAfterVpn") ?: false
         pairingInFlight = savedInstanceState?.getBoolean("pairingInFlight") ?: false
         // A fresh open with a saved setup asks whether to continue with it; a running relay skips the question.
         val offerLaunchChoice = savedInstanceState == null && runtime.status.session?.phase !in
@@ -104,7 +106,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                         android.util.Log.i("OpenXPlay Relay", "Start/stop tapped while running=${value.presentation.running}")
                         bootAutoStart = false
                         started = false
-                        work { runtime.sessionActions.action(if (value.presentation.running) "stop" else "start") }
+                        if (!value.presentation.running && vpnConsent() != null) explainPermissions(startAfterVpn = true)
+                        else work { runtime.sessionActions.action(if (value.presentation.running) "stop" else "start") }
                         updateReadiness()
                     },
                     onRestart = {
@@ -227,7 +230,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     private fun vpnConsent(): Intent? {
         val settings = settingsStore.snapshot.value ?: return null
-        return if (settingsStore.wireless(settings)) null else VpnService.prepare(this)
+        return if (runtime.needsVpnConsent(settings)) VpnService.prepare(this) else null
     }
 
     private fun updateReadiness() {
@@ -252,16 +255,13 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             webReason = webReason, webListening = runtime.serverState.startsWith("TLS enabled"),
             carNetworkAvailable = runtime.carIpv4.isNotEmpty(), currentWifi = cachedWifi, sharedWifiReady = !wireless || settings.wirelessNetwork.choice != org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI || runtime.currentSharedWifi(settings, cachedWifi) != null,
             problems = org.openxplay.direlay.ui.homeProblems(failures, carlinkFailed, runtime.carlinkDetail,
-                runtime.carlinkError, webReason, runtime.serverState, networkReadiness),
+                runtime.carlinkError, webReason, runtime.serverState, networkReadiness, runtime.teslaFailure),
             networkReadiness = networkReadiness, manualNetworkReminders = runtime.networkStart.reminders,
             // DiPlay does not export its discovery stage; observe a live wired wait with an empty Android USB list.
             usbRoleProblem = org.openxplay.direlay.network.wiredUsbRoleProblem(wireless,
                 started || starting, network)))
         val carAddresses = runtime.carIpv4
-        val receiverUrls = runtime.receiverUrls.filterNot { it.contains("://localhost:") }
-            .filter { url -> carAddresses.any { url.contains("://$it:") } }
-        // The public name comes first while it is trusted; the IP addresses stay listed as the fallback.
-        val urls = listOfNotNull(runtime.publicNameUrl()?.takeIf { receiverUrls.isNotEmpty() }) + receiverUrls
+        val urls = runtime.headUnitUrls()
         val ip = carAddresses.joinToString("\n")
             .ifEmpty { getString(R.string.ui_no_network) }
         // Without location access Android hides the network name, but the connection itself is known.
@@ -275,7 +275,11 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             pinRejected = runtime.pinRejected, pairingSuccess = runtime.pairingSuccess,
             displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi,
             iphoneName = runtime.iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name,
-            networkReadings = network, networkStart = runtime.networkStart.pending)
+            networkReadings = network, networkStart = runtime.networkStart.pending, teslaUrl = runtime.teslaUrl(),
+            requestVpnOnStart = needsVpn && missing.isEmpty() && readyIdentity && materialChecked && valid &&
+                (!wireless || selection.address != null) &&
+                (!wireless || settings.wirelessNetwork.choice != org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI ||
+                    runtime.currentSharedWifi(settings, cachedWifi) != null))
         if (!importOnly && !guideOpen && runtime.networkStart.pending == null && presentation.canStart && resumed && !requestingPermissions && !networkRefreshPending && !restartPending && !starting && !presentation.running && runtime.status.failure == null && !runtime.autoStartGate.paused &&
             runtime.autoStartSessions.tracker.observed && !runtime.autoStartSessions.tracker.running &&
             phase !in setOf(SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.RECONNECTING) &&
@@ -292,7 +296,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         else -> R.string.direlay_permission_network
     })
 
-    private fun explainPermissions() {
+    private fun explainPermissions(startAfterVpn: Boolean = false) {
         val missing = missingPermissions()
         AlertDialog.Builder(this).setTitle(R.string.direlay_permissions_title)
             .setMessage(getString(R.string.direlay_permissions_explanation) + "\n\n" +
@@ -303,6 +307,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
             .setPositiveButton(R.string.direlay_continue) { _, _ ->
+                manualStartAfterVpn = startAfterVpn
                 requestingPermissions = true
                 updateReadiness()
                 if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), PERMISSIONS)
@@ -313,7 +318,13 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private fun requestVpnConsent() {
         val consent = vpnConsent()
         if (missingPermissions().isEmpty() && consent != null) startActivityForResult(consent, VPN_CONSENT)
-        else { requestingPermissions = false; updateReadiness() }
+        else {
+            requestingPermissions = false
+            val start = manualStartAfterVpn && missingPermissions().isEmpty()
+            manualStartAfterVpn = false
+            if (start) work { runtime.sessionActions.start(manual = true) }
+            updateReadiness()
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -489,6 +500,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         }
         if (requestCode == VPN_CONSENT) {
             requestingPermissions = false
+            val start = manualStartAfterVpn && resultCode == RESULT_OK
+            manualStartAfterVpn = false
+            if (start) work { runtime.sessionActions.start(manual = true) }
             updateReadiness()
             return
         }
@@ -593,6 +607,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         outState.putBoolean("identityPicker", identityImport.awaitingPicker)
         outState.putBoolean("bootAutoStart", bootAutoStart)
         outState.putBoolean("requestingPermissions", requestingPermissions)
+        outState.putBoolean("manualStartAfterVpn", manualStartAfterVpn)
         outState.putBoolean("pairingInFlight", pairingInFlight)
         super.onSaveInstanceState(outState)
     }

@@ -34,7 +34,8 @@ import org.openxplay.direlay.R
     val state = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, tween(ms), label = "problem expansion")
     val context = LocalContext.current
-    val text = listOfNotNull(problem.textResource?.let { stringResource(it) } ?: problem.text ?: stringResource(R.string.ui_error), problem.detail).joinToString("\n")
+    val text = listOfNotNull(problem.textResource?.let { stringResource(it, *problem.arguments.toTypedArray()) }
+        ?: problem.text ?: stringResource(R.string.ui_error), problem.detail).joinToString("\n")
     Column(Modifier.fillMaxWidth().heightIn(min = 64.dp)
         .semantics { stateDescription = state }.clickable(role = Role.Button) { expanded = !expanded }
         .animateContentSize(tween(ms)).padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -70,11 +71,12 @@ import org.openxplay.direlay.R
     }
 }
 
-@Composable internal fun ReceiverAddresses(addresses: List<String>, onCopy: (String) -> Unit) {
+@Composable internal fun ReceiverAddresses(addresses: List<String>, onCopy: (String) -> Unit, teslaUrl: String? = null) {
     addresses.forEach { address ->
         // Keep the scheme visible so typing the address does not try HTTP first.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            FittingAddress(address.removeSuffix("/"), Modifier.weight(1f))
+            FittingAddress(if (address == teslaUrl) stringResource(R.string.tesla_url, address.removeSuffix("/"))
+                else address.removeSuffix("/"), Modifier.weight(1f))
             IconButton(onClick = { onCopy(address) }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) {
                 Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy))
             }

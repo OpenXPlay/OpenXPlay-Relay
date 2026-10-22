@@ -12,5 +12,20 @@
         "windowed": [{"width": 1533, "height": 907, "count": 5}, {"width": 2401, "height": 1201, "count": 4}, {"width": 1533, "height": 1014, "count": 1}]
       }]
     }]
+  }, {
+    "id": "tesla",
+    "names": {"en": "Tesla", "zh-CN": "特斯拉"},
+    "models": [
+      {"id": "model-3-2017", "names": {"en": "Model 3 (2017–2023)", "zh-CN": "Model 3（2017–2023 款）"}, "screens": []},
+      {"id": "model-3-2024", "names": {"en": "Model 3 (2024 and later)", "zh-CN": "Model 3 焕新版（2024 款起）"}, "screens": []},
+      {"id": "model-y-2020", "names": {"en": "Model Y (2020–2024)", "zh-CN": "Model Y（2020–2024 款）"}, "screens": []},
+      {"id": "model-y-2025", "names": {"en": "Model Y (2025 and later)", "zh-CN": "Model Y 焕新版（2025 款起）"}, "screens": []},
+      {"id": "model-y-l-2025", "names": {"en": "Model Y L", "zh-CN": "Model Y L"}, "screens": []},
+      {"id": "model-s-2021", "names": {"en": "Model S (2021 and later)", "zh-CN": "Model S（2021 款起）"}, "screens": []},
+      {"id": "model-s-2012", "names": {"en": "Model S (2012–2020)", "zh-CN": "Model S（2012–2020 款）"}, "screens": []},
+      {"id": "model-x-2021", "names": {"en": "Model X (2021 and later)", "zh-CN": "Model X（2021 款起）"}, "screens": []},
+      {"id": "model-x-2015", "names": {"en": "Model X (2015–2020)", "zh-CN": "Model X（2015–2020 款）"}, "screens": []},
+      {"id": "cybertruck-2023", "names": {"en": "Cybertruck", "zh-CN": "Cybertruck"}, "screens": []}
+    ]
   }]
 }

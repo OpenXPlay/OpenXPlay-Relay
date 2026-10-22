@@ -41,7 +41,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val carlink: Boolean, val both: Boolean, val carlinkState: Int, val pending: DialogPinProvider.Request?,
     val busy: Boolean = false, val onWifi: Boolean = false, val vehicle: VehicleView = VehicleView(),
     val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null,
-    val networkReadings: NetworkReadings = NetworkReadings(), val networkStart: NetworkReadiness? = null)
+    val networkReadings: NetworkReadings = NetworkReadings(), val networkStart: NetworkReadiness? = null,
+    val teslaUrl: String? = null, val requestVpnOnStart: Boolean = false)
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -135,7 +136,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStartStop() },
-            enabled = !value.busy && (state.canStart || state.running),
+            enabled = !value.busy && (state.canStart || state.running || value.requestVpnOnStart),
             colors = ButtonDefaults.buttonColors(containerColor = actionColor),
             modifier = Modifier.fillMaxWidth(actionWidth).heightIn(min = 56.dp)) {
             AnimatedContent(state.running, transitionSpec = {
@@ -270,7 +271,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
             Text(stringResource(R.string.host_head_unit_address), style = MaterialTheme.typography.titleSmall)
             Text(stringResource(R.string.ui_browser_instruction))
             if (value.addresses.isEmpty()) Hint(stringResource(R.string.ui_address_waiting))
-            ReceiverAddresses(value.addresses, onCopy)
+            ReceiverAddresses(value.addresses, onCopy, value.teslaUrl)
             if (value.addresses.isNotEmpty()) Hint(stringResource(R.string.ui_browser_https_hint))
             Hint(stringResource(R.string.ui_tls_hint))
         }

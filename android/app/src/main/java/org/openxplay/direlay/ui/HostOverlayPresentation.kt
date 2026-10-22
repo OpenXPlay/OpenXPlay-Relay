@@ -22,7 +22,7 @@ data class HostOverlaySnapshot(val home: HomeSnapshot, val iphoneName: String? =
     val carlinkState: Int = R.string.ui_searching, val carlinkWindow: HostOverlaySize? = null,
     val canvas: String? = null, val screenWidthMm: Int? = null, val videoCodec: VideoCodec? = null,
     val carPlayScreen: Pair<String, String>? = null, val viewport: HostOverlaySize? = null,
-    val videoStats: VideoStatsSnapshot? = null)
+    val videoStats: VideoStatsSnapshot? = null, val teslaUrl: String? = null)
 data class HostOverlayDetail(val label: Int, val value: String = "", val monospace: Boolean = false,
     val valueResource: Int? = null, val arguments: List<String> = emptyList())
 data class HostOverlaySection(val title: Int, val rows: List<HostOverlayDetail>)
@@ -30,7 +30,8 @@ data class HostOverlayPresentation(val headline: Int, val hint: Int?, val tone: 
     val iphoneName: String?, val outputs: List<Int>, val receiverUrls: List<String>,
     val buttons: List<HostOverlayButton>, val hintArguments: List<String> = emptyList(),
     val browserHint: Int? = null, val problems: List<HomeProblem> = emptyList(),
-    val sections: List<HostOverlaySection> = emptyList(), val videoStats: VideoStatsPresentation? = null)
+    val sections: List<HostOverlaySection> = emptyList(), val videoStats: VideoStatsPresentation? = null,
+    val teslaUrl: String? = null)
 
 /** Session state and resource IDs only: no Android services or mutable runtime references. */
 fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
@@ -53,7 +54,7 @@ fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
     val settings = value.home.settings
     val browser = !settings.carlinkOutput || settings.bothOutputs
     val carlink = settings.carlinkOutput || settings.bothOutputs
-    val urls = if (browser) (listOfNotNull(value.publicNameUrl?.takeIf { it.isNotBlank() }) + value.receiverUrls).distinct()
+    val urls = if (browser) (listOfNotNull(value.teslaUrl, value.publicNameUrl?.takeIf { it.isNotBlank() }) + value.receiverUrls).distinct()
         else emptyList()
     val stats = value.videoStats?.takeIf { settings.videoStats != VideoStatsWindow.OFF && it.window == settings.videoStats }
     val measuredFps = (stats?.iphone as? VideoMeasurement.Values)?.fps
@@ -106,8 +107,9 @@ fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
         urls.isNotEmpty() -> R.string.ui_browser_https_hint
         value.home.webListening && !value.home.carNetworkAvailable -> R.string.ui_head_unit_network
         else -> R.string.ui_no_network
-    }, home.problems, sections, if (settings.videoStats == VideoStatsWindow.OFF) null else stats?.let(::presentVideoStats)
-        ?: VideoStatsPresentation(VideoStatsText(R.string.video_stats_measuring, listOf(settings.videoStats.seconds.toString())), emptyList()))
+    }, home.problems + home.hints.filter { it.title == R.string.tesla_title }, sections,
+        if (settings.videoStats == VideoStatsWindow.OFF) null else stats?.let(::presentVideoStats)
+        ?: VideoStatsPresentation(VideoStatsText(R.string.video_stats_measuring, listOf(settings.videoStats.seconds.toString())), emptyList()), value.teslaUrl)
 }
 
 internal fun screenSourceLabel(source: String): Int = when (source) {

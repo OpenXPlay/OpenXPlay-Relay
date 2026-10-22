@@ -82,8 +82,15 @@ data class RelaySettings(
     val videoStats: VideoStatsWindow = VideoStatsWindow.OFF,
     /** Offer the iPhone no CarPlay audio, so music, navigation and calls stay on its Bluetooth link with the car. */
     val carBluetoothAudio: Boolean = true,
+    val teslaBrowser: TeslaBrowserMode = TeslaBrowserMode.OFF,
+    val teslaVirtualAddress: String = TeslaAddressPolicy.DEFAULT_VIRTUAL,
+    val teslaPublicAddress: String = TeslaAddressPolicy.DEFAULT_PUBLIC,
+    val teslaMirrorAddress: String = TeslaAddressPolicy.DEFAULT_MIRROR,
+    val teslaAndroidAddress: String = TeslaAddressPolicy.DEFAULT_ANDROID,
 ) {
-    fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
+    fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false,
+        phoneAddresses: Set<String> = emptySet()) {
+        teslaAddress()?.let { require(TeslaAddressPolicy.valid(it, phoneAddresses)) { "Invalid or already assigned Tesla address: $it" } }
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
         for (value in listOf(carlinkDeviceName, carlinkDeviceModel)) {
             require(value.isNotBlank() && value.toByteArray(Charsets.UTF_8).size <= 128 &&
@@ -248,6 +255,11 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
                 relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
             videoStats = VideoStatsWindow.fromStored(relay.getString("videoStats", null)),
+            teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == relay.getString("teslaBrowser", null) } ?: TeslaBrowserMode.OFF,
+            teslaVirtualAddress = relay.getString("teslaVirtualAddress", TeslaAddressPolicy.DEFAULT_VIRTUAL) ?: TeslaAddressPolicy.DEFAULT_VIRTUAL,
+            teslaPublicAddress = relay.getString("teslaPublicAddress", TeslaAddressPolicy.DEFAULT_PUBLIC) ?: TeslaAddressPolicy.DEFAULT_PUBLIC,
+            teslaMirrorAddress = relay.getString("teslaMirrorAddress", TeslaAddressPolicy.DEFAULT_MIRROR) ?: TeslaAddressPolicy.DEFAULT_MIRROR,
+            teslaAndroidAddress = relay.getString("teslaAndroidAddress", TeslaAddressPolicy.DEFAULT_ANDROID) ?: TeslaAddressPolicy.DEFAULT_ANDROID,
             carBluetoothAudio = AirPlayPersistence.loadCarBluetoothAudio(context),
             videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == relay.getString("videoCodec", null) } ?: VideoCodecSetting.AUTO,
             carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == relay.getString("carplayResolution", null) } ?: CarPlayResolution.AUTO,
@@ -287,6 +299,10 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         val wirelessChanged = settings.wirelessNetwork != current.wirelessNetwork ||
             settings.connectionMode != current.connectionMode
         settings.validate(wireless(settings) && wirelessChanged, allowEmptySharedWifi = true)
+        // An unchanged active address belongs to our TUN already; check collisions when choosing a new one.
+        if (settings.teslaAddress() != null && settings.teslaAddress() != current.teslaAddress())
+            settings.validate(wireless = false, allowEmptySharedWifi = true,
+                phoneAddresses = org.openxplay.direlay.network.phoneIpv4Addresses())
         val previousDisplay = current.display
         diplay.edit().putString("default_connection_mode", settings.connectionMode.key)
             .putBoolean("auto_connect", settings.autoStartWhenReady).apply()
@@ -325,6 +341,11 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("carModel", settings.car.model).putString("carModelText", settings.car.modelText)
             .putString("videoCodec", settings.videoCodec.name)
             .putString("videoStats", settings.videoStats.name)
+            .putString("teslaBrowser", settings.teslaBrowser.name)
+            .putString("teslaVirtualAddress", settings.teslaVirtualAddress)
+            .putString("teslaPublicAddress", settings.teslaPublicAddress)
+            .putString("teslaMirrorAddress", settings.teslaMirrorAddress)
+            .putString("teslaAndroidAddress", settings.teslaAndroidAddress)
             .putString("carplayResolution", settings.carplayResolution.name)
             .putInt("carplayScreenWidth", settings.carplayScreenWidth.mm)
             .putBoolean("plugins", settings.plugins)

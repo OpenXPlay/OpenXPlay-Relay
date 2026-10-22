@@ -40,7 +40,7 @@ internal fun networkChoiceReminder(requirement: NetworkRequirement, readings: Ne
 data class SetupItem(val text: Int, val actionLabel: Int, val action: SetupAction)
 /** Without text or a text resource, use the localized generic error. */
 data class HomeProblem(val title: Int, val text: String? = null, val detail: String? = null,
-    val textResource: Int? = null, val action: NetworkRequirement? = null)
+    val textResource: Int? = null, val action: NetworkRequirement? = null, val arguments: List<String> = emptyList())
 data class HomePresentation(val headline: Int, val subline: Int, val tone: StatusTone,
     val mode: List<ModeRow>, val checklist: List<SetupItem>, val canStart: Boolean, val running: Boolean,
     val checking: Boolean = false, val sublineArguments: List<String> = emptyList(),
@@ -85,7 +85,9 @@ fun carlinkStateLabel(state: String, failed: Boolean, awaitingPin: Boolean): Int
 /** Runtime values are copied by the Activity; this mapper has no services or mutable runtime references. */
 fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDetail: String,
     carlinkError: String?, webReason: WebStartReason?, serverState: String,
-    readiness: NetworkReadiness = NetworkReadiness()): List<HomeProblem> = buildList {
+    readiness: NetworkReadiness = NetworkReadiness(), teslaFailure: String? = null): List<HomeProblem> = buildList {
+    if (teslaFailure != null) add(HomeProblem(R.string.tesla_title,
+        textResource = R.string.tesla_address_failed, arguments = listOf(teslaFailure)))
     val joinCodes = ClinkFailureReason.entries.filter { it.name.startsWith("P2P_") || it.name.startsWith("WIFI_") }.map { it.code }
     val carlinkFailure = carlinkFailed || failures.any { it.outputId in setOf("clink", "carlink") }
     val wifiProblem = carlinkFailure && (readiness.wifi == Readiness.PROBLEM || carlinkFailed && carlinkDetail in joinCodes)
@@ -170,8 +172,9 @@ fun presentHome(value: HomeSnapshot): HomePresentation {
         checklist, ready && iphoneReady, running, value.checking,
         if (webReason?.failure == WebStartFailure.PORT_BUSY) listOf(webReason.port.toString()) else emptyList(),
         if (tone == StatusTone.ERROR) value.problems.ifEmpty { listOf(HomeProblem(R.string.home_problem_connection)) } else emptyList(),
-        if (running && !active && !value.wireless && value.usbRoleProblem) listOf(HomeProblem(R.string.home_problem_usb,
-            detail = "USB_STATE: connected=true, host_connected=false; USB devices=[]", textResource = R.string.network_usb_role_problem)) else emptyList(),
+        (if (tone != StatusTone.ERROR) value.problems.filter { it.title == R.string.tesla_title } else emptyList()) +
+            (if (running && !active && !value.wireless && value.usbRoleProblem) listOf(HomeProblem(R.string.home_problem_usb,
+                detail = "USB_STATE: connected=true, host_connected=false; USB devices=[]", textResource = R.string.network_usb_role_problem)) else emptyList()),
         if (tone == StatusTone.PROGRESS) (value.manualNetworkReminders intersect value.networkReadiness.unknown)
             .map { it.reminder() } else emptyList())
 }

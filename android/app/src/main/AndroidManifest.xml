@@ -68,6 +68,12 @@
         </receiver>
 
         <service android:name="com.shilapi.xcertplay.shared.MyCarAppService" tools:node="remove" />
+        <service android:name=".network.TeslaAddressVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE" android:exported="true">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
         <meta-data android:name="androidx.car.app.minCarApiLevel" tools:node="remove" />
 
         <activity android:name="com.shilapi.xcertplay.DiPlayActivity" android:exported="false" tools:replace="android:exported">
