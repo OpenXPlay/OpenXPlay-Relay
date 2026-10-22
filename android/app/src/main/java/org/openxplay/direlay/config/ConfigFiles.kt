@@ -66,7 +66,11 @@ class ConfigFiles(private val context: Context, private val settings: RelaySetti
             if (privateData) importPrivacy(data) else synchronized(settings) {
                 val current = settings.load()
                 val parsed = UserConfigCodec.decode(data, current, settings.developerOverrides.value, settings.wireless(current))
-                if (parsed.errors.isEmpty()) settings.save(parsed.settings, parsed.developer)
+                if (parsed.errors.isEmpty()) {
+                    settings.save(parsed.settings, parsed.developer)
+                    // The file comes from a configured relay: skip the setup guide on the next start.
+                    settings.setupCompleted = true
+                }
                 ConfigFileResult(parsed.changedCount, parsed.ignoredKeys, parsed.errors)
             }
         } catch (e: ConfigFailure) { ConfigFileResult(errors = mapOf(e.key to e.code)) }
