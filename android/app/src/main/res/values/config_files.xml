@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 OpenXPlay.org
+SPDX-License-Identifier: AGPL-3.0-only
+Created by riko chen on 2026-10-22
+-->
+<resources>
+    <string name="config_title">Configuration files</string>
+    <string name="config_summary">Export or import user and privacy configuration.</string>
+    <string name="config_user">User configuration</string>
+    <string name="config_privacy">Privacy configuration</string>
+    <string name="config_user_hint">Connection, outputs, picture and the other settings. No passwords for accounts or keys.</string>
+    <string name="config_privacy_hint">HTTPS domain, certificate and private keys. Keep this file private.</string>
+    <string name="config_export">Export…</string>
+    <string name="config_import">Import…</string>
+    <string name="config_export_confirm">Export</string>
+    <string name="config_privacy_warning">This file contains your domain token and the certificate\'s private key. Anyone with the file can use your HTTPS name.</string>
+    <string name="config_replace">Replace the current settings with the file\'s values?</string>
+    <string name="config_empty">No private data to export.</string>
+    <string name="config_exported">Configuration exported.</string>
+    <string name="config_imported">%1$d values changed.</string>
+    <string name="config_ignored">Ignored keys: %1$s</string>
+    <string name="config_expected_privacy">This is a user configuration file. Import a privacy configuration file here.</string>
+    <string name="config_expected_user">This is a privacy configuration file. Import a user configuration file here.</string>
+    <string name="config_too_large">The file exceeds 64 KiB.</string>
+    <string name="config_version">Unsupported configuration version.</string>
+    <string name="config_not_json">The file must contain valid UTF-8 JSON.</string>
+    <string name="config_io">Could not read, write or apply the configuration.</string>
+    <string name="config_invalid">Invalid value: %1$s</string>
+</resources>

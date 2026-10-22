@@ -115,6 +115,29 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
         onChanged()
     }
 
+    /** Only user-imported material belongs in a privacy configuration file. */
+    @Synchronized fun importedMaterial(): Pair<List<X509Certificate>, PrivateKey>? {
+        if (!hasImported()) return null
+        val password = File(store.directory, "password").readText(Charsets.UTF_8).toCharArray()
+        try {
+            val keys = KeyStore.getInstance("PKCS12")
+            File(store.directory, "certificate.p12").inputStream().use { keys.load(it, password) }
+            val alias = keys.aliases().toList().first { keys.isKeyEntry(it) }
+            return keys.getCertificateChain(alias).map { it as X509Certificate } to (keys.getKey(alias, password) as PrivateKey)
+        } finally { password.fill('\u0000') }
+    }
+
+    @Synchronized fun importMaterial(chain: List<X509Certificate>, key: PrivateKey) {
+        val password = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            .let { java.util.Base64.getEncoder().encodeToString(it) }.toCharArray()
+        try {
+            val keys = KeyStore.getInstance("PKCS12").apply { load(null, password) }
+            keys.setKeyEntry("imported", key, password, chain.toTypedArray())
+            val bytes = java.io.ByteArrayOutputStream().also { keys.store(it, password) }.toByteArray()
+            try { importFrom(bytes, password) } finally { bytes.fill(0) }
+        } finally { password.fill('\u0000') }
+    }
+
     /**
      * Today's certificate (imported, else generated). While the public name is served, the key manager
      * hands its Let's Encrypt chain to clients that ask for that name (SNI) and today's to everyone else.

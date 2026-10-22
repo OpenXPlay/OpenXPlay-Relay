@@ -36,8 +36,9 @@ android {
     }
 
     buildTypes {
-        // Test builds install next to the release (different signing key) as org.openxplay.relay.debug.
-        debug { applicationIdSuffix = ".debug" }
+        // Debug shares the release package; export configuration, then uninstall when switching signing keys.
+        // relay.applicationId can still target a legacy .debug install to export its settings.
+        debug { }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

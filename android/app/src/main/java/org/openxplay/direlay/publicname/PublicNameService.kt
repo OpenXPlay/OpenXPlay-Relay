@@ -178,6 +178,14 @@ class PublicNameService(
         return parsed
     }
 
+    /** Pause stale runs while all validated privacy sections are installed, then reload once. */
+    fun importConfigurationFiles(apply: () -> Unit) {
+        synchronized(lock) {
+            generation.incrementAndGet()
+            try { apply() } finally { changed() }
+        }
+    }
+
     /** Deletes all provider setups, the account key and ACME certificate; providers' address records stay. */
     fun remove() {
         synchronized(lock) {

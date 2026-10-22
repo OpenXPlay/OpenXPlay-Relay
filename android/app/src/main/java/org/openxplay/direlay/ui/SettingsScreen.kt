@@ -72,6 +72,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     copy: (String) -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit, currentWifi: String? = null,
     bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {},
     adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null) {
+    val runtimeContext = LocalContext.current.applicationContext
     var draft by state.draft
     var confirmCarlink by remember { mutableStateOf(false) }
     var confirmUsb by remember { mutableStateOf(false) }
@@ -102,6 +103,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     DetailPage(stringResource(settingsPageTitle(page)), back) {
         when (page) {
             "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, open)
+            "settings/configFiles" -> if (runtime != null) ConfigFilesScreen(remember(runtime) {
+                org.openxplay.direlay.config.ConfigFiles(runtimeContext, runtime.settingsStore, runtime.publicName, runtime.tlsStore)
+            })
             "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
             "settings/output" -> {
                 CollapsibleCard("output", stringResource(R.string.ui_output), outputSummary(draft),
