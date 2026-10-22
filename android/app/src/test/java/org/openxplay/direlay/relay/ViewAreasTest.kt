@@ -121,4 +121,28 @@ class ViewAreasTest {
         assertEquals(rows, WindowSizeRecords({ disk }, {}).snapshot())
         assertTrue(WindowSizeRecords({ "bad data\n1,2,3" }, {}).snapshot().isEmpty())
     }
+    @Test fun carlinkUsesDeclaredAreaAcrossScreensAndRestartsOnlyWhenNoneMatches() {
+        val browser = ScreenDataKey(1920, 1080, 240)
+        val carlink = ScreenDataKey(1532, 1013, 240)
+        val areas = ViewAreaPlanner.plan(1920, 960, listOf(row(1533, 1014, full = true)))
+        val match = ViewAreaPlanner.match(areas, carlink.width, carlink.height, true, null)
+        assertNotNull(match)
+        assertFalse(carlinkScreenChanged(carlink, browser, true, match))
+        assertTrue(carlinkScreenChanged(carlink, browser, true, null))
+        assertTrue(carlinkScreenChanged(carlink, browser, false, match))
+        assertFalse(carlinkScreenChanged(carlink, carlink, true, null))
+        val debounce = ViewAreaSwitchDebounce()
+        assertTrue(debounce.observe(match, 0))
+        assertNull(debounce.ready(299)); assertEquals(match, debounce.ready(300))
+        val nextAreas = ViewAreaPlanner.plan(1156, 764, emptyList())
+        assertEquals(0, ViewAreaPlanner.match(nextAreas, 1532, 1013, true, null))
+        assertFalse(carlinkScreenChanged(carlink, carlink, true, 0))
+    }
+    @Test fun carlinkRecordsKeepTheirOwnScreenKeyAndDoNotUseBrowserModelRecords() {
+        val carlink = ScreenDataKey(1532, 1013, 240)
+        val browserRow = WindowSizeRecord(1920, 1080, 240, 1533, 1014, true, 5, 1)
+        val carlinkRow = WindowSizeRecord(1532, 1013, 240, 1532, 1013, true, 1, 2)
+        assertEquals(listOf(carlinkRow), ViewAreaPlanner.mergeRecords(listOf(browserRow, carlinkRow), emptyList(), carlink))
+    }
+
 }

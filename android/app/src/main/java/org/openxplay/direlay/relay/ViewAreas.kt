@@ -109,3 +109,6 @@ class WindowSizeRecords(private val read: () -> String, private val write: (Stri
         "${it.screenWidth},${it.screenHeight},${it.densityDpi},${it.width},${it.height},${if (it.fullscreen) 1 else 0},${it.count},${it.lastSeen},1"
     })
 }
+
+fun carlinkScreenChanged(live: ScreenDataKey, started: ScreenDataKey?, carlink: Boolean, matchingArea: Int?): Boolean =
+    live != started && (!carlink || matchingArea == null)

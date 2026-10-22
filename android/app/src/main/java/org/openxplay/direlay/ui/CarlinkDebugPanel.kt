@@ -28,13 +28,11 @@ import org.openxplay.direlay.relay.RelayRuntime
     var dropped by remember { mutableStateOf(0L) }
     var file by remember { mutableStateOf<java.io.File?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(runtime, enabled) {
+    LaunchedEffect(runtime) {
         while (true) {
-            if (enabled || lines.isNotEmpty()) {
-                lines = runtime.carlinkTraceRecorder.snapshot(); dropped = runtime.carlinkTraceRecorder.dropped.get()
-                file = runtime.carlinkTraceRecorder.currentFile; failure = runtime.carlinkTraceRecorder.failure
-                capturing = runtime.carlinkMediaCapture.capturing; bytes = runtime.carlinkMediaCapture.bytes
-            }
+            lines = runtime.carlinkTraceRecorder.snapshot(); dropped = runtime.carlinkTraceRecorder.dropped.get()
+            file = runtime.carlinkTraceRecorder.currentFile; failure = runtime.carlinkTraceRecorder.failure
+            capturing = runtime.carlinkMediaCapture.capturing; bytes = runtime.carlinkMediaCapture.bytes
             delay(500)
         }
     }

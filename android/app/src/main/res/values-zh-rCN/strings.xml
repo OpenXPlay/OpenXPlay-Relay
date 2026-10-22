@@ -188,8 +188,11 @@
     <string name="settings_network_hint">选择无线 CarPlay 使用的网络。</string>
     <string name="settings_startup">启动</string>
     <string name="settings_automatic_hint">准备就绪时自动连接。</string>
-    <string name="settings_developer_hint">高级选项与诊断</string>
+    <string name="settings_developer_hint">高级选项与诊断。关闭开发者模式后，开发者选项恢复默认值。</string>
+    <string name="dev_use_options">使用开发者选项</string>
+    <string name="dev_use_options_hint">关闭后，下面的选项恢复默认值；你的选择会保留，下次打开时恢复。</string>
     <string name="settings_next_start">下次启动 CarPlay 时应用。</string>
+    <string name="settings_reconnect">重新连接 Carlink 以应用此更改。</string>
     <string name="settings_saved">已保存</string>
     <string name="settings_copied">已复制</string>
     <string name="settings_copy_value">复制%1$s</string>
@@ -217,6 +220,7 @@
     <string name="dev_remove_identity">移除身份文件</string>
     <string name="dev_outputs">输出与网络</string>
     <string name="dev_port">网页端口（留空为 8443）</string>
+    <string name="dev_web_port">网页端口</string>
     <string name="dev_both">同时使用两种输出</string>
     <string name="dev_remove_identity_question">移除身份文件？</string>
     <string name="dev_remove_tls_question">移除导入的证书？</string>
@@ -605,4 +609,12 @@
     <string name="public_name_name_invalid">请输入完整域名。DuckDNS 域名以 .duckdns.org 结尾。</string>
     <string name="public_name_token_invalid">这个 Token 与所选服务商不符。</string>
     <string name="public_name_remove_confirm">要从这台中继移除域名、Token 和证书吗？服务商那里的地址记录保持不变。</string>
+    <string name="carlink_picture_size">Carlink 画面尺寸</string>
+    <string name="carlink_picture_window">车机窗口</string>
+    <string name="carlink_picture_mode">1280×720（补偿变形）</string>
+    <string name="carlink_picture_size_hint">「车机窗口」：CarPlay 按 Carlink 窗口的尺寸显示。「1280×720（补偿变形）」：用于只接受 1280×720 的车机，画面会预先拉伸，显示出来比例正确。修改后请重新连接 Carlink。</string>
+    <string name="carlink_geometry">当前画面</string>
+    <string name="carlink_geometry_value">窗口 %1$s · 画布 %2$s · 区域 %3$s · 发送 %4$s · %5$s</string>
+    <string name="carlink_passthrough">直通</string>
+    <string name="carlink_transcode">转码</string>
 </resources>

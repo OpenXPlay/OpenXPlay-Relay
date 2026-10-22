@@ -220,8 +220,11 @@
     <string name="settings_network_hint">Choose the network used by wireless CarPlay.</string>
     <string name="settings_startup">Startup</string>
     <string name="settings_automatic_hint">Connect when setup is ready.</string>
-    <string name="settings_developer_hint">Advanced controls and diagnostics</string>
+    <string name="settings_developer_hint">Advanced controls and diagnostics. Turning Developer mode off returns developer options to their defaults.</string>
+    <string name="dev_use_options">Use developer options</string>
+    <string name="dev_use_options_hint">Off: the options below go back to their defaults. Your choices are kept for next time.</string>
     <string name="settings_next_start">Applies on the next CarPlay start.</string>
+    <string name="settings_reconnect">Reconnect Carlink to apply this change.</string>
     <string name="settings_saved">Saved</string>
     <string name="settings_copied">Copied</string>
     <string name="settings_copy_value">Copy %1$s</string>
@@ -249,6 +252,7 @@
     <string name="dev_remove_identity">Remove identity</string>
     <string name="dev_outputs">Outputs and network</string>
     <string name="dev_port">Web port (empty = 8443)</string>
+    <string name="dev_web_port">Web port</string>
     <string name="dev_both">Both outputs at once</string>
     <string name="dev_remove_identity_question">Remove identity?</string>
     <string name="dev_remove_tls_question">Remove imported certificate?</string>
@@ -612,4 +616,12 @@
     <string name="public_name_name_invalid">Enter the full domain name. DuckDNS names end in .duckdns.org.</string>
     <string name="public_name_token_invalid">This token does not fit the chosen provider.</string>
     <string name="public_name_remove_confirm">Remove the domain name, the token and the certificate from this relay? The address stays at the provider.</string>
+    <string name="carlink_picture_size">Carlink picture size</string>
+    <string name="carlink_picture_window">Car window</string>
+    <string name="carlink_picture_mode">1280×720, corrected</string>
+    <string name="carlink_picture_size_hint">Car window: CarPlay is sized to the Carlink window. 1280×720, corrected: for head units that only accept 1280×720; the picture is pre-stretched so it shows in the right shape. Reconnect Carlink after changing.</string>
+    <string name="carlink_geometry">Live picture</string>
+    <string name="carlink_geometry_value">Window %1$s · canvas %2$s · area %3$s · sent %4$s · %5$s</string>
+    <string name="carlink_passthrough">passthrough</string>
+    <string name="carlink_transcode">transcode</string>
 </resources>

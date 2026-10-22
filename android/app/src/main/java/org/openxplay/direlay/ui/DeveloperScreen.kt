@@ -22,11 +22,19 @@ import org.openxplay.direlay.settings.DisplayMode
 import org.openxplay.direlay.relay.RelayRuntime
 import kotlinx.coroutines.*
 import org.openxplay.direlay.storage.MaterialStatus
+import org.openxplay.direlay.video.CarlinkGeometry
+import org.openxplay.direlay.video.VideoCompatibility
+
+internal fun carlinkGeometryValues(geometry: CarlinkGeometry) = with(geometry) {
+    listOf("${window.width}×${window.height}", "${canvas.width}×${canvas.height}",
+        "${area.x},${area.y} ${area.width}×${area.height}", "${picture.width}×${picture.height}")
+}
 
 data class DeveloperRow(val label: Int, val value: String, val argument: String = "", val valueKey: Int = 0,
     val valueArguments: List<String> = emptyList())
 data class DeveloperView(val rows: List<DeveloperRow> = emptyList(), val urls: List<String> = emptyList(),
-    val fingerprint: String = "", val identity: Int = R.string.direlay_missing)
+    val fingerprint: String = "", val identity: Int = R.string.direlay_missing,
+    val carlinkGeometry: CarlinkGeometry? = null, val carlinkGeometryMode: VideoCompatibility.Mode? = null)
 fun developerView(runtime: RelayRuntime): DeveloperView {
     return DeveloperView(buildList {
     runtime.carPlayScreenSummary.let { (size, source) ->
@@ -84,25 +92,30 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         MaterialStatus.Installed -> R.string.direlay_installed
         MaterialStatus.Missing -> R.string.direlay_missing
         is MaterialStatus.Invalid -> R.string.dev_invalid_identity
-    })
+    }, runtime.carlinkGeometry, runtime.carlinkGeometryMode)
 }
 
-@Composable fun DeveloperScreen(initial: RelaySettings, view: DeveloperView, back: () -> Unit,
+@Composable fun DeveloperScreen(initial: RelaySettings, overrides: DeveloperOverrides, view: DeveloperView, back: () -> Unit,
     save: suspend (RelaySettings, RelaySettings) -> Boolean, copy: (String) -> Unit,
+    saveOverrides: suspend ((DeveloperOverrides) -> DeveloperOverrides) -> Boolean,
     reconnect: () -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit,
     sample: Boolean, setSample: (Boolean) -> Unit, openVehicle: () -> Unit, wireless: (RelaySettings) -> Boolean,
     debug: RelayRuntime? = null) {
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var saved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
-    var port by rememberSaveable { mutableStateOf(draft.webPort?.toString().orEmpty()) }
+    var port by rememberSaveable { mutableStateOf(overrides.webPort?.toString().orEmpty()) }
+    var model by rememberSaveable { mutableStateOf(overrides.carlinkDeviceModel) }
+    var knownPort by remember { mutableStateOf(overrides.webPort) }
+    var knownModel by remember { mutableStateOf(overrides.carlinkDeviceModel) }
     var custom by rememberSaveable { mutableStateOf(draft.displayMode == DisplayMode.FIXED && draft.display != null && draft.display !in DisplayProfile.presets) }
     var width by rememberSaveable { mutableStateOf((draft.display?.width ?: 1280).toString()) }
     var height by rememberSaveable { mutableStateOf((draft.display?.height ?: 720).toString()) }
     var density by rememberSaveable { mutableStateOf((draft.display?.density ?: 160).toString()) }
     var channel by rememberSaveable { mutableStateOf(draft.wirelessNetwork.channel.toString()) }
-    val invalidNumber = (port.isNotEmpty() && port.toIntOrNull() !in 1024..65535) ||
-        channel.toIntOrNull() == null || (custom && listOf(width, height, density).any { it.toIntOrNull() == null })
-    val candidate = draft.copy(webPort = port.toIntOrNull(), displayMode = if (custom) DisplayMode.FIXED else draft.displayMode, display = if (custom && !invalidNumber)
+    val invalidPort = port.isNotEmpty() && port.toIntOrNull() !in 1024..65535
+    val invalidModel = model.isBlank() || model.toByteArray(Charsets.UTF_8).size > 128 || model.any { Character.isISOControl(it) }
+    val invalidNumber = channel.toIntOrNull() == null || (custom && listOf(width, height, density).any { it.toIntOrNull() == null })
+    val candidate = draft.copy(displayMode = if (custom) DisplayMode.FIXED else draft.displayMode, display = if (custom && !invalidNumber)
         DisplayProfile(width.toInt(), height.toInt(), density.toInt()) else draft.display,
         wirelessNetwork = draft.wirelessNetwork.copy(channel = channel.toIntOrNull() ?: 0))
     var confirmCarlink by remember { mutableStateOf(false) }
@@ -116,6 +129,28 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
         }) { Text(stringResource(android.R.string.ok)) } },
         dismissButton = { TextButton(onClick = { confirmCarlink = false }) { Text(stringResource(android.R.string.cancel)) } })
     var failed by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    fun changeOverrides(change: (DeveloperOverrides) -> DeveloperOverrides) {
+        scope.launch { failed = !saveOverrides(change) }
+    }
+    LaunchedEffect(overrides.webPort) {
+        if (port == knownPort?.toString().orEmpty()) port = overrides.webPort?.toString().orEmpty()
+        knownPort = overrides.webPort
+    }
+    LaunchedEffect(overrides.carlinkDeviceModel) {
+        if (model == knownModel) model = overrides.carlinkDeviceModel
+        knownModel = overrides.carlinkDeviceModel
+    }
+    LaunchedEffect(port) {
+        val value = port.toIntOrNull()
+        if (!invalidPort && value != overrides.webPort)
+            failed = !saveOverrides { it.copy(webPort = value) }
+    }
+    LaunchedEffect(model) {
+        val value = model
+        if (!invalidModel && value != overrides.carlinkDeviceModel)
+            failed = !saveOverrides { it.copy(carlinkDeviceModel = value) }
+    }
     LaunchedEffect(candidate, invalidNumber) {
         if (!invalidNumber && candidate != saved && settingsSaveErrors(candidate, wireless(candidate)).isEmpty()) {
             if (save(saved, candidate)) { saved = candidate; failed = false } else failed = true
@@ -124,27 +159,63 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
     var confirm by remember { mutableStateOf<Boolean?>(null) }
     val ms = if (LocalRelayMotion.current) 220 else 0
     DetailPage(stringResource(R.string.ui_developer), back) {
-        Toggle(stringResource(R.string.dev_sample_vehicle), sample, setSample)
-        Hint(stringResource(R.string.dev_sample_hint))
+        Toggle(stringResource(R.string.dev_use_options), overrides.active) { enabled -> changeOverrides { it.copy(active = enabled) } }
+        Hint(stringResource(R.string.dev_use_options_hint))
+        Toggle(stringResource(R.string.dev_sample_vehicle), sample && overrides.active, enabled = overrides.active, onChange = setSample)
+        Hint(stringResource(R.string.dev_sample_hint), enabled = overrides.active)
         SettingsRow(stringResource(R.string.vehicle_title), stringResource(R.string.dev_sample_open), R.drawable.symbol_car, openVehicle)
         SmallHeading(stringResource(R.string.carlink_debug))
-        Toggle(stringResource(R.string.carlink_trace_enabled), draft.carlinkTrace, { draft = draft.copy(carlinkTrace = it) })
-        SmallHeading(stringResource(R.string.carlink_hevc))
-        Options(listOf(stringResource(R.string.carlink_hevc_stream_only), stringResource(R.string.carlink_hevc_off),
-            stringResource(R.string.carlink_hevc_signal)), draft.carlinkHevc.ordinal) {
-            draft = draft.copy(carlinkHevc = org.openxplay.stream.clink.ClinkHevcMode.entries[it])
+        Toggle(stringResource(R.string.carlink_trace_enabled), overrides.carlinkTrace, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(carlinkTrace = enabled) }
         }
-        Hint(stringResource(R.string.carlink_hevc_hint))
-        if (debug != null) CarlinkDebugPanel(debug, draft.carlinkTrace)
+        Toggle(stringResource(R.string.carlink_hevc), overrides.carlinkHevcEnabled, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(carlinkHevcEnabled = enabled) }
+        }
+        AnimatedVisibility(overrides.carlinkHevcEnabled, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Options(listOf(stringResource(R.string.carlink_hevc_stream_only), stringResource(R.string.carlink_hevc_off),
+                    stringResource(R.string.carlink_hevc_signal)), overrides.carlinkHevc.ordinal, enabled = overrides.active) { index ->
+                    changeOverrides { it.copy(carlinkHevc = org.openxplay.stream.clink.ClinkHevcMode.entries[index]) }
+                }
+                Hint(stringResource(R.string.carlink_hevc_hint), enabled = overrides.active)
+            }
+        }
+        Toggle(stringResource(R.string.carlink_picture_size), overrides.carlinkPictureSizeEnabled, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(carlinkPictureSizeEnabled = enabled) }
+        }
+        AnimatedVisibility(overrides.carlinkPictureSizeEnabled, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Options(listOf(stringResource(R.string.carlink_picture_window), stringResource(R.string.carlink_picture_mode)),
+                    overrides.carlinkPictureSize.ordinal, enabled = overrides.active) { index ->
+                    changeOverrides { it.copy(carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.entries[index]) }
+                }
+                Hint(stringResource(R.string.carlink_picture_size_hint), enabled = overrides.active)
+            }
+        }
+        view.carlinkGeometry?.let { geometry ->
+            val mode = stringResource(when (view.carlinkGeometryMode) {
+                VideoCompatibility.Mode.PASSTHROUGH -> R.string.carlink_passthrough
+                VideoCompatibility.Mode.TRANSCODE -> R.string.carlink_transcode
+                else -> R.string.dev_unavailable
+            })
+            KeyValue(stringResource(R.string.carlink_geometry), stringResource(R.string.carlink_geometry_value,
+                *(carlinkGeometryValues(geometry) + mode).toTypedArray()))
+        }
+        if (debug != null) CarlinkDebugPanel(debug, initial.carlinkTrace)
         SmallHeading(stringResource(R.string.car_view_areas))
         if (debug != null) ViewAreasPanel(debug)
-        if (debug != null) {
-            val widths = listOf(0) + (100..400 step 25)
-            var width by remember { mutableIntStateOf(debug.settingsStore.physicalWidthOverrideMm) }
-            Text(stringResource(R.string.dev_physical_width))
-            Options(widths.map { if (it == 0) stringResource(R.string.dev_physical_width_off) else "$it mm" },
-                widths.indexOf(width).coerceAtLeast(0)) { width = widths[it]; debug.settingsStore.physicalWidthOverrideMm = width }
-            Hint(stringResource(R.string.dev_physical_width_hint))
+        Toggle(stringResource(R.string.dev_physical_width), overrides.physicalWidthEnabled, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(physicalWidthEnabled = enabled,
+                physicalWidthOverrideMm = it.physicalWidthOverrideMm.takeIf { width -> width > 0 } ?: 200) }
+        }
+        AnimatedVisibility(overrides.physicalWidthEnabled, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                val widths = (100..400 step 25).toList()
+                Options(widths.map { "$it mm" }, widths.indexOf(overrides.physicalWidthOverrideMm), enabled = overrides.active) { index ->
+                    changeOverrides { it.copy(physicalWidthOverrideMm = widths[index]) }
+                }
+                Hint(stringResource(R.string.dev_physical_width_hint), enabled = overrides.active)
+            }
         }
         SmallHeading(stringResource(R.string.dev_runtime))
         KeyValue(stringResource(R.string.dev_connected_clients), stringResource(R.string.dev_unavailable))
@@ -195,15 +266,44 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
                 SettingField(stringResource(R.string.direlay_density), density, number = true) { density = it }
             }
         }
-        SmallHeading(stringResource(R.string.direlay_fps))
-        Options((30..60 step 5).map(Int::toString), (draft.fps - 30) / 5) { draft = draft.copy(fps = 30 + it * 5) }
-        Toggle(stringResource(R.string.direlay_local_preview), draft.localPreview) { draft = draft.copy(localPreview = it) }
-        Toggle(stringResource(R.string.direlay_play_audio), draft.playCarPlayAudio) { draft = draft.copy(playCarPlayAudio = it) }
-        SmallHeading(stringResource(R.string.direlay_microphone_source))
-        Options(listOf(stringResource(R.string.direlay_head_unit), stringResource(R.string.direlay_this_device)), MicrophoneSource.entries.indexOf(draft.microphoneSource)) { draft = draft.copy(microphoneSource = MicrophoneSource.entries[it]) }
+        Toggle(stringResource(R.string.direlay_fps), overrides.fpsEnabled, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(fpsEnabled = enabled) }
+        }
+        AnimatedVisibility(overrides.fpsEnabled, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+            Options((30..60 step 5).map(Int::toString), (overrides.fps - 30) / 5, enabled = overrides.active) { index ->
+                changeOverrides { it.copy(fps = 30 + index * 5) }
+            }
+        }
+        Toggle(stringResource(R.string.direlay_local_preview), overrides.localPreview, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(localPreview = enabled) }
+        }
+        Toggle(stringResource(R.string.direlay_play_audio), overrides.playCarPlayAudio, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(playCarPlayAudio = enabled) }
+        }
+        Toggle(stringResource(R.string.direlay_microphone_source), overrides.microphoneSourceEnabled, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(microphoneSourceEnabled = enabled) }
+        }
+        AnimatedVisibility(overrides.microphoneSourceEnabled, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+            Options(listOf(stringResource(R.string.direlay_head_unit), stringResource(R.string.direlay_this_device)),
+                MicrophoneSource.entries.indexOf(overrides.microphoneSource), enabled = overrides.active) { index ->
+                changeOverrides { it.copy(microphoneSource = MicrophoneSource.entries[index]) }
+            }
+        }
         SmallHeading(stringResource(R.string.dev_outputs))
-        SettingField(stringResource(R.string.dev_port), port, if (invalidNumber) R.string.settings_advanced_error else null, number = true) { port = it }
-        SettingField(stringResource(R.string.direlay_carlink_model), draft.carlinkDeviceModel) { draft = draft.copy(carlinkDeviceModel = it) }
+        Toggle(stringResource(R.string.dev_web_port), overrides.webPortEnabled, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(webPortEnabled = enabled) }
+        }
+        AnimatedVisibility(overrides.webPortEnabled, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+            SettingField(stringResource(R.string.dev_port), port, if (invalidPort) R.string.settings_advanced_error else null,
+                number = true, enabled = overrides.active) { port = it }
+        }
+        Toggle(stringResource(R.string.direlay_carlink_model), overrides.carlinkDeviceModelEnabled, enabled = overrides.active) { enabled ->
+            changeOverrides { it.copy(carlinkDeviceModelEnabled = enabled) }
+        }
+        AnimatedVisibility(overrides.carlinkDeviceModelEnabled, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+            SettingField(stringResource(R.string.direlay_carlink_model), model, if (invalidModel) R.string.settings_advanced_error else null,
+                enabled = overrides.active) { model = it }
+        }
         Toggle(stringResource(R.string.dev_both), draft.bothOutputs) {
             val next = draft.copy(bothOutputs = it)
             if (CarlinkConnectionPolicy.enabling(draft, next, wireless(next)) != next) confirmCarlink = true

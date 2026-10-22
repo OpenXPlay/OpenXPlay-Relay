@@ -38,6 +38,20 @@ class CarlinkTraceRecorderTest {
         } finally { release.countDown(); recorder.close(); directory.deleteRecursively() }
     }
 
+    @Test fun inputTraceKeepsRawCoordinatesAndCurrentPictureSize() {
+        val event = ClinkTraceEvent.Input(1, 2, "touch", listOf(.5 to .25),
+            listOf(640L to 180L), 1156 to 764)
+        val json = JSONObject(CarlinkTraceRecorder.encode(event))
+        assertEquals(.5, json.getJSONArray("coordinates").getJSONArray(0).getDouble(0), 0.0)
+        assertEquals(640L, json.getJSONArray("rawCoordinates").getJSONArray(0).getLong(0))
+        assertEquals(180L, json.getJSONArray("rawCoordinates").getJSONArray(0).getLong(1))
+        assertEquals(1156, json.getJSONArray("streamSize").getInt(0))
+        assertEquals(764, json.getJSONArray("streamSize").getInt(1))
+        val legacy = JSONObject(CarlinkTraceRecorder.encode(ClinkTraceEvent.Input(1, 2, "touch", emptyList())))
+        assertEquals(0, legacy.getJSONArray("rawCoordinates").length())
+        assertTrue(legacy.isNull("streamSize"))
+    }
+
     @Test fun ringRotationJsonAndClear() {
         val directory = Files.createTempDirectory("carlink-trace").toFile()
         val mirror = mutableListOf<String>()

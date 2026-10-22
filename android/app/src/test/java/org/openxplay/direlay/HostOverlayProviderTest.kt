@@ -22,8 +22,9 @@ class HostOverlayProviderTest {
         val context = RuntimeEnvironment.getApplication()
         val runtime = RelayRuntime(context)
         try {
-            val settings = runtime.settingsStore.awaitSnapshot()
-            runtime.settingsStore.save(settings.copy(localPreview = true))
+            runtime.settingsStore.awaitSnapshot()
+            runtime.settingsStore.developerMode = true
+            runtime.settingsStore.saveDeveloperOverrides(runtime.settingsStore.developerOverrides.value.copy(localPreview = true))
             runtime.settingsStore.awaitSnapshot()
             val application = DiRelayApplication()
             // Avoid starting a second runtime (web servers, discovery) for the Application under test.

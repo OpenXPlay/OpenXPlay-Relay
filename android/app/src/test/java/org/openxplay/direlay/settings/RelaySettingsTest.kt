@@ -27,6 +27,29 @@ class RelaySettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
+    private fun developerOptions(change: (DeveloperOverrides) -> DeveloperOverrides) {
+        RelaySettingsStore(context).use { store ->
+            store.developerMode = true
+            store.saveDeveloperOverrides(change(store.developerOverrides.value))
+        }
+    }
+
+    @Test fun carlinkPictureSizeDefaultsToWindowAndPersistsEveryOption() {
+        developerOptions { it.copy(carlinkPictureSizeEnabled = true) }
+        val preferences = context.getSharedPreferences("direlay", 0)
+        assertEquals(org.openxplay.stream.clink.ClinkPictureSize.WINDOW, store.load().carlinkPictureSize)
+        for (size in org.openxplay.stream.clink.ClinkPictureSize.entries) {
+            val settings = store.load().copy(carlinkPictureSize = size)
+            store.save(settings)
+            assertEquals(size.name, preferences.getString("carlinkPictureSize", null))
+            assertEquals(settings, RelaySettingsStore(context).load())
+        }
+        preferences.edit().putString("carlinkPictureSize", "future").commit()
+        assertEquals(org.openxplay.stream.clink.ClinkPictureSize.WINDOW, store.load().carlinkPictureSize)
+        preferences.edit().remove("carlinkPictureSize").commit()
+        assertEquals(org.openxplay.stream.clink.ClinkPictureSize.WINDOW, store.load().carlinkPictureSize)
+    }
+
     @Test fun viewAreasDefaultOnIgnoreExperimentalKeyAndPersist() {
         val preferences = context.getSharedPreferences("direlay", 0)
         for (old in listOf(false, true)) {
@@ -122,6 +145,7 @@ class RelaySettingsTest {
     }
     @Test fun developerWidthOverrideWinsForPreparedAndFixedDisplays() {
         RelaySettingsStore(context).use { store ->
+            store.developerMode = true
             val profile = DisplayProfile(2400, 1200, 300)
             store.physicalWidthOverrideMm = 225
             for (preset in CarPlayScreenWidth.entries) {
@@ -137,6 +161,7 @@ class RelaySettingsTest {
     }
 
     @Test fun carlinkHevcDefaultsAutomaticPreservesStoredNamesAndRejectsUnknownNames() {
+        developerOptions { it.copy(carlinkHevcEnabled = true) }
         RelaySettingsStore(context).use { store ->
             assertEquals(org.openxplay.stream.clink.ClinkHevcMode.STREAM_ONLY, store.load().carlinkHevc)
             for (mode in org.openxplay.stream.clink.ClinkHevcMode.entries) {
@@ -167,7 +192,8 @@ class RelaySettingsTest {
         val store = RelaySettingsStore(context)
         val original = store.load()
         assertFalse(original.carlinkTrace)
-        store.save(original.copy(carlinkTrace = true))
+        store.developerMode = true
+        store.saveDeveloperOverrides(store.developerOverrides.value.copy(carlinkTrace = true))
         assertTrue(store.load().carlinkTrace)
         store.save(original)
         assertFalse(store.load().carlinkTrace)
@@ -280,8 +306,10 @@ class RelaySettingsTest {
     @Test fun audioDefaultsAndBothMicrophoneSourcesPersist() {
         assertFalse(store.load().playCarPlayAudio)
         assertEquals(MicrophoneSource.HEAD_UNIT, store.load().microphoneSource)
+        developerOptions { it.copy(microphoneSourceEnabled = true) }
         for (source in MicrophoneSource.entries) for (play in listOf(false, true)) {
             val changed = store.load().copy(playCarPlayAudio = play, microphoneSource = source)
+            developerOptions { it.copy(playCarPlayAudio = play) }
             store.save(changed)
             assertEquals(changed, RelaySettingsStore(context).load())
         }
@@ -301,6 +329,7 @@ class RelaySettingsTest {
     }
 
     @Test fun sharedValuesAreWrittenThroughAirPlayPersistenceAndReadBack() {
+        developerOptions { it.copy(fpsEnabled = true) }
         for (target in MfiTarget.entries) {
             val settings = store.load().copy(
                 mfiTarget = target, i2cPath = " /dev/i2c-3 ",
@@ -388,6 +417,7 @@ class RelaySettingsTest {
     }
 
     @Test fun relayOptionsAndAutoConnectReuseTheirExistingStores() {
+        developerOptions { it.copy(localPreview = true, webPortEnabled = true) }
         store.save(store.load().copy(localPreview = true, webPort = 9443, autoStartWhenReady = true))
         val relay = context.getSharedPreferences("direlay", 0)
         assertTrue(relay.getBoolean("localPreview", false))
@@ -404,6 +434,7 @@ class RelaySettingsTest {
     }
 
     @Test fun invalidInputsCannotPartiallyOverwriteSettings() {
+        developerOptions { it.copy(fpsEnabled = true, webPortEnabled = true) }
         val original = store.load()
         val invalid = listOf(
             original.copy(displayMode = DisplayMode.FIXED, display = null),
@@ -429,6 +460,7 @@ class RelaySettingsTest {
     }
 
     @Test fun cachedSnapshotIsStableOnReadsAndPublishesSavesAndExternalChanges() {
+        developerOptions { it.copy(fpsEnabled = true, webPortEnabled = true) }
         val observed = RelaySettingsStore(context)
         try {
             // Production initializes on the settings worker; reads below only inspect memory.

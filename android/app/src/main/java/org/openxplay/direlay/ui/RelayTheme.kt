@@ -44,15 +44,19 @@ val RelayGreen = Color(0xFF54E8A0)
     }
 }
 @Composable fun Heading(text: String) = Text(text, modifier = Modifier.semantics { heading() }, fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
-@Composable fun Hint(text: String) = Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
-@Composable fun Toggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
+@Composable fun Hint(text: String, enabled: Boolean = true) = Text(text,
+    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface.copy(alpha = .38f))
+@Composable fun Toggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) = Toggle(label, value, true, onChange)
+@Composable fun Toggle(label: String, value: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f).padding(end = 12.dp))
-        LabeledSwitch(label, value, onChange)
+        Text(label, Modifier.weight(1f).padding(end = 12.dp),
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = .38f))
+        LabeledSwitch(label, value, enabled, onChange)
     }
 }
 
-@Composable fun LabeledSwitch(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
-    Switch(value, onChange, Modifier.semantics { contentDescription = label })
+@Composable fun LabeledSwitch(label: String, value: Boolean, onChange: (Boolean) -> Unit) = LabeledSwitch(label, value, true, onChange)
+@Composable fun LabeledSwitch(label: String, value: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Switch(value, onChange, Modifier.semantics { contentDescription = label }, enabled = enabled)
 }

@@ -168,7 +168,7 @@ class RelayRuntime(private val context: Context,
         val area = areas.getOrNull(index) ?: return
         activeAreaIndex = index
         val value = org.openxplay.stream.web.ViewArea(0, 0, area.width, area.height, areas[0].width, areas[0].height)
-        activeArea = value; areaListeners.forEach { it(value) }
+        activeArea = value; updateCarlinkArea(value); areaListeners.forEach { it(value) }
     }
     data class AreaSwitch(val time: Long, val index: Int, val accepted: Boolean)
     private val areaSwitches = ArrayDeque<AreaSwitch>()
@@ -184,13 +184,31 @@ class RelayRuntime(private val context: Context,
             areaSwitches.addLast(AreaSwitch(System.currentTimeMillis(), index, accepted))
         }
     }
+    private fun updateCarlinkArea(area: org.openxplay.stream.web.ViewArea) {
+        carlinkVideoOutput?.setCarlinkArea(area.x, area.y, area.width, area.height, area.canvasWidth, area.canvasHeight)
+    }
+    private fun carlinkPrimary() = carlinkScreen != null && displayPolicy.primaryDisplay === carlinkScreen
+    private fun carlinkMatchingArea(settings: RelaySettings): Int? =
+        if (carlinkPrimary() && settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC)
+            carlinkScreen?.let { display -> display.viewport?.let {
+                ViewAreaPlanner.match(declaredViewAreas, it.width, it.height, display.fullscreen, display.fullscreenPreferred)
+            } } else null
+    private var lastCarlinkWindow: List<Int>? = null
+    private fun recordCarlinkWindow(display: org.openxplay.stream.core.DisplayInfo?) {
+        val viewport = display?.viewport
+        if (display == null || viewport == null || display.fullscreen == null) { lastCarlinkWindow = null; return }
+        val key = listOf(display.widthPx, display.heightPx, display.densityDpi, viewport.width, viewport.height, if (display.fullscreen == true) 1 else 0)
+        if (key == lastCarlinkWindow) return
+        lastCarlinkWindow = key
+        windowRecords.record(key[0], key[1], key[2], key[3], key[4], display.fullscreen == true, System.currentTimeMillis())
+    }
     private var lastWindow: List<Int>? = null
     private fun observeWindow(display: org.openxplay.stream.core.DisplayInfo?) {
         if (display == null) synchronized(this) { clearedReport = null }
         viewAreaPreference = if (display == null) preparedPlanningDisplay?.preferred else display.fullscreenPreferred
         val viewport = display?.viewport
         val areas = declaredViewAreas
-        val candidate = if (viewport != null && settingsStore.snapshot.value?.viewAreas == true &&
+        val candidate = if (viewport != null && settingsStore.snapshot.value?.let { it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC } == true &&
             status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
             ViewAreaPlanner.match(areas, viewport.width, viewport.height, display.fullscreen, display.fullscreenPreferred)?.takeIf { it != activeAreaIndex } else null
         if (areaDebounce.observe(candidate, android.os.SystemClock.elapsedRealtime())) {
@@ -203,6 +221,7 @@ class RelayRuntime(private val context: Context,
                     switchViewArea(index)
             }, 300, java.util.concurrent.TimeUnit.MILLISECONDS)
         }
+        if (display != null && display === carlinkScreen) { recordCarlinkWindow(display); return }
         val fullscreen = display?.fullscreen
         if (display == null || viewport == null || fullscreen == null) { lastWindow = null; return }
         val key = listOf(display.widthPx, display.heightPx, display.densityDpi, viewport.width, viewport.height, if (fullscreen) 1 else 0)
@@ -210,14 +229,14 @@ class RelayRuntime(private val context: Context,
         lastWindow = key
         windowRecords.record(key[0], key[1], key[2], key[3], key[4], fullscreen, System.currentTimeMillis())
     }
-    fun clearWindowRecords() { setup.execute { windowRecords.clear(); lastWindow = null } }
+    fun clearWindowRecords() { setup.execute { windowRecords.clear(); lastWindow = null; lastCarlinkWindow = null } }
     fun planViewAreas(width: Int, height: Int): List<ViewAreaSize>? {
         val settings = settingsStore.snapshot.value
         if (settings?.viewAreas != true || settings.displayMode != DisplayMode.AUTOMATIC) {
             declaredViewAreas = emptyList()
             activeAreaIndex = 0
             val area = org.openxplay.stream.web.ViewArea(0, 0, width, height, width, height)
-            activeArea = area; areaListeners.forEach { it(area) }
+            activeArea = area; updateCarlinkArea(area); areaListeners.forEach { it(area) }
             return null
         }
         loadRememberedDisplay()
@@ -251,7 +270,8 @@ class RelayRuntime(private val context: Context,
     fun displayMismatch(running: Boolean, settings: RelaySettings): Boolean {
         val live = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)
         if (settings.viewAreas || declaredViewAreas.isNotEmpty()) return running && settings.displayMode == DisplayMode.AUTOMATIC &&
-            live != null && appliedDisplay != null && live.screen != appliedDisplay?.screen
+            live != null && appliedDisplay != null && carlinkScreenChanged(live.screen, appliedDisplay?.screen,
+                carlinkPrimary(), carlinkMatchingArea(settings))
         return (settings.carplayResolution in setOf(CarPlayResolution.SCREEN, CarPlayResolution.NATIVE) || live?.visible == null) && carDisplayMismatch(
             running, settings.displayMode, carPlayScreen?.profile, displayPolicy.carDisplay ?: savedHeadUnit?.canvas)
     }
@@ -300,10 +320,15 @@ class RelayRuntime(private val context: Context,
     @Volatile var carlinkFailed = false
         private set
     // Sensor opt-in belongs to a socket generation and waits for the explicit reconnect action.
-    private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean, val hevc: ClinkHevcMode)
+    private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean, val hevc: ClinkHevcMode, val pictureSize: ClinkPictureSize)
     private var carlinkConfig: CarlinkConfig? = null
     private val carlinkBlock = CarlinkWifiDirectBlock()
     @Volatile private var carlink: ClinkOutput? = null
+    @Volatile private var carlinkVideoOutput: TranscodingOutput? = null
+    @Volatile var carlinkGeometry: CarlinkGeometry? = null
+        private set
+    @Volatile var carlinkGeometryMode: VideoCompatibility.Mode? = null
+        private set
     @Volatile var vehicleView = org.openxplay.direlay.vehicle.VehicleView()
         private set
     @Volatile private var collectVehicle = false
@@ -316,11 +341,12 @@ class RelayRuntime(private val context: Context,
         private set
     private var sampleTick = 0L
     fun setSampleVehicleData(enabled: Boolean) { setup.execute {
-        if (sampleVehicleData == enabled) return@execute
-        sampleVehicleData = enabled
+        val requested = settingsStore.developerOverrides.value.effectiveSampleVehicleData(enabled, settingsStore.developerMode)
+        if (sampleVehicleData == requested) return@execute
+        sampleVehicleData = requested
         sampleTick = 0
         configureVehicle()
-        if (enabled) org.openxplay.direlay.vehicle.sampleVehicleData(sampleTick++).forEach(::queueVehicle)
+        if (requested) org.openxplay.direlay.vehicle.sampleVehicleData(sampleTick++).forEach(::queueVehicle)
     } }
 
     /** Both real and generated data enter the same bounded, per-type 250 ms mailbox. */
@@ -511,7 +537,10 @@ class RelayRuntime(private val context: Context,
         val settings = settingsStore.snapshot.value ?: return
         val desiredScreen = startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car))
         val desired = desiredScreen?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth,
-            displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)?.screen ?: appliedDisplay?.screen) }
+            displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)?.screen?.let { screen ->
+                if (!carlinkScreenChanged(screen, appliedDisplay?.screen, carlinkPrimary(), carlinkMatchingArea(settings)))
+                    appliedDisplay?.screen ?: screen else screen
+            } ?: appliedDisplay?.screen) }
         if (displayRefit.due(android.os.SystemClock.elapsedRealtime(), autoStartSessions.tracker.running,
                 settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null, settings.viewAreas || declaredViewAreas.isNotEmpty()) &&
             !sessionActions.restarting && !startRequest.pending) sessionActions.action("restart")
@@ -550,6 +579,10 @@ class RelayRuntime(private val context: Context,
 
     fun reloadSettings() {
         val requested = settingsStore.snapshot.value ?: return
+        if (!settingsStore.developerMode || !settingsStore.developerOverrides.value.active) {
+            setSampleVehicleData(false)
+            if (traceCapture.isInitialized() && carlinkMediaCapture.capturing) carlinkMediaCapture.stop()
+        }
         if (automaticEnabled == false && requested.autoStartWhenReady) autoStartSessions.resume("Automatic enabled")
         automaticEnabled = requested.autoStartWhenReady
         val vehicleEnabled = requested.vehicleInformation
@@ -610,8 +643,9 @@ class RelayRuntime(private val context: Context,
         val requested = CarlinkConfig(settings.carlinkOutput || settings.bothOutputs, permitted,
             settings.carlinkDeviceName, settings.carlinkDeviceModel,
             carlinkBlock.blocked(CarlinkConnectionPolicy.enabled(settings),
-                settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running), settings.carlinkTrace, settings.carlinkHevc)
-        if (!force && requested == carlinkConfig && !carlinkRestartPending) return
+                settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running), settings.carlinkTrace, settings.carlinkHevc, settings.carlinkPictureSize)
+        // Picture size is frozen until the next connection.
+        if (!force && requested.copy(pictureSize = carlinkConfig?.pictureSize ?: requested.pictureSize) == carlinkConfig && !carlinkRestartPending) return
         carlinkConfig = requested
         if (carlinkRetiring) { carlinkRestartPending = true; return }
         carlink?.let { output ->
@@ -622,6 +656,7 @@ class RelayRuntime(private val context: Context,
             // ClinkOutput.close stops the session; explicitly cancel a pending platform join too.
             carlinkLink?.disconnect()
             carlink = null
+            carlinkVideoOutput = null; carlinkGeometry = null; carlinkGeometryMode = null
             carlinkLink = null
             if (carlinkRetiring) return
         }
@@ -653,7 +688,7 @@ class RelayRuntime(private val context: Context,
         val output = ClinkOutput(link, sessionDiagnostics.pinProvider, sessionDiagnostics.trustStore,
             deviceId = id, deviceName = requested.name,
             vehicleData = settings.vehicleInformation,
-            hevc = requested.hevc, trace = trace, mediaTap = if (settings.carlinkTrace) carlinkMediaCapture else null,
+            hevc = requested.hevc, pictureSize = requested.pictureSize, trace = trace, mediaTap = if (settings.carlinkTrace) carlinkMediaCapture else null,
             listener = object : ClinkListener {
                 override fun state(state: ClinkState) {
                     sessionDiagnostics.state(state)
@@ -667,6 +702,7 @@ class RelayRuntime(private val context: Context,
                     }
                     if (state == ClinkState.ENDED) {
                         carlinkStatistics = null; carlinkVideoDecision = null; carlinkScreen = null
+                        carlinkGeometry = null; carlinkGeometryMode = null
                         carlinkEnded = true
                         try { setup.execute {
                             carlinkRetiring = false
@@ -702,7 +738,7 @@ class RelayRuntime(private val context: Context,
         carlinkState = "CONNECTING"
         carlinkLink = link
         carlink = output
-        hub.addOutput(TranscodingOutput(output, MediaCodecPipeline.factory, report = { format, decision, failed ->
+        val videoOutput = TranscodingOutput(output, MediaCodecPipeline.factory, report = { format, decision, failed ->
             carlinkVideoDecision = CarlinkVideoDecision(format, decision)
             val source = when {
                 format.codec == org.openxplay.stream.core.VideoCodec.H265 -> "H.265"
@@ -723,6 +759,8 @@ class RelayRuntime(private val context: Context,
             Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
         }, observeCapabilities = { caps ->
             carlinkScreen = caps?.displays?.get(org.openxplay.stream.core.ScreenId.MAIN)
+            try { setup.execute { recordCarlinkWindow(carlinkScreen) } }
+            catch (_: java.util.concurrent.RejectedExecutionException) { }
             val decoders = caps?.decoders.orEmpty()
             if (carlinkDecoders != decoders) {
                 carlinkDecoders = decoders
@@ -732,7 +770,13 @@ class RelayRuntime(private val context: Context,
             Log.i("DiRelayCarlink", "video decoders=${decoders.joinToString { it.codecString }}")
         // Only advertised HEVC sessions accept H.265; Off keeps H.264 delivery.
         }, deliveryCodecs = if (requested.hevc == ClinkHevcMode.OFF) setOf(org.openxplay.stream.core.VideoCodec.H264)
-            else setOf(org.openxplay.stream.core.VideoCodec.H264, org.openxplay.stream.core.VideoCodec.H265)))
+            else setOf(org.openxplay.stream.core.VideoCodec.H264, org.openxplay.stream.core.VideoCodec.H265),
+            carlinkGeometry = true, reportGeometry = { geometry, mode ->
+                carlinkGeometry = geometry; carlinkGeometryMode = mode
+            })
+        carlinkVideoOutput = videoOutput
+        activeArea?.let(::updateCarlinkArea)
+        hub.addOutput(videoOutput)
     }
 
     @Volatile var carlinkStatistics: ClinkStatistics? = null

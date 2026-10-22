@@ -24,6 +24,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkTrace", value.carlinkTrace)
         putString("carlinkHevc", value.carlinkHevc.name)
+        putString("carlinkPictureSize", value.carlinkPictureSize.name)
         putBoolean("carPlayViewAreas", value.viewAreas)
         putBoolean("carBluetoothAudio", value.carBluetoothAudio)
         putStringArrayList("car", arrayListOf(value.car.brand, value.car.brandText, value.car.model, value.car.modelText))
@@ -50,6 +51,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         carplayScreenWidth = CarPlayScreenWidth.entries.firstOrNull { it.mm == bundle.getInt("carplayScreenWidth", base.carplayScreenWidth.mm) } ?: base.carplayScreenWidth,
         carlinkTrace = bundle.getBoolean("carlinkTrace", false),
         carlinkHevc = org.openxplay.stream.clink.ClinkHevcMode.entries.firstOrNull { it.name == bundle.getString("carlinkHevc") } ?: base.carlinkHevc,
+        carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.entries.firstOrNull { it.name == bundle.getString("carlinkPictureSize") } ?: base.carlinkPictureSize,
         viewAreas = bundle.getBoolean("carPlayViewAreas", base.viewAreas),
         carBluetoothAudio = bundle.getBoolean("carBluetoothAudio", base.carBluetoothAudio),
         car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 }?.let { CarSelection(it[0], it[1], it[2], it[3]) } ?: base.car,

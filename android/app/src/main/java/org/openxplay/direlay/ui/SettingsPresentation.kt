@@ -18,21 +18,25 @@ fun networkOption(choice: WirelessNetworkChoice) = when (choice) {
     WirelessNetworkChoice.EXISTING_WIFI -> RadioOption(choice.label, R.string.option_wifi_hint)
 }
 enum class SettingsNotice { SILENT, NEXT_START, RECONNECT }
-fun settingsNotice(before: RelaySettings, after: RelaySettings, carlinkConnected: Boolean): SettingsNotice = when {
-    before == after -> SettingsNotice.SILENT
+fun settingsNotice(before: RelaySettings, after: RelaySettings, carlinkConnected: Boolean,
+    physicalWidthBefore: Int = 0, physicalWidthAfter: Int = physicalWidthBefore): SettingsNotice = when {
+    before == after && physicalWidthBefore == physicalWidthAfter -> SettingsNotice.SILENT
     before.vehicleInformation != after.vehicleInformation && carlinkConnected -> SettingsNotice.RECONNECT
     // These options are captured by the next CarPlay input session.
     before.iphoneAddress != after.iphoneAddress || before.connectionMode != after.connectionMode || before.wirelessNetwork != after.wirelessNetwork ||
         before.displayMode != after.displayMode || before.display != after.display || before.fps != after.fps || before.mfiTarget != after.mfiTarget ||
         before.i2cPath != after.i2cPath || before.remoteServer != after.remoteServer || before.remoteToken != after.remoteToken ||
-        before.carBluetoothAudio != after.carBluetoothAudio -> SettingsNotice.NEXT_START
+        before.carBluetoothAudio != after.carBluetoothAudio || physicalWidthBefore != physicalWidthAfter -> SettingsNotice.NEXT_START
+    before.carlinkPictureSize != after.carlinkPictureSize && carlinkConnected -> SettingsNotice.RECONNECT
     else -> SettingsNotice.SILENT
 }
 
 data class SettingsFeedback(val message: Int, val action: Int? = null)
-fun settingsFeedback(before: RelaySettings, after: RelaySettings, carlinkConnected: Boolean, running: Boolean): SettingsFeedback? =
-    when (settingsNotice(before, after, carlinkConnected)) {
+fun settingsFeedback(before: RelaySettings, after: RelaySettings, carlinkConnected: Boolean, running: Boolean,
+    physicalWidthBefore: Int = 0, physicalWidthAfter: Int = physicalWidthBefore): SettingsFeedback? =
+    when (settingsNotice(before, after, carlinkConnected, physicalWidthBefore, physicalWidthAfter)) {
         SettingsNotice.SILENT -> null
         SettingsNotice.NEXT_START -> SettingsFeedback(R.string.settings_next_start, if (running) R.string.settings_restart else null)
-        SettingsNotice.RECONNECT -> SettingsFeedback(R.string.vehicle_reconnect, R.string.vehicle_reconnect_action)
+        SettingsNotice.RECONNECT -> SettingsFeedback(if (before.vehicleInformation != after.vehicleInformation)
+            R.string.vehicle_reconnect else R.string.settings_reconnect, R.string.vehicle_reconnect_action)
     }

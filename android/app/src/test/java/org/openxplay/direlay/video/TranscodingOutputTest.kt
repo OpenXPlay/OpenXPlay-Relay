@@ -13,6 +13,8 @@ class TranscodingOutputTest {
         var started = false
         var closed = false
         var requests = 0
+        val geometries = mutableListOf<CarlinkGeometry>()
+        override fun updateGeometry(geometry: CarlinkGeometry) { geometries += geometry }
         val frames = mutableListOf<VideoFrame>()
         override fun start() { started = true }
         override fun offer(frame: VideoFrame) { frames.add(frame) }
@@ -276,6 +278,131 @@ class TranscodingOutputTest {
         assertEquals(5, reports.size)
         repeat(10) { inner.host!!.capabilities(capabilities("avc1.42E01F")) }
         assertEquals(5, reports.size)
+        output.close()
+    }
+
+    @Test fun carlinkIdentityPassesThroughButModeAndAreaUseThePipeline() {
+        val format = avc()
+        val canvas = Viewport(format.width, format.height)
+        val caps = capabilities("avc1.42E01F").copy(displays = mapOf(ScreenId.MAIN to
+            DisplayInfo(1532, 1013, 240, 30.0, viewport = Viewport(1532, 1013), fullscreen = true)))
+        val inner = RecordingOutput(reportedCapabilities = caps)
+        val pipelines = mutableListOf<Pipeline>()
+        val targets = mutableListOf<VideoCompatibility.Target>()
+        val snapshots = mutableListOf<CarlinkGeometry?>()
+        val host = Host()
+        val output = TranscodingOutput(inner, VideoPipeline.Factory { _, target, listener ->
+            targets += target; Pipeline(listener).also { pipelines += it }
+        }, carlinkGeometry = true, reportGeometry = { geometry, _ -> snapshots += geometry })
+        output.open(host)
+        output.onVideoFormat(ScreenId.MAIN, format)
+        assertTrue(pipelines.isEmpty())
+        assertTrue(snapshots.last()!!.identity)
+        inner.host!!.capabilities(caps.copy(displays = caps.displays.mapValues {
+            it.value.copy(frameSize = Viewport(1280, 720))
+        }))
+        assertEquals(Viewport(1280, 720), targets.single().geometry!!.picture)
+        val pipeline = pipelines.single()
+        output.setCarlinkArea(0, 0, canvas.width / 2, canvas.height, canvas.width, canvas.height)
+        assertEquals(1, pipelines.size)
+        val geometry = pipeline.geometries.single()
+        assertEquals(CarlinkCrop(0, 0, canvas.width / 2, canvas.height), geometry.area)
+        val origin = Origin(inner.id, "touch")
+        inner.host!!.control(ControlEvent.Touch(ScreenId.MAIN, listOf(TouchContact(0, 1.0, .5, true)), origin))
+        val mapped = host.controls.filterIsInstance<ControlEvent.Touch>().single()
+        assertEquals(.5, mapped.contacts.single().x)
+        assertEquals(.5, mapped.contacts.single().y)
+        assertEquals(origin, mapped.origin)
+        output.setCarlinkArea(canvas.width / 2, 0, canvas.width / 2, canvas.height, canvas.width, canvas.height)
+        assertEquals(1, pipelines.size)
+        assertEquals(2, pipeline.geometries.size)
+        inner.host!!.control(ControlEvent.Touch(ScreenId.MAIN, listOf(TouchContact(0, 1.0, .5, true)), origin))
+        assertEquals(1.0, host.controls.filterIsInstance<ControlEvent.Touch>().last().contacts.single().x)
+        // A size change requires a new encoder; a crop-only change above did not.
+        inner.host!!.capabilities(caps)
+        assertEquals(2, pipelines.size)
+        assertTrue(pipeline.closed)
+        assertEquals(Viewport(canvas.width / 2, canvas.height), targets.last().geometry!!.picture)
+        output.close()
+        assertNull(snapshots.last())
+    }
+
+    @Test fun identityCodecMismatchKeepsDirectGeometryWhileHevcCropPrefersHevc() {
+        val input = high()
+        val inner = RecordingOutput(reportedCapabilities = capabilities("avc1.42E01F"))
+        val targets = mutableListOf<VideoCompatibility.Target>()
+        val output = TranscodingOutput(inner, VideoPipeline.Factory { _, target, listener ->
+            targets += target; Pipeline(listener)
+        }, carlinkGeometry = true)
+        output.open(Host())
+        output.onVideoFormat(ScreenId.MAIN, input)
+        assertTrue(targets.single().geometry!!.identity)
+        assertEquals(VideoCodec.H264, targets.single().codec)
+        output.close()
+        val hevc = VideoFormat.create(ScreenId.MAIN, VideoCodec.H265, org.openxplay.direlay.bridge.hevcConfig)
+        val geometry = CarlinkGeometry.calculate(hevc.width, hevc.height,
+            CarlinkCrop(0, 0, hevc.width / 2, hevc.height), Viewport(1532, 1013))
+        val decision = VideoCompatibility.decide(hevc, capabilities("avc1.42E01F", hevc.codecString).decoders, geometry)
+        assertEquals(VideoCompatibility.Mode.TRANSCODE, decision.mode)
+        assertEquals(VideoCodec.H265, decision.target!!.codec)
+        assertSame(geometry, decision.target.geometry)
+    }
+
+    @Test fun failedCropPassesInputAndUnmappedTouchesUntilNewPipelineIsConfigured() {
+        for (setupFailure in listOf(true, false)) {
+            val format = avc()
+            val caps = capabilities("avc1.42E01F").let { caps ->
+                caps.copy(displays = caps.displays.mapValues { it.value.copy(frameSize = Viewport(1280, 720)) })
+            }
+            val inner = RecordingOutput(reportedCapabilities = caps)
+            val pipelines = mutableListOf<Pipeline>()
+            val snapshots = mutableListOf<Pair<CarlinkGeometry?, VideoCompatibility.Mode>>()
+            var failSetup = setupFailure
+            val output = TranscodingOutput(inner, VideoPipeline.Factory { _, _, listener ->
+                if (failSetup) error("crop_setup_failed")
+                Pipeline(listener).also { pipelines += it }
+            }, carlinkGeometry = true, reportGeometry = { geometry, mode -> snapshots += geometry to mode })
+            val host = Host()
+            output.open(host)
+            output.setCarlinkArea(0, 0, format.width / 2, format.height, format.width, format.height)
+            output.onVideoFormat(ScreenId.MAIN, format)
+            if (!setupFailure) pipelines.single().listener.failed(IllegalStateException("crop_failed"))
+            assertSame(format, inner.videoFormats.last().second)
+            assertTrue(snapshots.last().first!!.identity)
+            assertEquals(VideoCompatibility.Mode.PASSTHROUGH, snapshots.last().second)
+            // Repeated capabilities and input configuration must preserve the fallback geometry.
+            inner.host!!.capabilities(caps)
+            output.onVideoFormat(ScreenId.MAIN, format)
+            assertSame(format, inner.videoFormats.last().second)
+            val inputFrame = frame()
+            output.onVideoFrame(inputFrame)
+            assertSame(inputFrame, inner.frames.single())
+            val touch = ControlEvent.Touch(ScreenId.MAIN, listOf(TouchContact(0, .75, .5, true)), Origin(inner.id, "touch"))
+            inner.host!!.control(touch)
+            assertEquals(touch, host.controls.filterIsInstance<ControlEvent.Touch>().last())
+            assertTrue(snapshots.last().first!!.identity)
+            failSetup = false
+            output.setCarlinkArea(format.width / 2, 0, format.width / 2, format.height, format.width, format.height)
+            assertFalse(snapshots.last().first!!.identity)
+            assertEquals(VideoCompatibility.Mode.TRANSCODE, snapshots.last().second)
+            inner.host!!.control(touch)
+            assertEquals(.875, host.controls.filterIsInstance<ControlEvent.Touch>().last().contacts.single().x)
+            output.onVideoFrame(inputFrame)
+            assertSame(inputFrame, pipelines.last().frames.single())
+            assertEquals(1, inner.frames.size)
+            output.close()
+        }
+    }
+
+    @Test fun carlinkHevcIdentityDoesNotInheritTheAvcDecoderFrameLimit() {
+        val format = VideoFormat.create(ScreenId.MAIN, VideoCodec.H265, org.openxplay.direlay.bridge.hevcConfig)
+        val caps = capabilities("avc1.42E00A", format.codecString)
+        val inner = RecordingOutput(reportedCapabilities = caps)
+        val output = TranscodingOutput(inner, VideoPipeline.Factory { _, _, _ -> error("identity must pass through") }, carlinkGeometry = true)
+        output.open(Host())
+        output.onVideoFormat(ScreenId.MAIN, format)
+        output.onVideoFrame(frame())
+        assertEquals(1, inner.frames.size)
         output.close()
     }
 

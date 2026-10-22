@@ -5,6 +5,7 @@ package org.openxplay.direlay.settings
 
 import android.content.Context
 import org.openxplay.stream.clink.ClinkHevcMode
+import org.openxplay.stream.clink.ClinkPictureSize
 import com.shilapi.xcertplay.AirPlayPersistence
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import com.shilapi.xcertplay.orchestration.WirelessHotspotMode
@@ -71,6 +72,7 @@ data class RelaySettings(
     val pluginsEnabled: List<String> = emptyList(),
     val carlinkTrace: Boolean = false,
     val carlinkHevc: ClinkHevcMode = ClinkHevcMode.STREAM_ONLY,
+    val carlinkPictureSize: ClinkPictureSize = ClinkPictureSize.WINDOW,
     val carplayResolution: CarPlayResolution = CarPlayResolution.AUTO,
     val carplayScreenWidth: CarPlayScreenWidth = CarPlayScreenWidth.MM200,
     val viewAreas: Boolean = true,
@@ -130,6 +132,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
 
     private val cached = kotlinx.coroutines.flow.MutableStateFlow<RelaySettings?>(null)
     val snapshot: kotlinx.coroutines.flow.StateFlow<RelaySettings?> = cached
+    private val overrides = kotlinx.coroutines.flow.MutableStateFlow(DeveloperOverrides())
+    val developerOverrides: kotlinx.coroutines.flow.StateFlow<DeveloperOverrides> = overrides
     private val refreshWorker = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
         Thread(task, "direlay-settings").apply { isDaemon = true }
     }
@@ -165,7 +169,20 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         refreshWorker.shutdownNow()
     }
 
-    fun load(): RelaySettings {
+    @Synchronized fun load(): RelaySettings {
+        val stored = loadStored()
+        val remembered = loadDeveloperOverrides(stored)
+        val choices = remembered.remember(stored, developerMode)
+        val effective = choices.effectiveSettings(stored, developerMode)
+        if (choices != remembered || effective != stored ||
+            relay.getInt("devPhysicalWidthMm", 0) != choices.effectivePhysicalWidth(developerMode)) {
+            persistSettings(effective, stored, choices, developerMode)
+        }
+        overrides.value = choices
+        return effective
+    }
+
+    private fun loadStored(): RelaySettings {
         // Check each private preference key independently; keep every stored user value.
         if (!diplay.contains("auto_connect")) diplay.edit().putBoolean("auto_connect", true).apply()
         val identity = context.getSharedPreferences("xcertplay_airplay", Context.MODE_PRIVATE)
@@ -212,6 +229,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             relay.getString("iphoneAddress", null),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
+            carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
             viewAreas = relay.getBoolean("carPlayViewAreas", true),
             car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
                 relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
@@ -229,8 +247,20 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     }
 
     @Synchronized fun save(value: RelaySettings) {
+        val current = load()
+        val choices = overrides.value.remember(value, developerMode)
+        persistSettings(choices.effectiveSettings(value, developerMode), current, choices, developerMode)
+        publish(load())
+    }
+
+    @Synchronized fun saveDeveloperOverrides(value: DeveloperOverrides) {
+        val current = load()
+        persistSettings(value.effectiveSettings(current, developerMode), current, value, developerMode)
+        publish(load())
+    }
+
+    private fun persistSettings(value: RelaySettings, current: RelaySettings, choices: DeveloperOverrides, developerMode: Boolean) {
         val settings = value.copy(car = value.car.normalized())
-        val current = if (initialRead == null) load() else cached.value ?: load()
         // Validate wireless fields when they change or wireless is newly selected; untouched defaults
         // must not block unrelated settings.
         val wirelessChanged = settings.wirelessNetwork != current.wirelessNetwork ||
@@ -251,7 +281,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         if (settings.display != previousDisplay || settings.displayMode != current.displayMode) {
             AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
         }
-        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let { applyDisplayProfile(it, settings.carplayScreenWidth) }
+        if (settings.displayMode == DisplayMode.FIXED) settings.display?.let {
+            applyDisplayProfile(it, settings.carplayScreenWidth, choices.effectivePhysicalWidth(developerMode))
+        }
         AirPlayPersistence.saveFps(context, settings.fps)
         AirPlayPersistence.saveAutoStartOnBoot(context, settings.autoStartOnBoot)
         // DiPlay reads this when it builds the next session's AirPlay configuration.
@@ -265,6 +297,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
             .putBoolean("carlinkTrace", settings.carlinkTrace)
             .putString("carlinkHevc", settings.carlinkHevc.name)
+            .putString("carlinkPictureSize", settings.carlinkPictureSize.name)
             .putBoolean("carPlayViewAreas", settings.viewAreas)
             .putString("carBrand", settings.car.brand).putString("carBrandText", settings.car.brandText)
             .putString("carModel", settings.car.model).putString("carModelText", settings.car.modelText)
@@ -278,12 +311,60 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("displayMode", settings.displayMode.name)
             .putString("carlinkDeviceName", settings.carlinkDeviceName)
             .putString("carlinkDeviceModel", settings.carlinkDeviceModel)
+            .putBoolean("developerMode", developerMode)
+            .putInt("devPhysicalWidthMm", choices.effectivePhysicalWidth(developerMode))
             .putInt("webPort", settings.webPort ?: 0).putBoolean("customDisplay", settings.display != null)
         settings.display?.let {
             edit.putInt("displayWidth", it.width).putInt("displayHeight", it.height).putInt("displayDensity", it.density)
         }
+        writeDeveloperOverrides(edit, choices)
         edit.apply()
-        publish(load())
+    }
+
+    private fun loadDeveloperOverrides(stored: RelaySettings): DeveloperOverrides {
+        if (relay.all.keys.none { it.startsWith("developer.") }) {
+            val choices = DeveloperOverrides.migrate(stored, relay.getInt("devPhysicalWidthMm", 0))
+            val edit = relay.edit()
+            writeDeveloperOverrides(edit, choices)
+            if (choices.effectiveSettings(stored, false) != stored || choices.physicalWidthEnabled)
+                edit.putBoolean("developerMode", true)
+            edit.apply()
+            return choices
+        }
+        return DeveloperOverrides(
+            active = relay.getBoolean("developer.active", true),
+            carlinkTrace = relay.getBoolean("developer.carlinkTrace", false),
+            carlinkHevcEnabled = relay.getBoolean("developer.carlinkHevc.enabled", false),
+            carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("developer.carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
+            carlinkPictureSizeEnabled = relay.getBoolean("developer.carlinkPictureSize.enabled", false),
+            carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("developer.carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
+            physicalWidthEnabled = relay.getBoolean("developer.physicalWidth.enabled", false),
+            physicalWidthOverrideMm = relay.getInt("developer.physicalWidthMm", 0),
+            fpsEnabled = relay.getBoolean("developer.fps.enabled", false),
+            fps = relay.getInt("developer.fps", 30),
+            localPreview = relay.getBoolean("developer.localPreview", false),
+            playCarPlayAudio = relay.getBoolean("developer.playCarPlayAudio", false),
+            microphoneSourceEnabled = relay.getBoolean("developer.microphoneSource.enabled", false),
+            microphoneSource = MicrophoneSource.entries.firstOrNull { it.name == relay.getString("developer.microphoneSource", null) } ?: MicrophoneSource.HEAD_UNIT,
+            webPortEnabled = relay.getBoolean("developer.webPort.enabled", false),
+            webPort = relay.getInt("developer.webPort", 0).takeIf { it in 1024..65535 },
+            carlinkDeviceModelEnabled = relay.getBoolean("developer.carlinkDeviceModel.enabled", false),
+            carlinkDeviceModel = relay.getString("developer.carlinkDeviceModel", "Android relay") ?: "Android relay",
+        )
+    }
+
+    private fun writeDeveloperOverrides(edit: android.content.SharedPreferences.Editor, value: DeveloperOverrides) {
+        edit.putBoolean("developer.active", value.active)
+            .putBoolean("developer.carlinkTrace", value.carlinkTrace)
+            .putBoolean("developer.carlinkHevc.enabled", value.carlinkHevcEnabled).putString("developer.carlinkHevc", value.carlinkHevc.name)
+            .putBoolean("developer.carlinkPictureSize.enabled", value.carlinkPictureSizeEnabled).putString("developer.carlinkPictureSize", value.carlinkPictureSize.name)
+            .putBoolean("developer.physicalWidth.enabled", value.physicalWidthEnabled).putInt("developer.physicalWidthMm", value.physicalWidthOverrideMm)
+            .putBoolean("developer.fps.enabled", value.fpsEnabled).putInt("developer.fps", value.fps)
+            .putBoolean("developer.localPreview", value.localPreview)
+            .putBoolean("developer.playCarPlayAudio", value.playCarPlayAudio)
+            .putBoolean("developer.microphoneSource.enabled", value.microphoneSourceEnabled).putString("developer.microphoneSource", value.microphoneSource.name)
+            .putBoolean("developer.webPort.enabled", value.webPortEnabled).putInt("developer.webPort", value.webPort ?: 0)
+            .putBoolean("developer.carlinkDeviceModel.enabled", value.carlinkDeviceModelEnabled).putString("developer.carlinkDeviceModel", value.carlinkDeviceModel)
     }
 
     fun prepareDisplay(profile: DisplayProfile?, screenWidth: CarPlayScreenWidth = CarPlayScreenWidth.MM200) {
@@ -292,21 +373,29 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         profile?.let { applyDisplayProfile(it, screenWidth) }
     }
 
-    private fun applyDisplayProfile(profile: DisplayProfile, screenWidth: CarPlayScreenWidth) {
+    private fun applyDisplayProfile(profile: DisplayProfile, screenWidth: CarPlayScreenWidth, widthOverride: Int = physicalWidthOverrideMm) {
         AirPlayPersistence.saveDisplayScalePercent(context, 100)
         // DiPlay reports physical millimeters, with its existing 100–400 mm / 25 mm steps.
-        AirPlayPersistence.saveWidthPhysicalMm(context, physicalWidthOverrideMm.takeIf { it > 0 } ?: physicalWidth(profile, screenWidth))
+        AirPlayPersistence.saveWidthPhysicalMm(context, widthOverride.takeIf { it > 0 } ?: physicalWidth(profile, screenWidth))
         AirPlayPersistence.savePhysicalSizeBasis(context, com.shilapi.xcertplay.airplay.AirPlayPhysicalSizeBasis.WIDTH)
     }
 
     var developerMode: Boolean
         get() = relay.getBoolean("developerMode", false)
-        set(value) { relay.edit().putBoolean("developerMode", value).apply() }
+        @Synchronized set(value) {
+            val current = load()
+            persistSettings(overrides.value.effectiveSettings(current, value), current, overrides.value, value)
+            publish(load())
+        }
 
     /** Developer calibration: the physical width in mm declared instead of the selected preset, or 0 to use the preset. */
     var physicalWidthOverrideMm: Int
-        get() = relay.getInt("devPhysicalWidthMm", 0)
-        set(value) { relay.edit().putInt("devPhysicalWidthMm", value).apply() }
+        @Synchronized get() { load(); return overrides.value.effectivePhysicalWidth(developerMode) }
+        @Synchronized set(value) {
+            load()
+            saveDeveloperOverrides(overrides.value.copy(physicalWidthEnabled = value > 0,
+                physicalWidthOverrideMm = value.takeIf { it > 0 } ?: overrides.value.physicalWidthOverrideMm))
+        }
 
     /** Whether the guided setup has been finished; [load] seeds it once for installs that predate the guide. */
     var setupCompleted: Boolean

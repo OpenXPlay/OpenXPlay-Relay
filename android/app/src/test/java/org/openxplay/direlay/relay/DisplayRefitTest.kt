@@ -48,6 +48,26 @@ class DisplayRefitTest {
         assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, running, applied, false, true))
         assertTrue(gate.due(1000, true, DisplayMode.AUTOMATIC, running, applied, false, true))
     }
+    @Test fun carlinkDifferentWindowKeepsMatchedAreaOrRestartsOnceAndFreezesNewScreen() {
+        val browser = ScreenDataKey(1920, 1080, 240)
+        val carlink = ScreenDataKey(1532, 1013, 240)
+        val applied = running.copy(screen = browser)
+        val incoming = desired.copy(screen = carlink)
+        for (match in listOf<Int?>(0, 1, null)) {
+            val gate = DisplayRefit()
+            val target = incoming.copy(screen = if (carlinkScreenChanged(carlink, browser, true, match)) carlink else browser)
+            assertFalse(gate.due(0, true, DisplayMode.AUTOMATIC, applied, target, true, true))
+            assertEquals(match == null, gate.due(1000, true, DisplayMode.AUTOMATIC, applied, target, true, true))
+            if (match == null) {
+                gate.restarted(1000)
+                assertFalse(gate.due(11000, true, DisplayMode.AUTOMATIC, incoming, incoming, true, true))
+                assertFalse(gate.due(21000, true, DisplayMode.AUTOMATIC, incoming, incoming, true, true))
+            }
+        }
+        val noAreas = DisplayRefit()
+        assertFalse(noAreas.due(0, true, DisplayMode.AUTOMATIC, applied, incoming, true, false))
+        assertTrue(noAreas.due(1000, true, DisplayMode.AUTOMATIC, applied, incoming, true, false))
+    }
     @Test fun sameScreenWindowAndFullscreenPreferenceChangesNeverRestartWithAreas() {
         val report = display.copy(fullscreen = true, fullscreenPreferred = true)
         val screen = HeadUnitDisplay.from(report).screen

@@ -21,6 +21,21 @@ class SettingsDraftSaverTest {
         30, false, true, false, null)
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
+    @Test fun carlinkPictureSizeUsesWindowModeOrderAndEveryDraftSurvivesRotation() {
+        assertEquals(listOf("WINDOW", "MODE"), org.openxplay.stream.clink.ClinkPictureSize.entries.map { it.name })
+        assertEquals(org.openxplay.stream.clink.ClinkPictureSize.WINDOW, base.carlinkPictureSize)
+        for (size in org.openxplay.stream.clink.ClinkPictureSize.entries) {
+            val value = base.copy(carlinkPictureSize = size)
+            val saved = bundle(value)
+            assertEquals(size.name, saved.getString("carlinkPictureSize"))
+            assertEquals(value, relaySettingsSaver(base).restore(saved))
+        }
+        val old = bundle(base); old.remove("carlinkPictureSize")
+        val remembered = base.copy(carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.MODE)
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        old.putString("carlinkPictureSize", "future")
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
     @Test fun carlinkHevcOptionsUseAutomaticOffSignalOrder() {
         assertEquals(listOf("STREAM_ONLY", "OFF", "SIGNAL"), org.openxplay.stream.clink.ClinkHevcMode.entries.map { it.name })
         assertEquals(org.openxplay.stream.clink.ClinkHevcMode.STREAM_ONLY, base.carlinkHevc)

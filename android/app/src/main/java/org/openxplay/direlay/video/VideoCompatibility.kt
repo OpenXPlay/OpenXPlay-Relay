@@ -8,7 +8,7 @@ import org.openxplay.stream.core.*
 /** Receiver limits stay separate from Android codec availability. */
 object VideoCompatibility {
     enum class Mode { PASSTHROUGH, TRANSCODE, UNSUPPORTED }
-    data class Target(val codec: VideoCodec, val profile: Int, val level: Int, val codecString: String)
+    data class Target(val codec: VideoCodec, val profile: Int, val level: Int, val codecString: String, val geometry: CarlinkGeometry? = null)
     data class Decision(val mode: Mode, val target: Target? = null)
 
     internal data class ReportKey(val codec: VideoCodec, val profile: String, val width: Int,
@@ -17,7 +17,7 @@ object VideoCompatibility {
         ReportKey(format.codec, format.codecString, format.width, format.height, decision,
             if (failed) "pipeline_failed" else when (decision.mode) {
                 Mode.PASSTHROUGH -> "receiver_accepts"
-                Mode.TRANSCODE -> "receiver_profile_mismatch"
+                Mode.TRANSCODE -> if (decision.target?.geometry?.identity == false) "carlink_geometry" else "receiver_profile_mismatch"
                 Mode.UNSUPPORTED -> "no_supported_target"
             })
 
@@ -49,18 +49,24 @@ object VideoCompatibility {
             target[3].drop(1).toInt() >= source[3].drop(1).toInt()
     }
 
-    fun decide(input: VideoFormat, decoders: List<DecoderSupport>): Decision {
-        if (decoders.any { accepts(input, it) }) return Decision(Mode.PASSTHROUGH)
+    fun decide(input: VideoFormat, decoders: List<DecoderSupport>, geometry: CarlinkGeometry? = null): Decision {
+        if (geometry?.identity != false && decoders.any { accepts(input, it) }) return Decision(Mode.PASSTHROUGH)
+        if (geometry?.identity == false && input.codec == VideoCodec.H265) decoders.firstNotNullOfOrNull { decoder ->
+            val h = hevc(decoder.codecString)
+            h?.takeIf { it[1] == "1" && it[3][0] == 'L' && it[3].drop(1).toInt() in hevcLevels }?.let {
+                Target(VideoCodec.H265, 1, it[3].drop(1).toInt(), decoder.codecString, geometry)
+            }
+        }?.let { return Decision(Mode.TRANSCODE, it.copy(geometry = geometry)) }
         val avcTargets = decoders.mapNotNull { avc(it.codecString) }
         for (profile in listOf(66, 77, 100)) {
             avcTargets.firstOrNull { it.profile == profile && it.level in avcLevels }?.let {
-                return Decision(Mode.TRANSCODE, it)
+                return Decision(Mode.TRANSCODE, it.copy(geometry = geometry))
             }
         }
         decoders.forEach { decoder ->
             val h = hevc(decoder.codecString)
             if (h != null && h[1] == "1" && h[3][0] == 'L' && h[3].drop(1).toInt() in hevcLevels) {
-                return Decision(Mode.TRANSCODE, Target(VideoCodec.H265, 1, h[3].drop(1).toInt(), decoder.codecString))
+                return Decision(Mode.TRANSCODE, Target(VideoCodec.H265, 1, h[3].drop(1).toInt(), decoder.codecString, geometry))
             }
         }
         return Decision(Mode.UNSUPPORTED)

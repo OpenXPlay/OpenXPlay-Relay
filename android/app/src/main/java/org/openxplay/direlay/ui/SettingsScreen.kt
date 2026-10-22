@@ -256,16 +256,16 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
 }
 @OptIn(ExperimentalLayoutApi::class)
-@Composable fun Options(labels: List<String>, selected: Int, select: (Int) -> Unit) {
+@Composable fun Options(labels: List<String>, selected: Int, enabled: Boolean = true, select: (Int) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         labels.forEachIndexed { index, label -> FilterChip(index == selected, { select(index) },
-            modifier = Modifier.heightIn(min = 48.dp), label = { Text(label) }) }
+            modifier = Modifier.heightIn(min = 48.dp), enabled = enabled, label = { Text(label) }) }
     }
 }
 @Composable fun SettingField(label: String, value: String, error: Int? = null, number: Boolean = false,
-    secret: Boolean = false, change: (String) -> Unit) {
+    secret: Boolean = false, enabled: Boolean = true, change: (String) -> Unit) {
     OutlinedTextField(value, change, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true,
-        isError = error != null, supportingText = error?.let { { Text(stringResource(it)) } },
+        enabled = enabled, isError = error != null, supportingText = error?.let { { Text(stringResource(it)) } },
         keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Number else if (secret) KeyboardType.Password else KeyboardType.Text),
         visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
 }

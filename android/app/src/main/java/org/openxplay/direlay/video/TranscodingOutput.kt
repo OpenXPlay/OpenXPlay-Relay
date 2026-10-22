@@ -10,6 +10,7 @@ interface VideoPipeline {
     fun start()
     fun offer(frame: VideoFrame)
     fun requestKeyFrame()
+    fun updateGeometry(geometry: CarlinkGeometry) {}
     fun close()
     interface Listener {
         fun format(format: VideoFormat)
@@ -29,6 +30,8 @@ class TranscodingOutput(
     private val report: (VideoFormat, VideoCompatibility.Decision, Boolean) -> Unit = { _, _, _ -> },
     private val observeCapabilities: (OutputCapabilities?) -> Unit = {},
     private val deliveryCodecs: Set<VideoCodec> = VideoCodec.entries.toSet(),
+    private val carlinkGeometry: Boolean = false,
+    private val reportGeometry: (CarlinkGeometry?, VideoCompatibility.Mode) -> Unit = { _, _ -> },
 ) : ProjectionOutput by inner {
     private class Stream(val format: VideoFormat) {
         var decision = VideoCompatibility.Decision(VideoCompatibility.Mode.PASSTHROUGH)
@@ -46,6 +49,13 @@ class TranscodingOutput(
     private var capabilities: OutputCapabilities? = null
     private var host: OutputHost? = null
     private var closed = false
+    private var area: CarlinkGeometry? = null
+    private var requestedArea: Pair<Viewport, CarlinkCrop>? = null
+
+    fun setCarlinkArea(x: Int, y: Int, width: Int, height: Int, canvasWidth: Int, canvasHeight: Int) = locked {
+        requestedArea = Viewport(canvasWidth, canvasHeight) to CarlinkCrop(x, y, width, height)
+        streams.values.forEach { configure(it) }
+    }
     // Requests to the host are queued under the gate and sent after it is released: the hub can call
     // back into the input while the input thread holds its own lock and waits for this gate.
     private val outbox = ArrayList<ControlEvent>()
@@ -87,7 +97,12 @@ class TranscodingOutput(
                         if (stream?.decision?.mode == VideoCompatibility.Mode.UNSUPPORTED) return
                     }
                 }
-                host.control(event)
+                val mapped = synchronized(gate) {
+                    val geometry = area
+                    if (event is ControlEvent.Touch && event.screen == ScreenId.MAIN && geometry != null)
+                        event.copy(contacts = event.contacts.map(geometry::map)) else event
+                }
+                host.control(mapped)
             }
         })
     }
@@ -107,27 +122,55 @@ class TranscodingOutput(
         streams.remove(screen)?.let { it.revision++; it.pipeline?.close() }
         if (format == null) {
             reported.remove(screen)
+            if (screen == ScreenId.MAIN) { area = null; reportGeometry(null, VideoCompatibility.Mode.PASSTHROUGH) }
             inner.onVideoFormat(screen, null)
         } else Stream(format).also { streams[screen] = it; configure(it, force = true) }
     }
 
     private fun configure(stream: Stream, force: Boolean = false) {
+        val geometry = if (carlinkGeometry && stream.format.screen == ScreenId.MAIN) capabilities?.displays?.get(ScreenId.MAIN)?.let { display ->
+            val canvas = Viewport(stream.format.width, stream.format.height)
+            val crop = requestedArea?.takeIf { it.first == canvas }?.second ?: CarlinkCrop(0, 0, canvas.width, canvas.height)
+            val decoders = capabilities!!.decoders.filter {
+                (if (it.codecString.startsWith("avc1.")) VideoCodec.H264 else VideoCodec.H265) in deliveryCodecs
+            }
+            val baseline = VideoCompatibility.decide(stream.format, decoders)
+            val codec = baseline.target?.codec ?: stream.format.codec
+            val limit = if (codec == VideoCodec.H264) baseline.target?.let {
+                org.openxplay.direlay.settings.CarDisplayFit.h264MaxMacroblocks(it.codecString)
+            } ?: decoders.filter { VideoCompatibility.accepts(stream.format, it) }.mapNotNull {
+                org.openxplay.direlay.settings.CarDisplayFit.h264MaxMacroblocks(it.codecString)
+            }.maxOrNull() else null
+            CarlinkGeometry.calculate(canvas.width, canvas.height, crop, display.viewport ?: Viewport(display.widthPx, display.heightPx), display.frameSize, limit)
+        } else null
         // No capability report yet: preserve the existing output's negotiation behavior.
         val decision = capabilities?.let { caps -> VideoCompatibility.decide(stream.format, caps.decoders.filter {
             (if (it.codecString.startsWith("avc1.")) VideoCodec.H264 else VideoCodec.H265) in deliveryCodecs
-        }) }
+        }, geometry) }
             ?: VideoCompatibility.Decision(VideoCompatibility.Mode.PASSTHROUGH)
+        if (!force && stream.pipeline != null && decision.mode == VideoCompatibility.Mode.TRANSCODE &&
+            decision.target?.copy(geometry = null) == stream.decision.target?.copy(geometry = null) &&
+            decision.target?.geometry?.picture == stream.decision.target?.geometry?.picture &&
+            decision.target?.geometry?.identity == stream.decision.target?.geometry?.identity) {
+            geometry?.let { stream.pipeline?.updateGeometry(it) }
+            stream.decision = decision
+            if (stream.format.screen == ScreenId.MAIN) { area = geometry; reportGeometry(geometry, decision.mode) }
+            reportChange(stream.format, decision, stream.failed)
+            return
+        }
         if (!force && decision == stream.decision) {
+            if (!stream.failed && stream.format.screen == ScreenId.MAIN) { area = geometry; reportGeometry(geometry, decision.mode) }
             reportChange(stream.format, decision, stream.failed)
             return
         }
         stream.revision++
         stream.pipeline?.close(); stream.pipeline = null
         stream.failed = false
+        if (stream.format.screen == ScreenId.MAIN) { area = geometry; reportGeometry(geometry, decision.mode) }
         stream.decision = decision
         reportChange(stream.format, decision, false)
         if (decision.mode != VideoCompatibility.Mode.TRANSCODE) {
-            inner.onVideoFormat(stream.format.screen, stream.format)
+            inner.onVideoFormat(stream.format.screen, if (geometry?.identity == false) null else stream.format)
             return
         }
         inner.onVideoFormat(stream.format.screen, null)
@@ -136,7 +179,8 @@ class TranscodingOutput(
             private fun current() = !closed && streams[stream.format.screen] === stream && stream.revision == revision
             override fun format(format: VideoFormat) = locked {
                 if (current()) {
-                    if (capabilities?.decoders?.any { VideoCompatibility.accepts(format, it) } != true) {
+                    if (capabilities?.decoders?.any { VideoCompatibility.accepts(format, it) } != true ||
+                        geometry?.picture?.let { it.width != format.width || it.height != format.height } == true) {
                         failed(IllegalStateException("encoder_profile_mismatch"))
                     } else inner.onVideoFormat(format.screen, format)
                 }
@@ -153,6 +197,10 @@ class TranscodingOutput(
                     stream.pipeline?.close(); stream.pipeline = null
                     stream.failed = true
                     reportChange(stream.format, decision, true)
+                    if (stream.format.screen == ScreenId.MAIN) {
+                        area = area?.let { it.copy(area = CarlinkCrop(0, 0, it.canvas.width, it.canvas.height), picture = it.canvas) }
+                        reportGeometry(area, VideoCompatibility.Mode.PASSTHROUGH)
+                    }
                     inner.onVideoFormat(stream.format.screen, stream.format)
                     requestKeyFrame(stream.format.screen)
                 }
@@ -177,6 +225,7 @@ class TranscodingOutput(
     override fun onSession(state: SessionState, config: SessionConfig) = synchronized(gate) {
         if (state.phase == SessionPhase.ENDED) {
             streams.values.forEach { it.revision++; it.pipeline?.close() }; streams.clear(); reported.clear()
+            area = null; requestedArea = null; reportGeometry(null, VideoCompatibility.Mode.PASSTHROUGH)
         }
         inner.onSession(state, config)
     }
@@ -185,7 +234,8 @@ class TranscodingOutput(
         synchronized(gate) {
             closed = true
             streams.values.forEach { it.revision++; it.pipeline?.close() }; streams.clear(); reported.clear()
-            host = null; capabilities = null
+            host = null; capabilities = null; area = null; requestedArea = null
+            reportGeometry(null, VideoCompatibility.Mode.PASSTHROUGH)
         }
         observeCapabilities(null)
         inner.close()

@@ -32,6 +32,10 @@ class MediaCodecPipeline(
     private var decoder: MediaCodec? = null
     private var encoder: MediaCodec? = null
     private var surface: Surface? = null
+    private var cropSurface: CarlinkGlSurface? = null
+    @Volatile private var geometry = target.geometry
+
+    override fun updateGeometry(geometry: CarlinkGeometry) { this.geometry = geometry }
 
     override fun start() {
         check(running.compareAndSet(false, true))
@@ -93,7 +97,14 @@ class MediaCodecPipeline(
                 val decoded = dec.dequeueOutputBuffer(info, 1_000)
                 if (decoded >= 0) {
                     // Surface timestamps are nanoseconds; preserve the input clock for audio sync.
-                    dec.releaseOutputBuffer(decoded, info.presentationTimeUs * 1000)
+                    val timestamp = info.presentationTimeUs * 1000
+                    val crop = cropSurface
+                    if (crop == null) dec.releaseOutputBuffer(decoded, timestamp)
+                    else {
+                        val snapshot = checkNotNull(geometry)
+                        dec.releaseOutputBuffer(decoded, true)
+                        crop.draw(snapshot, timestamp) { running.get() }
+                    }
                 }
                 val encoded = enc.dequeueOutputBuffer(info, 1_000)
                 if (encoded == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -141,7 +152,8 @@ class MediaCodecPipeline(
         // Some vendors reject optional latency hints or ConstrainedBaseline despite supporting Baseline.
         for (profile in profiles) for (hints in listOf(true, false)) {
             try {
-                val format = MediaFormat.createVideoFormat(mime, input.width, input.height).apply {
+                val picture = geometry?.picture ?: Viewport(input.width, input.height)
+                val format = MediaFormat.createVideoFormat(mime, picture.width, picture.height).apply {
                     setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                     setInteger(MediaFormat.KEY_PROFILE, profile)
                     setInteger(MediaFormat.KEY_LEVEL, level(target))
@@ -159,6 +171,7 @@ class MediaCodecPipeline(
                 encoder!!.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 surface = encoder!!.createInputSurface()
                 encoder!!.start()
+                if (geometry?.identity == false) cropSurface = CarlinkGlSurface(checkNotNull(surface))
                 val decoderFormat = MediaFormat.createVideoFormat(mime(input.codec), input.width, input.height)
                 val sets = when (input.codec) {
                     VideoCodec.H264 -> AvcConfig.parse(input.config).let { listOf(it.sps, it.pps) }
@@ -168,7 +181,7 @@ class MediaCodecPipeline(
                     decoderFormat.setByteBuffer("csd-$index", ByteBuffer.wrap(CodecConfiguration.annexB(nals)))
                 }
                 decoder = createHardware(mime(input.codec), false)
-                decoder!!.configure(decoderFormat, surface, null, 0)
+                decoder!!.configure(decoderFormat, cropSurface?.surface ?: surface, null, 0)
                 decoder!!.start()
                 return
             } catch (failure: Exception) { last = failure; release() }
@@ -182,6 +195,7 @@ class MediaCodecPipeline(
             try { it.release() } catch (_: Exception) { }
         }
         decoder = null; encoder = null
+        cropSurface?.close(); cropSurface = null
         surface?.release(); surface = null
     }
 

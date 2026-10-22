@@ -23,6 +23,8 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.settings.*
 
+private data class AppliedSettings(val before: RelaySettings, val after: RelaySettings, val feedback: SettingsFeedback?)
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable fun RelayApp(value: HomeContent, store: RelaySettingsStore, runtime: RelayRuntime,
     onStartStop: () -> Unit, onRestart: () -> Unit, onAutomatic: (Boolean) -> Unit, onSetup: (SetupAction) -> Unit,
@@ -40,6 +42,7 @@ import org.openxplay.direlay.settings.*
     var developer by remember { mutableStateOf(store.developerMode) }
     var setupCompleted by remember { mutableStateOf(store.setupCompleted) }
     val snapshot by store.snapshot.collectAsState()
+    val overrides by store.developerOverrides.collectAsState()
     val publicNameView by runtime.publicName.view.collectAsState()
     val publicNameStatus by runtime.publicName.status.collectAsState()
     val initial = checkNotNull(snapshot)
@@ -104,24 +107,28 @@ import org.openxplay.direlay.settings.*
         if (entries.last() == "launch") entries = listOf("home")
     }
     val saveLock = remember { Mutex() }
-    /** Saves without feedback; returns the settings that applied before, or null if saving failed. */
-    suspend fun persist(after: RelaySettings): RelaySettings? = withContext(NonCancellable + Dispatchers.IO) {
+    suspend fun persistChange(change: () -> Unit): AppliedSettings? = withContext(NonCancellable + Dispatchers.IO) {
         saveLock.withLock {
             runCatching {
                 val appliedBefore = store.awaitSnapshot()
-                val controller = SettingsAutoSave(appliedBefore, store::save)
-                controller.apply(after, store.wireless(after))
+                val widthBefore = store.physicalWidthOverrideMm
+                change()
                 runtime.reloadSettings()
-                appliedBefore
+                val appliedAfter = checkNotNull(store.snapshot.value)
+                AppliedSettings(appliedBefore, appliedAfter, settingsFeedback(appliedBefore, appliedAfter,
+                    runtime.carlinkConnected, value.presentation.running, widthBefore, store.physicalWidthOverrideMm))
             }.getOrNull()
         }
     }
-    val save: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after ->
-        val appliedBefore = persist(after)
-        if (appliedBefore != null && appliedBefore.wirelessNetwork.choice != after.wirelessNetwork.choice && value.presentation.running) {
+    suspend fun persist(after: RelaySettings): AppliedSettings? = persistChange {
+        val controller = SettingsAutoSave(checkNotNull(store.snapshot.value), store::save)
+        controller.apply(after, store.wireless(after))
+    }
+    fun feedback(applied: AppliedSettings?): Boolean {
+        if (applied != null && applied.before.wirelessNetwork.choice != applied.after.wirelessNetwork.choice && value.presentation.running) {
             onRestart()
-        } else if (appliedBefore != null) {
-            val feedback = settingsFeedback(appliedBefore, after, runtime.carlinkConnected, value.presentation.running)
+        } else if (applied != null) {
+            val feedback = applied.feedback
             if (feedback != null) scope.launch {
                 snackbar.currentSnackbarData?.dismiss()
                 val result = snackbar.showSnackbar(context.getString(feedback.message),
@@ -131,7 +138,14 @@ import org.openxplay.direlay.settings.*
                 }
             }
         }
-        appliedBefore != null
+        return applied != null
+    }
+    val save: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after -> feedback(persist(after)) }
+    val saveDeveloperSettings: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after ->
+        feedback(persistChange { store.save(store.developerOverrides.value.effectiveSettings(after, store.developerMode)) })
+    }
+    val saveOverrides: suspend ((DeveloperOverrides) -> DeveloperOverrides) -> Boolean = { change ->
+        feedback(persistChange { store.saveDeveloperOverrides(change(store.developerOverrides.value)) })
     }
     CompositionLocalProvider(LocalRelayMotion provides motion) {
         Box(Modifier.fillMaxSize()) {
@@ -170,9 +184,9 @@ import org.openxplay.direlay.settings.*
                                         runtime.adminService.setEnabled(enabled); adminEnabled = enabled
                                     }, ::copy, { withContext(Dispatchers.IO) { runtime.adminService.resetPassword() } })
                                 }) {
-                                    developer = it
-                                    if (!it) runtime.setSampleVehicleData(false)
-                                    scope.launch { withContext(Dispatchers.IO) { store.developerMode = it } }
+                                    enabled -> scope.launch {
+                                        if (feedback(persistChange { store.developerMode = enabled })) developer = enabled
+                                    }
                                 }
                             route == "about" -> AboutScreen(::back)
                             route == "publicName" -> PublicNameScreen(publicNameView, publicNameStatus,
@@ -180,7 +194,7 @@ import org.openxplay.direlay.settings.*
                                 { edit -> withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.save(edit) }.getOrNull() } },
                                 importPublicName, runtime.publicName::renewNow,
                                 { withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.remove() }.isSuccess } })
-                            route == "developer" -> if (developer) DeveloperScreen(initial, diagnostics, ::back, save, ::copy,
+                            route == "developer" -> if (developer) DeveloperScreen(initial, overrides, diagnostics, ::back, saveDeveloperSettings, ::copy, saveOverrides,
                                 onReconnect, importMaterial, removeMaterial,
                                 runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless, runtime)
                                 else LaunchedEffect(Unit) { back() }

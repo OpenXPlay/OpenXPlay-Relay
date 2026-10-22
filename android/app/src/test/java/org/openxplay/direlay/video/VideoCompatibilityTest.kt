@@ -25,6 +25,22 @@ class VideoCompatibilityTest {
         assertEquals(PASSTHROUGH, VideoCompatibility.decide(input,
             avcOnly + DecoderSupport("hvc1.1.6.L123.B0", true)).mode)
     }
+    @Test fun hevcCodecPreferenceOnlyAppliesToNonIdentityGeometry() {
+        val input = VideoFormat.create(ScreenId.MAIN, VideoCodec.H265, hevcConfig.also { it[12] = 123 })
+        val decoders = capabilities("hvc1.1.6.L120.B0", "avc1.42E01F").decoders
+        assertFalse(VideoCompatibility.accepts(input, decoders.first()))
+        val identity = CarlinkGeometry.calculate(input.width, input.height,
+            CarlinkCrop(0, 0, input.width, input.height), Viewport(1532, 1013))
+        for (geometry in listOf(null, identity)) {
+            val decision = VideoCompatibility.decide(input, decoders, geometry)
+            assertEquals(TRANSCODE, decision.mode)
+            assertEquals(VideoCodec.H264, decision.target!!.codec)
+            assertEquals("avc1.42E01F", decision.target.codecString)
+        }
+        val crop = identity.copy(area = CarlinkCrop(0, 0, input.width / 2, input.height))
+        assertEquals(VideoCodec.H265, VideoCompatibility.decide(input, decoders, crop).target!!.codec)
+    }
+
     @Test fun policyTable() {
         val high = high()
         val hevc = VideoFormat.create(ScreenId.MAIN, VideoCodec.H265, hevcConfig)
