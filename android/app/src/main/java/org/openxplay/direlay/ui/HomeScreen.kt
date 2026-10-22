@@ -22,10 +22,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,8 +38,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val ip: String, val wifi: String, val deviceName: String, val automatic: Boolean,
     val carlink: Boolean, val both: Boolean, val carlinkState: Int, val pending: DialogPinProvider.Request?,
     val busy: Boolean = false, val onWifi: Boolean = false, val vehicle: VehicleView = VehicleView(),
-    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null,
-    val videoStats: org.openxplay.direlay.relay.VideoStatsSnapshot? = null)
+    val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null)
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -61,17 +60,6 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val status: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusHero(value)
-            value.videoStats?.let { stats ->
-                val display = presentVideoStats(stats)
-                MotionCard {
-                    Heading(stringResource(R.string.video_stats_title))
-                    Hint(stringResource(display.caption.resource, *display.caption.arguments.toTypedArray()))
-                    display.sections.forEach { section ->
-                        SmallHeading(stringResource(section.title.resource, *section.title.arguments.toTypedArray()))
-                        section.lines.forEach { Text(stringResource(it.resource, *it.arguments.toTypedArray())) }
-                    }
-                }
-            }
             MotionCard(value.displayMismatch && value.presentation.running) {
                 Text(stringResource(R.string.display_changed))
                 TextButton(onClick = onRestart, modifier = Modifier.heightIn(min = 48.dp)) {
@@ -87,7 +75,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(40.dp))
                 RelayBrand(Modifier.weight(1f))
             }
-        }, actions = { IconButton(onClick = { onSettings("output") }) {
+        }, actions = { IconButton(onClick = { onSettings("") }) {
             Symbol(R.drawable.symbol_settings, stringResource(R.string.direlay_settings))
         } }) },
         bottomBar = {
@@ -102,25 +90,25 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
             // Use this window's available width, including split-screen and freeform resizing.
             val layout = window.layout
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (layout == WindowLayout.COMPACT) {
                     item("hero") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { status() } }
                     if (window.inlineActions) item("actions") { actions() }
-                    item("setup") { if (setupCompleted) Checklist(value, onSetup) else GuideCard(value, onGuide) }
-                    item("browser") { BrowserCard(value, onCopy) }
-                    item("carlink") { CarlinkCard(value, onReconnect) }
-                    item("mode") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { ModeCard(value, onGuide) } }
-                    item("network") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { NetworkCard(value, onNetwork) } }
-                    item("vehicle") { VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier) }
+                    if (value.presentation.checklist.isNotEmpty() || !setupCompleted && !value.presentation.running)
+                        item("setup") { if (setupCompleted) Checklist(value, onSetup) else GuideCard(value, onGuide) }
+                    item("mode") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { ModeCard(value, onGuide, onReconnect) } }
+                    item("network") { Column(Modifier.animateItem(placementSpec = if (motion) spring() else snap())) { NetworkCard(value, onNetwork, onCopy) } }
+                    if (value.carlink || value.both || value.vehicle.sample)
+                        item("vehicle") { VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier) }
                 } else item("panes") {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (layout == WindowLayout.EXPANDED) 24.dp else 16.dp)) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             status(); if (setupCompleted) Checklist(value, onSetup) else GuideCard(value, onGuide)
-                            BrowserCard(value, onCopy); CarlinkCard(value, onReconnect)
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             if (window.inlineActions) actions()
-                            ModeCard(value, onGuide); NetworkCard(value, onNetwork)
+                            ModeCard(value, onGuide, onReconnect); NetworkCard(value, onNetwork, onCopy)
                             VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier)
                         }
                     }
@@ -199,13 +187,18 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                     }, stringResource(state.headline), Modifier.size(32.dp))
                 }
             }
-            AnimatedContent(Triple(state.headline, state.subline, state.sublineArguments), transitionSpec = {
+            AnimatedContent(state.tone to Triple(state.headline, state.subline, state.sublineArguments), transitionSpec = {
                 (fadeIn(tween(ms)) + slideInVertically(tween(ms)) { it / 8 }) togetherWith
                     (fadeOut(tween(ms)) + slideOutVertically(tween(ms)) { -it / 8 })
-            }, label = "status") { (headline, subline, arguments) ->
+            }, label = "status") { (tone, message) ->
+                val (headline, subline, arguments) = message
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Heading(stringResource(headline))
-                    value.iphoneName?.takeIf { it.isNotBlank() }?.let { Text(stringResource(R.string.ui_iphone_name, it)) }
+                    if (tone == StatusTone.ERROR) {
+                        state.problems.forEach { problem -> key(problem) { HomeProblemRow(problem) } }
+                    } else {
+                        value.iphoneName?.takeIf { it.isNotBlank() }?.let { Text(stringResource(R.string.ui_iphone_name, it)) }
+                    }
                     Hint(if (subline == R.string.ui_iphone_pairing) stringResource(subline, value.deviceName) else stringResource(subline, *arguments.toTypedArray()))
                 }
             }
@@ -238,43 +231,6 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     }
 }
 
-@Composable private fun BrowserCard(value: HomeContent, onCopy: (String) -> Unit) {
-    MotionCard(!value.carlink || value.both) {
-        Heading(stringResource(R.string.ui_car_screen))
-        Text(stringResource(R.string.ui_browser_instruction))
-        if (value.addresses.isEmpty()) Hint(stringResource(R.string.ui_address_waiting))
-        value.addresses.forEach { address ->
-            // The scheme stays in the large address: typed without it, browsers try http:// and fail.
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                FittingAddress(address.removeSuffix("/"), Modifier.weight(1f))
-                IconButton(onClick = { onCopy(address) }) { Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy)) }
-            }
-        }
-        if (value.addresses.isNotEmpty()) Hint(stringResource(R.string.ui_browser_https_hint))
-        Hint(stringResource(R.string.ui_tls_hint))
-    }
-}
-@Composable private fun FittingAddress(value: String, modifier: Modifier) {
-    BoxWithConstraints(modifier) {
-        val density = androidx.compose.ui.platform.LocalDensity.current
-        var size by remember(value, maxWidth, density.fontScale) { mutableFloatStateOf(32f) }
-        Text(value, fontSize = size.sp, maxLines = 1, softWrap = false, fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp,
-            onTextLayout = {
-                if (it.hasVisualOverflow && size > 6f) {
-                    val measured = (it.getLineRight(0) - it.getLineLeft(0)).coerceAtLeast(1f)
-                    size = (size * (it.size.width / measured) * .98f).coerceIn(6f, (size - .5f).coerceAtLeast(6f))
-                }
-            })
-    }
-}
-@Composable private fun CarlinkCard(value: HomeContent, reconnect: () -> Unit) {
-    MotionCard(value.carlink || value.both) {
-        Heading(stringResource(R.string.ui_carlink)); Text(stringResource(R.string.ui_carlink_instruction))
-        Hint(stringResource(value.carlinkState))
-        TextButton(onClick = reconnect, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.direlay_carlink_reconnect)) }
-    }
-}
 /** Shown until the guided setup is finished, in place of the checklist it covers. */
 @Composable private fun GuideCard(value: HomeContent, guide: (String?) -> Unit) {
     MotionCard(!value.presentation.running) {
@@ -285,40 +241,53 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     }
 }
 /** The chosen mode; each row opens the guide at the step that changes it. */
-@Composable private fun ModeCard(value: HomeContent, guide: (String?) -> Unit) {
-    MotionCard {
-        Heading(stringResource(R.string.mode_title))
+@Composable private fun ModeCard(value: HomeContent, guide: (String?) -> Unit, reconnect: () -> Unit) {
+    val context = LocalContext.current
+    val carlink = value.carlink || value.both
+    CollapsibleCard("home-connection", stringResource(R.string.home_connection_method),
+        connectionSummary(value.presentation.mode, value.carlinkState.takeIf { carlink }, context::getString)) {
         Column { ModeSummary(value.presentation.mode) { guide(it.key) } }
         OutlinedButton(onClick = { guide(null) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.setup_change_mode)) }
+        if (carlink) {
+            Text(stringResource(R.string.ui_carlink_instruction))
+            DetailValue(R.string.ui_carlink, stringResource(value.carlinkState))
+            TextButton(onClick = reconnect, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.direlay_carlink_reconnect)) }
+        }
     }
 }
-/** This phone's own network: the Wi-Fi it is on and its IP addresses. */
-@Composable private fun NetworkCard(value: HomeContent, network: () -> Unit) {
-    MotionCard {
-        Heading(stringResource(R.string.network_title))
-        Column {
-            SettingsRow(stringResource(R.string.network_wifi), value.wifi, R.drawable.symbol_wifi)
+/** This phone's network and the addresses reachable from the head unit. */
+@Composable private fun NetworkCard(value: HomeContent, network: () -> Unit, onCopy: (String) -> Unit) {
+    CollapsibleCard("home-network", stringResource(R.string.ui_network), networkSummary(value.wifi, value.ip)) {
+        DetailValue(R.string.network_wifi, value.wifi)
+        DetailValue(R.string.network_addresses, value.ip, monospace = true)
+        if (!value.carlink || value.both) {
             HorizontalDivider()
-            SettingsRow(stringResource(R.string.network_addresses), value.ip, R.drawable.symbol_link)
+            Text(stringResource(R.string.host_head_unit_address), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.ui_browser_instruction))
+            if (value.addresses.isEmpty()) Hint(stringResource(R.string.ui_address_waiting))
+            ReceiverAddresses(value.addresses, onCopy)
+            if (value.addresses.isNotEmpty()) Hint(stringResource(R.string.ui_browser_https_hint))
+            Hint(stringResource(R.string.ui_tls_hint))
         }
         if (!value.onWifi) TextButton(onClick = network, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.ui_open_wifi)) }
     }
 }
 @Composable private fun VehicleTile(value: HomeContent, open: () -> Unit, modifier: Modifier, contentModifier: Modifier) {
+    val context = LocalContext.current
     val ms = if (LocalRelayMotion.current) 220 else 0
     AnimatedVisibility(value.carlink || value.both || value.vehicle.sample, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
         exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
         Card(onClick = open, modifier = modifier.fillMaxWidth()) {
-            Column(contentModifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(contentModifier.fillMaxWidth().heightIn(min = 72.dp).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Symbol(R.drawable.symbol_car, stringResource(R.string.vehicle_title))
-                val state = vehicleTileState(value.vehicle)
-                Heading(stringResource(if (state == VehicleTileState.OFF) R.string.vehicle_off else R.string.vehicle_title))
-                when (state) {
-                    VehicleTileState.OFF -> Hint(stringResource(R.string.vehicle_privacy))
-                    VehicleTileState.WAITING -> Text(stringResource(R.string.vehicle_waiting))
-                    VehicleTileState.DATA -> { val glance = vehicleGlance(value.vehicle.reports)
-                        Text(stringResource(R.string.vehicle_glance, glance[0], glance[1], glance[2])) }
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.vehicle_title), style = MaterialTheme.typography.titleMedium)
+                    Text(vehicleSummary(value.vehicle) { key, arguments -> context.getString(key, *arguments.toTypedArray()) },
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                Symbol(R.drawable.symbol_chevron, stringResource(R.string.vehicle_title))
             }
         }
     }

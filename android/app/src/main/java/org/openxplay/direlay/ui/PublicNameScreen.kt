@@ -55,24 +55,25 @@ import java.util.Date
     DetailPage(stringResource(R.string.public_name_title), back) {
         Hint(stringResource(R.string.public_name_summary))
         Toggle(stringResource(R.string.public_name_enabled), enabled) { enabled = it; saved = false }
-        SmallHeading(stringResource(R.string.public_name_provider))
-        Options(providers.map { it.label }, providers.indexOfFirst { it.key == provider }.coerceAtLeast(0)) {
-            provider = providers[it].key; saved = false
+        CollapsibleCard("configuration", stringResource(R.string.public_name_provider), name.ifEmpty { stringResource(R.string.public_name_name) }, initiallyExpanded = true) {
+            Options(providers.map { it.label }, providers.indexOfFirst { it.key == provider }.coerceAtLeast(0)) {
+                provider = providers[it].key; saved = false
+            }
+            SettingField(stringResource(R.string.public_name_name), name, errors[PublicNameFile.NAME]) { name = it; saved = false }
+            Hint(stringResource(R.string.public_name_name_hint))
+            SettingField(stringResource(R.string.public_name_token), token, errors[PublicNameFile.TOKEN], secret = true) { token = it; saved = false }
+            if (view.tokenSet && token.isEmpty()) Text(stringResource(R.string.public_name_token_saved), color = MaterialTheme.colorScheme.primary)
+            Hint(stringResource(R.string.public_name_token_hint))
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                .toggleable(terms, role = Role.Checkbox) { terms = it; saved = false },
+                verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(terms, onCheckedChange = null, Modifier.padding(end = 12.dp))
+                Text(stringResource(R.string.public_name_terms), Modifier.weight(1f))
+            }
+            TextButton(onClick = {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(R.string.public_name_terms_url)))) }
+            }) { Text(stringResource(R.string.public_name_terms_url)) }
         }
-        SettingField(stringResource(R.string.public_name_name), name, errors[PublicNameFile.NAME]) { name = it; saved = false }
-        Hint(stringResource(R.string.public_name_name_hint))
-        SettingField(stringResource(R.string.public_name_token), token, errors[PublicNameFile.TOKEN], secret = true) { token = it; saved = false }
-        if (view.tokenSet && token.isEmpty()) Text(stringResource(R.string.public_name_token_saved), color = MaterialTheme.colorScheme.primary)
-        Hint(stringResource(R.string.public_name_token_hint))
-        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-            .toggleable(terms, role = Role.Checkbox) { terms = it; saved = false },
-            verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(terms, onCheckedChange = null, Modifier.padding(end = 12.dp))
-            Text(stringResource(R.string.public_name_terms), Modifier.weight(1f))
-        }
-        TextButton(onClick = {
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(R.string.public_name_terms_url)))) }
-        }) { Text(stringResource(R.string.public_name_terms_url)) }
         Text(publicNameStatusText(context, status, url), Modifier.padding(vertical = 8.dp),
             color = if (status.state == PublicNameState.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
         if (saved) Text(stringResource(R.string.settings_saved), color = MaterialTheme.colorScheme.primary)
@@ -90,12 +91,14 @@ import java.util.Date
                 }
             }
         }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_save)) }
-        OutlinedButton(onClick = importFile, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_import)) }
-        OutlinedButton(onClick = renew, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = view.configured && view.enabled) {
-            Text(stringResource(R.string.public_name_renew))
-        }
-        TextButton(onClick = { confirmRemove = true }, Modifier.heightIn(min = 48.dp), enabled = view.configured && !busy) {
-            Text(stringResource(R.string.public_name_remove), color = MaterialTheme.colorScheme.error)
+        CollapsibleCard("maintenance", stringResource(R.string.menu_https_maintenance), stringResource(R.string.public_name_import)) {
+            OutlinedButton(onClick = importFile, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_import)) }
+            OutlinedButton(onClick = renew, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = view.configured && view.enabled) {
+                Text(stringResource(R.string.public_name_renew))
+            }
+            TextButton(onClick = { confirmRemove = true }, Modifier.heightIn(min = 48.dp), enabled = view.configured && !busy) {
+                Text(stringResource(R.string.public_name_remove), color = MaterialTheme.colorScheme.error)
+            }
         }
     }
     if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false },

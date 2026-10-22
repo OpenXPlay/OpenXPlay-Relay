@@ -40,6 +40,10 @@ class DialogPinProvider : PinProvider {
 
     @Volatile var pending: Request? = null
         private set
+    @Synchronized internal fun redactFailureMessage(text: String): String =
+        listOfNotNull(lastPinRequest?.answer?.getNow(null), retryPin?.second)
+            .filter { it.isNotEmpty() }.fold(text) { value, pin -> value.replace(pin, "[redacted]") }
+
     override fun requestPin(headUnitId: String): String? {
         synchronized(this) {
             retryPin?.takeIf { it.first == headUnitId }?.let {

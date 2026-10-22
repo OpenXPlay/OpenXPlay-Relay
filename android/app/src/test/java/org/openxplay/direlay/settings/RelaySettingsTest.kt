@@ -238,18 +238,17 @@ class RelaySettingsTest {
         assertFalse(RelaySettingsStore(context).load().autoStartWhenReady)
     }
 
-    @Test fun developerModeAndBothOutputsPersistIndependentlyOfTheChosenOutput() {
-        assertFalse(store.developerMode)
-        store.developerMode = true
-        for (carlink in listOf(false, true)) {
-            store.save(store.load().copy(carlinkOutput = carlink, bothOutputs = true))
-            assertTrue(RelaySettingsStore(context).load().bothOutputs)
-            assertEquals(carlink, store.load().carlinkOutput)
-            assertTrue(RelaySettingsStore(context).developerMode)
+    @Test fun bothOutputsIgnoreLegacyDeveloperModeAndLeaveItsStoredKeyUntouched() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        for (legacy in listOf(false, true)) {
+            preferences.edit().putBoolean("developerMode", legacy).commit()
+            for (carlink in listOf(false, true)) {
+                store.save(store.load().copy(carlinkOutput = carlink, bothOutputs = true))
+                assertTrue(RelaySettingsStore(context).load().bothOutputs)
+                assertEquals(carlink, store.load().carlinkOutput)
+                assertEquals(legacy, preferences.getBoolean("developerMode", !legacy))
+            }
         }
-        store.developerMode = false
-        assertFalse(RelaySettingsStore(context).developerMode)
-        assertTrue(store.load().bothOutputs)
     }
 
     @Test fun freshIdentityDefaultsAreSavedThroughAirPlayPersistence() {

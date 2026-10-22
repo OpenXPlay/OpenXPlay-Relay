@@ -299,10 +299,6 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         AirPlayPersistence.savePhysicalSizeBasis(context, com.shilapi.xcertplay.airplay.AirPlayPhysicalSizeBasis.WIDTH)
     }
 
-    var developerMode: Boolean
-        get() = relay.getBoolean("developerMode", false)
-        set(value) { relay.edit().putBoolean("developerMode", value).apply() }
-
     /** Developer calibration: the physical width in mm declared instead of the selected preset, or 0 to use the preset. */
     var physicalWidthOverrideMm: Int
         get() = relay.getInt("devPhysicalWidthMm", 0)

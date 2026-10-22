@@ -78,7 +78,19 @@ class RelayRuntime(private val context: Context,
     @Volatile private var configuredPlugins: Pair<Boolean, List<String>> = false to emptyList()
 
     fun prepareCarPlayFrameRate() { AirPlayPersistence.saveFps(context, negotiatedFps) }
-    val status = RelayStatus()
+    private fun redactFailureMessage(text: String): String {
+        val settings = settingsStore.snapshot.value
+        val secrets = buildList {
+            settings?.let {
+                add(it.remoteToken)
+                add(it.wirelessNetwork.manualPassphrase)
+                addAll(it.wirelessNetwork.sharedWifiNetworks.map { network -> network.passphrase })
+            }
+        }
+        val redacted = redactFailureText(text, secrets)
+        return carlinkPins.redactFailureMessage(carlinkFailureRedactor(redacted))
+    }
+    val status = RelayStatus(redactFailure = ::redactFailureMessage)
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }
@@ -97,6 +109,8 @@ class RelayRuntime(private val context: Context,
     private var clearedReport: HeadUnitDisplay? = null
     @Volatile private var screenPrepared = false
     @Volatile var carPlayScreen: CarPlayScreen? = null
+        private set
+    @Volatile var carPlayScreenWidthMm: Int? = null
         private set
 
     @Synchronized private fun loadRememberedDisplay() {
@@ -242,6 +256,7 @@ class RelayRuntime(private val context: Context,
         preparedPlanningDisplay = planningDisplay(settings)
         return startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car)).also {
             settingsStore.prepareDisplay(it?.profile, settings.carplayScreenWidth)
+            carPlayScreenWidthMm = AirPlayPersistence.loadWidthPhysicalMm(context)
             appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth, preparedPlanningDisplay?.screen) }
             carPlayScreen = it
             screenPrepared = true
@@ -299,6 +314,9 @@ class RelayRuntime(private val context: Context,
         private set
     @Volatile var carlinkFailed = false
         private set
+    @Volatile var carlinkError: String? = null
+        private set
+    @Volatile private var carlinkFailureRedactor: (String) -> String = { it }
     // Sensor opt-in belongs to a socket generation and waits for the explicit reconnect action.
     private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean, val hevc: ClinkHevcMode)
     private var carlinkConfig: CarlinkConfig? = null
@@ -628,8 +646,11 @@ class RelayRuntime(private val context: Context,
         carlinkRestartPending = false
         carlinkDetail = ""
         carlinkFailed = false
+        carlinkError = null
+        carlinkFailureRedactor = { it }
         carlinkVideoDetail = ""
         carlinkVideoFailed = false
+        carlinkVideoError = null
         if (!requested.enabled) { carlinkState = "Disabled"; return }
         if (requested.blocked) {
             carlinkState = "Blocked"
@@ -662,6 +683,7 @@ class RelayRuntime(private val context: Context,
                     // A reconnected session clears the previous failure shown on the status screens.
                     if (state == ClinkState.PLAYING) {
                         carlinkBackoff.succeeded()
+                        carlinkError = null
                         carlinkFailed = carlinkVideoFailed
                         carlinkDetail = carlinkVideoDetail
                     }
@@ -675,6 +697,7 @@ class RelayRuntime(private val context: Context,
                     }
                 }
                 override fun error(error: Throwable) {
+                    carlinkError = failureText(error) { redactFailureMessage(link.redactFailureMessage(it)) }
                     carlinkFailed = true
                     // Code locations only (no messages, which may carry platform details), except protocol codes.
                     val root = generateSequence(error) { it.cause }.last()
@@ -685,14 +708,14 @@ class RelayRuntime(private val context: Context,
                     val rejected = generateSequence(error) { it.cause }.any { it.message in setOf("auth_rejected", "auth_pin_proof_failed") }
                     if (rejected) carlinkPins.reject(::reconnectCarlink)
                     else carlinkPins.cancel()
-                    // User-facing failure text is selected by RelayActivity; detail retains the safe code.
                 }
                 // Output-side video diagnostics only (queue resets); session diagnostics stay in the diagnostics port.
                 override fun diagnostic(message: String) { if (message.startsWith("video ") || message.startsWith("audio ") || message.startsWith("frame ")) android.util.Log.i("DiRelayCarlink", message) }
                 override fun statistics(stats: ClinkStatistics) { carlinkStatistics = stats }
                 override fun profileMismatch(inputCodec: String, decoders: List<String>) {
                     carlinkFailed = true
-                    carlinkDetail = "Head unit cannot decode this video"
+                    carlinkDetail = (carlinkVideoDetail.takeIf { carlinkVideoFailed }
+                        ?: "Head unit cannot decode this video") + "\ninput=$inputCodec decoders=${decoders.joinToString()}"
                     Log.w("DiRelayCarlink", "video encoder mismatch input=$inputCodec decoders=${decoders.joinToString()}")
                 }
             })
@@ -700,6 +723,7 @@ class RelayRuntime(private val context: Context,
         carlinkEnded = false
         carlinkPins.resumeRequests()
         carlinkState = "CONNECTING"
+        carlinkFailureRedactor = link::redactFailureMessage
         carlinkLink = link
         carlink = output
         hub.addOutput(TranscodingOutput(output, MediaCodecPipeline.factory, report = { format, decision, failed ->
@@ -712,14 +736,16 @@ class RelayRuntime(private val context: Context,
             }
             val target = when (decision.target?.profile) { 66 -> "Baseline"; 77 -> "Main"; 100 -> "High"; else -> "H.265" }
             carlinkVideoFailed = failed || decision.mode == VideoCompatibility.Mode.UNSUPPORTED
+            if (!failed) carlinkVideoError = null
+            val reason = VideoCompatibility.reportKey(format, decision, failed).reason
             carlinkVideoDetail = when {
-                carlinkVideoFailed -> "Head unit cannot decode this video"
+                carlinkVideoFailed -> listOfNotNull("Head unit cannot decode this video", reason, carlinkVideoError).joinToString("\n")
                 decision.mode == VideoCompatibility.Mode.TRANSCODE -> "Transcoding $source → $target for the head unit"
                 else -> "Video passthrough"
             }
             carlinkFailed = carlinkVideoFailed
             carlinkDetail = carlinkVideoDetail
-            val reason = VideoCompatibility.reportKey(format, decision, failed).reason
+            if (!carlinkVideoFailed) carlinkError = null
             Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
         }, observeCapabilities = { caps ->
             carlinkScreen = caps?.displays?.get(org.openxplay.stream.core.ScreenId.MAIN)
@@ -732,7 +758,8 @@ class RelayRuntime(private val context: Context,
             Log.i("DiRelayCarlink", "video decoders=${decoders.joinToString { it.codecString }}")
         // Only advertised HEVC sessions accept H.265; Off keeps H.264 delivery.
         }, deliveryCodecs = if (requested.hevc == ClinkHevcMode.OFF) setOf(org.openxplay.stream.core.VideoCodec.H264)
-            else setOf(org.openxplay.stream.core.VideoCodec.H264, org.openxplay.stream.core.VideoCodec.H265)))
+            else setOf(org.openxplay.stream.core.VideoCodec.H264, org.openxplay.stream.core.VideoCodec.H265),
+            onFailure = { _, failure -> carlinkVideoError = failureText(failure) { redactFailureMessage(link.redactFailureMessage(it)) } }))
     }
 
     @Volatile var carlinkStatistics: ClinkStatistics? = null
@@ -743,6 +770,7 @@ class RelayRuntime(private val context: Context,
         private set
     @Volatile private var carlinkVideoFailed = false
     @Volatile private var carlinkVideoDetail = ""
+    @Volatile private var carlinkVideoError: String? = null
     private val carlinkBackoff = AndroidClinkLink.retryBackoff
 
     /** Reconnects an ended Carlink session with backoff when the user enabled automatic reconnection. */
@@ -823,7 +851,7 @@ class RelayRuntime(private val context: Context,
                 Log.w("OpenXPlay Relay", "Web receiver start failed: $reason", failure)
                 lastWebFailure = reason
             }
-            serverState = "Web receiver unavailable: ${failure.message ?: failure.javaClass.simpleName}"
+            serverState = "Web receiver unavailable: ${failureText(failure, ::redactFailureMessage)}"
             receiverUrls = emptyList()
             urlRefresh?.cancel(false)
             urlRefresh = null

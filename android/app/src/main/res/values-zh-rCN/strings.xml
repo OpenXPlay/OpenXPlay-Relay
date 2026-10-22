@@ -115,8 +115,7 @@
     <string name="ui_network">网络</string>
     <string name="ui_wifi_direct_recommended">Wi-Fi 直连（推荐）</string>
     <string name="ui_boot">开机启动</string>
-    <string name="ui_developer">开发者</string>
-    <string name="ui_developer_mode">开发者模式</string>
+    <string name="ui_developer">开发者选项</string>
     <string name="ui_settings_validation">请检查网络名称（1–32 个 UTF-8 字节）及密码（开放网络可留空，否则为 8–63 个字符）。如果更改了高级选项，请在开发者页面中检查。</string>
     <string name="ui_start_failed">无法启动 CarPlay。请检查权限、身份和连接设置，然后重试。</string>
     <string name="ui_material_failed">无法导入文件。请检查文件格式和密码，然后重试。</string>
@@ -187,7 +186,6 @@
     <string name="settings_network_hint">选择无线 CarPlay 使用的网络。</string>
     <string name="settings_startup">启动</string>
     <string name="settings_automatic_hint">准备就绪时自动连接。</string>
-    <string name="settings_developer_hint">高级选项与诊断</string>
     <string name="settings_next_start">下次启动 CarPlay 时应用。</string>
     <string name="settings_saved">已保存</string>
     <string name="settings_copied">已复制</string>
@@ -352,6 +350,11 @@
     <string name="host_back">返回 OpenXPlay Relay</string>
     <string name="host_cancel">取消</string>
     <string name="host_stopped">CarPlay 已停止</string>
+    <string name="host_head_unit_address">车机访问地址</string>
+    <string name="host_detected_screen">检测到的屏幕</string>
+    <string name="host_state">状态</string>
+    <string name="host_frame_rate">设定 %1$s fps</string>
+    <string name="host_frame_rate_measured">设定 %1$s fps · 实测 %2$s fps</string>
     <string name="carlink_auto_reconnect">Carlink 自动重连</string>
     <string name="carlink_auto_reconnect_hint">连接断开后自动重新连接车机。</string>
     <string name="shared_wifi_not_saved">此 Wi-Fi 尚未保存用于 CarPlay</string>
@@ -423,8 +426,7 @@
     <string name="setup_home_hint">选好车机的显示方式和 iPhone 的连接方式，就能开启 CarPlay。</string>
     <string name="setup_home_action">打开设置向导</string>
     <string name="setup_change_mode">更改模式</string>
-    <string name="mode_title">当前模式</string>
-    <string name="network_title">本机网络</string>
+    <string name="home_connection_method">连接方式</string>
     <string name="network_addresses">本机 IP 地址</string>
     <string name="ui_wifi_connected">已连接</string>
     <string name="ui_wifi_not_connected">未连接</string>
@@ -457,7 +459,7 @@
     <string name="picture_native_hint">画面最清晰，需要更多 Wi-Fi 带宽。</string>
     <string name="picture_resolution">分辨率</string>
     <string name="picture_screen_width">CarPlay 屏幕宽度</string>
-    <string name="picture_screen_width_hint">数值越大，一页显示的图标越多。</string>
+    <string name="picture_screen_width_hint">数值越大，一页显示的图标越多，Dock 栏也可能从左侧移到底部。</string>
     <string name="picture_screen">整屏</string>
     <string name="picture_window">窗口</string>
     <string name="ui_browser_https_hint">注意：地址以 https:// 开头，不是 http://。</string>
@@ -546,7 +548,7 @@
     <string name="video_stats_off">关闭</string>
     <string name="video_stats_5">近 5 秒</string>
     <string name="video_stats_15">近 15 秒</string>
-    <string name="video_stats_hint">中继运行时在首页显示帧率、分辨率、码率和丢帧率，统计满所选时长后才开始显示。关闭时不做任何统计。</string>
+    <string name="video_stats_hint">在运行页面显示帧率、分辨率、码率和丢帧率，统计满所选时长后才开始显示。关闭时不做任何统计。</string>
     <string name="video_stats_iphone">iPhone</string>
     <string name="video_stats_carlink">Carlink</string>
     <string name="video_stats_browser">浏览器 %1$d</string>
@@ -604,4 +606,10 @@
     <string name="public_name_name_invalid">请输入完整域名。DuckDNS 域名以 .duckdns.org 结尾。</string>
     <string name="public_name_token_invalid">这个 Token 与所选服务商不符。</string>
     <string name="public_name_remove_confirm">要从这台中继移除域名、Token 和证书吗？服务商那里的地址记录保持不变。</string>
+    <string name="home_problem_connection">连接</string>
+    <string name="home_problem_carplay">CarPlay 连接</string>
+    <string name="home_problem_carlink">Carlink</string>
+    <string name="home_problem_browser">浏览器输出</string>
+    <string name="home_problem_web_server">浏览器输出（网页服务器）</string>
+    <string name="home_problem_output">中继输出</string>
 </resources>

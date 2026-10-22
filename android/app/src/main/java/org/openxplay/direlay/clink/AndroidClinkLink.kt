@@ -78,10 +78,15 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         val waits = java.util.concurrent.CopyOnWriteArrayList<CompletableFuture<*>>()
     }
     @Volatile private var current: Run? = null
+    @Volatile private var failurePassphrase = ""
+    internal fun redactFailureMessage(text: String): String = failurePassphrase.let {
+        if (it.isEmpty()) text else text.replace(it, "[redacted]")
+    }
     override fun connect(onLinkLost: (Throwable?) -> Unit): ClinkAddresses {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Connect must run on a worker" }
         val run = Run(onLinkLost)
         synchronized(this) { check(current == null); current = run }
+        failurePassphrase = ""
         diagnostics.emit(ClinkStage.LINK_START)
         try {
             awaitCleanup()
@@ -103,6 +108,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                 }
             }
             val (carId, reply) = checkNotNull(handoff)
+            failurePassphrase = reply.psk
             diagnostics.handoff(reply.ssid, reply.psk.length)
             // No PIN/UI pause here; return immediately after DHCP so clink can start AUTH.
             val endpoints = diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) { join(run, reply) }

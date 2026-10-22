@@ -29,6 +29,7 @@ class TranscodingOutput(
     private val report: (VideoFormat, VideoCompatibility.Decision, Boolean) -> Unit = { _, _, _ -> },
     private val observeCapabilities: (OutputCapabilities?) -> Unit = {},
     private val deliveryCodecs: Set<VideoCodec> = VideoCodec.entries.toSet(),
+    private val onFailure: (VideoFormat, Exception) -> Unit = { _, _ -> },
 ) : ProjectionOutput by inner {
     private class Stream(val format: VideoFormat) {
         var decision = VideoCompatibility.Decision(VideoCompatibility.Mode.PASSTHROUGH)
@@ -152,6 +153,7 @@ class TranscodingOutput(
                     stream.revision++
                     stream.pipeline?.close(); stream.pipeline = null
                     stream.failed = true
+                    onFailure(stream.format, error)
                     reportChange(stream.format, decision, true)
                     inner.onVideoFormat(stream.format.screen, stream.format)
                     requestKeyFrame(stream.format.screen)

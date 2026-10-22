@@ -7,8 +7,11 @@ import org.openxplay.stream.core.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
+data class RelayFailure(val outputId: String?, val text: String)
+
 /** Model-only observer supplements HubListener, which has no frame or connection callbacks. */
-class RelayStatus(private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
+class RelayStatus(private val redactFailure: (String) -> String = { redactFailureText(it) },
+    private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
     override val id = "relay-status"
     private val frames = ConcurrentHashMap<ScreenId, AtomicLong>()
     @Volatile var countVideoBytes = false
@@ -36,8 +39,9 @@ class RelayStatus(private val clock: () -> Long = System::nanoTime) : HubListene
     val receivers = ReceiverDiagnostics()
     @Volatile var session: SessionState? = null
         private set
-    @Volatile var failure: String? = null
+    @Volatile var failures: List<RelayFailure> = emptyList()
         private set
+    val failure: String? get() = failures.firstOrNull()?.text
     val frameCounts: Map<Int, Long> get() = frames.mapKeys { it.key.value }.mapValues { it.value.get() }
     val recentWebReporters: Int get() = webMeasurements().size
 
@@ -54,12 +58,16 @@ class RelayStatus(private val clock: () -> Long = System::nanoTime) : HubListene
         receivers.report(origin.clientId, type, json)
         if (type == "fullscreen-exit") android.util.Log.i("OpenXPlay Relay", "Fullscreen exit ${origin.clientId}: $json")
     }
-    fun clearFailure() { failure = null }
+    @Synchronized fun clearFailure() { failures = emptyList() }
+    @Synchronized private fun rememberFailure(outputId: String?, failure: Throwable) {
+        val text = "${outputId ?: "Input"}: ${failureText(failure, redactFailure)}"
+        failures = (listOf(RelayFailure(outputId, text)) + failures.filterNot { it.text == text }).take(10)
+    }
     override fun outputFailed(outputId: String, failure: Throwable) {
-        this.failure = "$outputId: ${failure.message ?: failure.javaClass.simpleName}"
+        rememberFailure(outputId, failure)
     }
     override fun inputFailed(failure: Throwable) {
-        this.failure = "Input: ${failure.message ?: failure.javaClass.simpleName}"
+        rememberFailure(null, failure)
     }
     override fun open(host: OutputHost) = Unit
     override fun onSession(state: SessionState, config: SessionConfig) {

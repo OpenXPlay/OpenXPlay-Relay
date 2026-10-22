@@ -8,15 +8,23 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.RelaySettings
 import org.openxplay.direlay.relay.WebStartReason
 import org.openxplay.direlay.relay.WebStartFailure
+import org.openxplay.direlay.relay.RelayFailure
 import org.openxplay.stream.core.SessionPhase
+import org.openxplay.direlay.vehicle.VehicleTileState
+import org.openxplay.direlay.vehicle.VehicleView
+import org.openxplay.direlay.vehicle.vehicleGlance
+import org.openxplay.direlay.vehicle.vehicleTileState
 
 /** No Android services or mutable runtime references enter the presentation mapper. */
 enum class StatusTone { IDLE, PROGRESS, ATTENTION, RUNNING, ERROR }
 enum class SetupAction { PERMISSIONS, IDENTITY, IPHONE, SETTINGS, SHARED_WIFI, CHOOSE_IPHONE }
 data class SetupItem(val text: Int, val actionLabel: Int, val action: SetupAction)
+/** Null text selects the localized generic error when no specific message is available. */
+data class HomeProblem(val title: Int, val text: String? = null, val detail: String? = null)
 data class HomePresentation(val headline: Int, val subline: Int, val tone: StatusTone,
     val mode: List<ModeRow>, val checklist: List<SetupItem>, val canStart: Boolean, val running: Boolean,
-    val checking: Boolean = false, val sublineArguments: List<String> = emptyList())
+    val checking: Boolean = false, val sublineArguments: List<String> = emptyList(),
+    val problems: List<HomeProblem> = emptyList())
 data class HomeSnapshot(
     val settings: RelaySettings, val wireless: Boolean, val permissionsReady: Boolean,
     val identityReady: Boolean, val checking: Boolean = false, val validSettings: Boolean = true,
@@ -24,7 +32,53 @@ data class HomeSnapshot(
     val iphoneSelection: IphoneSelection = IphoneSelection.NoIphone, val autoStartPaused: Boolean = false,
     val sharedWifiReady: Boolean = true, val currentWifi: String? = null,
     val webReason: WebStartReason? = null, val webListening: Boolean = false, val carNetworkAvailable: Boolean = true,
+    val problems: List<HomeProblem> = emptyList(),
 )
+
+fun connectionSummary(mode: List<ModeRow>, carlinkState: Int?, label: (Int) -> String): String =
+    listOfNotNull(mode.firstOrNull { it.step == SetupStep.CONNECTION }?.value,
+        mode.firstOrNull { it.step == SetupStep.OUTPUT }?.value, carlinkState)
+        .joinToString(" · ", transform = label)
+
+fun networkSummary(wifi: String, addresses: String): String =
+    listOfNotNull(wifi.trim().takeIf { it.isNotEmpty() },
+        addresses.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() })
+        .distinct().joinToString(" · ")
+
+fun vehicleSummary(value: VehicleView, label: (Int, List<String>) -> String): String = when (vehicleTileState(value)) {
+    VehicleTileState.OFF -> label(R.string.vehicle_off_value, emptyList())
+    VehicleTileState.WAITING -> label(R.string.vehicle_waiting, emptyList())
+    VehicleTileState.DATA -> label(R.string.vehicle_glance, vehicleGlance(value.reports))
+}
+
+fun carlinkStateLabel(state: String, failed: Boolean, awaitingPin: Boolean): Int = when {
+    awaitingPin -> R.string.ui_waiting_code
+    state in setOf("ACTIVE", "CONNECTED", "STREAMING", "PLAYING") -> R.string.ui_connected
+    state == "Requires Android 10+" -> R.string.ui_carlink_unsupported
+    failed || state == "ENDED" -> R.string.ui_carlink_failed
+    else -> R.string.ui_searching
+}
+
+/** Runtime values are copied by the Activity; this mapper has no services or mutable runtime references. */
+fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDetail: String,
+    carlinkError: String?, webReason: WebStartReason?, serverState: String): List<HomeProblem> = buildList {
+    failures.forEach { failure ->
+        add(HomeProblem(when (failure.outputId) {
+            null -> R.string.home_problem_carplay
+            "clink", "carlink" -> R.string.home_problem_carlink
+            "web" -> R.string.home_problem_browser
+            else -> R.string.home_problem_output
+        }, failure.text))
+    }
+    if (carlinkFailed) {
+        if (carlinkDetail.isNotBlank()) add(HomeProblem(R.string.home_problem_carlink, carlinkDetail))
+        if (!carlinkError.isNullOrBlank() && carlinkError != carlinkDetail)
+            add(HomeProblem(R.string.home_problem_carlink, carlinkError))
+        if (carlinkDetail.isBlank() && carlinkError.isNullOrBlank()) add(HomeProblem(R.string.home_problem_carlink))
+    }
+    if (webReason != null) add(HomeProblem(R.string.home_problem_web_server,
+        serverState.takeIf { it.isNotBlank() }, webReason.toString()))
+}
 
 fun presentHome(value: HomeSnapshot): HomePresentation {
     val browser = !value.settings.carlinkOutput || value.settings.bothOutputs
@@ -77,5 +131,6 @@ fun presentHome(value: HomeSnapshot): HomePresentation {
     }
     return HomePresentation(headline, subline, tone, modeRows(value.settings, value.wireless),
         checklist, ready && iphoneReady, running, value.checking,
-        if (webReason?.failure == WebStartFailure.PORT_BUSY) listOf(webReason.port.toString()) else emptyList())
+        if (webReason?.failure == WebStartFailure.PORT_BUSY) listOf(webReason.port.toString()) else emptyList(),
+        if (tone == StatusTone.ERROR) value.problems.ifEmpty { listOf(HomeProblem(R.string.home_problem_connection)) } else emptyList())
 }

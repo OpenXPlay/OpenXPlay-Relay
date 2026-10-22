@@ -20,12 +20,14 @@ class DialogPinRetryTest {
             val first = requireNotNull(requests.poll(3, TimeUnit.SECONDS))
             assertFalse(first.incorrect); first.respond("111111")
             assertEquals("111111", answer.get(3, TimeUnit.SECONDS)); assertNull(provider.pending)
+            assertEquals("auth_rejected [redacted]", provider.redactFailureMessage("auth_rejected 111111"))
             var reconnects = 0
             provider.reject { reconnects++ }
             val retry = requireNotNull(requests.poll(3, TimeUnit.SECONDS))
             assertTrue(retry.incorrect); assertEquals(1, provider.rejected)
             retry.respond("222222"); retry.respond("333333")
             assertEquals(1, reconnects)
+            assertEquals("[redacted] [redacted]", provider.redactFailureMessage("111111 222222"))
             provider.retire(); provider.resumeRequests()
             assertEquals("222222", provider.requestPin("car"))
             provider.paired(); assertEquals(1, provider.successes)

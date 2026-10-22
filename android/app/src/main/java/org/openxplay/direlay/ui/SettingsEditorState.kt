@@ -1,0 +1,144 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-21
+package org.openxplay.direlay.ui
+
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.ui.res.stringResource
+import org.openxplay.direlay.R
+import kotlinx.coroutines.flow.collect
+import org.openxplay.direlay.settings.*
+import org.openxplay.direlay.settings.DisplayMode
+
+/** A single editing session, shared by every settings and developer destination. */
+@Stable
+class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved: MutableState<RelaySettings>,
+    val customDisplayState: MutableState<Boolean>,
+    val numberText: SnapshotStateMap<String, String>,
+    val invalidNumbers: SnapshotStateMap<String, Boolean>,
+    private val sessionActive: MutableState<Boolean> = mutableStateOf(false)) {
+    private var generation by mutableIntStateOf(0)
+    private var observedInitial: RelaySettings? = null
+    var savingError by mutableStateOf(false)
+    var customDisplay by customDisplayState
+    /** Called at the app boundary; leaving the entire menu discards unpublished editing state. */
+    fun synchronize(initial: RelaySettings, editing: Boolean) {
+        if (editing && sessionActive.value && observedInitial == initial) return
+        observedInitial = initial
+        if (!editing || !sessionActive.value) {
+            if (sessionActive.value != editing || draft.value != initial || lastSaved.value != initial ||
+                numberText.isNotEmpty() || invalidNumbers.isNotEmpty() || savingError) {
+                generation++
+                draft.value = initial
+                lastSaved.value = initial
+                numberText.clear()
+                invalidNumbers.clear()
+                customDisplay = initial.hasCustomDisplay()
+                savingError = false
+            }
+        } else if (draft.value == lastSaved.value) {
+            if (initial != lastSaved.value && invalidNumbers.isEmpty()) {
+                numberText.clear()
+                customDisplay = initial.hasCustomDisplay()
+            }
+            val car = draft.value.car.takeIf { it.normalized() == initial.car } ?: initial.car
+            draft.value = initial.copy(car = car)
+            lastSaved.value = draft.value
+        }
+        sessionActive.value = editing
+    }
+
+    /** Field text errors belong to that field; the typed draft contains only parsed values. */
+    fun editNumber(key: String, text: String, valid: (String) -> Boolean, change: (String) -> Unit) {
+        numberText[key] = text
+        if (valid(text)) {
+            change(text)
+            invalidNumbers.remove(key)
+        } else invalidNumbers[key] = true
+    }
+
+    internal suspend fun collectChanges(wireless: (RelaySettings) -> Boolean,
+        save: suspend (RelaySettings, RelaySettings) -> Boolean) {
+        snapshotFlow { if (sessionActive.value) draft.value to generation else null }.collect { pending ->
+            if (pending != null) {
+                val (candidate, version) = pending
+                if (candidate != lastSaved.value && settingsSaveErrors(candidate, wireless(candidate)).isEmpty()) {
+                    val saved = save(lastSaved.value, candidate)
+                    // An in-flight publication must not restore a session that was already closed.
+                    if (sessionActive.value && generation == version) {
+                        if (saved) lastSaved.value = candidate
+                        savingError = !saved
+                    }
+                }
+            }
+        }
+    }
+
+    fun errorPages(wireless: (RelaySettings) -> Boolean): Set<String> = settingsInvalidPages(draft.value, lastSaved.value, wireless) +
+        invalidNumbers.keys.map { if (it in listOf("width", "height", "density")) "developer/video" else "developer/connection" }
+    fun clearDisplayErrors() {
+        listOf("width", "height", "density").forEach { invalidNumbers.remove(it) }
+    }
+    fun updateDisplay(key: String? = null, value: String = "") {
+        if (key != null) numberText[key] = value
+        val current = draft.value.display ?: DisplayProfile(1280, 720, 160)
+        val width = (numberText["width"] ?: current.width.toString()).toIntOrNull()
+        val height = (numberText["height"] ?: current.height.toString()).toIntOrNull()
+        val density = (numberText["density"] ?: current.density.toString()).toIntOrNull()
+        listOf("width" to width, "height" to height, "density" to density).forEach { (name, number) ->
+            if (number == null || !displayNumberValid(name, number.toString())) invalidNumbers[name] = true else invalidNumbers.remove(name)
+        }
+        if (width != null && height != null && density != null && listOf("width", "height", "density").none { it in invalidNumbers })
+            draft.value = draft.value.copy(displayMode = DisplayMode.FIXED, display = DisplayProfile(width, height, density))
+    }
+}
+
+internal fun displayNumberValid(key: String, text: String): Boolean {
+    val number = text.toIntOrNull() ?: return false
+    return when (key) {
+        "width" -> number in 320..3840 && number % 2 == 0
+        "height" -> number in 240..2160 && number % 2 == 0
+        "density" -> number in 120..640
+        else -> false
+    }
+}
+
+/** SnapshotStateMap.toMap() returns a persistent map that Android cannot put in a Bundle. */
+private fun <V> editorMapSaver() = Saver<SnapshotStateMap<String, V>, HashMap<String, V>>(
+    save = { HashMap(it) }, restore = { it.toList().toMutableStateMap() })
+
+internal val settingsNumberTextSaver = editorMapSaver<String>()
+internal val settingsInvalidNumbersSaver = editorMapSaver<Boolean>()
+
+private fun RelaySettings.hasCustomDisplay() = displayMode == DisplayMode.FIXED && display != null && display !in DisplayProfile.presets
+
+@Composable
+fun rememberSettingsEditorState(initial: RelaySettings, editing: Boolean, wireless: (RelaySettings) -> Boolean,
+    save: suspend (RelaySettings, RelaySettings) -> Boolean): SettingsEditorState {
+    val draft = rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
+    val lastSaved = rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
+    val custom = rememberSaveable { mutableStateOf(initial.hasCustomDisplay()) }
+    val numbers = rememberSaveable(saver = settingsNumberTextSaver) { mutableStateMapOf<String, String>() }
+    val invalid = rememberSaveable(saver = settingsInvalidNumbersSaver) { mutableStateMapOf<String, Boolean>() }
+    val active = rememberSaveable { mutableStateOf(editing) }
+    val state = remember { SettingsEditorState(draft, lastSaved, custom, numbers, invalid, active) }
+    val currentSave by rememberUpdatedState(save)
+    SideEffect { state.synchronize(initial, editing) }
+    // One collector serializes publications. Destination transitions do not create new collectors.
+    LaunchedEffect(state) { state.collectChanges(wireless) { before, after -> currentSave(before, after) } }
+    return state
+}
+
+@Composable
+fun EditorNumberField(state: SettingsEditorState, key: String, label: Int, initial: String,
+    valid: (String) -> Boolean, change: (String) -> Unit) {
+    val stored = state.numberText[key]
+    val text = if (stored != null && (key in state.invalidNumbers || stored.toIntOrNull() == initial.toIntOrNull())) stored else initial
+    SettingField(stringResource(label), text,
+        if (key in state.invalidNumbers) R.string.settings_advanced_error else null, number = true) {
+        state.editNumber(key, it, valid, change)
+    }
+}
