@@ -116,6 +116,7 @@ class CarlinkTraceRecorder(private val directory: File, private val mirror: (Str
                     put("kind", event.kind); put("coordinates", JSONArray(event.coordinates.map { listOf(it.first, it.second) }))
                     put("rawCoordinates", JSONArray(event.rawCoordinates.map { listOf(it.first, it.second) }))
                     put("streamSize", event.streamSize?.let { JSONArray(listOf(it.first, it.second)) })
+                    put("viewSize", event.viewSize?.let { JSONArray(listOf(it.first, it.second)) })
                 }
                 is ClinkTraceEvent.Error -> { put("code", event.code); put("exceptionClass", event.exceptionClass); put("location", event.location) }
                 is ClinkTraceEvent.Link -> { put("stage", event.stage); put("fields", map(event.fields)) }

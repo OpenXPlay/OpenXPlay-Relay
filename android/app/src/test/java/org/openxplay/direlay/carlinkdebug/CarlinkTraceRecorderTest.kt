@@ -40,16 +40,19 @@ class CarlinkTraceRecorderTest {
 
     @Test fun inputTraceKeepsRawCoordinatesAndCurrentPictureSize() {
         val event = ClinkTraceEvent.Input(1, 2, "touch", listOf(.5 to .25),
-            listOf(640L to 180L), 1156 to 764)
+            listOf(640L to 180L), 1156 to 764, 1532 to 1013)
         val json = JSONObject(CarlinkTraceRecorder.encode(event))
         assertEquals(.5, json.getJSONArray("coordinates").getJSONArray(0).getDouble(0), 0.0)
         assertEquals(640L, json.getJSONArray("rawCoordinates").getJSONArray(0).getLong(0))
         assertEquals(180L, json.getJSONArray("rawCoordinates").getJSONArray(0).getLong(1))
         assertEquals(1156, json.getJSONArray("streamSize").getInt(0))
         assertEquals(764, json.getJSONArray("streamSize").getInt(1))
+        assertEquals(1532, json.getJSONArray("viewSize").getInt(0))
+        assertEquals(1013, json.getJSONArray("viewSize").getInt(1))
         val legacy = JSONObject(CarlinkTraceRecorder.encode(ClinkTraceEvent.Input(1, 2, "touch", emptyList())))
         assertEquals(0, legacy.getJSONArray("rawCoordinates").length())
         assertTrue(legacy.isNull("streamSize"))
+        assertTrue(legacy.isNull("viewSize"))
     }
 
     @Test fun ringRotationJsonAndClear() {
