@@ -1,0 +1,53 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-21 -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector android:width="288dp" android:height="288dp"
+            android:viewportWidth="288" android:viewportHeight="288">
+            <group android:name="mark" android:pivotX="144" android:pivotY="144">
+                <path android:name="bar1" android:pathData="M105,105 L183,183"
+                    android:strokeColor="#5BFFAE" android:strokeWidth="32"
+                    android:strokeLineCap="butt" android:fillColor="#00000000"
+                    android:trimPathEnd="0" />
+                <path android:name="bar2" android:pathData="M183,105 L105,183"
+                    android:strokeColor="#5BFFAE" android:strokeWidth="32"
+                    android:strokeLineCap="butt" android:fillColor="#00000000"
+                    android:trimPathEnd="0" />
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="bar1">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="trimPathEnd" android:valueType="floatType"
+                android:valueFrom="0" android:valueTo="1" android:duration="240"
+                android:interpolator="@android:interpolator/fast_out_slow_in" />
+        </aapt:attr>
+    </target>
+    <target android:name="bar2">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="trimPathEnd" android:valueType="floatType"
+                android:valueFrom="0" android:valueTo="1" android:duration="240"
+                android:startOffset="180"
+                android:interpolator="@android:interpolator/fast_out_slow_in" />
+        </aapt:attr>
+    </target>
+    <target android:name="mark">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:duration="180" android:startOffset="420"
+                android:interpolator="@android:interpolator/fast_out_slow_in">
+                <propertyValuesHolder android:propertyName="scaleX" android:valueType="floatType">
+                    <keyframe android:fraction="0" android:value="1" />
+                    <keyframe android:fraction="0.5" android:value="1.08" />
+                    <keyframe android:fraction="1" android:value="1" />
+                </propertyValuesHolder>
+                <propertyValuesHolder android:propertyName="scaleY" android:valueType="floatType">
+                    <keyframe android:fraction="0" android:value="1" />
+                    <keyframe android:fraction="0.5" android:value="1.08" />
+                    <keyframe android:fraction="1" android:value="1" />
+                </propertyValuesHolder>
+            </objectAnimator>
+        </aapt:attr>
+    </target>
+</animated-vector>

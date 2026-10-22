@@ -81,6 +81,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) animateSplashExit()
         if (identityImport.uri == null) {
             identityImport.uri = savedInstanceState?.getString("identityUri")?.let(Uri::parse)
             identityImport.kind = savedInstanceState?.getString("identityKind")?.let(IdentityKind::valueOf) ?: IdentityKind.UNKNOWN
@@ -153,6 +154,28 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose)
                 }
             }
+        }
+    }
+
+    // Finish the icon animation before fading the system splash.
+    @android.annotation.TargetApi(Build.VERSION_CODES.S)
+    private fun animateSplashExit() {
+        splashScreen.setOnExitAnimationListener { view ->
+            if (Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) {
+                view.remove()
+                return@setOnExitAnimationListener
+            }
+            val start = view.iconAnimationStart
+            val duration = view.iconAnimationDuration
+            val remaining = if (start != null && duration != null) {
+                java.time.Duration.between(java.time.Instant.now(), start.plus(duration)).toMillis().coerceIn(0L, 600L)
+            } else 0L
+            view.postDelayed({
+                view.alpha = 1f
+                view.animate().alpha(0f).setDuration(200L)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .withEndAction { view.remove() }.start()
+            }, remaining)
         }
     }
 

@@ -13,6 +13,7 @@
         <item name="android:windowLightNavigationBar">false</item>
         <!-- Without these, API 31+ shows a white splash before the dark Home screen. -->
         <item name="android:windowSplashScreenBackground" tools:targetApi="31">#080808</item>
-        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@mipmap/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/splash_mark</item>
+        <item name="android:windowSplashScreenAnimationDuration" tools:targetApi="31">600</item>
     </style>
 </resources>
