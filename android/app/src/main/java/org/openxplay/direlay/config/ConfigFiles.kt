@@ -65,7 +65,8 @@ class ConfigFiles(private val context: Context, private val settings: RelaySetti
             bytes = data
             if (privateData) importPrivacy(data) else synchronized(settings) {
                 val current = settings.load()
-                val parsed = UserConfigCodec.decode(data, current, settings.developerOverrides.value, settings.wireless(current))
+                val parsed = UserConfigCodec.decode(data, current, settings.developerOverrides.value, settings.wireless(current),
+                    phoneAddresses = org.openxplay.direlay.network.phoneIpv4Addresses())
                 if (parsed.errors.isEmpty()) {
                     settings.save(parsed.settings, parsed.developer)
                     // The file comes from a configured relay: skip the setup guide on the next start.

@@ -30,6 +30,9 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   carBluetoothAudio: booleans; pluginsEnabled: unique valid plugin IDs.
  * - carlinkDeviceName, carlinkDeviceModel: nonblank 1–128 UTF-8 bytes without controls.
  * - car: {brand, brandText, model, modelText}, using CarSelection's normalized values.
+ * - teslaBrowser: off/virtual-name/public-address/teslamirror/tesla-android; teslaVirtualAddress,
+ *   teslaPublicAddress, teslaMirrorAddress, teslaAndroidAddress: strings; the active address must
+ *   satisfy TeslaAddressPolicy and, when changed, must not collide with a phone IPv4 address.
  * - hotspotSsid: SSID; hotspotPassphrase: empty or 8–63 chars; hotspotChannel: 0 (automatic),
  *   1–14 or 32–177, compatible with hotspotBand. Other integer channels are ignored.
  * - developer: active, carlinkTrace, carlinkHevcEnabled, carlinkPictureSizeEnabled,
@@ -57,6 +60,8 @@ object UserConfigCodec {
         CarPlayScreenWidth.MM125 to "mm125", CarPlayScreenWidth.MM200 to "mm200", CarPlayScreenWidth.MM250 to "mm250", CarPlayScreenWidth.MM300 to "mm300",
         VideoCodecSetting.AUTO to "auto", VideoCodecSetting.H265 to "h265", VideoCodecSetting.H264 to "h264",
         VideoStatsWindow.OFF to "off", VideoStatsWindow.SECONDS_5 to "seconds-5", VideoStatsWindow.SECONDS_15 to "seconds-15",
+        TeslaBrowserMode.OFF to "off", TeslaBrowserMode.VIRTUAL_NAME to "virtual-name", TeslaBrowserMode.PUBLIC_ADDRESS to "public-address",
+        TeslaBrowserMode.TESLAMIRROR to "teslamirror", TeslaBrowserMode.TESLA_ANDROID to "tesla-android",
     )
     private fun wire(value: Enum<*>): String = enumWires.getValue(value)
     private inline fun <reified T : Enum<T>> enumValue(value: String): T =
@@ -101,6 +106,11 @@ object UserConfigCodec {
         .put("carplayScreenWidth", wire(s.carplayScreenWidth))
         .put("videoCodec", wire(s.videoCodec))
         .put("videoStats", wire(s.videoStats))
+        .put("teslaBrowser", wire(s.teslaBrowser))
+        .put("teslaVirtualAddress", s.teslaVirtualAddress)
+        .put("teslaPublicAddress", s.teslaPublicAddress)
+        .put("teslaMirrorAddress", s.teslaMirrorAddress)
+        .put("teslaAndroidAddress", s.teslaAndroidAddress)
         .put("pluginsEnabled", org.json.JSONArray(s.pluginsEnabled))
         .put("display", s.display?.let { JSONObject().put("width", it.width).put("height", it.height).put("density", it.density) } ?: JSONObject.NULL)
         .put("car", JSONObject().put("brand", s.car.brand).put("brandText", s.car.brandText).put("model", s.car.model).put("modelText", s.car.modelText))
@@ -132,12 +142,12 @@ object UserConfigCodec {
         .put("carlinkDeviceModel", d.carlinkDeviceModel)
 
     fun decode(bytes: ByteArray, current: RelaySettings, choices: DeveloperOverrides = DeveloperOverrides(),
-        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS): UserConfigImport = try {
-        decode(ConfigEnvelope.text(bytes), current, choices, wireless)
+        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS, phoneAddresses: Set<String> = emptySet()): UserConfigImport = try {
+        decode(ConfigEnvelope.text(bytes), current, choices, wireless, phoneAddresses)
     } catch (e: ConfigFailure) { UserConfigImport(current, choices, 0, emptyList(), mapOf(e.key to e.code)) }
 
     fun decode(text: String, current: RelaySettings, choices: DeveloperOverrides = DeveloperOverrides(),
-        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS): UserConfigImport {
+        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS, phoneAddresses: Set<String> = emptySet()): UserConfigImport {
         var s = current
         var d = choices
         val errors = linkedMapOf<String, String>()
@@ -189,6 +199,11 @@ object UserConfigCodec {
                 "carplayScreenWidth" -> { val value = enumValue<CarPlayScreenWidth>(j.string(key)); s = s.copy(carplayScreenWidth = value) }
                 "videoCodec" -> { val value = enumValue<VideoCodecSetting>(j.string(key)); s = s.copy(videoCodec = value) }
                 "videoStats" -> { val value = enumValue<VideoStatsWindow>(j.string(key)); s = s.copy(videoStats = value) }
+                "teslaBrowser" -> { val value = enumValue<TeslaBrowserMode>(j.string(key)); s = s.copy(teslaBrowser = value) }
+                "teslaVirtualAddress" -> { val value = j.string(key); s = s.copy(teslaVirtualAddress = value) }
+                "teslaPublicAddress" -> { val value = j.string(key); s = s.copy(teslaPublicAddress = value) }
+                "teslaMirrorAddress" -> { val value = j.string(key); s = s.copy(teslaMirrorAddress = value) }
+                "teslaAndroidAddress" -> { val value = j.string(key); s = s.copy(teslaAndroidAddress = value) }
                 "pluginsEnabled" -> { val value = j.getJSONArray(key).let { a -> (0 until a.length()).map { require(a.get(it) is String); a.getString(it) } }; s = s.copy(pluginsEnabled = value) }
                 "display" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DisplayProfile(it.integer("width"), it.integer("height"), it.integer("density")).also(DisplayProfile::validate) }; s = s.copy(display = value) }
                 "car" -> { val value = j.getJSONObject(key).let { CarSelection(it.string("brand"), it.string("brandText"), it.string("model"), it.string("modelText")).also { c -> require(c == c.normalized()) } }; s = s.copy(car = value) }
@@ -231,6 +246,17 @@ object UserConfigCodec {
             }
         } catch (_: Exception) { errors.putIfAbsent(key, "invalid") }
         fun check(key: String, test: () -> Unit) { try { test() } catch (_: Exception) { errors.putIfAbsent(key, "invalid") } }
+        val teslaKey = when (s.teslaBrowser) {
+            TeslaBrowserMode.OFF -> null
+            TeslaBrowserMode.VIRTUAL_NAME -> "teslaVirtualAddress"
+            TeslaBrowserMode.PUBLIC_ADDRESS -> "teslaPublicAddress"
+            TeslaBrowserMode.TESLAMIRROR -> "teslaMirrorAddress"
+            TeslaBrowserMode.TESLA_ANDROID -> "teslaAndroidAddress"
+        }
+        if (teslaKey != null) check(teslaKey) {
+            val address = checkNotNull(s.teslaAddress())
+            require(TeslaAddressPolicy.valid(address, if (address != current.teslaAddress()) phoneAddresses else emptySet()))
+        }
         check("fps") { require(s.fps in 30..60 && s.fps % 5 == 0) }
         check("receiverPort") { require(s.webPort?.let { it in 1024..65535 } != false) }
         check("iphone") { require(s.iphoneAddress == null || Regex("[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}").matches(s.iphoneAddress!!)) }
