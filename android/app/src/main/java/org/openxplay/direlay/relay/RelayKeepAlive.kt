@@ -1,0 +1,14 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-22
+package org.openxplay.direlay.relay
+
+interface RelayKeepAlive {
+    fun update(needed: Boolean)
+    fun uiVisible()
+
+    object None : RelayKeepAlive {
+        override fun update(needed: Boolean) = Unit
+        override fun uiVisible() = Unit
+    }
+}

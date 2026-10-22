@@ -619,6 +619,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        runtime.keepAlive.uiVisible()
         resumed = true
         runtime.reloadSettings()
         // Coming back from system Wi-Fi or Bluetooth settings: show the new network at once.
