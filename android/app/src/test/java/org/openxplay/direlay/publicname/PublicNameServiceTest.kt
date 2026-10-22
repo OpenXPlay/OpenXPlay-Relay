@@ -328,11 +328,14 @@ class PublicNameServiceTest {
 
     @Test fun removeDeletesConfigurationTokenAndCertificateButNeverTheARecord() {
         configure()
+        configure(enabled = false, provider = DnsProviderId.DYNV6, name = "other.dynv6.net", token = "dynv6-token")
+        assertEquals(2, store.savedProviders().size)
         store.accountKey()
         service.remove(); runQueued()
         assertEquals(PublicNameState.OFF, status.state)
         assertNull(store.config())
         assertNull(store.accountKey())
+        assertTrue(store.savedProviders().isEmpty())
         assertNull(certificates.installed)
         assertNull(certificates.served)
         assertEquals(PublicNameView(revision = service.view.value.revision), service.view.value)
@@ -350,10 +353,10 @@ class PublicNameServiceTest {
         assertFalse(service.view.value.toString().contains(token))
         configure(enabled = false, provider = DnsProviderId.DYNV6, name = "Relay.Dynv6.NET", token = " dynv6-token ")
         assertEquals(PublicNameConfig(false, DnsProviderId.DYNV6, "relay.dynv6.net", "dynv6-token", true), store.config())
-        // Back to DuckDNS without a new token: the kept dynv6 token does not fit, and is reported instead of kept silently.
-        assertEquals(listOf(ConfigError("token", ConfigProblem.INVALID)),
+        assertEquals(emptyList<ConfigError>(),
             configure(enabled = false, provider = DnsProviderId.DUCKDNS, name = "x.duckdns.org", token = ""))
-        assertEquals("dynv6-token", store.config()!!.token)
+        assertEquals("the DuckDNS token is restored", token, store.config()!!.token)
+        assertEquals("dynv6-token", store.savedProviders()[DnsProviderId.DYNV6]?.token)
         val imported = service.import("""{"version":1,"provider":"duckdns","name":"x.duckdns.org","token":"$token","agreeLetsEncryptTerms":true}""".toByteArray())
         assertTrue(imported is ConfigParse.Valid)
         assertEquals(PublicNameConfig(true, DnsProviderId.DUCKDNS, "x.duckdns.org", token, true), store.config())
@@ -361,6 +364,61 @@ class PublicNameServiceTest {
         assertEquals("a rejected file changes nothing", "x.duckdns.org", store.config()!!.name)
         runQueued()
         assertFalse(status.toString().contains(token))
+    }
+
+    @Test fun anEmptyTokenForANewProviderDoesNotBorrowTheActiveProvidersToken() {
+        configure(enabled = false)
+        assertEquals(emptyList<ConfigError>(), configure(enabled = false, provider = DnsProviderId.DYNV6,
+            name = "other.dynv6.net", token = ""))
+        assertEquals("", store.config()?.token)
+        assertEquals(DnsProviderId.DYNV6, service.view.value.provider)
+        assertFalse(service.view.value.tokenSet)
+        assertEquals(PublicNameProviderView(name, true), service.view.value.providers[DnsProviderId.DUCKDNS])
+        assertEquals(PublicNameProviderView("other.dynv6.net", false), service.view.value.providers[DnsProviderId.DYNV6])
+        assertEquals(emptyList<ConfigError>(), configure(enabled = false, name = name, token = ""))
+        assertEquals(token, store.config()?.token)
+        assertEquals("", store.savedProviders()[DnsProviderId.DYNV6]?.token)
+    }
+
+    @Test fun blankTokensRestoreEachProvidersOwnSetupWhileSharedFieldsFollowTheSave() {
+        configure(enabled = false)
+        configure(enabled = false, provider = DnsProviderId.DYNV6, name = "other.dynv6.net", token = "dynv6-secret")
+        val saved = store.savedProviders()
+        configure(enabled = false, terms = false, token = "")
+        assertEquals(PublicNameConfig(false, DnsProviderId.DUCKDNS, name, token, false), store.config())
+        configure(enabled = false, provider = DnsProviderId.DYNV6, name = "other.dynv6.net", token = "   ")
+        assertEquals(PublicNameConfig(false, DnsProviderId.DYNV6, "other.dynv6.net", "dynv6-secret", true), store.config())
+        assertEquals(saved, store.savedProviders())
+        assertEquals(DnsProviderId.entries.toSet(), service.view.value.providers.keys)
+        assertEquals(PublicNameProviderView(name, true), service.view.value.providers[DnsProviderId.DUCKDNS])
+        assertEquals(PublicNameProviderView("other.dynv6.net", true), service.view.value.providers[DnsProviderId.DYNV6])
+        assertFalse(service.view.value.toString().contains(token))
+        assertFalse(service.view.value.toString().contains("dynv6-secret"))
+        assertFalse(PublicNameEdit(false, DnsProviderId.DYNV6, "other.dynv6.net", "dynv6-secret", true).toString().contains("dynv6-secret"))
+    }
+
+    @Test fun importingReplacesOnlyItsProviderAndActivatesTheImportedConfiguration() {
+        configure(enabled = false)
+        configure(enabled = false, provider = DnsProviderId.DYNV6, name = "old.dynv6.net", token = "old-secret")
+        configure(enabled = false, token = "")
+        val duck = store.savedProviders()[DnsProviderId.DUCKDNS]
+        val key = checkNotNull(store.accountKey())
+        val record = PublicNameRecord(listOf(name to now))
+        store.saveRecord(record)
+        val imported = PublicNameConfig(false, DnsProviderId.DYNV6, "new.dynv6.net", "new-secret", false, AcmeEnvironment.STAGING)
+        assertTrue(service.import(PublicNameFile.encode(imported)) is ConfigParse.Valid)
+        assertEquals(imported, store.config())
+        assertEquals(duck, store.savedProviders()[DnsProviderId.DUCKDNS])
+        assertEquals(PublicNameProviderSetup("new.dynv6.net", "new-secret"), store.savedProviders()[DnsProviderId.DYNV6])
+        assertEquals(DnsProviderId.DYNV6, service.view.value.provider)
+        assertEquals(PublicNameProviderView("new.dynv6.net", true), service.view.value.providers[DnsProviderId.DYNV6])
+        assertEquals(key.public, store.accountKey()?.public)
+        assertEquals(record, store.record())
+        val before = store.savedProviders()
+        assertTrue(service.import("""{"version":1,"provider":"dynv6","token":""}""".toByteArray()) is ConfigParse.Invalid)
+        assertEquals(imported, store.config())
+        assertEquals(before, store.savedProviders())
+        assertFalse(service.view.value.toString().contains("new-secret"))
     }
 
     @Test fun noAddressMeansNoTrustedName() {

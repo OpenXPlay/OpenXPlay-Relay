@@ -29,7 +29,6 @@ class RelaySettingsTest {
 
     private fun developerOptions(change: (DeveloperOverrides) -> DeveloperOverrides) {
         RelaySettingsStore(context).use { store ->
-            store.developerMode = true
             store.saveDeveloperOverrides(change(store.developerOverrides.value))
         }
     }
@@ -145,7 +144,6 @@ class RelaySettingsTest {
     }
     @Test fun developerWidthOverrideWinsForPreparedAndFixedDisplays() {
         RelaySettingsStore(context).use { store ->
-            store.developerMode = true
             val profile = DisplayProfile(2400, 1200, 300)
             store.physicalWidthOverrideMm = 225
             for (preset in CarPlayScreenWidth.entries) {
@@ -192,11 +190,25 @@ class RelaySettingsTest {
         val store = RelaySettingsStore(context)
         val original = store.load()
         assertFalse(original.carlinkTrace)
-        store.developerMode = true
         store.saveDeveloperOverrides(store.developerOverrides.value.copy(carlinkTrace = true))
         assertTrue(store.load().carlinkTrace)
         store.save(original)
         assertFalse(store.load().carlinkTrace)
+    }
+
+    @Test fun carlinkResizeReconnectDefaultsOffAndPersistsIndependentlyOfAutoReconnect() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        RelaySettingsStore(context).use { store ->
+            val original = store.awaitSnapshot()
+            assertFalse(original.carlinkReconnectOnResize)
+            for (auto in listOf(false, true)) for (resize in listOf(false, true)) {
+                val changed = original.copy(carlinkAutoReconnect = auto, carlinkReconnectOnResize = resize)
+                store.save(changed)
+                assertEquals(resize, preferences.getBoolean("carlinkReconnectOnResize", !resize))
+                assertEquals(changed, store.snapshot.value)
+                assertEquals(changed, RelaySettingsStore(context).use { it.load() })
+            }
+        }
     }
 
     @Test fun iphoneChoiceDefaultsToAutomaticAndCanBeClearedWithoutChangingOtherSettings() {
@@ -264,18 +276,17 @@ class RelaySettingsTest {
         assertFalse(RelaySettingsStore(context).load().autoStartWhenReady)
     }
 
-    @Test fun developerModeAndBothOutputsPersistIndependentlyOfTheChosenOutput() {
-        assertFalse(store.developerMode)
-        store.developerMode = true
-        for (carlink in listOf(false, true)) {
-            store.save(store.load().copy(carlinkOutput = carlink, bothOutputs = true))
-            assertTrue(RelaySettingsStore(context).load().bothOutputs)
-            assertEquals(carlink, store.load().carlinkOutput)
-            assertTrue(RelaySettingsStore(context).developerMode)
+    @Test fun bothOutputsIgnoreLegacyDeveloperModeAndLeaveItsStoredKeyUntouched() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        for (legacy in listOf(false, true)) {
+            preferences.edit().putBoolean("developerMode", legacy).commit()
+            for (carlink in listOf(false, true)) {
+                store.save(store.load().copy(carlinkOutput = carlink, bothOutputs = true))
+                assertTrue(RelaySettingsStore(context).load().bothOutputs)
+                assertEquals(carlink, store.load().carlinkOutput)
+                assertEquals(legacy, preferences.getBoolean("developerMode", !legacy))
+            }
         }
-        store.developerMode = false
-        assertFalse(RelaySettingsStore(context).developerMode)
-        assertTrue(store.load().bothOutputs)
     }
 
     @Test fun freshIdentityDefaultsAreSavedThroughAirPlayPersistence() {
@@ -317,8 +328,8 @@ class RelaySettingsTest {
         assertEquals(MicrophoneSource.HEAD_UNIT, store.load().microphoneSource)
     }
 
-    @Test fun carBluetoothAudioDefaultsOffAndLivesInDiPlayPersistence() {
-        assertFalse(store.load().carBluetoothAudio)
+    @Test fun carBluetoothAudioDefaultsOnAndLivesInDiPlayPersistence() {
+        assertTrue(store.load().carBluetoothAudio)
         for (enabled in listOf(true, false)) {
             store.save(store.load().copy(carBluetoothAudio = enabled))
             assertEquals(enabled, AirPlayPersistence.loadCarBluetoothAudio(context))
@@ -326,6 +337,45 @@ class RelaySettingsTest {
         }
         AirPlayPersistence.saveCarBluetoothAudio(context, true)
         assertTrue(store.load().carBluetoothAudio)
+    }
+
+    @Test fun carBluetoothAudioIsDefaultedSynchronouslyBeforeTheFirstSettingsLoad() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        assertFalse(preferences.contains("carBluetoothAudioDefaulted"))
+        RelaySettingsStore(context).use { store ->
+            assertNull(store.snapshot.value)
+            assertTrue(AirPlayPersistence.loadCarBluetoothAudio(context))
+            assertTrue(preferences.getBoolean("carBluetoothAudioDefaulted", false))
+        }
+    }
+
+    @Test fun carBluetoothAudioUpgradeEnablesStoredValuesOnceWhenTheMarkerIsMissing() {
+        for (stored in listOf(false, true)) {
+            clear()
+            AirPlayPersistence.saveCarBluetoothAudio(context, stored)
+            RelaySettingsStore(context).use { store ->
+                assertTrue(AirPlayPersistence.loadCarBluetoothAudio(context))
+                assertTrue(context.getSharedPreferences("direlay", 0).getBoolean("carBluetoothAudioDefaulted", false))
+                store.save(store.load().copy(carBluetoothAudio = false))
+            }
+            RelaySettingsStore(context).use { store ->
+                assertFalse(AirPlayPersistence.loadCarBluetoothAudio(context))
+                assertFalse(store.load().carBluetoothAudio)
+            }
+        }
+    }
+
+    @Test fun carBluetoothAudioMarkerPreservesEitherUserChoiceRegardlessOfMarkerValue() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        for (marker in listOf(false, true)) for (stored in listOf(false, true)) {
+            preferences.edit().putBoolean("carBluetoothAudioDefaulted", marker).commit()
+            AirPlayPersistence.saveCarBluetoothAudio(context, stored)
+            RelaySettingsStore(context).use { store ->
+                assertEquals(stored, AirPlayPersistence.loadCarBluetoothAudio(context))
+                assertEquals(stored, store.load().carBluetoothAudio)
+                assertEquals(marker, preferences.getBoolean("carBluetoothAudioDefaulted", !marker))
+            }
+        }
     }
 
     @Test fun sharedValuesAreWrittenThroughAirPlayPersistenceAndReadBack() {

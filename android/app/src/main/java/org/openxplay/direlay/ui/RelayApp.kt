@@ -39,7 +39,6 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
         openLaunch -> listOf("home", "launch")
         else -> listOf("home")
     }) }
-    var developer by remember { mutableStateOf(store.developerMode) }
     var setupCompleted by remember { mutableStateOf(store.setupCompleted) }
     val snapshot by store.snapshot.collectAsState()
     val overrides by store.developerOverrides.collectAsState()
@@ -48,6 +47,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
     val initial = checkNotNull(snapshot)
     val savedStates = rememberSaveableStateHolder()
     var diagnostics by remember { mutableStateOf(DeveloperView()) }
+    var identityStatus by remember { mutableIntStateOf(R.string.direlay_missing) }
     var adminEnabled by remember { mutableStateOf(runtime.adminService.enabled) }
     var adminUrls by remember { mutableStateOf(runtime.adminService.urls) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -85,11 +85,15 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
         }
     }
     LaunchedEffect(entries.last()) {
+        if (showsIdentityStatus(entries.last())) identityStatus = withContext(Dispatchers.IO) { identityStatusKey(runtime.identityStore.status()) }
         while (isActive) {
             now = System.currentTimeMillis()
             adminEnabled = runtime.adminService.enabled
             adminUrls = runtime.adminService.urls
-            if (entries.last() == "developer") diagnostics = withContext(Dispatchers.IO) { developerView(runtime) }
+            if (showsDeveloperDiagnostics(entries.last())) {
+                diagnostics = withContext(Dispatchers.IO) { developerView(runtime) }
+                identityStatus = diagnostics.identity
+            }
             delay(500)
         }
     }
@@ -141,12 +145,11 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
         return applied != null
     }
     val save: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after -> feedback(persist(after)) }
-    val saveDeveloperSettings: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after ->
-        feedback(persistChange { store.save(store.developerOverrides.value.effectiveSettings(after, store.developerMode)) })
+    val saveEditor: suspend (RelaySettings, RelaySettings, DeveloperOverrides) -> Boolean = { _, after, choices ->
+        feedback(persistChange { store.save(after, choices) })
     }
-    val saveOverrides: suspend ((DeveloperOverrides) -> DeveloperOverrides) -> Boolean = { change ->
-        feedback(persistChange { store.saveDeveloperOverrides(change(store.developerOverrides.value)) })
-    }
+    val settingsEditor = rememberSettingsEditorState(initial, settingsSessionActive(entries), store::wireless, save,
+        initialDeveloper = overrides, saveDeveloper = saveEditor)
     CompositionLocalProvider(LocalRelayMotion provides motion) {
         Box(Modifier.fillMaxSize()) {
             SharedTransitionLayout {
@@ -161,7 +164,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                         enter = fadeIn(tween(80, delayMillis = RelayPageDurationMillis - 80)), exit = fadeOut(tween(80))) else Modifier
                     savedStates.SaveableStateProvider("${stack.lastIndex}:$route") {
                         when {
-                            route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic, { action -> if (action == SetupAction.SHARED_WIFI) open("settings:sharedWifi") else if (action == SetupAction.SETTINGS) open("settings:output") else if (action == SetupAction.CHOOSE_IPHONE) open("settings:iphone") else onSetup(action) },
+                            route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic, { action -> if (action == SetupAction.SHARED_WIFI) open("settings:sharedWifi") else if (action == SetupAction.SETTINGS) open(firstSettingsErrorPage(settingsEditor.errorPages(store::wireless))) else if (action == SetupAction.CHOOSE_IPHONE) open("settings:iphone") else onSetup(action) },
                                 ::copy, onReconnect, onNetwork, { open("vehicle") }, shared, sharedContent, onRestart,
                                 setupCompleted) { step -> open(if (step == null) "setup" else "setup:$step") }
                             route == "launch" -> LaunchScreen(value, onContinue = {
@@ -178,26 +181,24 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                                 entries = listOf("home")
                                 if (!value.presentation.running) onStartStop() else if (changed) onRestart()
                             }
-                            route.startsWith("settings") -> SettingsScreen(initial, store::wireless, developer,
-                                route.substringAfter(':', "output"), ::back, ::open, save, value.currentWifi, runtime.bondedDevices, runtime = runtime, useSharedWifi = { runtime.sharedWifiSelection.use(it) }, adminPage = {
+                            route.startsWith("settings") && route != "settings/about" && route != "settings/access/publicName" -> SettingsScreen(settingsEditor, store::wireless,
+                                route, ::back, ::open, identityStatus, diagnostics, ::copy, importMaterial, removeMaterial,
+                                value.currentWifi, runtime.bondedDevices, runtime = runtime,
+                                accessSummary = androidx.compose.ui.res.stringResource(R.string.menu_access_summary,
+                                    menuToggleSummary(adminEnabled), menuToggleSummary(publicNameView.enabled)), useSharedWifi = { runtime.sharedWifiSelection.use(it) }, adminPage = {
                                     AdminPageSettings(adminEnabled, adminUrls, { enabled ->
                                         runtime.adminService.setEnabled(enabled); adminEnabled = enabled
                                     }, ::copy, { withContext(Dispatchers.IO) { runtime.adminService.resetPassword() } })
-                                }) {
-                                    enabled -> scope.launch {
-                                        if (feedback(persistChange { store.developerMode = enabled })) developer = enabled
-                                    }
-                                }
-                            route == "about" -> AboutScreen(::back)
-                            route == "publicName" -> PublicNameScreen(publicNameView, publicNameStatus,
+                                })
+                            route == "settings/about" -> AboutScreen(::back)
+                            route == "settings/access/publicName" -> PublicNameScreen(publicNameView, publicNameStatus,
                                 remember(publicNameStatus) { runtime.publicNameUrl() }, ::back,
                                 { edit -> withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.save(edit) }.getOrNull() } },
                                 importPublicName, runtime.publicName::renewNow,
                                 { withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.remove() }.isSuccess } })
-                            route == "developer" -> if (developer) DeveloperScreen(initial, overrides, diagnostics, ::back, saveDeveloperSettings, ::copy, saveOverrides,
-                                onReconnect, importMaterial, removeMaterial,
+                            route.startsWith("developer") -> DeveloperScreen(settingsEditor, diagnostics, route, ::back, ::open, ::copy,
+                                onReconnect,
                                 runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless, runtime)
-                                else LaunchedEffect(Unit) { back() }
                             route == "vehicle" || route.startsWith("snapshot:") -> {
                                 val time = route.substringAfter(':', "").toLongOrNull()
                                 VehicleScreen(value.vehicle, now, value.vehicle.history.firstOrNull { it.id == time },

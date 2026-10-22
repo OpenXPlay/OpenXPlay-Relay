@@ -42,7 +42,7 @@ class DeveloperOverridesTest {
             context.getSharedPreferences(name, 0).edit().clear().commit()
     }
 
-    @Test fun effectiveSettingsRequireBothGlobalSwitchesAndPreserveEveryUngovernedField() {
+    @Test fun effectiveSettingsUseTheApplySwitchAndPreserveEveryUngovernedField() {
         RelaySettingsStore(context).use { store ->
             val base = store.load().copy(
                 connectionMode = ConnectionMode.USB, mfiTarget = MfiTarget.I2C, i2cPath = "/dev/i2c-3",
@@ -65,12 +65,12 @@ class DeveloperOverridesTest {
                 playCarPlayAudio = false, microphoneSource = MicrophoneSource.HEAD_UNIT, webPort = null,
                 carlinkDeviceModel = "Android relay")
             val enabled = base.copy(fps = 55, webPort = 9443, carlinkDeviceModel = "Test relay")
-            for (mode in listOf(false, true)) for (master in listOf(false, true)) {
+            for (master in listOf(false, true)) {
                 val overrides = chosen.copy(active = master)
-                assertEquals(if (mode && master) enabled else defaults, overrides.effectiveSettings(base, mode))
-                assertEquals(if (mode && master) 225 else 0, overrides.effectivePhysicalWidth(mode))
+                assertEquals(if (master) enabled else defaults, overrides.effectiveSettings(base))
+                assertEquals(if (master) 225 else 0, overrides.effectivePhysicalWidth())
                 for (sample in listOf(false, true))
-                    assertEquals(sample && mode && master, overrides.effectiveSampleVehicleData(sample, mode))
+                    assertEquals(sample && master, overrides.effectiveSampleVehicleData(sample))
             }
             val items = listOf(
                 chosen.copy(carlinkTrace = false) to enabled.copy(carlinkTrace = false),
@@ -85,16 +85,15 @@ class DeveloperOverridesTest {
                 chosen.copy(physicalWidthEnabled = false) to enabled,
             )
             for ((overrides, expected) in items) {
-                assertEquals(expected, overrides.effectiveSettings(base, true))
-                assertEquals(if (overrides.physicalWidthEnabled) 225 else 0, overrides.effectivePhysicalWidth(true))
-                assertEquals(defaults, overrides.effectiveSettings(base, false))
-                assertEquals(defaults, overrides.copy(active = false).effectiveSettings(base, true))
+                assertEquals(expected, overrides.effectiveSettings(base))
+                assertEquals(if (overrides.physicalWidthEnabled) 225 else 0, overrides.effectivePhysicalWidth())
+                assertEquals(defaults, overrides.copy(active = false).effectiveSettings(base))
             }
-            assertNull(chosen.copy(webPort = null).effectiveSettings(base, true).webPort)
+            assertNull(chosen.copy(webPort = null).effectiveSettings(base).webPort)
         }
     }
 
-    @Test fun migrationPreservesLegacyValuesAndMakesHiddenOverridesVisible() {
+    @Test fun migrationPreservesLegacyValuesWithoutReadingOrWritingDeveloperMode() {
         relay.edit().putBoolean("developerMode", false)
             .putBoolean("carlinkTrace", true).putString("carlinkHevc", chosen.carlinkHevc.name)
             .putString("carlinkPictureSize", chosen.carlinkPictureSize.name).putInt("devPhysicalWidthMm", 225)
@@ -104,7 +103,7 @@ class DeveloperOverridesTest {
         AirPlayPersistence.saveFps(context, 55)
         RelaySettingsStore(context).use { store ->
             val settings = store.awaitSnapshot()
-            assertTrue(store.developerMode)
+            assertFalse(relay.getBoolean("developerMode", false))
             assertEquals(chosen, store.developerOverrides.value)
             assertEquals(55, settings.fps)
             assertEquals(9443, settings.webPort)
@@ -114,27 +113,76 @@ class DeveloperOverridesTest {
             assertEquals(chosen.carlinkPictureSize, settings.carlinkPictureSize)
             assertEquals(MicrophoneSource.THIS_DEVICE, settings.microphoneSource)
             assertEquals("Test relay", settings.carlinkDeviceModel)
-            store.developerMode = false
+            store.saveDeveloperOverrides(chosen.copy(active = false))
         }
         RelaySettingsStore(context).use { store ->
             assertEquals(30, store.load().fps)
-            assertFalse(store.developerMode)
-            assertEquals(chosen, store.developerOverrides.value)
+            assertFalse(relay.getBoolean("developerMode", false))
+            assertEquals(chosen.copy(active = false), store.developerOverrides.value)
         }
     }
 
-    @Test fun defaultMigrationLeavesDeveloperModeOffAndValueSwitchesOff() {
+    @Test fun defaultMigrationLeavesTheLegacyModeKeyUntouchedAndValueSwitchesOff() {
         assertEquals(30, AirPlayPersistence.loadFps(context))
         relay.edit().putBoolean("bothOutputs", true).putBoolean("vehicleInformation", true).commit()
         RelaySettingsStore(context).use { store ->
             val settings = store.load()
-            assertFalse(store.developerMode)
+            assertFalse(relay.getBoolean("developerMode", false))
             assertEquals(DeveloperOverrides(), store.developerOverrides.value)
             assertTrue(settings.bothOutputs && settings.vehicleInformation)
         }
     }
 
-    @Test fun eachLegacyOverrideAloneEnablesDeveloperMode() {
+    @Test fun freshStorePartialEditsPreserveEveryRememberedOverrideAndSwitch() {
+        val disabledItems = chosen.copy(carlinkHevcEnabled = false, carlinkPictureSizeEnabled = false,
+            physicalWidthEnabled = false, fpsEnabled = false, microphoneSourceEnabled = false,
+            webPortEnabled = false, carlinkDeviceModelEnabled = false)
+        for (initial in listOf(chosen, chosen.copy(active = false), disabledItems)) {
+            clear()
+            relay.edit().putBoolean("developerMode", false).commit()
+            RelaySettingsStore(context).use { it.saveDeveloperOverrides(initial) }
+            val expected = initial.copy(playCarPlayAudio = false)
+            RelaySettingsStore(context).use { store ->
+                // No load/awaitSnapshot: opening a store and editing one choice must retain the others.
+                val observed = store.developerOverrides
+                assertEquals(initial, observed.value)
+                store.saveDeveloperOverrides(observed.value.copy(playCarPlayAudio = false))
+                assertEquals(expected, observed.value)
+            }
+            RelaySettingsStore(context).use { store ->
+                assertEquals(expected, store.developerOverrides.value)
+                val settings = store.load()
+                assertEquals(expected.effectiveSettings(settings), settings)
+                assertEquals(expected.effectivePhysicalWidth(), store.physicalWidthOverrideMm)
+                assertFalse(relay.getBoolean("developerMode", true))
+            }
+        }
+    }
+
+    @Test fun freshStoreOverrideReadMigratesLegacyChoicesBeforeAPartialEdit() {
+        relay.edit().putBoolean("developerMode", false)
+            .putString("microphoneSource", MicrophoneSource.THIS_DEVICE.name)
+            .putInt("devPhysicalWidthMm", 225).commit()
+        AirPlayPersistence.saveFps(context, 55)
+        val migrated = DeveloperOverrides(microphoneSourceEnabled = true,
+            microphoneSource = MicrophoneSource.THIS_DEVICE, physicalWidthEnabled = true,
+            physicalWidthOverrideMm = 225, fpsEnabled = true, fps = 55)
+        RelaySettingsStore(context).use { store ->
+            assertEquals(migrated, store.developerOverrides.value)
+            store.saveDeveloperOverrides(store.developerOverrides.value.copy(playCarPlayAudio = true))
+        }
+        RelaySettingsStore(context).use { store ->
+            assertEquals(migrated.copy(playCarPlayAudio = true), store.developerOverrides.value)
+            val settings = store.load()
+            assertEquals(MicrophoneSource.THIS_DEVICE, settings.microphoneSource)
+            assertEquals(55, settings.fps)
+            assertEquals(225, store.physicalWidthOverrideMm)
+            assertTrue(settings.playCarPlayAudio)
+            assertFalse(relay.getBoolean("developerMode", true))
+        }
+    }
+
+    @Test fun eachLegacyOverrideAloneRemainsActiveWithoutDeveloperMode() {
         val changes: List<() -> Unit> = listOf(
             { relay.edit().putBoolean("carlinkTrace", true).commit(); Unit },
             { relay.edit().putString("carlinkHevc", chosen.carlinkHevc.name).commit(); Unit },
@@ -152,7 +200,7 @@ class DeveloperOverridesTest {
             change()
             RelaySettingsStore(context).use { store ->
                 store.load()
-                assertTrue(store.developerMode)
+                assertFalse(relay.getBoolean("developerMode", false))
                 assertTrue(store.developerOverrides.value.active)
             }
         }
@@ -160,13 +208,12 @@ class DeveloperOverridesTest {
 
     @Test fun masterWritesEffectiveDefaultsAndRestoresRememberedValuesAfterReopening() {
         RelaySettingsStore(context).use { store ->
-            store.developerMode = true
             store.saveDeveloperOverrides(chosen)
             store.save(store.load().copy(display = DisplayProfile(2400, 1200, 300), displayMode = DisplayMode.FIXED))
             assertEquals(225, AirPlayPersistence.loadWidthPhysicalMm(context))
             store.saveDeveloperOverrides(chosen.copy(active = false))
             val effective = checkNotNull(store.snapshot.value)
-            assertEquals(DeveloperOverrides().effectiveSettings(effective, true), effective)
+            assertEquals(DeveloperOverrides().effectiveSettings(effective), effective)
             assertEquals(effective, store.load())
             assertEquals(effective, store.awaitSnapshot())
             assertEquals(30, AirPlayPersistence.loadFps(context))
@@ -188,37 +235,32 @@ class DeveloperOverridesTest {
             val defaults = store.awaitSnapshot()
             assertEquals(chosen.copy(active = false), store.developerOverrides.value)
             store.saveDeveloperOverrides(store.developerOverrides.value.copy(active = true))
-            assertEquals(chosen.effectiveSettings(defaults, true), store.snapshot.value)
+            assertEquals(chosen.effectiveSettings(defaults), store.snapshot.value)
             assertEquals(55, AirPlayPersistence.loadFps(context))
             assertEquals(225, AirPlayPersistence.loadWidthPhysicalMm(context))
             assertEquals(chosen, store.developerOverrides.value)
         }
     }
 
-    @Test fun developerModeReturnsToDefaultsAndRestoresTheMasterAndItemChoices() {
+    @Test fun legacyDeveloperModeKeyDoesNotGateOrChangeOverrideChoices() {
         RelaySettingsStore(context).use { store ->
-            store.developerMode = true
-            store.saveDeveloperOverrides(chosen.copy(fpsEnabled = false))
+            store.saveDeveloperOverrides(chosen)
             val enabled = store.load()
-            store.developerMode = false
-            assertEquals(DeveloperOverrides().effectiveSettings(enabled, true), store.snapshot.value)
-            assertEquals(0, store.physicalWidthOverrideMm)
-            assertEquals(30, AirPlayPersistence.loadFps(context))
-            assertEquals(chosen.copy(fpsEnabled = false), store.developerOverrides.value)
-            store.developerMode = true
-            assertEquals(enabled, store.snapshot.value)
-            assertEquals(225, store.physicalWidthOverrideMm)
+            for (legacyMode in listOf(false, true, false)) {
+                relay.edit().putBoolean("developerMode", legacyMode).commit()
+                assertEquals(enabled, store.load())
+                assertEquals(chosen, store.developerOverrides.value)
+                assertEquals(225, store.physicalWidthOverrideMm)
+                assertEquals(legacyMode, relay.getBoolean("developerMode", !legacyMode))
+            }
             store.saveDeveloperOverrides(chosen.copy(active = false))
-            store.developerMode = false
-            store.developerMode = true
-            assertFalse(store.developerOverrides.value.active)
             assertEquals(30, store.load().fps)
+            assertFalse(store.developerOverrides.value.active)
         }
     }
 
     @Test fun valueItemSwitchesKeepTheirValuesWhileOff() {
         RelaySettingsStore(context).use { store ->
-            store.developerMode = true
             store.saveDeveloperOverrides(chosen)
             val disabled = chosen.copy(carlinkHevcEnabled = false, carlinkPictureSizeEnabled = false,
                 physicalWidthEnabled = false, fpsEnabled = false, microphoneSourceEnabled = false,
@@ -236,12 +278,10 @@ class DeveloperOverridesTest {
     }
 
     @Test fun ordinarySavesIgnoreInactiveOverridesButStillSaveOtherSettings() {
-        for (gate in 0..2) RelaySettingsStore(context).use { store ->
+        for (gate in 0..1) RelaySettingsStore(context).use { store ->
             clear()
-            store.developerMode = gate != 0
             val choices = when (gate) {
-                0 -> chosen
-                1 -> chosen.copy(active = false)
+                0 -> chosen.copy(active = false)
                 else -> chosen.copy(carlinkTrace = false, localPreview = false, playCarPlayAudio = false,
                     carlinkHevcEnabled = false, carlinkPictureSizeEnabled = false, fpsEnabled = false,
                     physicalWidthEnabled = false, microphoneSourceEnabled = false, webPortEnabled = false,
@@ -261,7 +301,6 @@ class DeveloperOverridesTest {
 
     @Test fun ordinarySavesUpdateRememberedValuesOfActiveOverrides() {
         RelaySettingsStore(context).use { store ->
-            store.developerMode = true
             store.saveDeveloperOverrides(chosen)
             val incoming = store.load().copy(fps = 60, webPort = null, carlinkDeviceModel = "Changed model",
                 carlinkHevc = ClinkHevcMode.STREAM_ONLY, carlinkPictureSize = ClinkPictureSize.WINDOW,
@@ -280,21 +319,37 @@ class DeveloperOverridesTest {
         }
     }
 
+    @Test fun editorPublishesNormalSettingsAndWindowFitChoicesTogetherAndRejectsInvalidSettings() {
+        RelaySettingsStore(context).use { store ->
+            val base = store.awaitSnapshot()
+            val next = base.copy(autoStartOnBoot = true, carlinkOutput = true)
+            store.save(next, chosen)
+            assertEquals(chosen.effectiveSettings(next), store.snapshot.value)
+            assertEquals(chosen, store.developerOverrides.value)
+            assertEquals(ClinkPictureSize.MODE.name, relay.getString("carlinkPictureSize", null))
+            assertEquals(225, store.physicalWidthOverrideMm)
+            val invalid = next.copy(carlinkDeviceName = "")
+            assertTrue(runCatching { store.save(invalid, chosen.copy(active = false)) }.isFailure)
+            assertEquals(chosen.effectiveSettings(next), store.load())
+            assertEquals(chosen, store.developerOverrides.value)
+        }
+    }
+
     @Test fun feedbackUsesEffectiveValuesAndIncludesPhysicalWidthChanges() {
         RelaySettingsStore(context).use { store ->
             val base = store.load()
             val options = DeveloperOverrides(fpsEnabled = true, fps = 55)
-            val enabled = options.effectiveSettings(base, true)
-            val disabled = options.effectiveSettings(base, false)
+            val enabled = options.effectiveSettings(base)
+            val disabled = options.copy(active = false).effectiveSettings(base)
             assertEquals(SettingsFeedback(R.string.settings_next_start, R.string.settings_restart),
                 settingsFeedback(enabled, disabled, false, true))
-            assertNull(settingsFeedback(disabled, options.copy(fps = 60).effectiveSettings(base, false), false, true))
+            assertNull(settingsFeedback(disabled, options.copy(fps = 60).copy(active = false).effectiveSettings(base), false, true))
             assertEquals(SettingsFeedback(R.string.settings_next_start, R.string.settings_restart),
                 settingsFeedback(base, base, false, true, 225, 0))
             assertNull(settingsFeedback(base, base, false, true, 0, 0))
             val picture = DeveloperOverrides(carlinkPictureSizeEnabled = true, carlinkPictureSize = ClinkPictureSize.MODE)
             assertEquals(SettingsFeedback(R.string.settings_reconnect, R.string.vehicle_reconnect_action),
-                settingsFeedback(picture.effectiveSettings(base, true), picture.effectiveSettings(base, false), true, true))
+                settingsFeedback(picture.effectiveSettings(base), picture.copy(active = false).effectiveSettings(base), true, true))
         }
     }
 }

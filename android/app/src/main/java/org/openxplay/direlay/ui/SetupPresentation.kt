@@ -13,9 +13,14 @@ enum class SetupStep(val key: String) {
 fun setupSteps(wireless: Boolean) = SetupStep.entries.filter { wireless || it != SetupStep.NETWORK }
 fun setupStep(key: String) = SetupStep.entries.firstOrNull { it.key == key }
 
-/** Carlink takes this phone's Wi-Fi for the car, so a cable is the dependable iPhone link beside it. */
-fun recommendedConnection(settings: RelaySettings) =
-    if (CarlinkConnectionPolicy.enabled(settings)) ConnectionMode.USB else ConnectionMode.WIRELESS
+/** Wireless avoids the relay phone's USB power and cable limitations, including with Carlink. */
+@Suppress("UNUSED_PARAMETER")
+fun recommendedConnection(settings: RelaySettings) = ConnectionMode.WIRELESS
+
+/** LAST_USED must be compared using the transport it would use now. */
+fun needsUsbConfirmation(before: ConnectionMode, after: ConnectionMode, lastUsedWireless: Boolean): Boolean =
+    after == ConnectionMode.USB && before.wireless(lastUsedWireless)
+
 /** Wi-Fi Direct is the fastest link for the browser; Carlink can replace the Wi-Fi Direct group. */
 fun recommendedNetwork(settings: RelaySettings) =
     if (CarlinkConnectionPolicy.enabled(settings)) WirelessNetworkChoice.PHONE_HOTSPOT else WirelessNetworkChoice.WIFI_DIRECT

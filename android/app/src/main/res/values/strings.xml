@@ -148,8 +148,7 @@
     <string name="ui_network">Network</string>
     <string name="ui_wifi_direct_recommended">Wi-Fi Direct (recommended)</string>
     <string name="ui_boot">Start on boot</string>
-    <string name="ui_developer">Developer</string>
-    <string name="ui_developer_mode">Developer mode</string>
+    <string name="ui_developer">Developer options</string>
     <string name="ui_settings_validation">Check the network name (1–32 UTF-8 bytes) and password (empty for an open network, otherwise 8–63 characters). If you changed advanced options, check them in Developer.</string>
     <string name="ui_start_failed">Could not start CarPlay. Check permissions, identity and connection settings, then try again.</string>
     <string name="ui_material_failed">Could not import the files. Check the file format and password, then try again.</string>
@@ -264,7 +263,15 @@
     <string name="option_browser_hint">Show CarPlay in the car’s browser.</string>
     <string name="option_carlink_hint">Experimental: connecting may fail. Show CarPlay in the car’s Carlink app.</string>
     <string name="option_wireless_hint">Connect the iPhone over Bluetooth and Wi-Fi.</string>
-    <string name="option_usb_hint">Connect the iPhone with a USB cable.</string>
+    <string name="option_usb_hint">Not recommended: this phone has to power the iPhone, and only some cables work.</string>
+    <string name="usb_confirm_title">Use a USB cable?</string>
+    <string name="usb_confirm_intro">Wireless is recommended. A USB cable often causes two problems:</string>
+    <string name="usb_confirm_power_title">Power</string>
+    <string name="usb_confirm_power">This phone powers the iPhone through the cable. Its battery drains fast and it may get warm, and it usually can’t charge while the cable is in.</string>
+    <string name="usb_confirm_cable_title">Cable</string>
+    <string name="usb_confirm_cable">With a USB-C to USB-C cable, the iPhone often takes control and this phone can’t see it. Use a USB-C OTG adapter on this phone with a USB-A to USB-C cable, or a USB-C to Lightning cable for a Lightning iPhone. Charge-only cables don’t work, and a loose plug drops CarPlay while you drive.</string>
+    <string name="usb_confirm_use">Use USB anyway</string>
+    <string name="usb_confirm_keep">Keep wireless</string>
     <string name="option_direct_hint">The iPhone connects straight to this phone. The car screen uses this phone\'s normal Wi-Fi, for example the car\'s hotspot.</string>
     <string name="option_hotspot_hint">Turn on this phone\'s hotspot. The iPhone and the car screen both join it.</string>
     <string name="option_wifi_hint">The iPhone, this phone and the car screen join the same Wi-Fi, such as the car\'s hotspot or a travel router.</string>
@@ -363,8 +370,15 @@
     <string name="host_back">Back to OpenXPlay Relay</string>
     <string name="host_cancel">Cancel</string>
     <string name="host_stopped">CarPlay stopped</string>
+    <string name="host_head_unit_address">Head-unit address</string>
+    <string name="host_detected_screen">Detected screen</string>
+    <string name="host_state">State</string>
+    <string name="host_frame_rate">%1$s fps configured</string>
+    <string name="host_frame_rate_measured">%1$s fps configured · %2$s fps measured</string>
     <string name="carlink_auto_reconnect">Carlink auto-reconnect</string>
     <string name="carlink_auto_reconnect_hint">Reconnect to the head unit automatically after the connection drops.</string>
+    <string name="carlink_resize_reconnect">Reconnect when the window size changes</string>
+    <string name="carlink_resize_reconnect_hint">After the car changes the Carlink area (for example from two thirds of the screen to full screen), the first touch reconnects Carlink to fit the new size. The picture stops for a few seconds while it reconnects.</string>
     <string name="shared_wifi_not_saved">This Wi-Fi isn\'t saved for CarPlay</string>
     <string name="shared_wifi_save_current">Save this Wi-Fi</string>
     <string name="shared_wifi_unreadable">The current Wi-Fi name is unavailable. Choose a saved network manually.</string>
@@ -391,6 +405,7 @@
     <string name="setup_close">Close the setup guide</string>
     <string name="setup_next">Next</string>
     <string name="setup_recommended">Recommended</string>
+    <string name="setup_not_recommended">Not recommended</string>
     <string name="setup_experimental">Experimental</string>
     <string name="setup_output_title">How should the car show CarPlay?</string>
     <string name="setup_output_hint">Choose what your car already has. You can change it later.</string>
@@ -401,8 +416,8 @@
     <string name="setup_connection_title">How does the iPhone connect to this phone?</string>
     <string name="setup_connection_hint">This phone sits between the iPhone and the car.</string>
     <string name="setup_wireless_hint">Over Bluetooth and Wi-Fi. The iPhone connects by itself when you get in.</string>
-    <string name="setup_usb_hint">With a USB cable between the iPhone and this phone. The steadiest link.</string>
-    <string name="setup_carlink_usb_tip">With Carlink, this phone’s Wi-Fi also talks to the car, so a USB cable is more reliable for the iPhone.</string>
+    <string name="setup_usb_hint">With a USB cable between the iPhone and this phone. This phone has to power the iPhone, and only some cables work.</string>
+    <string name="setup_carlink_hotspot_tip">With Carlink, choose Wireless and use this phone’s hotspot. Keep this phone’s Wi-Fi on as well: it connects to the car.</string>
     <string name="setup_network_title">Which network should wireless CarPlay use?</string>
     <string name="setup_network_hint">The iPhone, this phone and the car screen must be able to reach each other.</string>
     <string name="setup_prepare_title">Get ready</string>
@@ -434,8 +449,7 @@
     <string name="setup_home_hint">Choose how the car shows CarPlay and how the iPhone connects, then start.</string>
     <string name="setup_home_action">Open the setup guide</string>
     <string name="setup_change_mode">Change mode</string>
-    <string name="mode_title">Current mode</string>
-    <string name="network_title">This phone\'s network</string>
+    <string name="home_connection_method">Connection method</string>
     <string name="network_addresses">IP addresses</string>
     <string name="ui_wifi_connected">Connected</string>
     <string name="ui_wifi_not_connected">Not connected</string>
@@ -468,7 +482,7 @@
     <string name="picture_native_hint">Sharpest picture; needs more Wi-Fi bandwidth.</string>
     <string name="picture_resolution">Resolution</string>
     <string name="picture_screen_width">CarPlay screen width</string>
-    <string name="picture_screen_width_hint">Larger values show more icons on one page.</string>
+    <string name="picture_screen_width_hint">Larger values show more icons on one page and can move the Dock from the left side to the bottom.</string>
     <string name="picture_screen">Whole screen</string>
     <string name="picture_window">Window</string>
     <string name="ui_browser_https_hint">Note: the address starts with https://, not http://.</string>
@@ -557,7 +571,7 @@
     <string name="video_stats_off">Off</string>
     <string name="video_stats_5">Last 5 s</string>
     <string name="video_stats_15">Last 15 s</string>
-    <string name="video_stats_hint">Shows frame rate, resolution, bit rate and dropped frames on the home screen while the relay runs. Values appear once the chosen period has been measured. Off measures nothing.</string>
+    <string name="video_stats_hint">Shows frame rate, resolution, bit rate and dropped frames on the running page. Values appear once the chosen period has been measured. Off measures nothing.</string>
     <string name="video_stats_iphone">iPhone</string>
     <string name="video_stats_carlink">Carlink</string>
     <string name="video_stats_browser">Browser %1$d</string>
@@ -577,8 +591,18 @@
     <string name="public_name_summary">Open the head-unit page without a certificate warning, using a free domain name.</string>
     <string name="public_name_enabled">Use a free domain name</string>
     <string name="public_name_provider">DNS provider</string>
+    <string name="public_name_per_provider">Each provider keeps its own name and token. Switching shows what is saved for it.</string>
+    <string name="public_name_hint_duckdns">Sign in at duckdns.org (from mainland China, use a GitHub account), add a name, then copy the token at the top of the page. Enter the full name, such as myrelay.duckdns.org. This token can change every name in the account, so keep it like a password.</string>
+    <string name="public_name_hint_dynv6">Sign up at dynv6.com with an email address, create a zone ending in .dynv6.net, then create an HTTP token on the Keys page, limited to this zone if you can. Enter the full name, such as myrelay.dynv6.net.</string>
+    <string name="public_name_open_duckdns">Open DuckDNS</string>
+    <string name="public_name_open_dynv6">Open dynv6</string>
+    <string name="public_name_guide">Setup guide on openxplay.org</string>
+    <string name="public_name_url_duckdns" translatable="false">https://www.duckdns.org/</string>
+    <string name="public_name_url_dynv6" translatable="false">https://dynv6.com/</string>
+    <string name="public_name_guide_url">https://openxplay.org/en/trusted-https</string>
     <string name="public_name_name">Domain name</string>
-    <string name="public_name_name_hint">For example myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_duckdns">For example myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_dynv6">For example myrelay.dynv6.net</string>
     <string name="public_name_token">Token</string>
     <string name="public_name_token_hint">Copy it from your provider account. It stays on this relay.</string>
     <string name="public_name_token_saved">Token saved</string>
@@ -615,7 +639,13 @@
     <string name="public_name_problem_not_json">not a JSON object</string>
     <string name="public_name_name_invalid">Enter the full domain name. DuckDNS names end in .duckdns.org.</string>
     <string name="public_name_token_invalid">This token does not fit the chosen provider.</string>
-    <string name="public_name_remove_confirm">Remove the domain name, the token and the certificate from this relay? The address stays at the provider.</string>
+    <string name="public_name_remove_confirm">Remove every provider’s name and token, and the certificate, from this relay? The address records at the providers stay.</string>
+    <string name="home_problem_connection">Connection</string>
+    <string name="home_problem_carplay">CarPlay connection</string>
+    <string name="home_problem_carlink">Carlink</string>
+    <string name="home_problem_browser">Browser output</string>
+    <string name="home_problem_web_server">Browser output (web server)</string>
+    <string name="home_problem_output">Relay output</string>
     <string name="carlink_picture_size">Carlink picture size</string>
     <string name="carlink_picture_window">Car window</string>
     <string name="carlink_picture_mode">1280×720, corrected</string>
@@ -624,4 +654,20 @@
     <string name="carlink_geometry_value">Window %1$s · canvas %2$s · area %3$s · sent %4$s · %5$s</string>
     <string name="carlink_passthrough">passthrough</string>
     <string name="carlink_transcode">transcode</string>
+    <string name="ui_developer_mode">Developer mode</string>
+    <string name="mode_title">Current mode</string>
+    <string name="network_title">This phone\'s network</string>
+
+    <!-- Network readiness and USB role guidance. -->
+    <string name="network_readiness_title">Before you start</string>
+    <string name="network_wifi_reminder">Carlink needs this phone’s Wi-Fi turned on.</string>
+    <string name="network_hotspot_reminder">Turn on this phone’s hotspot before you start.</string>
+    <string name="network_wifi_problem">Turn on this phone’s Wi-Fi. Carlink connects to the car over Wi-Fi; you do not need to join a network, and the hotspot can stay on.</string>
+    <string name="network_hotspot_problem">This phone’s hotspot is off. Turn on the hotspot, then start again.</string>
+    <string name="network_open_wifi">Open Wi-Fi settings</string>
+    <string name="network_open_hotspot">Open hotspot settings</string>
+    <string name="network_start_anyway">Start anyway</string>
+    <string name="home_problem_hotspot">Phone hotspot</string>
+    <string name="home_problem_usb">USB connection</string>
+    <string name="network_usb_role_problem">This phone is connected over USB as a device, so it cannot see the iPhone. The other end (an iPhone, computer or car port) is acting as the host. A USB-C iPhone on a USB-C to USB-C cable usually takes control. Use a USB-C OTG adapter (USB-C to USB-A) on this phone, then a USB-A to USB-C cable to the iPhone. If this phone has an OTG switch, turn it on, then unplug and plug in again. For a Lightning iPhone, use a USB-C to Lightning cable.</string>
 </resources>

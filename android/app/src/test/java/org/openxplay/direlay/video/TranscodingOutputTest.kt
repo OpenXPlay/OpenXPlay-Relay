@@ -123,7 +123,9 @@ class TranscodingOutputTest {
     @Test fun formatReplacementAndEndReleasePipelinesAndFenceLateCallbacks() {
         val inner = RecordingOutput(reportedCapabilities = capabilities("avc1.42E01F"))
         val pipelines = mutableListOf<Pipeline>()
-        val output = TranscodingOutput(inner, VideoPipeline.Factory { _, _, listener -> Pipeline(listener).also { pipelines.add(it) } })
+        val failures = mutableListOf<Exception>()
+        val output = TranscodingOutput(inner, VideoPipeline.Factory { _, _, listener -> Pipeline(listener).also { pipelines.add(it) } },
+            onFailure = { _, failure -> failures.add(failure) })
         output.open(Host())
         output.onVideoFormat(ScreenId.MAIN, high())
         output.onVideoFormat(ScreenId.MAIN, highLevel32())
@@ -131,11 +133,14 @@ class TranscodingOutputTest {
         assertTrue(pipelines.first().closed)
         val count = inner.videoFormats.size
         pipelines.first().listener.format(avc())
+        pipelines.first().listener.failed(IllegalStateException("old codec failure"))
         assertEquals(count, inner.videoFormats.size)
         output.onSession(SessionState(SessionId(1), SessionPhase.ENDED), SessionConfig(emptyMap()))
         assertTrue(pipelines.last().closed)
         pipelines.last().listener.frame(frame())
+        pipelines.last().listener.failed(IllegalStateException("ended codec failure"))
         assertTrue(inner.frames.isEmpty())
+        assertTrue(failures.isEmpty())
         output.close()
     }
 
@@ -144,15 +149,22 @@ class TranscodingOutputTest {
             val inner = RecordingOutput(reportedCapabilities = capabilities("avc1.42E01F"))
             var pipeline: Pipeline? = null
             var failed = false
+            val failure = IllegalStateException("codec_failed", IllegalArgumentException("hardware_codec_unavailable"))
+            val failures = mutableListOf<Pair<VideoFormat, Exception>>()
             val output = TranscodingOutput(inner, VideoPipeline.Factory { _, _, listener ->
-                if (setupFailure) error("unavailable")
+                if (setupFailure) throw failure
                 Pipeline(listener).also { pipeline = it }
-            }, report = { _, _, failure -> failed = failure })
+            }, report = { _, _, failedFlag ->
+                failed = failedFlag
+                if (failedFlag) assertSame(failure, failures.single().second)
+            }, onFailure = { format, error -> failures.add(format to error) })
             output.open(Host())
             val input = high()
             output.onVideoFormat(ScreenId.MAIN, input)
-            if (!setupFailure) pipeline!!.listener.failed(IllegalStateException("codec_failed"))
+            if (!setupFailure) pipeline!!.listener.failed(failure)
             assertTrue(failed)
+            assertSame(input, failures.single().first)
+            assertSame(failure, failures.single().second)
             assertSame(input, inner.videoFormats.last().second)
             val frame = frame()
             output.onVideoFrame(frame)

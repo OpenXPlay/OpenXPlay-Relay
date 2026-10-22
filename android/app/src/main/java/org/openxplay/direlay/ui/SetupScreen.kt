@@ -49,6 +49,11 @@ import org.openxplay.direlay.settings.*
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(setupDraft(initial, wireless(initial))) }
     var lastSaved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var saveFailed by remember { mutableStateOf(false) }
+    var confirmUsb by remember { mutableStateOf(false) }
+    if (confirmUsb) UsbConnectionDialog(confirm = {
+        draft = chooseConnection(draft, wireless = false)
+        confirmUsb = false
+    }, dismiss = { confirmUsb = false })
     LaunchedEffect(initial) {
         if (draft == lastSaved) { draft = setupDraft(initial, wireless(initial)); lastSaved = initial }
     }
@@ -154,7 +159,11 @@ import org.openxplay.direlay.settings.*
                 Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     when (current) {
                         SetupStep.OUTPUT -> OutputStep(draft) { draft = chooseOutput(draft, it, isWireless) }
-                        SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) { draft = chooseConnection(draft, it) }
+                        SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) {
+                            val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB
+                            if (needsUsbConfirmation(draft.connectionMode, mode, isWireless)) confirmUsb = true
+                            else draft = chooseConnection(draft, it)
+                        }
                         SetupStep.NETWORK -> NetworkStep(draft, if (attempted) errors else emptyMap(), home.currentWifi, useSharedWifi, nextRequests) { draft = it }
                         SetupStep.PREPARE -> PrepareStep(draft, isWireless, home, bondedDevices, { draft = draft.copy(iphoneAddress = it) }) { action ->
                             when (action) {
@@ -198,6 +207,7 @@ import org.openxplay.direlay.settings.*
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun ChoiceCard(title: String, description: String, icon: Int, selected: Boolean,
     badges: List<String> = emptyList(), enabled: Boolean = true, note: String? = null,
+    warningBadge: Boolean = false,
     extra: @Composable (() -> Unit)? = null, select: () -> Unit) {
     val border = if (selected) RelayGreen else MaterialTheme.colorScheme.outline
     Card(Modifier.fillMaxWidth().alpha(if (enabled) 1f else .5f)
@@ -209,7 +219,7 @@ import org.openxplay.direlay.settings.*
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(title, Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.titleMedium)
-                    badges.forEach { ChoiceBadge(it, Modifier.align(Alignment.CenterVertically)) }
+                    badges.forEach { ChoiceBadge(it, Modifier.align(Alignment.CenterVertically), warning = warningBadge) }
                 }
                 Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFB547)) }
@@ -220,8 +230,9 @@ import org.openxplay.direlay.settings.*
     }
 }
 
-@Composable private fun ChoiceBadge(text: String, modifier: Modifier = Modifier) {
-    Surface(modifier, shape = RoundedCornerShape(8.dp), color = RelayGreen.copy(alpha = .15f), contentColor = RelayGreen) {
+@Composable private fun ChoiceBadge(text: String, modifier: Modifier = Modifier, warning: Boolean = false) {
+    val color = if (warning) Color(0xFFFFB547) else RelayGreen
+    Surface(modifier, shape = RoundedCornerShape(8.dp), color = color.copy(alpha = .15f), contentColor = color) {
         Text(text, Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
@@ -234,7 +245,8 @@ import org.openxplay.direlay.settings.*
             !draft.carlinkOutput && !draft.bothOutputs, listOf(stringResource(R.string.setup_recommended))) { choose(false) }
         ChoiceCard(stringResource(R.string.ui_carlink), stringResource(R.string.setup_carlink_hint), R.drawable.symbol_car,
             draft.carlinkOutput && !draft.bothOutputs, listOf(stringResource(R.string.setup_experimental)), carlinkSupported,
-            if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10)) { choose(true) }
+            if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10),
+            extra = { NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) { choose(true) }
     }
     Hint(stringResource(R.string.setup_browser_check_tip))
 }
@@ -247,9 +259,9 @@ import org.openxplay.direlay.settings.*
         ChoiceCard(stringResource(R.string.direlay_wireless), stringResource(R.string.setup_wireless_hint), R.drawable.symbol_wifi,
             wireless, if (recommended == ConnectionMode.WIRELESS) badge else emptyList()) { choose(true) }
         ChoiceCard(stringResource(R.string.ui_usb), stringResource(R.string.setup_usb_hint), R.drawable.symbol_phone,
-            !wireless, if (recommended == ConnectionMode.USB) badge else emptyList()) { choose(false) }
+            !wireless, listOf(stringResource(R.string.setup_not_recommended)), warningBadge = true) { choose(false) }
     }
-    if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.setup_carlink_usb_tip))
+    if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.setup_carlink_hotspot_tip))
 }
 
 @Composable private fun NetworkStep(draft: RelaySettings, errors: Map<String, Int>, currentWifi: String?,
@@ -274,7 +286,11 @@ import org.openxplay.direlay.settings.*
                 WirelessNetworkChoice.EXISTING_WIFI -> R.drawable.symbol_router
             }, selected == choice, if (choice == recommended) listOf(stringResource(R.string.setup_recommended)) else emptyList(),
                 allowed, if (allowed) null else stringResource(R.string.carlink_wifi_direct_constraint),
-                extra = { NetworkDiagram(choice, selected == choice) }) {
+                extra = {
+                    NetworkDiagram(choice, selected == choice)
+                    if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
+                        NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
+                }) {
                 change(draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice)))
                 if (choice == WirelessNetworkChoice.PHONE_HOTSPOT) revealRequests++
             }

@@ -9,6 +9,52 @@ import com.shilapi.xcertplay.orchestration.ManualHotspotBand
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.openxplay.direlay.settings.*
+import org.openxplay.stream.clink.ClinkHevcMode
+import org.openxplay.stream.clink.ClinkPictureSize
+
+/** Remember both the switches and parked values across rotation, including inactive overrides. */
+fun developerOverridesSaver(base: DeveloperOverrides) = Saver<DeveloperOverrides, Bundle>(save = { value ->
+    Bundle().apply {
+        putBoolean("active", value.active)
+        putBoolean("carlinkTrace", value.carlinkTrace)
+        putBoolean("carlinkHevcEnabled", value.carlinkHevcEnabled)
+        putString("carlinkHevc", value.carlinkHevc.name)
+        putBoolean("carlinkPictureSizeEnabled", value.carlinkPictureSizeEnabled)
+        putString("carlinkPictureSize", value.carlinkPictureSize.name)
+        putBoolean("physicalWidthEnabled", value.physicalWidthEnabled)
+        putInt("physicalWidthOverrideMm", value.physicalWidthOverrideMm)
+        putBoolean("fpsEnabled", value.fpsEnabled)
+        putInt("fps", value.fps)
+        putBoolean("localPreview", value.localPreview)
+        putBoolean("playCarPlayAudio", value.playCarPlayAudio)
+        putBoolean("microphoneSourceEnabled", value.microphoneSourceEnabled)
+        putString("microphoneSource", value.microphoneSource.name)
+        putBoolean("webPortEnabled", value.webPortEnabled)
+        putInt("webPort", value.webPort ?: 0)
+        putBoolean("carlinkDeviceModelEnabled", value.carlinkDeviceModelEnabled)
+        putString("carlinkDeviceModel", value.carlinkDeviceModel)
+    }
+}, restore = { bundle ->
+    base.copy(
+        active = bundle.getBoolean("active", base.active),
+        carlinkTrace = bundle.getBoolean("carlinkTrace", base.carlinkTrace),
+        carlinkHevcEnabled = bundle.getBoolean("carlinkHevcEnabled", base.carlinkHevcEnabled),
+        carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == bundle.getString("carlinkHevc") } ?: base.carlinkHevc,
+        carlinkPictureSizeEnabled = bundle.getBoolean("carlinkPictureSizeEnabled", base.carlinkPictureSizeEnabled),
+        carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == bundle.getString("carlinkPictureSize") } ?: base.carlinkPictureSize,
+        physicalWidthEnabled = bundle.getBoolean("physicalWidthEnabled", base.physicalWidthEnabled),
+        physicalWidthOverrideMm = bundle.getInt("physicalWidthOverrideMm", base.physicalWidthOverrideMm),
+        fpsEnabled = bundle.getBoolean("fpsEnabled", base.fpsEnabled), fps = bundle.getInt("fps", base.fps),
+        localPreview = bundle.getBoolean("localPreview", base.localPreview),
+        playCarPlayAudio = bundle.getBoolean("playCarPlayAudio", base.playCarPlayAudio),
+        microphoneSourceEnabled = bundle.getBoolean("microphoneSourceEnabled", base.microphoneSourceEnabled),
+        microphoneSource = MicrophoneSource.entries.firstOrNull { it.name == bundle.getString("microphoneSource") } ?: base.microphoneSource,
+        webPortEnabled = bundle.getBoolean("webPortEnabled", base.webPortEnabled),
+        webPort = bundle.getInt("webPort", base.webPort ?: 0).takeIf { it != 0 },
+        carlinkDeviceModelEnabled = bundle.getBoolean("carlinkDeviceModelEnabled", base.carlinkDeviceModelEnabled),
+        carlinkDeviceModel = bundle.getString("carlinkDeviceModel") ?: base.carlinkDeviceModel,
+    )
+})
 
 /** Rotation retains unsaved choices without publishing them into the runtime's preferences. */
 fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save = { value ->
@@ -22,6 +68,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
             value.localPreview, value.carlinkOutput, value.playCarPlayAudio, value.bothOutputs, value.vehicleInformation))
         putIntArray("numbers", intArrayOf(value.fps, value.webPort ?: 0, value.wirelessNetwork.channel))
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
+        putBoolean("carlinkReconnectOnResize", value.carlinkReconnectOnResize)
         putBoolean("carlinkTrace", value.carlinkTrace)
         putString("carlinkHevc", value.carlinkHevc.name)
         putString("carlinkPictureSize", value.carlinkPictureSize.name)
@@ -46,6 +93,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],
         playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), fps = numbers[0], webPort = numbers[1].takeIf { it != 0 },
         videoStats = if (bundle.containsKey("videoStats")) VideoStatsWindow.fromStored(bundle.getString("videoStats")) else base.videoStats,
+        carlinkReconnectOnResize = bundle.getBoolean("carlinkReconnectOnResize", base.carlinkReconnectOnResize),
         videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == bundle.getString("videoCodec") } ?: base.videoCodec,
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,
         carplayScreenWidth = CarPlayScreenWidth.entries.firstOrNull { it.mm == bundle.getInt("carplayScreenWidth", base.carplayScreenWidth.mm) } ?: base.carplayScreenWidth,

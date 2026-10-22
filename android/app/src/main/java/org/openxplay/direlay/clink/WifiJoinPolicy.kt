@@ -5,6 +5,10 @@ package org.openxplay.direlay.clink
 
 /** Pure platform choice and endpoint validation; never guesses a peer address. */
 object WifiJoinPolicy {
+    internal fun <T> withWifi(wifiEnabled: Boolean?, connect: () -> T): T {
+        if (wifiEnabled == false) throw ClinkFailure(ClinkFailureReason.WIFI_OFF)
+        return connect()
+    }
     enum class Method { P2P_CREDENTIALS, NETWORK_SPECIFIER, UNSUPPORTED }
     fun first(sdk: Int, p2pAvailable: Boolean, replyType: Int = 1001): Method = when {
         sdk < 29 -> Method.UNSUPPORTED

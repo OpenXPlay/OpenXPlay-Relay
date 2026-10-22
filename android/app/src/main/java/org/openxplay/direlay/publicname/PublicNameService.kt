@@ -36,11 +36,15 @@ data class PublicNameStatus(val state: PublicNameState, val name: String? = null
     val notAfter: Long? = null, val error: PublicNameError? = null, val detail: String? = null,
     val nextAttempt: Long? = null, val trustedName: String? = null)
 
+/** A provider's saved fields that may leave the store; never the token itself. */
+data class PublicNameProviderView(val name: String = "", val tokenSet: Boolean = false)
+
 /** What the settings screen may show; never the token itself. [revision] changes with every saved change. */
 data class PublicNameView(val configured: Boolean = false, val enabled: Boolean = false, val provider: DnsProviderId? = null,
-    val name: String = "", val tokenSet: Boolean = false, val agreeTerms: Boolean = false, val revision: Long = 0)
+    val name: String = "", val tokenSet: Boolean = false, val agreeTerms: Boolean = false, val revision: Long = 0,
+    val providers: Map<DnsProviderId, PublicNameProviderView> = DnsProviderId.entries.associateWith { PublicNameProviderView() })
 
-/** A settings-screen change; an empty [token] keeps the saved one. */
+/** A settings-screen change; an empty [token] keeps the chosen provider's saved one. */
 class PublicNameEdit(val enabled: Boolean, val provider: DnsProviderId?, val name: String, val token: String, val agreeTerms: Boolean) {
     override fun toString() = "PublicNameEdit(enabled=$enabled, provider=${provider?.key}, name=$name)"
 }
@@ -155,10 +159,9 @@ class PublicNameService(
         val token = edit.token.trim()
         synchronized(lock) {
             val current = store.config()
-            val kept = token.ifEmpty { current?.token.orEmpty() }
+            val kept = token.ifEmpty { edit.provider?.let { store.savedProviders()[it]?.token }.orEmpty() }
             val errors = buildList {
                 if (name.isNotEmpty() && !PublicNameRules.nameValid(edit.provider, name)) add(ConfigError(PublicNameFile.NAME, ConfigProblem.INVALID))
-                // A saved token that does not fit a newly chosen provider is reported, never silently kept or dropped.
                 if (kept.isNotEmpty() && !PublicNameRules.tokenValid(edit.provider, kept)) add(ConfigError(PublicNameFile.TOKEN, ConfigProblem.INVALID))
             }
             if (errors.isNotEmpty()) return errors
@@ -168,14 +171,14 @@ class PublicNameService(
         return emptyList()
     }
 
-    /** An imported file replaces the whole configuration; nothing is saved when it has problems. */
+    /** An imported file replaces its provider's setup and activates it; invalid files change nothing. */
     fun import(bytes: ByteArray): ConfigParse {
         val parsed = PublicNameFile.parse(bytes)
         if (parsed is ConfigParse.Valid) synchronized(lock) { store.save(parsed.config); changed() }
         return parsed
     }
 
-    /** Deletes the configuration, token, account key and ACME certificate; the provider's A record stays. */
+    /** Deletes all provider setups, the account key and ACME certificate; providers' address records stay. */
     fun remove() {
         synchronized(lock) {
             generation.incrementAndGet()
@@ -216,8 +219,13 @@ class PublicNameService(
 
     private fun publishView(config: PublicNameConfig?) {
         active = config?.enabled == true
+        val savedProviders = store.savedProviders()
         mutableView.value = PublicNameView(config != null, config?.enabled == true, config?.provider, config?.name.orEmpty(),
-            config?.token?.isNotEmpty() == true, config?.agreeTerms == true, generation.get())
+            config?.token?.isNotEmpty() == true, config?.agreeTerms == true, generation.get(),
+            DnsProviderId.entries.associateWith { provider ->
+                val setup = savedProviders[provider]
+                PublicNameProviderView(setup?.name.orEmpty(), setup?.token?.isNotEmpty() == true)
+            })
     }
 
     private fun trigger() {

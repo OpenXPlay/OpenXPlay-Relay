@@ -30,6 +30,7 @@ class TranscodingOutput(
     private val report: (VideoFormat, VideoCompatibility.Decision, Boolean) -> Unit = { _, _, _ -> },
     private val observeCapabilities: (OutputCapabilities?) -> Unit = {},
     private val deliveryCodecs: Set<VideoCodec> = VideoCodec.entries.toSet(),
+    private val onFailure: (VideoFormat, Exception) -> Unit = { _, _ -> },
     private val carlinkGeometry: Boolean = false,
     private val reportGeometry: (CarlinkGeometry?, VideoCompatibility.Mode) -> Unit = { _, _ -> },
 ) : ProjectionOutput by inner {
@@ -196,6 +197,7 @@ class TranscodingOutput(
                     stream.revision++
                     stream.pipeline?.close(); stream.pipeline = null
                     stream.failed = true
+                    onFailure(stream.format, error)
                     reportChange(stream.format, decision, true)
                     if (stream.format.screen == ScreenId.MAIN) {
                         area = area?.let { it.copy(area = CarlinkCrop(0, 0, it.canvas.width, it.canvas.height), picture = it.canvas) }

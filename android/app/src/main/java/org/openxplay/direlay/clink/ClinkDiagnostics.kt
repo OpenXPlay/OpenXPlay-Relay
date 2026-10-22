@@ -80,7 +80,7 @@ internal enum class ClinkFailureReason(val code: String) {
     BLE_EXCHANGE("ble_exchange_failed"), BLE_EXCHANGE_TIMEOUT("ble_exchange_timeout"),
     P2P_ERROR("wifi_join_p2p_error"), P2P_UNSUPPORTED("wifi_join_p2p_unsupported"),
     P2P_BUSY("wifi_join_p2p_busy"), P2P_UNKNOWN("wifi_join_p2p_unknown"),
-    P2P_TIMEOUT("wifi_join_p2p_timeout"), WIFI_UNAVAILABLE("wifi_join_unavailable"),
+    P2P_TIMEOUT("wifi_join_p2p_timeout"), WIFI_OFF("wifi_off"), WIFI_UNAVAILABLE("wifi_join_unavailable"),
     WIFI_BIND("wifi_bind_failed"), WIFI_TIMEOUT("wifi_join_timeout"), LINK_LOST("wifi_link_lost");
 }
 

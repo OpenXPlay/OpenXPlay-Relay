@@ -55,8 +55,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private var lastNetworkRefresh = Long.MIN_VALUE / 2
     private var identityReady = false
     private var materialChecked = false
-    private var resumed = false
-    private val videoStats = org.openxplay.direlay.relay.VideoStats()
+    @Volatile private var resumed = false
     private val starting get() = runtime.startRequest.pending
     private var requestingPermissions = false
     /** A pairing permission request or "make visible" dialog is on screen; its answer is still to come. */
@@ -98,7 +97,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         setContent {
             org.openxplay.direlay.ui.RelayTheme {
-                content?.let { value -> org.openxplay.direlay.ui.RelayApp(value, settingsStore, runtime,
+                content?.let { value -> androidx.compose.runtime.CompositionLocalProvider(
+                    org.openxplay.direlay.ui.LocalNetworkReadings provides value.networkReadings) {
+                    org.openxplay.direlay.ui.RelayApp(value, settingsStore, runtime,
                     onStartStop = {
                         android.util.Log.i("OpenXPlay Relay", "Start/stop tapped while running=${value.presentation.running}")
                         bootAutoStart = false
@@ -126,7 +127,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     onCopy = { text -> getSystemService(android.content.ClipboardManager::class.java)
                         .setPrimaryClip(android.content.ClipData.newPlainText(getString(R.string.ui_car_screen), text)) },
                     onReconnect = { if (missingPermissions().isNotEmpty()) explainPermissions() else runtime.reconnectCarlink() },
-                    onNetwork = { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) },
+                    onNetwork = { org.openxplay.direlay.ui.NetworkSettingsLauncher(this).open(false) },
                     importMaterial = { identity -> openDocument(if (identity) IDENTITY_KEY else TLS_FILE, if (identity) R.string.direlay_choose_key else R.string.direlay_choose_tls) },
                     removeMaterial = { identity -> work { if (identity) runtime.identityStore.remove() else runtime.tlsStore.remove() } },
                     importPublicName = { openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose) },
@@ -136,7 +137,11 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                         if (settingsStore.snapshot.value?.autoStartWhenReady == true) runtime.autoStartSessions.pause("not now at launch")
                     },
                     onGuideVisible = { visible -> guideOpen = visible; if (!visible) updateReadiness() },
-                ) }
+                    )
+                    org.openxplay.direlay.ui.NetworkReadinessDialog(value.networkStart,
+                        startAnyway = { work { runtime.startAnyway() } },
+                        cancel = { work { runtime.cancelNetworkStart() } })
+                } }
             }
         }
         if (savedInstanceState == null) {
@@ -201,6 +206,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 NetworkSnapshot(wifi, name, connected)
             }
             runtime.autoStartSessions.refresh()
+            if (resumed) runtime.recheckNetworkStart()
             val running = runtime.autoStartSessions.tracker.running
             handler.post {
                 networkRefreshPending = false
@@ -235,13 +241,22 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val readyIdentity = settings.mfiTarget != MfiTarget.LOCAL || identityReady
         val phase = runtime.status.session?.phase
         val selection = runtime.iphoneSelection()
+        val failures = runtime.status.failures
+        val carlinkFailed = (settings.carlinkOutput || settings.bothOutputs) && runtime.carlinkFailed
+        val webReason = runtime.serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs }
+        val network = runtime.networkReadings
+        val networkReadiness = runtime.networkReadiness(settings, network)
         val presentation = org.openxplay.direlay.ui.presentHome(org.openxplay.direlay.ui.HomeSnapshot(
             settings, wireless, missing.isEmpty() && !needsVpn, readyIdentity, !materialChecked, valid,
-            phase, started || starting, runtime.status.failure != null ||
-                (settings.carlinkOutput && runtime.carlinkFailed) ||
-                ((!settings.carlinkOutput || settings.bothOutputs) && runtime.serverReason != null), selection, autoStartPaused = runtime.autoStartGate.paused,
-            webReason = runtime.serverReason, webListening = runtime.serverState.startsWith("TLS enabled"),
-            carNetworkAvailable = runtime.carIpv4.isNotEmpty(), currentWifi = cachedWifi, sharedWifiReady = !wireless || settings.wirelessNetwork.choice != org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI || runtime.currentSharedWifi(settings, cachedWifi) != null))
+            phase, started || starting, failures.isNotEmpty() || carlinkFailed || webReason != null, selection, autoStartPaused = runtime.autoStartGate.paused,
+            webReason = webReason, webListening = runtime.serverState.startsWith("TLS enabled"),
+            carNetworkAvailable = runtime.carIpv4.isNotEmpty(), currentWifi = cachedWifi, sharedWifiReady = !wireless || settings.wirelessNetwork.choice != org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI || runtime.currentSharedWifi(settings, cachedWifi) != null,
+            problems = org.openxplay.direlay.ui.homeProblems(failures, carlinkFailed, runtime.carlinkDetail,
+                runtime.carlinkError, webReason, runtime.serverState, networkReadiness),
+            networkReadiness = networkReadiness, manualNetworkReminders = runtime.networkStart.reminders,
+            // DiPlay does not export its discovery stage; observe a live wired wait with an empty Android USB list.
+            usbRoleProblem = org.openxplay.direlay.network.wiredUsbRoleProblem(wireless,
+                started || starting, network)))
         val carAddresses = runtime.carIpv4
         val receiverUrls = runtime.receiverUrls.filterNot { it.contains("://localhost:") }
             .filter { url -> carAddresses.any { url.contains("://$it:") } }
@@ -252,22 +267,16 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         // Without location access Android hides the network name, but the connection itself is known.
         val wifi = cachedWifi ?: getString(if (onWifi) R.string.ui_wifi_connected else R.string.ui_wifi_not_connected)
         val deviceName = cachedDeviceName ?: settings.carlinkDeviceName
-        val stats = if (resumed) videoStats.sample(runtime.status, settings.videoStats,
-            settings.carlinkOutput || settings.bothOutputs, runtime.carlinkStatistics, runtime.carlinkVideoDecision, runtime.carlinkScreen)
-            else null
         content = org.openxplay.direlay.ui.HomeContent(presentation, urls,
             ip, wifi, deviceName, settings.autoStartWhenReady, settings.carlinkOutput, settings.bothOutputs,
-            when {
-                runtime.carlinkPins.pending != null -> R.string.ui_waiting_code
-                runtime.carlinkState in setOf("ACTIVE", "CONNECTED", "STREAMING", "PLAYING") -> R.string.ui_connected
-                runtime.carlinkState == "Requires Android 10+" -> R.string.ui_carlink_unsupported
-                runtime.carlinkFailed || runtime.carlinkState == "ENDED" -> R.string.ui_carlink_failed
-                else -> R.string.ui_searching
-            }, runtime.carlinkPins.pending.takeIf { resumed }, starting || requestingPermissions, onWifi = onWifi, vehicle = runtime.vehicleView,
+            org.openxplay.direlay.ui.carlinkStateLabel(runtime.carlinkState, runtime.carlinkFailed,
+                runtime.carlinkPins.pending != null), runtime.carlinkPins.pending.takeIf { resumed },
+            starting || requestingPermissions, onWifi = onWifi, vehicle = runtime.vehicleView,
             pinRejected = runtime.pinRejected, pairingSuccess = runtime.pairingSuccess,
-            videoStats = stats, displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi,
-            iphoneName = runtime.iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name)
-        if (!importOnly && !guideOpen && presentation.canStart && resumed && !requestingPermissions && !networkRefreshPending && !restartPending && !starting && !presentation.running && runtime.status.failure == null && !runtime.autoStartGate.paused &&
+            displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi,
+            iphoneName = runtime.iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name,
+            networkReadings = network, networkStart = runtime.networkStart.pending)
+        if (!importOnly && !guideOpen && runtime.networkStart.pending == null && presentation.canStart && resumed && !requestingPermissions && !networkRefreshPending && !restartPending && !starting && !presentation.running && runtime.status.failure == null && !runtime.autoStartGate.paused &&
             runtime.autoStartSessions.tracker.observed && !runtime.autoStartSessions.tracker.running &&
             phase !in setOf(SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.RECONNECTING) &&
             (settings.autoStartWhenReady || bootAutoStart)) startCarPlay()
@@ -623,9 +632,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     override fun onPause() {
         resumed = false
-        runtime.status.countVideoBytes = false
-        videoStats.clear()
-        content = content?.copy(pending = null, videoStats = null)
+        content = content?.copy(pending = null)
         handler.removeCallbacks(refreshStatus)
         super.onPause()
     }

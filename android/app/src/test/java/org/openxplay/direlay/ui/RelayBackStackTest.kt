@@ -9,9 +9,8 @@ import org.junit.Test
 class RelayBackStackTest {
     @Test fun navigationKeepsSectionsAndSnapshotParents() {
         val stack = RelayBackStack().open("settings:network").open("developer").open("about")
-        assertEquals("developer", stack.back().current)
-        assertEquals("settings:network", stack.back().back().current)
-        assertEquals("home", stack.back().back().back().current)
+        assertEquals("settings", stack.back().current)
+        assertEquals("home", stack.back().back().current)
         assertFalse(RelayBackStack().canBack)
         assertEquals(RelayBackStack(), RelayBackStack().back())
         val vehicle = RelayBackStack().open("vehicle").open("snapshot:123")
@@ -24,6 +23,17 @@ class RelayBackStackTest {
         assertEquals(WindowLayout.MEDIUM, windowLayout(600))
         assertEquals(WindowLayout.MEDIUM, windowLayout(839))
         assertEquals(WindowLayout.EXPANDED, windowLayout(840))
+    }
+
+    @Test fun identityBackReturnsToSettingsAndRetainsTheOrigin() {
+        val origin = RelayBackStack().open("setup")
+        for (entry in listOf("settings/identity", "settings:identity", "developer/identity")) {
+            val stack = origin.open("developer/video").open(entry)
+            assertEquals(listOf("home", "setup", "settings", "settings/identity"), stack.entries)
+            assertEquals("settings", stack.back().current)
+            assertEquals(origin, stack.back().back())
+            assertEquals(stack, stack.open(entry))
+        }
     }
 
     @Test fun shortWindowsScrollActionsRegardlessOfWidthOrOrientation() {

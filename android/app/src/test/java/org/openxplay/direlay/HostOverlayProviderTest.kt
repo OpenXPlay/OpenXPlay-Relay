@@ -23,7 +23,6 @@ class HostOverlayProviderTest {
         val runtime = RelayRuntime(context)
         try {
             runtime.settingsStore.awaitSnapshot()
-            runtime.settingsStore.developerMode = true
             runtime.settingsStore.saveDeveloperOverrides(runtime.settingsStore.developerOverrides.value.copy(localPreview = true))
             runtime.settingsStore.awaitSnapshot()
             val application = DiRelayApplication()

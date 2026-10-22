@@ -20,6 +20,48 @@ class SettingsAutoSaveTest {
         assertFalse(saver.apply(updated, true)); assertEquals(listOf(updated), published)
         assertFalse(initial.vehicleInformation)
     }
+    @Test fun editsOnTwoPagesShareTheDraftAndPublishEachValidChangeOnlyOnce() {
+        val published = mutableListOf<RelaySettings>()
+        val saver = SettingsAutoSave(initial, published::add)
+        var stack = RelayBackStack().open("settings:output")
+        var draft = initial.copy(carlinkDeviceName = "")
+        assertFalse(saver.apply(draft, true))
+        stack = stack.open("settings/startup")
+        draft = draft.copy(autoStartOnBoot = true)
+        assertFalse(saver.apply(draft, true))
+        stack = stack.open("settings:output")
+        assertEquals("settings/output#output", stack.current)
+        assertTrue(draft.autoStartOnBoot)
+        draft = draft.copy(carlinkDeviceName = "My relay")
+        assertTrue(saver.apply(draft, true))
+        assertFalse(saver.apply(draft, true))
+        stack = stack.open("settings/picture")
+        draft = draft.copy(videoCodec = VideoCodecSetting.entries.last())
+        assertTrue(saver.apply(draft, true))
+        assertFalse(saver.apply(draft, true))
+        assertEquals("settings/picture", stack.current)
+        assertEquals(listOf(initial.copy(carlinkDeviceName = "My relay", autoStartOnBoot = true), draft), published)
+    }
+
+    @Test fun menuErrorsIdentifyEveryInvalidPageEvenWhenAnotherGroupIsInvalid() {
+        val invalid = initial.copy(carlinkDeviceName = "", carlinkDeviceModel = "", webPort = 80,
+            display = DisplayProfile(1, 2, 3), mfiTarget = MfiTarget.REMOTE, remoteServer = "invalid",
+            wirelessNetwork = initial.wirelessNetwork.copy(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
+                manualSsid = "", manualPassphrase = "short"))
+        assertEquals(setOf("settings/output", "settings/connection/network", "developer/video",
+            "developer/connection", "settings/identity"), settingsInvalidPages(invalid, initial) { true })
+        assertTrue(settingsInvalidPages(initial, initial) { true }.isEmpty())
+    }
+
+    @Test fun identityValidationMarksOnlyTheTopLevelIdentityPage() {
+        for (invalid in listOf(initial.copy(mfiTarget = MfiTarget.REMOTE, remoteServer = "invalid"),
+            initial.copy(mfiTarget = MfiTarget.I2C, i2cPath = ""), initial.copy(remoteToken = "\u0000"))) {
+            val pages = settingsInvalidPages(invalid, initial) { true }
+            assertEquals(setOf("settings/identity"), pages)
+            assertFalse(pages.any { it.startsWith("developer/") })
+        }
+    }
+
     @Test fun invalidCredentialsStayDraftUntilValidAndIrrelevantCredentialsDoNotBlockUsb() {
         val published = mutableListOf<RelaySettings>()
         val saver = SettingsAutoSave(initial, published::add)
@@ -46,10 +88,13 @@ class SettingsAutoSaveTest {
             initial.copy(carlinkDeviceName = "Car"), initial.copy(carlinkOutput = true))) {
             assertEquals(SettingsNotice.SILENT, settingsNotice(initial, value, false))
         }
+        for (connected in listOf(false, true)) {
+            assertEquals(SettingsNotice.SILENT, settingsNotice(initial, initial.copy(carlinkReconnectOnResize = true), connected))
+        }
         for (value in listOf(initial.copy(connectionMode = ConnectionMode.USB), initial.copy(fps = 60),
             initial.copy(display = DisplayProfile(800, 480, 160)), initial.copy(mfiTarget = MfiTarget.USB_CH341),
             initial.copy(i2cPath = "/dev/i2c-2"), initial.copy(remoteServer = "https://example.test"),
-            initial.copy(remoteToken = "new"), initial.copy(carBluetoothAudio = true), initial.copy(wirelessNetwork = initial.wirelessNetwork.copy(sharedWifiNetworks = listOf(SharedWifiNetwork("Car", "")))))) {
+            initial.copy(remoteToken = "new"), initial.copy(carBluetoothAudio = false), initial.copy(wirelessNetwork = initial.wirelessNetwork.copy(sharedWifiNetworks = listOf(SharedWifiNetwork("Car", "")))))) {
             assertEquals(SettingsNotice.NEXT_START, settingsNotice(initial, value, false))
             assertEquals(SettingsNotice.NEXT_START, settingsNotice(initial, value, true))
         }

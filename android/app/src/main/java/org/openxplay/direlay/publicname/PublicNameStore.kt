@@ -22,6 +22,11 @@ data class PublicNameRecord(val orders: List<Pair<String, Long>> = emptyList(), 
     fun orders(name: String): List<Long> = orders.filter { it.first == name }.map { it.second }
 }
 
+/** Only these fields belong to a provider; tokens stay in the private store. */
+data class PublicNameProviderSetup(val name: String, val token: String) {
+    override fun toString() = "PublicNameProviderSetup(name=$name, token=${if (token.isEmpty()) "none" else "set"})"
+}
+
 /**
  * Configuration, token and ACME account key in `no_backup/public-name/` (0700, files 0600).
  * Never part of RelaySettings, a saved-state Bundle or the admin API.
@@ -30,15 +35,61 @@ class PublicNameStore(noBackupFilesDir: File) {
     private val store = PrivateStore(noBackupFilesDir, "public-name")
 
     @Synchronized fun config(): PublicNameConfig? {
+        val config = readConfig()
+        readProviders(config)
+        return config
+    }
+
+    /** Saved provider credentials, for the service only; the screen gets names and token-present flags. */
+    @Synchronized fun savedProviders(): Map<DnsProviderId, PublicNameProviderSetup> = readProviders(readConfig())
+
+    private fun readConfig(): PublicNameConfig? {
         val bytes = read(CONFIG, PublicNameFile.MAX_BYTES) ?: return null
         return try { (PublicNameFile.parse(bytes, partial = true) as? ConfigParse.Valid)?.config } finally { bytes.fill(0) }
     }
 
-    /** Replaces the configuration; the account key and the scheduler record stay. */
-    @Synchronized fun save(config: PublicNameConfig) = update(mapOf(CONFIG to PublicNameFile.encode(config)))
+    /** Activates this configuration and replaces only its provider's setup, in one private generation. */
+    @Synchronized fun save(config: PublicNameConfig) {
+        val providers = readProviders(readConfig()).toMutableMap()
+        config.provider?.let { providers[it] = PublicNameProviderSetup(config.name, config.token) }
+        update(mapOf(CONFIG to PublicNameFile.encode(config), PROVIDERS to encodeProviders(providers)))
+    }
 
-    /** Removes the configuration, the token, the account key and the record. */
+    /** Removes every provider's setup, the active configuration, the account key and the record. */
     @Synchronized fun remove() = store.remove()
+
+    /** Older installs have only config.json; seed its provider without changing that version-1 file. */
+    private fun readProviders(config: PublicNameConfig?): Map<DnsProviderId, PublicNameProviderSetup> {
+        val bytes = read(PROVIDERS, PublicNameFile.MAX_BYTES)
+        if (bytes != null) try {
+            val parsed = runCatching {
+                val json = JSONObject(String(bytes, Charsets.UTF_8))
+                require(json.getInt("version") == 1)
+                val providers = json.getJSONObject("providers")
+                DnsProviderId.entries.mapNotNull { provider ->
+                    if (!providers.has(provider.key)) return@mapNotNull null
+                    val entry = providers.getJSONObject(provider.key)
+                    val name = entry.getString("name")
+                    val token = entry.getString("token")
+                    require(name.isEmpty() || PublicNameRules.nameValid(provider, name))
+                    require(token.isEmpty() || PublicNameRules.tokenValid(provider, token))
+                    provider to PublicNameProviderSetup(name, token)
+                }.toMap()
+            }.getOrNull()
+            if (parsed != null) return parsed
+        } finally { bytes.fill(0) }
+        val migrated = config?.provider?.let { mapOf(it to PublicNameProviderSetup(config.name, config.token)) }.orEmpty()
+        if (config != null) update(mapOf(PROVIDERS to encodeProviders(migrated)))
+        return migrated
+    }
+
+    private fun encodeProviders(providers: Map<DnsProviderId, PublicNameProviderSetup>): ByteArray {
+        val entries = JSONObject()
+        providers.forEach { (provider, setup) ->
+            entries.put(provider.key, JSONObject().put("name", setup.name).put("token", setup.token))
+        }
+        return JSONObject().put("version", 1).put("providers", entries).toString().toByteArray(Charsets.UTF_8)
+    }
 
     /** The account key is created once and kept with the configuration; null without a configuration. */
     @Synchronized fun accountKey(): KeyPair? {
@@ -120,6 +171,7 @@ class PublicNameStore(noBackupFilesDir: File) {
 
     companion object {
         private const val CONFIG = "config.json"
+        private const val PROVIDERS = "providers.json"
         private const val ACCOUNT_KEY = "account.key"
         private const val ACCOUNT_PUBLIC = "account.pub"
         private const val ACCOUNT = "account.json"

@@ -9,8 +9,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.CancellationException
@@ -20,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.RelayRuntime
+import org.openxplay.direlay.relay.VideoStats
 
 fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime): ComposeView? =
     hostOverlayUnlessPreview(runtime.settingsStore.snapshot.value?.localPreview ?: runtime.localPreview) {
@@ -29,27 +32,53 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
         }
     }
 
-private fun RelayRuntime.overlaySnapshot(): HostOverlaySnapshot? {
+private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySnapshot? {
     val settings = settingsStore.snapshot.value ?: return null
     val selection = iphoneSelection(settings.iphoneAddress)
     val name = iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name
+    val addresses = carIpv4.toList()
     val urls = receiverUrls.filterNot { it.contains("://localhost:") }
-        .filter { url -> carIpv4.any { url.contains("://$it:") } }
+        .filter { url -> addresses.any { url.contains("://$it:") } }
+    val failures = status.failures
+    val carlinkOn = settings.carlinkOutput || settings.bothOutputs
+    val failedCarlink = carlinkOn && carlinkFailed
+    val webReason = serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs }
+    val screen = carPlayScreenSummary
+    val window = displayPolicy.primaryDisplay?.viewport
+    val carlinkDisplay = carlinkScreen
+    val stats = videoStats.sample(status, settings.videoStats, carlinkOn,
+        carlinkStatistics, carlinkVideoDecision, carlinkDisplay)
     return HostOverlaySnapshot(HomeSnapshot(settings, settingsStore.wireless(settings),
         permissionsReady = true, identityReady = true, phase = status.session?.phase, started = true,
-        failure = status.failure != null || (settings.carlinkOutput && carlinkFailed) ||
-            ((!settings.carlinkOutput || settings.bothOutputs) && serverReason != null),
-        iphoneSelection = selection, webReason = serverReason, webListening = serverState.startsWith("TLS enabled"),
-        carNetworkAvailable = carIpv4.isNotEmpty()), name, urls, stopped = autoStartGate.paused)
+        failure = failures.isNotEmpty() || failedCarlink || webReason != null,
+        iphoneSelection = selection, webReason = webReason, webListening = serverState.startsWith("TLS enabled"),
+        carNetworkAvailable = addresses.isNotEmpty(),
+        problems = homeProblems(failures, failedCarlink, carlinkDetail, carlinkError, webReason, serverState)),
+        name, urls, stopped = autoStartGate.paused,
+        publicNameUrl = publicNameUrl(), carIpv4 = addresses,
+        carlinkState = carlinkStateLabel(carlinkState, carlinkFailed, carlinkPins.pending != null),
+        carlinkWindow = carlinkDisplay?.let { HostOverlaySize(it.widthPx, it.heightPx) },
+        canvas = screen.first.substringBefore(" · "), screenWidthMm = carPlayScreenWidthMm,
+        videoCodec = status.videoCodec ?: appliedVideoDecision.codec,
+        carPlayScreen = screen, viewport = window?.let { HostOverlaySize(it.width, it.height) }, videoStats = stats)
 }
 
 @Composable private fun RuntimeHostOverlay(activity: ComponentActivity, runtime: RelayRuntime) {
     val snapshot by produceState<HostOverlaySnapshot?>(null, activity, runtime) {
-        while (true) {
-            if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                value = withContext(Dispatchers.IO) { runtime.overlaySnapshot() }
+        val videoStats = VideoStats()
+        try {
+            while (true) {
+                if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                    value = withContext(Dispatchers.IO) { runtime.overlaySnapshot(videoStats) }
+                } else {
+                    videoStats.clear()
+                    runtime.status.countVideoBytes = false
+                }
+                delay(500)
             }
-            delay(500)
+        } finally {
+            videoStats.clear()
+            runtime.status.countVideoBytes = false
         }
     }
     val scope = rememberCoroutineScope()
@@ -87,8 +116,10 @@ private fun RelayRuntime.overlaySnapshot(): HostOverlaySnapshot? {
 @Composable internal fun HostOverlayScreen(value: HostOverlayPresentation, stopping: Boolean,
     onAction: (HostOverlayAction) -> Unit) {
     val motion = rememberRelayMotion()
+    val clipboard = LocalClipboardManager.current
+    CompositionLocalProvider(LocalRelayMotion provides motion) {
     RelayPage {
-        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val description = stringResource(value.headline)
             when (value.tone) {
                 StatusTone.PROGRESS -> if (motion) CircularProgressIndicator(Modifier.size(48.dp))
@@ -101,15 +132,7 @@ private fun RelayRuntime.overlaySnapshot(): HostOverlaySnapshot? {
             }
             Heading(description)
             value.iphoneName?.let { Text(stringResource(R.string.ui_iphone_name, it), style = MaterialTheme.typography.titleMedium) }
-            RelayCard {
-                value.outputs.forEach { output ->
-                    Text(stringResource(output), style = MaterialTheme.typography.titleMedium)
-                    if (output == R.string.ui_browser) {
-                        value.receiverUrls.forEach { Text(it) }
-                        value.browserHint?.let { Hint(stringResource(it)) }
-                    }
-                }
-            }
+            value.problems.forEach { problem -> key(problem) { HomeProblemRow(problem) } }
             value.hint?.let { Hint(stringResource(it, *value.hintArguments.toTypedArray())) }
             value.buttons.forEach { button ->
                 OutlinedButton(onClick = { onAction(button.action) }, enabled = !stopping,
@@ -120,6 +143,23 @@ private fun RelayRuntime.overlaySnapshot(): HostOverlaySnapshot? {
                     Text(stringResource(button.label), Modifier.weight(1f))
                 }
             }
+            value.sections.forEach { section ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(stringResource(section.title), style = MaterialTheme.typography.titleMedium)
+                        section.rows.forEach { row ->
+                            DetailValue(row.label, row.valueResource?.let { stringResource(it, *row.arguments.toTypedArray()) }
+                                ?: row.value, row.monospace)
+                        }
+                        if (section.title == R.string.host_head_unit_address) {
+                            ReceiverAddresses(value.receiverUrls) { clipboard.setText(AnnotatedString(it)) }
+                            value.browserHint?.let { Hint(stringResource(it)) }
+                        }
+                    }
+                }
+            }
+            value.videoStats?.let { VideoStatisticsCard(it) }
         }
+    }
     }
 }

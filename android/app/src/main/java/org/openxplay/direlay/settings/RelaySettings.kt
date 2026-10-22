@@ -66,6 +66,7 @@ data class RelaySettings(
     val bothOutputs: Boolean = false,
     val vehicleInformation: Boolean = false,
     val carlinkAutoReconnect: Boolean = true,
+    val carlinkReconnectOnResize: Boolean = false,
     val displayMode: DisplayMode = if (display == null) DisplayMode.AUTOMATIC else DisplayMode.FIXED,
     val iphoneAddress: String? = null,
     val plugins: Boolean = false,
@@ -80,7 +81,7 @@ data class RelaySettings(
     val videoCodec: VideoCodecSetting = VideoCodecSetting.AUTO,
     val videoStats: VideoStatsWindow = VideoStatsWindow.OFF,
     /** Offer the iPhone no CarPlay audio, so music, navigation and calls stay on its Bluetooth link with the car. */
-    val carBluetoothAudio: Boolean = false,
+    val carBluetoothAudio: Boolean = true,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -130,10 +131,21 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     private val relay get() = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     private val diplay get() = context.getSharedPreferences("diplay", Context.MODE_PRIVATE)
 
+    init {
+        // Synchronous at runtime construction, before application startup can launch a CarPlay activity or service.
+        CarBluetoothAudioDefaults.apply(context, relay)
+    }
+
     private val cached = kotlinx.coroutines.flow.MutableStateFlow<RelaySettings?>(null)
     val snapshot: kotlinx.coroutines.flow.StateFlow<RelaySettings?> = cached
     private val overrides = kotlinx.coroutines.flow.MutableStateFlow(DeveloperOverrides())
-    val developerOverrides: kotlinx.coroutines.flow.StateFlow<DeveloperOverrides> = overrides
+    private var overridesLoaded = false
+    // Read-modify-write callers must copy persisted choices, even before observation starts.
+    val developerOverrides: kotlinx.coroutines.flow.StateFlow<DeveloperOverrides>
+        @Synchronized get() {
+            if (!overridesLoaded) load()
+            return overrides
+        }
     private val refreshWorker = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
         Thread(task, "direlay-settings").apply { isDaemon = true }
     }
@@ -172,13 +184,14 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     @Synchronized fun load(): RelaySettings {
         val stored = loadStored()
         val remembered = loadDeveloperOverrides(stored)
-        val choices = remembered.remember(stored, developerMode)
-        val effective = choices.effectiveSettings(stored, developerMode)
+        val choices = remembered.remember(stored)
+        val effective = choices.effectiveSettings(stored)
         if (choices != remembered || effective != stored ||
-            relay.getInt("devPhysicalWidthMm", 0) != choices.effectivePhysicalWidth(developerMode)) {
-            persistSettings(effective, stored, choices, developerMode)
+            relay.getInt("devPhysicalWidthMm", 0) != choices.effectivePhysicalWidth()) {
+            persistSettings(effective, stored, choices)
         }
         overrides.value = choices
+        overridesLoaded = true
         return effective
     }
 
@@ -225,6 +238,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             relay.getBoolean("bothOutputs", false),
             relay.getBoolean("vehicleInformation", false),
             carlinkAutoReconnect = relay.getBoolean("carlinkAutoReconnect", true),
+            carlinkReconnectOnResize = relay.getBoolean("carlinkReconnectOnResize", false),
             mode,
             relay.getString("iphoneAddress", null),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
@@ -248,18 +262,25 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
 
     @Synchronized fun save(value: RelaySettings) {
         val current = load()
-        val choices = overrides.value.remember(value, developerMode)
-        persistSettings(choices.effectiveSettings(value, developerMode), current, choices, developerMode)
+        val choices = overrides.value.remember(value)
+        persistSettings(choices.effectiveSettings(value), current, choices)
+        publish(load())
+    }
+
+    /** Publish the shared editor's settings and remembered overrides together. */
+    @Synchronized fun save(value: RelaySettings, choices: DeveloperOverrides) {
+        val current = load()
+        persistSettings(choices.effectiveSettings(value), current, choices)
         publish(load())
     }
 
     @Synchronized fun saveDeveloperOverrides(value: DeveloperOverrides) {
         val current = load()
-        persistSettings(value.effectiveSettings(current, developerMode), current, value, developerMode)
+        persistSettings(value.effectiveSettings(current), current, value)
         publish(load())
     }
 
-    private fun persistSettings(value: RelaySettings, current: RelaySettings, choices: DeveloperOverrides, developerMode: Boolean) {
+    private fun persistSettings(value: RelaySettings, current: RelaySettings, choices: DeveloperOverrides) {
         val settings = value.copy(car = value.car.normalized())
         // Validate wireless fields when they change or wireless is newly selected; untouched defaults
         // must not block unrelated settings.
@@ -282,7 +303,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             AirPlayPersistence.saveMaximumDetectedDisplay(context, 0, 0)
         }
         if (settings.displayMode == DisplayMode.FIXED) settings.display?.let {
-            applyDisplayProfile(it, settings.carplayScreenWidth, choices.effectivePhysicalWidth(developerMode))
+            applyDisplayProfile(it, settings.carplayScreenWidth, choices.effectivePhysicalWidth())
         }
         AirPlayPersistence.saveFps(context, settings.fps)
         AirPlayPersistence.saveAutoStartOnBoot(context, settings.autoStartOnBoot)
@@ -295,6 +316,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("bothOutputs", settings.bothOutputs)
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
+            .putBoolean("carlinkReconnectOnResize", settings.carlinkReconnectOnResize)
             .putBoolean("carlinkTrace", settings.carlinkTrace)
             .putString("carlinkHevc", settings.carlinkHevc.name)
             .putString("carlinkPictureSize", settings.carlinkPictureSize.name)
@@ -311,8 +333,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("displayMode", settings.displayMode.name)
             .putString("carlinkDeviceName", settings.carlinkDeviceName)
             .putString("carlinkDeviceModel", settings.carlinkDeviceModel)
-            .putBoolean("developerMode", developerMode)
-            .putInt("devPhysicalWidthMm", choices.effectivePhysicalWidth(developerMode))
+            .putInt("devPhysicalWidthMm", choices.effectivePhysicalWidth())
             .putInt("webPort", settings.webPort ?: 0).putBoolean("customDisplay", settings.display != null)
         settings.display?.let {
             edit.putInt("displayWidth", it.width).putInt("displayHeight", it.height).putInt("displayDensity", it.density)
@@ -326,8 +347,6 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             val choices = DeveloperOverrides.migrate(stored, relay.getInt("devPhysicalWidthMm", 0))
             val edit = relay.edit()
             writeDeveloperOverrides(edit, choices)
-            if (choices.effectiveSettings(stored, false) != stored || choices.physicalWidthEnabled)
-                edit.putBoolean("developerMode", true)
             edit.apply()
             return choices
         }
@@ -380,17 +399,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         AirPlayPersistence.savePhysicalSizeBasis(context, com.shilapi.xcertplay.airplay.AirPlayPhysicalSizeBasis.WIDTH)
     }
 
-    var developerMode: Boolean
-        get() = relay.getBoolean("developerMode", false)
-        @Synchronized set(value) {
-            val current = load()
-            persistSettings(overrides.value.effectiveSettings(current, value), current, overrides.value, value)
-            publish(load())
-        }
-
     /** Developer calibration: the physical width in mm declared instead of the selected preset, or 0 to use the preset. */
     var physicalWidthOverrideMm: Int
-        @Synchronized get() { load(); return overrides.value.effectivePhysicalWidth(developerMode) }
+        @Synchronized get() { load(); return overrides.value.effectivePhysicalWidth() }
         @Synchronized set(value) {
             load()
             saveDeveloperOverrides(overrides.value.copy(physicalWidthEnabled = value > 0,

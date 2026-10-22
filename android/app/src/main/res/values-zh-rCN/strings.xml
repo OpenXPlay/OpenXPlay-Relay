@@ -116,8 +116,7 @@
     <string name="ui_network">网络</string>
     <string name="ui_wifi_direct_recommended">Wi-Fi 直连（推荐）</string>
     <string name="ui_boot">开机启动</string>
-    <string name="ui_developer">开发者</string>
-    <string name="ui_developer_mode">开发者模式</string>
+    <string name="ui_developer">开发者选项</string>
     <string name="ui_settings_validation">请检查网络名称（1–32 个 UTF-8 字节）及密码（开放网络可留空，否则为 8–63 个字符）。如果更改了高级选项，请在开发者页面中检查。</string>
     <string name="ui_start_failed">无法启动 CarPlay。请检查权限、身份和连接设置，然后重试。</string>
     <string name="ui_material_failed">无法导入文件。请检查文件格式和密码，然后重试。</string>
@@ -232,7 +231,15 @@
     <string name="option_browser_hint">在车载浏览器中显示 CarPlay。</string>
     <string name="option_carlink_hint">实验性功能，有可能连接失败。在车机的 Carlink 应用中显示 CarPlay。</string>
     <string name="option_wireless_hint">通过蓝牙和 Wi-Fi 连接 iPhone。</string>
-    <string name="option_usb_hint">使用 USB 线缆连接 iPhone。</string>
+    <string name="option_usb_hint">不推荐：这台手机要给 iPhone 供电，而且对数据线有要求。</string>
+    <string name="usb_confirm_title">确定用数据线连接吗？</string>
+    <string name="usb_confirm_intro">建议使用无线连接。用数据线连接常见两个问题：</string>
+    <string name="usb_confirm_power_title">供电</string>
+    <string name="usb_confirm_power">这台手机要通过数据线给 iPhone 供电，耗电快、可能发热，插着线时通常也没法给自己充电。</string>
+    <string name="usb_confirm_cable_title">数据线</string>
+    <string name="usb_confirm_cable">用两头都是 USB-C 的线时，iPhone 常会占用主控，这台手机就识别不到它。可以在这台手机上插一个 USB-C OTG 转接头，再用 USB-A 转 USB-C 线连接 iPhone；Lightning 接口的 iPhone 用 USB-C 转 Lightning 线。只能充电的线不能用，行车中插头松动也会让 CarPlay 断开。</string>
+    <string name="usb_confirm_use">仍然使用数据线</string>
+    <string name="usb_confirm_keep">继续用无线</string>
     <string name="option_direct_hint">iPhone 直接连接此手机；车机屏幕通过此手机的普通 Wi-Fi 连接，例如车机热点。</string>
     <string name="option_hotspot_hint">打开此手机的个人热点，iPhone 和车机屏幕都连接到它。</string>
     <string name="option_wifi_hint">iPhone、此手机和车机屏幕连接同一个 Wi-Fi，例如车机热点或随身 Wi-Fi。</string>
@@ -357,8 +364,15 @@
     <string name="host_back">返回 OpenXPlay Relay</string>
     <string name="host_cancel">取消</string>
     <string name="host_stopped">CarPlay 已停止</string>
+    <string name="host_head_unit_address">车机访问地址</string>
+    <string name="host_detected_screen">检测到的屏幕</string>
+    <string name="host_state">状态</string>
+    <string name="host_frame_rate">设定 %1$s fps</string>
+    <string name="host_frame_rate_measured">设定 %1$s fps · 实测 %2$s fps</string>
     <string name="carlink_auto_reconnect">Carlink 自动重连</string>
     <string name="carlink_auto_reconnect_hint">连接断开后自动重新连接车机。</string>
+    <string name="carlink_resize_reconnect">窗口尺寸变化时重新连接</string>
+    <string name="carlink_resize_reconnect_hint">车机切换 Carlink 显示区域后（例如从三分之二屏切到全屏），第一次触摸屏幕时会重新连接，以适配新尺寸。重新连接时画面会中断几秒。</string>
     <string name="shared_wifi_not_saved">此 Wi-Fi 尚未保存用于 CarPlay</string>
     <string name="shared_wifi_save_current">保存此 Wi-Fi</string>
     <string name="shared_wifi_unreadable">无法读取当前 Wi-Fi 名称。请手动选择已保存的网络。</string>
@@ -385,6 +399,7 @@
     <string name="setup_close">关闭设置向导</string>
     <string name="setup_next">下一步</string>
     <string name="setup_recommended">推荐</string>
+    <string name="setup_not_recommended">不推荐</string>
     <string name="setup_experimental">实验性</string>
     <string name="setup_output_title">车机用什么显示 CarPlay？</string>
     <string name="setup_output_hint">选择你的车机上已有的方式，之后随时可以更改。</string>
@@ -395,8 +410,8 @@
     <string name="setup_connection_title">iPhone 怎么连接这台手机？</string>
     <string name="setup_connection_hint">这台手机是 iPhone 和车机之间的中继。</string>
     <string name="setup_wireless_hint">通过蓝牙和 Wi-Fi 连接，上车后 iPhone 会自动连上。</string>
-    <string name="setup_usb_hint">用数据线连接 iPhone 和这台手机，连接最稳定。</string>
-    <string name="setup_carlink_usb_tip">使用 Carlink 时，这台手机的 Wi-Fi 还要连接车机，iPhone 改用数据线连接会更可靠。</string>
+    <string name="setup_usb_hint">用数据线连接 iPhone 和这台手机。这台手机要给 iPhone 供电，而且对数据线有要求。</string>
+    <string name="setup_carlink_hotspot_tip">使用 Carlink 时，请选择无线，并使用这台手机的热点。这台手机的 Wi-Fi 也要保持打开，它要用来连接车机。</string>
     <string name="setup_network_title">无线 CarPlay 用哪种网络？</string>
     <string name="setup_network_hint">iPhone、这台手机和车机屏幕之间需要能互相连通。</string>
     <string name="setup_prepare_title">完成准备</string>
@@ -428,8 +443,7 @@
     <string name="setup_home_hint">选好车机的显示方式和 iPhone 的连接方式，就能开启 CarPlay。</string>
     <string name="setup_home_action">打开设置向导</string>
     <string name="setup_change_mode">更改模式</string>
-    <string name="mode_title">当前模式</string>
-    <string name="network_title">本机网络</string>
+    <string name="home_connection_method">连接方式</string>
     <string name="network_addresses">本机 IP 地址</string>
     <string name="ui_wifi_connected">已连接</string>
     <string name="ui_wifi_not_connected">未连接</string>
@@ -462,7 +476,7 @@
     <string name="picture_native_hint">画面最清晰，需要更多 Wi-Fi 带宽。</string>
     <string name="picture_resolution">分辨率</string>
     <string name="picture_screen_width">CarPlay 屏幕宽度</string>
-    <string name="picture_screen_width_hint">数值越大，一页显示的图标越多。</string>
+    <string name="picture_screen_width_hint">数值越大，一页显示的图标越多，Dock 栏也可能从左侧移到底部。</string>
     <string name="picture_screen">整屏</string>
     <string name="picture_window">窗口</string>
     <string name="ui_browser_https_hint">注意：地址以 https:// 开头，不是 http://。</string>
@@ -551,7 +565,7 @@
     <string name="video_stats_off">关闭</string>
     <string name="video_stats_5">近 5 秒</string>
     <string name="video_stats_15">近 15 秒</string>
-    <string name="video_stats_hint">中继运行时在首页显示帧率、分辨率、码率和丢帧率，统计满所选时长后才开始显示。关闭时不做任何统计。</string>
+    <string name="video_stats_hint">在运行页面显示帧率、分辨率、码率和丢帧率，统计满所选时长后才开始显示。关闭时不做任何统计。</string>
     <string name="video_stats_iphone">iPhone</string>
     <string name="video_stats_carlink">Carlink</string>
     <string name="video_stats_browser">浏览器 %1$d</string>
@@ -571,8 +585,16 @@
     <string name="public_name_summary">用免费域名，让车机打开网页时不再出现证书警告。</string>
     <string name="public_name_enabled">使用免费域名</string>
     <string name="public_name_provider">域名服务商</string>
+    <string name="public_name_per_provider">每个服务商的域名和 Token 分开保存，切换时会显示对应服务商已保存的内容。</string>
+    <string name="public_name_hint_duckdns">在 duckdns.org 登录（中国大陆建议用 GitHub 账号），添加一个域名，再复制页面顶部的 token。域名要填完整，例如 myrelay.duckdns.org。这个 Token 能修改账号下的所有域名，请像密码一样保管。</string>
+    <string name="public_name_hint_dynv6">在 dynv6.com 用邮箱注册，新建一个以 .dynv6.net 结尾的 zone（域名），再到 Keys 页面新建一个 HTTP Token，最好限定只能管理这个 zone。域名要填完整，例如 myrelay.dynv6.net。</string>
+    <string name="public_name_open_duckdns">打开 DuckDNS 官网</string>
+    <string name="public_name_open_dynv6">打开 dynv6 官网</string>
+    <string name="public_name_guide">查看 OpenXPlay 官网教程</string>
+    <string name="public_name_guide_url">https://openxplay.org/trusted-https</string>
     <string name="public_name_name">域名</string>
-    <string name="public_name_name_hint">例如 myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_duckdns">例如 myrelay.duckdns.org</string>
+    <string name="public_name_name_hint_dynv6">例如 myrelay.dynv6.net</string>
     <string name="public_name_token">Token</string>
     <string name="public_name_token_hint">从服务商账号中复制，只保存在这台中继上。</string>
     <string name="public_name_token_saved">已保存 Token</string>
@@ -608,7 +630,13 @@
     <string name="public_name_problem_not_json">不是 JSON 对象</string>
     <string name="public_name_name_invalid">请输入完整域名。DuckDNS 域名以 .duckdns.org 结尾。</string>
     <string name="public_name_token_invalid">这个 Token 与所选服务商不符。</string>
-    <string name="public_name_remove_confirm">要从这台中继移除域名、Token 和证书吗？服务商那里的地址记录保持不变。</string>
+    <string name="public_name_remove_confirm">要从这台中继移除所有服务商的域名和 Token，以及证书吗？服务商那里的地址记录保持不变。</string>
+    <string name="home_problem_connection">连接</string>
+    <string name="home_problem_carplay">CarPlay 连接</string>
+    <string name="home_problem_carlink">Carlink</string>
+    <string name="home_problem_browser">浏览器输出</string>
+    <string name="home_problem_web_server">浏览器输出（网页服务器）</string>
+    <string name="home_problem_output">中继输出</string>
     <string name="carlink_picture_size">Carlink 画面尺寸</string>
     <string name="carlink_picture_window">车机窗口</string>
     <string name="carlink_picture_mode">1280×720（补偿变形）</string>
@@ -617,4 +645,20 @@
     <string name="carlink_geometry_value">窗口 %1$s · 画布 %2$s · 区域 %3$s · 发送 %4$s · %5$s</string>
     <string name="carlink_passthrough">直通</string>
     <string name="carlink_transcode">转码</string>
+    <string name="ui_developer_mode">开发者模式</string>
+    <string name="mode_title">当前模式</string>
+    <string name="network_title">本机网络</string>
+
+    <!-- Network readiness and USB role guidance. -->
+    <string name="network_readiness_title">启动前请检查</string>
+    <string name="network_wifi_reminder">Carlink 需要打开本机的 Wi-Fi。</string>
+    <string name="network_hotspot_reminder">请先打开本机热点，再启动连接。</string>
+    <string name="network_wifi_problem">请打开本机的 Wi-Fi。Carlink 通过 Wi-Fi 连接车机，无需手动加入网络，热点也可以保持开启。</string>
+    <string name="network_hotspot_problem">本机热点尚未开启。请打开热点，再重新启动连接。</string>
+    <string name="network_open_wifi">打开 Wi-Fi 设置</string>
+    <string name="network_open_hotspot">打开热点设置</string>
+    <string name="network_start_anyway">仍然启动</string>
+    <string name="home_problem_hotspot">本机热点</string>
+    <string name="home_problem_usb">USB 连接</string>
+    <string name="network_usb_role_problem">本机已通过 USB 连接，但处于设备模式，无法识别 iPhone。此时由另一端（iPhone、电脑或车机接口）充当主机。USB-C 接口的 iPhone 使用双头 USB-C 线时，通常会占据主机角色。请在本机接上 USB-C OTG 转接头（USB-C 转 USB-A），再用 USB-A 转 USB-C 数据线连接 iPhone。如本机有 OTG 开关，请将其打开，然后拔线重插。Lightning 接口的 iPhone 可使用 USB-C 转 Lightning 数据线。</string>
 </resources>

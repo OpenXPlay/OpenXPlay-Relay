@@ -40,3 +40,11 @@ fun settingsFeedback(before: RelaySettings, after: RelaySettings, carlinkConnect
         SettingsNotice.RECONNECT -> SettingsFeedback(if (before.vehicleInformation != after.vehicleInformation)
             R.string.vehicle_reconnect else R.string.settings_reconnect, R.string.vehicle_reconnect_action)
     }
+
+/** Resolve catalog IDs through localized display names; custom selections show their supplied text. */
+fun carSelectionSummary(car: org.openxplay.direlay.settings.CarSelection, models: org.openxplay.direlay.relay.CarModels?,
+    locale: java.util.Locale, none: String, other: String): String {
+    val brand = if (car.brand == "other") car.brandText.ifBlank { other } else models?.brand(car)?.name(locale)
+    val model = if (car.model == "other") car.modelText.ifBlank { other } else models?.model(car)?.name(locale)
+    return listOfNotNull(brand, model).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { none }
+}

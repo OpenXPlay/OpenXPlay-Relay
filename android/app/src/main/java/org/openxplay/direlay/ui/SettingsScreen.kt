@@ -20,6 +20,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalConfiguration
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.openxplay.direlay.relay.CarModels
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -30,8 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import com.shilapi.xcertplay.orchestration.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.*
@@ -65,29 +67,30 @@ import org.openxplay.direlay.settings.*
 }
 private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading() })
 
-@Composable fun SettingsScreen(initial: RelaySettings, wireless: (RelaySettings) -> Boolean,
-    developer: Boolean, section: String, back: () -> Unit, open: (String) -> Unit,
-    save: suspend (RelaySettings, RelaySettings) -> Boolean, currentWifi: String? = null,
-    bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {}, adminPage: @Composable () -> Unit = {}, runtime: org.openxplay.direlay.relay.RelayRuntime? = null, setDeveloper: (Boolean) -> Unit) {
-    var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
-    var lastSaved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
+@Composable fun SettingsScreen(state: SettingsEditorState, wireless: (RelaySettings) -> Boolean,
+    route: String, back: () -> Unit, open: (String) -> Unit, identityStatus: Int, identityView: DeveloperView,
+    copy: (String) -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit, currentWifi: String? = null,
+    bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {},
+    adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null) {
+    var draft by state.draft
     var confirmCarlink by remember { mutableStateOf(false) }
-    var savingError by remember { mutableStateOf(false) }
-    LaunchedEffect(initial) {
-        if (draft == lastSaved) {
-            // Preserve editing spaces while persistence trims the Other fields.
-            val car = draft.car.takeIf { it.normalized() == initial.car } ?: initial.car
-            draft = initial.copy(car = car); lastSaved = draft
-        }
-    }
+    var confirmUsb by remember { mutableStateOf(false) }
+    if (confirmUsb) UsbConnectionDialog(confirm = {
+        val candidate = draft.copy(connectionMode = ConnectionMode.USB)
+        draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
+        confirmUsb = false
+    }, dismiss = { confirmUsb = false })
     val errors = settingsErrors(draft, wireless(draft))
-    LaunchedEffect(draft) {
-        if (draft != lastSaved && settingsSaveErrors(draft, wireless(draft)).isEmpty()) {
-            val candidate = draft
-            if (save(lastSaved, candidate)) { lastSaved = candidate; savingError = false }
-            else savingError = true
-        }
-    }
+    val invalidPages = state.errorPages(wireless)
+    val page = route.substringBefore('#')
+    val target = route.substringAfter('#', "")
+    var iphoneLocated by rememberSaveable { mutableStateOf(false) }
+    var sharedWifiLocated by rememberSaveable { mutableStateOf(false) }
+    var models by remember { mutableStateOf<CarModels?>(null) }
+    LaunchedEffect(runtime) { models = withContext(Dispatchers.IO) { runtime?.carModels } }
+    val carSummary = carSelectionSummary(draft.car, models, LocalConfiguration.current.locales[0],
+        stringResource(R.string.car_none), stringResource(R.string.car_other))
+    val ms = if (LocalRelayMotion.current) 220 else 0
     if (confirmCarlink) AlertDialog(onDismissRequest = { confirmCarlink = false },
         title = { Text(stringResource(R.string.ui_carlink)) },
         text = { Text(stringResource(R.string.carlink_wifi_direct_confirm)) },
@@ -96,110 +99,134 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             confirmCarlink = false
         }) { Text(stringResource(android.R.string.ok)) } },
         dismissButton = { TextButton(onClick = { confirmCarlink = false }) { Text(stringResource(android.R.string.cancel)) } })
-    val scroll = rememberScrollState()
-    val positions = remember { mutableStateMapOf<String, Int>() }
-    var located by rememberSaveable(section) { mutableStateOf(false) }
-    LaunchedEffect(section, positions.toMap()) {
-        positions[if (section == "sharedWifi") "network" else section]?.let { if (!located) { scroll.scrollTo(it); located = true } }
-    }
-    val ms = if (LocalRelayMotion.current) 220 else 0
-    Scaffold(topBar = { TopAppBarForSettings(back) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(scroll).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            fun sectionModifier(key: String) = Modifier.onGloballyPositioned { positions[key] = it.positionInParent().y.toInt() }
-            Box(sectionModifier("output")) { SmallHeading(stringResource(R.string.ui_output)) }
-            RadioOptions(outputOptions, if (draft.carlinkOutput) 1 else 0) {
-                val candidate = draft.copy(carlinkOutput = it == 1)
-                if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmCarlink = true
-                else draft = candidate
-            }
-            if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
-            AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SettingField(stringResource(R.string.direlay_carlink_name), draft.carlinkDeviceName, errors["name"]) { draft = draft.copy(carlinkDeviceName = it) }
-                    SettingsRow(stringResource(R.string.vehicle_title), stringResource(R.string.vehicle_privacy), R.drawable.symbol_car,
-                        trailing = { LabeledSwitch(stringResource(R.string.vehicle_title), draft.vehicleInformation, { draft = draft.copy(vehicleInformation = it) }) })
-                    SettingsRow(stringResource(R.string.carlink_auto_reconnect), stringResource(R.string.carlink_auto_reconnect_hint), R.drawable.symbol_sync,
-                        trailing = { LabeledSwitch(stringResource(R.string.carlink_auto_reconnect), draft.carlinkAutoReconnect, { draft = draft.copy(carlinkAutoReconnect = it) }) })
-                }
-            }
-            Box(sectionModifier("car")) { SmallHeading(stringResource(R.string.car_and_screen)) }
-            if (runtime != null) CarScreenSettings(draft, runtime) { draft = it }
-            Box(sectionModifier("picture")) { SmallHeading(stringResource(R.string.picture_title)) }
-            SmallHeading(stringResource(R.string.picture_resolution))
-            Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
-                CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
-            if (draft.carplayResolution == CarPlayResolution.NATIVE) Hint(stringResource(R.string.picture_native_hint))
-            SmallHeading(stringResource(R.string.picture_screen_width))
-            Options(CarPlayScreenWidth.entries.map { "${it.mm} mm" },
-                CarPlayScreenWidth.entries.indexOf(draft.carplayScreenWidth)) { draft = draft.copy(carplayScreenWidth = CarPlayScreenWidth.entries[it]) }
-            Hint(stringResource(R.string.picture_screen_width_hint))
-            SmallHeading(stringResource(R.string.picture_video_codec))
-            Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_force_h265), stringResource(R.string.picture_force_h264)),
-                VideoCodecSetting.entries.indexOf(draft.videoCodec)) { draft = draft.copy(videoCodec = VideoCodecSetting.entries[it]) }
-            Hint(stringResource(R.string.picture_video_codec_hint))
-            SmallHeading(stringResource(R.string.video_stats_title))
-            Options(listOf(stringResource(R.string.video_stats_off), stringResource(R.string.video_stats_5), stringResource(R.string.video_stats_15)),
-                VideoStatsWindow.entries.indexOf(draft.videoStats)) { draft = draft.copy(videoStats = VideoStatsWindow.entries[it]) }
-            Hint(stringResource(R.string.video_stats_hint))
-            Box(sectionModifier("audio")) { SmallHeading(stringResource(R.string.audio_title)) }
-            SettingsRow(stringResource(R.string.audio_car_bluetooth), stringResource(R.string.audio_car_bluetooth_hint), R.drawable.symbol_bluetooth,
-                trailing = { LabeledSwitch(stringResource(R.string.audio_car_bluetooth), draft.carBluetoothAudio, { draft = draft.copy(carBluetoothAudio = it) }) })
-            Box(sectionModifier("connection")) { SmallHeading(stringResource(R.string.ui_iphone_connection)) }
-            RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
-                val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)
-                draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
-            }
-            AnimatedVisibility(wireless(draft), enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
-                exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
-                Column {
-                    Box(sectionModifier("iphone")) {
-                        IphonePickerSetting(draft.iphoneAddress, bondedDevices, section == "iphone") {
-                            draft = draft.copy(iphoneAddress = it)
+    DetailPage(stringResource(settingsPageTitle(page)), back) {
+        when (page) {
+            "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, open)
+            "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
+            "settings/output" -> {
+                CollapsibleCard("output", stringResource(R.string.ui_output), outputSummary(draft),
+                    initiallyExpanded = true, targeted = target == "output") {
+                    Column(Modifier.selectableGroup()) {
+                        outputOptions.forEachIndexed { index, option ->
+                            RadioOptionRow(option, (if (draft.carlinkOutput) 1 else 0) == index,
+                                extra = if (index == 1) ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) else null) {
+                                val candidate = draft.copy(carlinkOutput = index == 1)
+                                if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmCarlink = true
+                                else draft = candidate
+                            }
                         }
                     }
-                    Box(sectionModifier("network")) { SmallHeading(stringResource(R.string.ui_network)) }
-                    Column(Modifier.selectableGroup()) {
-                        WirelessNetworkChoice.entries.forEach { choice ->
+                    if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
+                    AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SettingField(stringResource(R.string.direlay_carlink_name), draft.carlinkDeviceName, errors["name"]) { draft = draft.copy(carlinkDeviceName = it) }
+                            SettingsRow(stringResource(R.string.vehicle_title), stringResource(R.string.vehicle_privacy), R.drawable.symbol_car,
+                                trailing = { LabeledSwitch(stringResource(R.string.vehicle_title), draft.vehicleInformation, { draft = draft.copy(vehicleInformation = it) }) })
+                            SettingsRow(stringResource(R.string.carlink_auto_reconnect), stringResource(R.string.carlink_auto_reconnect_hint), R.drawable.symbol_sync,
+                                trailing = { LabeledSwitch(stringResource(R.string.carlink_auto_reconnect), draft.carlinkAutoReconnect, { draft = draft.copy(carlinkAutoReconnect = it) }) })
+                            SettingsRow(stringResource(R.string.carlink_resize_reconnect), stringResource(R.string.carlink_resize_reconnect_hint), R.drawable.symbol_sync,
+                                trailing = { LabeledSwitch(stringResource(R.string.carlink_resize_reconnect), draft.carlinkReconnectOnResize, { draft = draft.copy(carlinkReconnectOnResize = it) }) })
+                        }
+                    }
+                }
+            }
+            "settings/car" -> {
+                if (runtime != null) CarScreenSettings(draft, runtime) { draft = it }
+            }
+            "settings/picture" -> {
+                CollapsibleCard("resolution", stringResource(R.string.picture_resolution), resolutionSummary(draft),
+                    initiallyExpanded = target.isEmpty() || target == "resolution", targeted = target == "resolution") {
+                    Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
+                        CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
+                    if (draft.carplayResolution == CarPlayResolution.NATIVE) Hint(stringResource(R.string.picture_native_hint))
+                }
+                CollapsibleCard("width", stringResource(R.string.picture_screen_width), "${draft.carplayScreenWidth.mm} mm",
+                    initiallyExpanded = false, targeted = target == "width") {
+                    Options(CarPlayScreenWidth.entries.map { "${it.mm} mm" },
+                        CarPlayScreenWidth.entries.indexOf(draft.carplayScreenWidth)) { draft = draft.copy(carplayScreenWidth = CarPlayScreenWidth.entries[it]) }
+                    Hint(stringResource(R.string.picture_screen_width_hint))
+                }
+                CollapsibleCard("codec", stringResource(R.string.picture_video_codec), codecSummary(draft),
+                    initiallyExpanded = false, targeted = target == "codec") {
+                    Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_force_h265), stringResource(R.string.picture_force_h264)),
+                        VideoCodecSetting.entries.indexOf(draft.videoCodec)) { draft = draft.copy(videoCodec = VideoCodecSetting.entries[it]) }
+                    Hint(stringResource(R.string.picture_video_codec_hint))
+                }
+                CollapsibleCard("stats", stringResource(R.string.video_stats_title), stringResource(listOf(R.string.video_stats_off, R.string.video_stats_5, R.string.video_stats_15)[draft.videoStats.ordinal]),
+                    initiallyExpanded = false, targeted = target == "stats") {
+                    Options(listOf(stringResource(R.string.video_stats_off), stringResource(R.string.video_stats_5), stringResource(R.string.video_stats_15)),
+                        VideoStatsWindow.entries.indexOf(draft.videoStats)) { draft = draft.copy(videoStats = VideoStatsWindow.entries[it]) }
+                    Hint(stringResource(R.string.video_stats_hint))
+                }
+            }
+            "settings/audio" -> {
+                SettingsRow(stringResource(R.string.audio_car_bluetooth), stringResource(R.string.audio_car_bluetooth_hint), R.drawable.symbol_bluetooth,
+                    trailing = { LabeledSwitch(stringResource(R.string.audio_car_bluetooth), draft.carBluetoothAudio, { draft = draft.copy(carBluetoothAudio = it) }) })
+            }
+            "settings/connection" -> {
+                CollapsibleCard("connection", stringResource(R.string.ui_iphone_connection), stringResource(if (wireless(draft)) R.string.direlay_wireless else R.string.ui_usb),
+                    initiallyExpanded = true, targeted = target == "connection" || target == "iphone") {
+                    RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
+                        val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)
+                        if (needsUsbConfirmation(draft.connectionMode, candidate.connectionMode, wireless(draft))) confirmUsb = true
+                        else draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
+                    }
+                    AnimatedVisibility(wireless(draft), enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
+                        exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
+                        Column {
+                            IphonePickerSetting(draft.iphoneAddress, bondedDevices, target == "iphone" && !iphoneLocated) {
+                                draft = draft.copy(iphoneAddress = it)
+                            }
+                            LaunchedEffect(Unit) { iphoneLocated = true }
+                        }
+                    }
+                }
+                if (wireless(draft)) SettingsMenuRow(R.string.ui_network, stringResource(networkOption(draft.wirelessNetwork.choice).title),
+                    R.drawable.symbol_wifi, "settings/connection/network" in invalidPages) { open("settings/connection/network") }
+            }
+            "settings/connection/network" -> {
+                Column(Modifier.selectableGroup()) {
+                    WirelessNetworkChoice.entries.forEach { choice ->
+                        val key = choice.name
+                        CollapsibleCard(key, stringResource(networkOption(choice).title), stringResource(networkOption(choice).supporting),
+                            initiallyExpanded = draft.wirelessNetwork.choice == choice && target.isEmpty(),
+                            selected = draft.wirelessNetwork.choice == choice, error = draft.wirelessNetwork.choice == choice && "settings/connection/network" in invalidPages, targeted = target == key || (target == "sharedWifi" && choice == WirelessNetworkChoice.EXISTING_WIFI)) {
                             RadioOptionRow(networkOption(choice), draft.wirelessNetwork.choice == choice,
                                 extra = {
                                     NetworkDiagram(choice, draft.wirelessNetwork.choice == choice)
+                                    if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
+                                        NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
                                     if (choice == WirelessNetworkChoice.WIFI_DIRECT && !CarlinkConnectionPolicy.wifiDirectAllowed(draft))
                                         Hint(stringResource(R.string.carlink_wifi_direct_constraint))
                                 }, enabled = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)) {
                                 draft = draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice))
                             }
-                            AnimatedVisibility(draft.wirelessNetwork.choice == choice && choice != WirelessNetworkChoice.WIFI_DIRECT,
-                                enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
-                                exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
-                                NetworkFields(draft.wirelessNetwork, choice, errors, currentWifi, section == "sharedWifi", useSharedWifi) { draft = draft.copy(wirelessNetwork = it) }
+                            if (draft.wirelessNetwork.choice == choice && choice != WirelessNetworkChoice.WIFI_DIRECT) {
+                                NetworkFields(draft.wirelessNetwork, choice, errors, currentWifi, target == "sharedWifi" && !sharedWifiLocated, useSharedWifi) {
+                                    draft = draft.copy(wirelessNetwork = it)
+                                }
+                                if (choice == WirelessNetworkChoice.EXISTING_WIFI) LaunchedEffect(Unit) { sharedWifiLocated = true }
                             }
                         }
                     }
                 }
             }
-            SmallHeading(stringResource(R.string.settings_startup))
-            SettingsRow(stringResource(R.string.ui_automatic), stringResource(R.string.settings_automatic_hint), R.drawable.symbol_sync,
-                trailing = { LabeledSwitch(stringResource(R.string.ui_automatic), draft.autoStartWhenReady, { draft = draft.copy(autoStartWhenReady = it) }) })
-            SettingsRow(stringResource(R.string.ui_boot), stringResource(R.string.direlay_boot_hint), R.drawable.symbol_play,
-                trailing = { LabeledSwitch(stringResource(R.string.ui_boot), draft.autoStartOnBoot, { draft = draft.copy(autoStartOnBoot = it) }) })
-            adminPage()
-            SettingsRow(stringResource(R.string.public_name_title), stringResource(R.string.public_name_summary), R.drawable.symbol_link,
-                { open("publicName") })
-            if (savingError) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
-            errors["advanced"]?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
-            SettingsRow(stringResource(R.string.direlay_about), stringResource(R.string.direlay_attribution), R.drawable.symbol_info, { open("about") })
-            if (developer) SettingsRow(stringResource(R.string.ui_developer), stringResource(R.string.settings_developer_hint), R.drawable.symbol_code, { open("developer") })
-            SettingsRow(stringResource(R.string.ui_developer_mode), stringResource(R.string.settings_developer_hint), R.drawable.symbol_code,
-                trailing = { LabeledSwitch(stringResource(R.string.ui_developer_mode), developer, setDeveloper) })
+            "settings/startup" -> {
+                SettingsRow(stringResource(R.string.ui_automatic), stringResource(R.string.settings_automatic_hint), R.drawable.symbol_sync,
+                    trailing = { LabeledSwitch(stringResource(R.string.ui_automatic), draft.autoStartWhenReady, { draft = draft.copy(autoStartWhenReady = it) }) })
+                SettingsRow(stringResource(R.string.ui_boot), stringResource(R.string.direlay_boot_hint), R.drawable.symbol_play,
+                    trailing = { LabeledSwitch(stringResource(R.string.ui_boot), draft.autoStartOnBoot, { draft = draft.copy(autoStartOnBoot = it) }) })
+            }
+            "settings/access" -> {
+                CollapsibleCard("admin", stringResource(R.string.admin_page), accessSummary, initiallyExpanded = true) { adminPage() }
+                SettingsMenuRow(R.string.public_name_title, stringResource(R.string.public_name_summary), R.drawable.symbol_link) {
+                    open("settings/access/publicName")
+                }
+            }
         }
+        if (state.savingError) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
+        errors["advanced"]?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
     }
-}
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun TopAppBarForSettings(back: () -> Unit) {
-    TopAppBar(expandedHeight = 64.dp * LocalDensity.current.fontScale.coerceAtLeast(1f), title = { Heading(stringResource(R.string.direlay_settings)) }, navigationIcon = {
-        IconButton(onClick = back) { Symbol(R.drawable.symbol_back, stringResource(R.string.ui_back)) }
-    })
 }
 @Composable fun NetworkFields(network: WirelessNetworkSettings, choice: WirelessNetworkChoice,
     errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit, credentialsModifier: Modifier = Modifier, change: (WirelessNetworkSettings) -> Unit) {
@@ -283,18 +310,20 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     val context = LocalContext.current
     fun link(url: String) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     DetailPage(stringResource(R.string.direlay_about), back) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(64.dp))
-            RelayBrand()
+        CollapsibleCard("project", stringResource(R.string.direlay_about), stringResource(R.string.about_project), initiallyExpanded = true) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(64.dp))
+                RelayBrand()
+            }
+            Text(context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SettingsRow(stringResource(R.string.direlay_attribution), stringResource(R.string.about_project), R.drawable.symbol_info,
+                { link(context.getString(R.string.direlay_project_url)) })
+            SettingsRow(stringResource(R.string.about_source), stringResource(R.string.about_source_hint), R.drawable.symbol_code,
+                { link(context.getString(R.string.direlay_source_url)) })
+            SettingsRow(stringResource(R.string.about_licence), stringResource(R.string.about_licence_hint), R.drawable.symbol_info,
+                { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
         }
-        Text(context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        SettingsRow(stringResource(R.string.direlay_attribution), stringResource(R.string.about_project), R.drawable.symbol_info,
-            { link(context.getString(R.string.direlay_project_url)) })
-        SettingsRow(stringResource(R.string.about_source), stringResource(R.string.about_source_hint), R.drawable.symbol_code,
-            { link(context.getString(R.string.direlay_source_url)) })
-        SettingsRow(stringResource(R.string.about_licence), stringResource(R.string.about_licence_hint), R.drawable.symbol_info,
-            { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
         SmallHeading(stringResource(R.string.direlay_acknowledgements))
         Text(stringResource(R.string.direlay_acknowledgement_text))
         SettingsRow("DiPlay", stringResource(R.string.about_diplay_hint), R.drawable.symbol_car,

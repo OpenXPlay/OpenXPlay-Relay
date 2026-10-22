@@ -39,3 +39,19 @@ class SettingsAutoSave(initial: RelaySettings, private val publish: (RelaySettin
         return true
     }
 }
+
+/** Validate groups against the last valid draft so one invalid page cannot hide another page's error. */
+fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (RelaySettings) -> Boolean): Set<String> = buildSet {
+    fun check(page: String, candidate: RelaySettings) {
+        if (settingsSaveErrors(candidate, wireless(candidate)).isNotEmpty()) add(page)
+    }
+    check("settings/output", saved.copy(carlinkDeviceName = value.carlinkDeviceName))
+    val network = saved.copy(connectionMode = value.connectionMode, wirelessNetwork = value.wirelessNetwork)
+    if (settingsErrors(network, wireless(network)).isNotEmpty()) add("settings/connection/network")
+    check("developer/video", saved.copy(displayMode = value.displayMode, display = value.display, fps = value.fps))
+    check("developer/connection", saved.copy(webPort = value.webPort, carlinkDeviceModel = value.carlinkDeviceModel,
+        connectionMode = value.connectionMode, wirelessNetwork = saved.wirelessNetwork.copy(
+            channel = value.wirelessNetwork.channel, band = value.wirelessNetwork.band, security = value.wirelessNetwork.security)))
+    check("settings/identity", saved.copy(mfiTarget = value.mfiTarget, i2cPath = value.i2cPath,
+        remoteServer = value.remoteServer, remoteToken = value.remoteToken))
+}

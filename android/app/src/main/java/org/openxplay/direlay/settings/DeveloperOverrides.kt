@@ -26,8 +26,8 @@ data class DeveloperOverrides(
     val carlinkDeviceModelEnabled: Boolean = false,
     val carlinkDeviceModel: String = "Android relay",
 ) {
-    fun effectiveSettings(base: RelaySettings, developerMode: Boolean): RelaySettings {
-        val enabled = developerMode && active
+    fun effectiveSettings(base: RelaySettings): RelaySettings {
+        val enabled = active
         return base.copy(
             carlinkTrace = enabled && carlinkTrace,
             carlinkHevc = if (enabled && carlinkHevcEnabled) carlinkHevc else ClinkHevcMode.STREAM_ONLY,
@@ -41,13 +41,13 @@ data class DeveloperOverrides(
         )
     }
 
-    fun effectivePhysicalWidth(developerMode: Boolean): Int =
-        if (developerMode && active && physicalWidthEnabled) physicalWidthOverrideMm else 0
+    fun effectivePhysicalWidth(): Int =
+        if (active && physicalWidthEnabled) physicalWidthOverrideMm else 0
 
-    fun effectiveSampleVehicleData(requested: Boolean, developerMode: Boolean): Boolean = requested && developerMode && active
+    fun effectiveSampleVehicleData(requested: Boolean): Boolean = requested && active
 
-    internal fun remember(value: RelaySettings, developerMode: Boolean): DeveloperOverrides {
-        if (!developerMode || !active) return this
+    internal fun remember(value: RelaySettings): DeveloperOverrides {
+        if (!active) return this
         return copy(
             carlinkTrace = carlinkTrace && value.carlinkTrace,
             carlinkHevc = if (carlinkHevcEnabled) value.carlinkHevc else carlinkHevc,

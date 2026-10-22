@@ -31,6 +31,15 @@ import org.openxplay.direlay.publicname.PublicNameView
 import java.text.DateFormat
 import java.util.Date
 
+internal data class PublicNameProviderResources(val hint: Int, val nameHint: Int, val openLabel: Int, val url: Int)
+
+internal val publicNameProviderResources = mapOf(
+    DnsProviderId.DUCKDNS to PublicNameProviderResources(R.string.public_name_hint_duckdns, R.string.public_name_name_hint_duckdns,
+        R.string.public_name_open_duckdns, R.string.public_name_url_duckdns),
+    DnsProviderId.DYNV6 to PublicNameProviderResources(R.string.public_name_hint_dynv6, R.string.public_name_name_hint_dynv6,
+        R.string.public_name_open_dynv6, R.string.public_name_url_dynv6),
+)
+
 /**
  * Settings → Trusted HTTPS. The token typed here lives only in this composition: it is never put into a
  * saved-state Bundle and never shown back; an empty field keeps the saved token.
@@ -39,63 +48,84 @@ import java.util.Date
     save: suspend (PublicNameEdit) -> List<ConfigError>?, importFile: () -> Unit, renew: () -> Unit, remove: suspend () -> Boolean) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    // Keyed by the revision: a save, an import or a removal elsewhere resets the fields to what is stored.
+    // Shared fields and the active selection follow saves, imports and removals.
     var enabled by rememberSaveable(view.revision) { mutableStateOf(view.enabled) }
     var provider by rememberSaveable(view.revision) { mutableStateOf((view.provider ?: DnsProviderId.DUCKDNS).key) }
-    var name by rememberSaveable(view.revision) { mutableStateOf(view.name) }
     var terms by rememberSaveable(view.revision) { mutableStateOf(view.agreeTerms) }
-    var token by remember(view.revision) { mutableStateOf("") }
+    // Keep drafts across provider switches and saves of the other provider, only while this screen is open.
+    var drafts by remember { mutableStateOf(PublicNameDrafts()) }
     // Not keyed: the save that sets them also changes the revision.
-    var errors by remember { mutableStateOf(emptyMap<String, Int>()) }
+    var errors by remember { mutableStateOf(emptyMap<DnsProviderId, Map<String, Int>>()) }
     var saved by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
     val providers = DnsProviderId.entries
+    val selectedProvider = DnsProviderId.of(provider) ?: DnsProviderId.DUCKDNS
+    val fields = drafts.fields(selectedProvider, view)
+    val guidance = publicNameProviderResources.getValue(selectedProvider)
+    val fieldErrors = errors[selectedProvider].orEmpty()
+    LaunchedEffect(view.revision) {
+        if (!view.configured) { drafts = PublicNameDrafts(); errors = emptyMap() }
+    }
     DetailPage(stringResource(R.string.public_name_title), back) {
         Hint(stringResource(R.string.public_name_summary))
         Toggle(stringResource(R.string.public_name_enabled), enabled) { enabled = it; saved = false }
-        SmallHeading(stringResource(R.string.public_name_provider))
-        Options(providers.map { it.label }, providers.indexOfFirst { it.key == provider }.coerceAtLeast(0)) {
-            provider = providers[it].key; saved = false
+        CollapsibleCard("configuration", stringResource(R.string.public_name_provider), fields.name.ifEmpty { stringResource(R.string.public_name_name) }, initiallyExpanded = true) {
+            Options(providers.map { it.label }, providers.indexOfFirst { it.key == provider }.coerceAtLeast(0)) {
+                provider = providers[it].key; saved = false
+            }
+            Hint(stringResource(R.string.public_name_per_provider))
+            Hint(stringResource(guidance.hint))
+            PublicNameLink(guidance.openLabel, guidance.url)
+            PublicNameLink(R.string.public_name_guide, R.string.public_name_guide_url)
+            SettingField(stringResource(R.string.public_name_name), fields.name, fieldErrors[PublicNameFile.NAME]) {
+                drafts = drafts.edit(selectedProvider, fields.copy(name = it)); saved = false
+            }
+            Hint(stringResource(guidance.nameHint))
+            SettingField(stringResource(R.string.public_name_token), fields.token, fieldErrors[PublicNameFile.TOKEN], secret = true) {
+                drafts = drafts.edit(selectedProvider, fields.copy(token = it)); saved = false
+            }
+            if (fields.tokenSet && fields.token.isEmpty()) Text(stringResource(R.string.public_name_token_saved), color = MaterialTheme.colorScheme.primary)
+            Hint(stringResource(R.string.public_name_token_hint))
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                .toggleable(terms, role = Role.Checkbox) { terms = it; saved = false },
+                verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(terms, onCheckedChange = null, Modifier.padding(end = 12.dp))
+                Text(stringResource(R.string.public_name_terms), Modifier.weight(1f))
+            }
+            TextButton(onClick = {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(R.string.public_name_terms_url)))) }
+            }) { Text(stringResource(R.string.public_name_terms_url)) }
+            OutlinedButton(onClick = importFile, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_import)) }
         }
-        SettingField(stringResource(R.string.public_name_name), name, errors[PublicNameFile.NAME]) { name = it; saved = false }
-        Hint(stringResource(R.string.public_name_name_hint))
-        SettingField(stringResource(R.string.public_name_token), token, errors[PublicNameFile.TOKEN], secret = true) { token = it; saved = false }
-        if (view.tokenSet && token.isEmpty()) Text(stringResource(R.string.public_name_token_saved), color = MaterialTheme.colorScheme.primary)
-        Hint(stringResource(R.string.public_name_token_hint))
-        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-            .toggleable(terms, role = Role.Checkbox) { terms = it; saved = false },
-            verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(terms, onCheckedChange = null, Modifier.padding(end = 12.dp))
-            Text(stringResource(R.string.public_name_terms), Modifier.weight(1f))
-        }
-        TextButton(onClick = {
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(R.string.public_name_terms_url)))) }
-        }) { Text(stringResource(R.string.public_name_terms_url)) }
         Text(publicNameStatusText(context, status, url), Modifier.padding(vertical = 8.dp),
             color = if (status.state == PublicNameState.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+        if (status.state == PublicNameState.ERROR) {
+            OutlinedButton(onClick = renew, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = view.configured && view.enabled && !busy) {
+                Text(stringResource(R.string.public_name_renew))
+            }
+        }
         if (saved) Text(stringResource(R.string.settings_saved), color = MaterialTheme.colorScheme.primary)
         if (failed) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
         Button(enabled = !busy, onClick = {
-            val edit = PublicNameEdit(enabled, DnsProviderId.of(provider), name, token, terms)
+            val edit = PublicNameEdit(enabled, selectedProvider, fields.name, fields.token, terms)
             busy = true
             scope.launch {
                 val problems = save(edit)
                 busy = false
                 failed = problems == null
                 if (problems != null) {
-                    errors = problems.associate { it.key to if (it.key == PublicNameFile.NAME) R.string.public_name_name_invalid else R.string.public_name_token_invalid }
-                    if (problems.isEmpty()) { token = ""; saved = true }
+                    errors = errors + (selectedProvider to problems.associate {
+                        it.key to if (it.key == PublicNameFile.NAME) R.string.public_name_name_invalid else R.string.public_name_token_invalid
+                    })
+                    if (problems.isEmpty()) { drafts = drafts.saved(selectedProvider, fields); saved = true }
                 }
             }
         }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_save)) }
-        OutlinedButton(onClick = importFile, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_import)) }
-        OutlinedButton(onClick = renew, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = view.configured && view.enabled) {
-            Text(stringResource(R.string.public_name_renew))
-        }
-        TextButton(onClick = { confirmRemove = true }, Modifier.heightIn(min = 48.dp), enabled = view.configured && !busy) {
-            Text(stringResource(R.string.public_name_remove), color = MaterialTheme.colorScheme.error)
+        TextButton(onClick = { confirmRemove = true }, Modifier.heightIn(min = 48.dp), enabled = view.configured && !busy,
+            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+            Text(stringResource(R.string.public_name_remove))
         }
     }
     if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false },
@@ -107,6 +137,13 @@ import java.util.Date
             scope.launch { failed = !remove(); busy = false }
         }) { Text(stringResource(R.string.public_name_remove)) } },
         dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text(stringResource(android.R.string.cancel)) } })
+}
+
+@Composable private fun PublicNameLink(label: Int, url: Int) {
+    val context = LocalContext.current
+    TextButton(onClick = {
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(url)))) }
+    }) { Text(stringResource(label)) }
 }
 
 /** The shared status line wording; [url] is the full head-unit address while the name is ready. */

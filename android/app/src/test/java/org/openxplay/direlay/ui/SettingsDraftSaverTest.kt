@@ -5,6 +5,7 @@ package org.openxplay.direlay.ui
 
 import android.app.Application
 import android.os.Bundle
+import android.os.Parcel
 import androidx.compose.runtime.saveable.SaverScope
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
@@ -21,6 +22,28 @@ class SettingsDraftSaverTest {
         30, false, true, false, null)
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
+
+    @Test fun rememberedDeveloperValuesAndSwitchesSurviveARealBundleRoundTrip() {
+        val chosen = DeveloperOverrides(carlinkTrace = true,
+            carlinkHevcEnabled = true, carlinkHevc = org.openxplay.stream.clink.ClinkHevcMode.OFF,
+            carlinkPictureSizeEnabled = true, carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.MODE,
+            physicalWidthEnabled = true, physicalWidthOverrideMm = 225, fpsEnabled = true, fps = 55,
+            localPreview = true, playCarPlayAudio = true, microphoneSourceEnabled = true,
+            microphoneSource = MicrophoneSource.THIS_DEVICE, webPortEnabled = true, webPort = 9443,
+            carlinkDeviceModelEnabled = true, carlinkDeviceModel = "Test relay")
+        val saver = developerOverridesSaver(DeveloperOverrides())
+        for (value in listOf(chosen, chosen.copy(active = false), chosen.copy(carlinkPictureSizeEnabled = false, webPortEnabled = false))) {
+            val encoded = with(saver) { requireNotNull(scope.save(value)) }
+            val parcel = Parcel.obtain()
+            try {
+                encoded.writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                assertEquals(value, saver.restore(Bundle.CREATOR.createFromParcel(parcel)))
+            } finally { parcel.recycle() }
+        }
+        assertEquals(chosen, developerOverridesSaver(chosen).restore(Bundle()))
+    }
+
     @Test fun carlinkPictureSizeUsesWindowModeOrderAndEveryDraftSurvivesRotation() {
         assertEquals(listOf("WINDOW", "MODE"), org.openxplay.stream.clink.ClinkPictureSize.entries.map { it.name })
         assertEquals(org.openxplay.stream.clink.ClinkPictureSize.WINDOW, base.carlinkPictureSize)
@@ -48,13 +71,24 @@ class SettingsDraftSaverTest {
         val old = bundle(base); old.remove("carlinkHevc")
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
-    @Test fun carBluetoothAudioDraftSurvivesRotationAndOldDraftsKeepTheBase() {
+    @Test fun carBluetoothAudioDefaultsOnAndDraftSurvivesRotationAndOldDraftsKeepTheBase() {
+        assertTrue(base.carBluetoothAudio)
         for (enabled in listOf(true, false)) {
             val value = base.copy(carBluetoothAudio = enabled)
             assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
         }
         val old = bundle(base); old.remove("carBluetoothAudio")
-        val remembered = base.copy(carBluetoothAudio = true)
+        val remembered = base.copy(carBluetoothAudio = false)
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+    }
+    @Test fun resizeReconnectDraftSurvivesRotationAndOldDraftsKeepTheBase() {
+        assertFalse(base.carlinkReconnectOnResize)
+        for (enabled in listOf(true, false)) {
+            val value = base.copy(carlinkReconnectOnResize = enabled)
+            assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
+        }
+        val old = bundle(base); old.remove("carlinkReconnectOnResize")
+        val remembered = base.copy(carlinkReconnectOnResize = true)
         assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
     }
     @Test fun everyVideoStatsWindowSurvivesRotation() {
