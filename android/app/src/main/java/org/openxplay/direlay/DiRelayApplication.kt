@@ -27,7 +27,10 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
         private set
 
     override val carPlayEventObserver: com.shilapi.xcertplay.orchestration.CarPlayEventObserver?
-        get() = if (::runtime.isInitialized && runtime.settingsStore.snapshot.value?.plugins == true) runtime.pluginContext else null
+        get() = if (::runtime.isInitialized) org.openxplay.direlay.relay.CompositeCarPlayObserver(
+            runtime.carPlayDiagnostics,
+            runtime.pluginContext.takeIf { runtime.settingsStore.snapshot.value?.plugins == true },
+        ) else null
 
     override fun onCreate() {
         super.onCreate()

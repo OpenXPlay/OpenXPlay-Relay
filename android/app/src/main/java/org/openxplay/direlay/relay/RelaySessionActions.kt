@@ -144,6 +144,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         val launchGeneration = ++generation
         try {
             runtime.status.clearFailure()
+            runtime.carPlayDiagnostics.clear()
             sharedWifi?.let { AirPlayPersistence.saveExistingWifiCredentials(context, it.ssid, it.passphrase) }
             store.prepareStart()
             runtime.prepareCarPlay(chooseVideoCodec = true)

@@ -7,10 +7,11 @@ import org.openxplay.stream.core.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-data class RelayFailure(val outputId: String?, val text: String)
+data class RelayFailure(val outputId: String?, val text: String, val atMillis: Long = 0)
 
 /** Model-only observer supplements HubListener, which has no frame or connection callbacks. */
 class RelayStatus(private val redactFailure: (String) -> String = { redactFailureText(it) },
+    private val wallClock: () -> Long = System::currentTimeMillis,
     private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
     override val id = "relay-status"
     private val frames = ConcurrentHashMap<ScreenId, AtomicLong>()
@@ -61,7 +62,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     @Synchronized fun clearFailure() { failures = emptyList() }
     @Synchronized private fun rememberFailure(outputId: String?, failure: Throwable) {
         val text = "${outputId ?: "Input"}: ${failureText(failure, redactFailure)}"
-        failures = (listOf(RelayFailure(outputId, text)) + failures.filterNot { it.text == text }).take(10)
+        failures = (listOf(RelayFailure(outputId, text, wallClock())) + failures.filterNot { it.text == text }).take(10)
     }
     override fun outputFailed(outputId: String, failure: Throwable) {
         rememberFailure(outputId, failure)

@@ -220,16 +220,22 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                 override fun requestMtu(size: Int) = run.gatt?.requestMtu(size) == true
                 override fun discover() = run.gatt?.discoverServices() == true
                 override fun subscribeLocally(): Boolean {
-                    val service = run.gatt?.getService(UUID.fromString(BleCodec.GATT_SERVICE)) ?: return false
-                    phoneCharacteristic = service.getCharacteristic(UUID.fromString(BleCodec.PHONE_CHARACTERISTIC))
-                    replyCharacteristic = service.getCharacteristic(UUID.fromString(BleCodec.HEAD_UNIT_CHARACTERISTIC))
-                    if (phoneCharacteristic == null || replyCharacteristic == null) return false
-                    return run.gatt?.setCharacteristicNotification(replyCharacteristic, true) == true
+                    val service = run.gatt?.getService(UUID.fromString(BleCodec.GATT_SERVICE))
+                    phoneCharacteristic = service?.getCharacteristic(UUID.fromString(BleCodec.PHONE_CHARACTERISTIC))
+                    replyCharacteristic = service?.getCharacteristic(UUID.fromString(BleCodec.HEAD_UNIT_CHARACTERISTIC))
+                    val notify = if (phoneCharacteristic != null && replyCharacteristic != null)
+                        run.gatt?.setCharacteristicNotification(replyCharacteristic, true) == true else null
+                    if (notify != true) diagnostics.emit(ClinkDiagnostic.Characteristics(phoneCharacteristic != null, replyCharacteristic != null, notify))
+                    return notify == true
                 }
                 override fun subscribeCccd(): Boolean {
-                    val characteristic = replyCharacteristic ?: return false
+                    val characteristic = replyCharacteristic
+                    val gatt = run.gatt
+                    if (characteristic == null || gatt == null) {
+                        diagnostics.emit(ClinkDiagnostic.Cccd(ClinkDiagnostic.CccdResult.REFUSED))
+                        return false
+                    }
                     val descriptor = characteristic.getDescriptor(UUID.fromString(BleCodec.CCCD))
-                    val gatt = run.gatt ?: return false
                     val value = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0)
                         BluetoothGattDescriptor.ENABLE_INDICATION_VALUE else BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                     val accepted = descriptor != null && if (Build.VERSION.SDK_INT >= 33) {
@@ -250,19 +256,21 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                         }
                         run.cccdTimer = timer
                         handler.postDelayed(timer, 2000)
-                    } else diagnostics.emit(ClinkDiagnostic.Cccd(ClinkDiagnostic.CccdResult.FAILED))
+                    } else diagnostics.emit(ClinkDiagnostic.Cccd(ClinkDiagnostic.CccdResult.REFUSED))
                     return accepted
                 }
                 override fun write(payload: ByteArray): Boolean {
-                    val characteristic = phoneCharacteristic ?: return false
-                    val gatt = run.gatt ?: return false
-                    return if (Build.VERSION.SDK_INT >= 33) {
+                    val characteristic = phoneCharacteristic
+                    val gatt = run.gatt
+                    val accepted = characteristic != null && gatt != null && if (Build.VERSION.SDK_INT >= 33) {
                         gatt.writeCharacteristic(characteristic, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
                     } else {
                         characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                         characteristic.value = payload
                         gatt.writeCharacteristic(characteristic)
                     }
+                    if (!accepted) diagnostics.emit(ClinkDiagnostic.BleWrite(null))
+                    return accepted
                 }
                 override fun requestUnchanged(): Boolean {
                     val request = run.gatt?.getService(UUID.fromString(BleCodec.GATT_SERVICE))
@@ -281,7 +289,9 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                     diagnostics.emit(ClinkDiagnostic.Exchange(reply.freq))
                     result.complete(reply)
                 } else {
-                    val reason = when ((failure as? BleExchange.Failure)?.reason) {
+                    val exchangeFailure = failure as BleExchange.Failure
+                    exchangeFailure.detail?.let { diagnostics.emit(ClinkDiagnostic.ReplyInvalid(it)) }
+                    val reason = when (exchangeFailure.reason) {
                         BleExchange.Reason.CCCD_TIMEOUT -> {
                             peers.cccdTimedOut(key, choice)
                             // A pending descriptor blocks the GATT queue; the retry must use a fresh connection.
@@ -291,7 +301,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                             peers.rejected(key, choice)
                             ClinkFailureReason.BLE_REQUEST_REJECTED
                         }
-                        else -> ClinkFailureReason.BLE_EXCHANGE
+                        BleExchange.Reason.DISCOVERY -> ClinkFailureReason.BLE_DISCOVERY
+                        BleExchange.Reason.SERVICE_MISSING -> ClinkFailureReason.BLE_SERVICE_MISSING
+                        BleExchange.Reason.SUBSCRIBE -> ClinkFailureReason.BLE_SUBSCRIBE
+                        BleExchange.Reason.CCCD -> ClinkFailureReason.BLE_CCCD
+                        BleExchange.Reason.WRITE -> ClinkFailureReason.BLE_WRITE
+                        BleExchange.Reason.REPLY_INVALID -> ClinkFailureReason.BLE_REPLY_INVALID
+                        BleExchange.Reason.VERIFY_TIMEOUT -> ClinkFailureReason.BLE_VERIFY_TIMEOUT
+                        BleExchange.Reason.DISCONNECTED -> ClinkFailureReason.BLE_EXCHANGE
                     }
                     result.completeExceptionally(ClinkFailure(reason, failure))
                 }
@@ -309,23 +326,31 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                     }
                     event(gatt) {
                         if (status != BluetoothGatt.GATT_SUCCESS || state == BluetoothProfile.STATE_DISCONNECTED) {
+                            diagnostics.emit(ClinkDiagnostic.GattConnection(status, state == BluetoothProfile.STATE_CONNECTED))
                             result.completeExceptionally(ClinkFailure(ClinkFailureReason.GATT_CONNECT))
-                            machine.fail()
+                            machine.fail(BleExchange.Reason.DISCONNECTED)
                         } else if (state == BluetoothProfile.STATE_CONNECTED) {
                             diagnostics.emit(ClinkStage.GATT_CONNECTED)
                             machine.connected()
                             // When another app's GATT keeps the LE link up, Android reuses it and may never
                             // report the MTU; continue without it (mtu() ignores a late or duplicate call).
-                            handler.postDelayed({ event(gatt) { machine.mtu(false) } }, 1500)
+                            handler.postDelayed({ event(gatt) { if (machine.state == BleExchange.State.MTU) {
+                                diagnostics.emit(ClinkDiagnostic.Mtu(null, null)); machine.mtu(false)
+                            } } }, 1500)
                         }
                     }
                 }
                 override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) = event(gatt) {
+                    diagnostics.emit(ClinkDiagnostic.Mtu(mtu, status))
                     machine.mtu(status == BluetoothGatt.GATT_SUCCESS)
                 }
                 override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) = event(gatt) {
                     if (status == BluetoothGatt.GATT_SUCCESS) diagnostics.emit(ClinkStage.GATT_SERVICES)
-                    else result.completeExceptionally(ClinkFailure(ClinkFailureReason.GATT_SERVICES))
+                    else {
+                        diagnostics.emit(ClinkDiagnostic.GattServices(status))
+                        if (machine.state != BleExchange.State.VERIFYING)
+                            result.completeExceptionally(ClinkFailure(ClinkFailureReason.GATT_SERVICES))
+                    }
                     if (status == BluetoothGatt.GATT_SUCCESS && gatt.getService(UUID.fromString(BleCodec.GATT_SERVICE)) == null)
                         machine.serviceRemoved()
                     else machine.services(status == BluetoothGatt.GATT_SUCCESS)
@@ -335,12 +360,15 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                     if (descriptor === pendingDescriptor && (machine.state == BleExchange.State.SUBSCRIBING || machine.state == BleExchange.State.REDISCOVERING)) {
                         cancelCccdTimer()
                         val success = status == BluetoothGatt.GATT_SUCCESS
-                        diagnostics.emit(ClinkDiagnostic.Cccd(if (success) ClinkDiagnostic.CccdResult.SUCCESS else ClinkDiagnostic.CccdResult.FAILED))
+                        diagnostics.emit(ClinkDiagnostic.Cccd(if (success) ClinkDiagnostic.CccdResult.SUCCESS else ClinkDiagnostic.CccdResult.FAILED, if (success) null else status))
                         machine.descriptorWritten(success)
                     }
                 }
                 override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) = event(gatt) {
-                    if (characteristic.uuid == UUID.fromString(BleCodec.PHONE_CHARACTERISTIC)) machine.written(status == BluetoothGatt.GATT_SUCCESS)
+                    if (characteristic.uuid == UUID.fromString(BleCodec.PHONE_CHARACTERISTIC)) {
+                        diagnostics.emit(ClinkDiagnostic.BleWrite(status))
+                        machine.written(status == BluetoothGatt.GATT_SUCCESS)
+                    }
                 }
                 override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
                     val bytes = value.copyOf()

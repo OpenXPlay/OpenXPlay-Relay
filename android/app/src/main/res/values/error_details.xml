@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-22 -->
+<resources>
+    <string name="error_details">Details</string>
+    <string name="error_copy">Copy</string>
+    <string name="error_collapse">Collapse</string>
+    <string name="error_copied">Copied</string>
+    <string name="error_time">Time: %1$s</string>
+    <string name="error_explain_ble_unavailable">Bluetooth is off or unavailable on this phone.</string>
+    <string name="error_explain_ble_timeout">No head unit running Carlink was found over Bluetooth. Open Carlink on the head unit and keep it in front.</string>
+    <string name="error_explain_ble_scan_failed">Android could not start the Bluetooth scan.</string>
+    <string name="error_explain_gatt_connect_failed">The head unit was found, but the Bluetooth connection failed or dropped.</string>
+    <string name="error_explain_gatt_services_failed">Connected over Bluetooth, but the head unit\'s services could not be read.</string>
+    <string name="error_explain_ble_service_missing">The head unit does not offer the Carlink Bluetooth service. Carlink may be closed, in the background, or an unsupported version.</string>
+    <string name="error_explain_ble_subscribe_failed">The head unit\'s Carlink service is incomplete, or Android refused to subscribe to its replies.</string>
+    <string name="error_explain_ble_cccd_failed">The head unit refused the subscription to its replies.</string>
+    <string name="error_explain_ble_cccd_timeout">The head unit did not confirm the subscription to its replies in time.</string>
+    <string name="error_explain_ble_write_failed">The head unit did not accept the relay\'s connection request.</string>
+    <string name="error_explain_ble_request_rejected">The head unit rejected the connection request.</string>
+    <string name="error_explain_ble_reply_invalid">The head unit\'s reply could not be read.</string>
+    <string name="error_explain_ble_verify_timeout">The head unit changed its Bluetooth services during the exchange and did not finish in time.</string>
+    <string name="error_explain_ble_exchange_timeout">The head unit did not finish the Bluetooth exchange within 15 seconds.</string>
+    <string name="error_explain_ble_exchange_failed">The Bluetooth exchange with the head unit failed.</string>
+    <string name="error_explain_hotspot_not_ready">The hotspot for wireless CarPlay did not become ready in time.</string>
+    <string name="error_explain_hotspot_configuration">The hotspot for wireless CarPlay is off or cannot be used as set up. Turn on the hotspot or check the network settings.</string>
+    <string name="error_explain_first_tcp_timeout">The iPhone accepted CarPlay over Bluetooth but did not connect over Wi-Fi in time.</string>
+    <string name="error_explain_bluetooth_unusable">Bluetooth connections from this phone do not reach the iPhone. Turn Bluetooth off and on, or restart the phone.</string>
+</resources>
