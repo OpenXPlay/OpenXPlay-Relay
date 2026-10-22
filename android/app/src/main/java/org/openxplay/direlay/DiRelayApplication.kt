@@ -18,9 +18,12 @@ import org.openxplay.direlay.admin.AndroidBluetoothVisibility
 import org.openxplay.direlay.admin.PairingWindow
 import org.openxplay.direlay.bridge.StreamBridgeSink
 import org.openxplay.direlay.relay.RelayRuntime
+import org.openxplay.direlay.service.AndroidRelayKeepAlive
 
 class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider {
     lateinit var runtime: RelayRuntime
+        private set
+    lateinit var keepAlive: AndroidRelayKeepAlive
         private set
 
     override val carPlayEventObserver: com.shilapi.xcertplay.orchestration.CarPlayEventObserver?
@@ -29,7 +32,9 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
     override fun onCreate() {
         super.onCreate()
         installOutOfMemoryDump()
-        runtime = RelayRuntime(this, pairing = PairingWindow(AndroidBluetoothVisibility(this, ::showRelayScreen)))
+        keepAlive = AndroidRelayKeepAlive(this)
+        runtime = RelayRuntime(this, pairing = PairingWindow(AndroidBluetoothVisibility(this, ::showRelayScreen)),
+            keepAlive = keepAlive)
         runtime.carlinkPins.onPending = { showPendingPin() }
         runtime.carlinkPins.onCancel = runtime::cancelCarlinkPairing
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {

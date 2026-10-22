@@ -51,7 +51,8 @@ class RelayRuntime(private val context: Context,
         AndroidBondedDevices(context.applicationContext),
     /** One Bluetooth pairing window shared by the app and the admin page. */
     val pairing: org.openxplay.direlay.admin.PairingWindow = org.openxplay.direlay.admin.PairingWindow(
-        org.openxplay.direlay.admin.AndroidBluetoothVisibility(context.applicationContext) { false })) : AutoCloseable {
+        org.openxplay.direlay.admin.AndroidBluetoothVisibility(context.applicationContext) { false }),
+    val keepAlive: RelayKeepAlive = RelayKeepAlive.None) : AutoCloseable {
     @Volatile var iphoneBonds: List<BondedDevice> = emptyList()
         private set
     fun refreshIphoneBonds() { iphoneBonds = bondedDevices.read() }
@@ -524,6 +525,7 @@ class RelayRuntime(private val context: Context,
             automaticEnabled = initial.autoStartWhenReady
             configuredWebPort = initial.webPort
             webEnabled = !initial.carlinkOutput || initial.bothOutputs
+            updateKeepAlive(initial)
             prepareCarPlay()
             ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
             startWeb()
@@ -691,6 +693,11 @@ class RelayRuntime(private val context: Context,
             networkPermissionAvailable = networkGranted
             restartWeb()
         }
+        updateKeepAlive(settings)
+    }
+
+    private fun updateKeepAlive(settings: RelaySettings) = synchronized(lifecycle) {
+        keepAlive.update(RelayKeepAlivePolicy.needed(!closed, webEnabled, settings.carlinkOutput || settings.bothOutputs))
     }
 
     fun reconnectCarlink() { status.clearFailure(); enqueueCarlink(true) }
@@ -718,6 +725,7 @@ class RelayRuntime(private val context: Context,
         if (closed) return
         configureVehicle()
         val settings = settingsStore.awaitSnapshot()
+        updateKeepAlive(settings)
         carlinkResizePolicy.enabled = settings.carlinkReconnectOnResize
         if (!settings.carlinkTrace && traceCapture.isInitialized()) carlinkMediaCapture.stop()
         val permitted = StartupPermissions.carlink(Build.VERSION.SDK_INT, true).all {
@@ -1108,6 +1116,7 @@ class RelayRuntime(private val context: Context,
         synchronized(lifecycle) {
             if (closed) return
             closed = true
+            keepAlive.update(false)
             teslaSession.close()
             sharedWifiConnectivity.unregisterNetworkCallback(sharedWifiCallback)
             publicName.close()

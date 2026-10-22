@@ -118,6 +118,16 @@ class PublicNameStore(noBackupFilesDir: File) {
         update(mapOf(ACCOUNT to url?.let { JSONObject().put("directory", directory).put("url", it).toString().toByteArray() }))
     }
 
+    /** Preserve the transferred account instead of registering a new one after reinstall. */
+    @Synchronized fun importAccount(pair: KeyPair, directory: String, url: String?) {
+        update(mapOf(ACCOUNT_KEY to pair.private.encoded, ACCOUNT_PUBLIC to pair.public.encoded,
+            ACCOUNT to url?.let { JSONObject().put("directory", directory).put("url", it).toString().toByteArray(Charsets.UTF_8) }))
+    }
+
+    @Synchronized fun importProviders(providers: Map<DnsProviderId, PublicNameProviderSetup>) {
+        update(mapOf(PROVIDERS to encodeProviders(providers)))
+    }
+
     @Synchronized fun record(): PublicNameRecord {
         val bytes = read(RECORD, 64 * 1024) ?: return PublicNameRecord()
         return runCatching {

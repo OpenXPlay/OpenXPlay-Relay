@@ -74,6 +74,7 @@ fun settingsPageTitle(route: String) = when (route) {
     "settings/startup" -> R.string.settings_startup
     "settings/access" -> R.string.menu_access
     "settings/identity" -> R.string.menu_identity
+    "settings/configFiles" -> R.string.config_title
     else -> R.string.direlay_settings
 }
 
@@ -113,6 +114,7 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
     SettingsMenuRow(R.string.menu_access, accessSummary, R.drawable.symbol_link) { open("settings/access") }
     SettingsMenuRow(R.string.menu_identity, stringResource(identityStatus), R.drawable.symbol_code,
         "settings/identity" in invalidPages) { open("settings/identity") }
+    SettingsMenuRow(R.string.config_title, stringResource(R.string.config_summary), R.drawable.symbol_code) { open("settings/configFiles") }
     SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
     SettingsMenuRow(R.string.ui_developer, stringResource(R.string.menu_developer_summary, draft.fps, draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), R.drawable.symbol_code,
         invalidPages.any { it.startsWith("developer/") }) { open("developer") }

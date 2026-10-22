@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-22 -->
+<resources>
+    <string name="relay_keep_alive_channel">Relay running</string>
+    <string name="relay_keep_alive_title">OpenXPlay Relay</string>
+    <string name="relay_keep_alive_text">Keeps Carlink and the head-unit page working with the screen off.</string>
+</resources>
