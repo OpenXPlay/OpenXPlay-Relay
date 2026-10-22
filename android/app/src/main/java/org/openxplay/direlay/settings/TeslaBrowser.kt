@@ -5,12 +5,13 @@ package org.openxplay.direlay.settings
 
 enum class TeslaBrowserMode { OFF, VIRTUAL_NAME, PUBLIC_ADDRESS }
 
-enum class TeslaBrowserActivation { OFF, NEEDS_WIRELESS, NEEDS_PHONE_NETWORK, NEEDS_NAME, READY }
+enum class TeslaBrowserActivation { OFF, NEEDS_BROWSER, NEEDS_WIRELESS, NEEDS_PHONE_NETWORK, NEEDS_NAME, READY }
 
 /** A shared rule for the editor, VPN consent and session startup. */
 fun teslaBrowserActivation(mode: TeslaBrowserMode, wireless: Boolean, network: WirelessNetworkChoice,
-    trustedNameConfigured: Boolean): TeslaBrowserActivation = when {
+    trustedNameConfigured: Boolean, carlinkOutput: Boolean, bothOutputs: Boolean): TeslaBrowserActivation = when {
     mode == TeslaBrowserMode.OFF -> TeslaBrowserActivation.OFF
+    carlinkOutput && !bothOutputs -> TeslaBrowserActivation.NEEDS_BROWSER
     !wireless -> TeslaBrowserActivation.NEEDS_WIRELESS
     network == WirelessNetworkChoice.EXISTING_WIFI -> TeslaBrowserActivation.NEEDS_PHONE_NETWORK
     mode == TeslaBrowserMode.VIRTUAL_NAME && !trustedNameConfigured -> TeslaBrowserActivation.NEEDS_NAME
@@ -18,8 +19,8 @@ fun teslaBrowserActivation(mode: TeslaBrowserMode, wireless: Boolean, network: W
 }
 
 object TeslaAddressPolicy {
-    const val DEFAULT_VIRTUAL = "100.88.0.1"
-    const val DEFAULT_PUBLIC = "3.3.3.1"
+    const val DEFAULT_VIRTUAL = "169.254.88.1"
+    const val DEFAULT_PUBLIC = "169.254.88.1"
 
     /** Numeric dotted quads only: never resolve a hostname or accept ambiguous shortened IPv4 forms. */
     fun valid(address: String, phoneAddresses: Set<String> = emptySet()): Boolean {
@@ -28,11 +29,14 @@ object TeslaAddressPolicy {
                 it.any { c -> c !in '0'..'9' } || it.length > 1 && it[0] == '0' }) return false
         val octets = parts.map { it.toInt() }
         if (octets.any { it > 255 }) return false
-        val (a, b) = octets
-        return a !in setOf(0, 10, 127) && !(a == 169 && b == 254) &&
+        val (a, b, c) = octets
+        return a !in setOf(0, 10, 127) && !(a == 169 && b == 254 && c !in 1..254) &&
             !(a == 172 && b in 16..31) && !(a == 192 && b == 168) && a !in 224..239 &&
             octets.any { it != 255 } && address !in phoneAddresses
     }
+
+    fun needsAndroid13Warning(sdk: Int, address: String): Boolean =
+        sdk >= 33 && valid(address) && !address.startsWith("169.254.")
 }
 
 fun RelaySettings.teslaAddress(): String? = when (teslaBrowser) {

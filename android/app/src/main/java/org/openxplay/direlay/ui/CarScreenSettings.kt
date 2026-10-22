@@ -5,6 +5,7 @@ package org.openxplay.direlay.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
@@ -24,7 +25,7 @@ import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 
 private data class DetectedCarScreen(val screen: ScreenDataKey, val records: List<WindowSizeRecord>, val receiver: org.json.JSONObject?)
 @Composable fun CarScreenSettings(draft: RelaySettings, runtime: RelayRuntime,
-    openTrustedHttps: () -> Unit = {}, change: (RelaySettings) -> Unit) {
+    openTrustedHttps: () -> Unit = {}, openOutput: () -> Unit = {}, change: (RelaySettings) -> Unit) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     var models by remember { mutableStateOf<CarModels?>(null) }
@@ -80,7 +81,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         }
     }
     if (car.brand == "tesla" || draft.teslaBrowser != TeslaBrowserMode.OFF)
-        TeslaBrowserSettings(draft, runtime, openTrustedHttps, change)
+        TeslaBrowserSettings(draft, runtime, openTrustedHttps, openOutput, change)
     CollapsibleCard("canvas", stringResource(R.string.car_saved_canvas), savedCanvas?.let { "${it.profile.width} × ${it.profile.height}" } ?: none) {
         savedCanvas?.let { saved ->
             Text(stringResource(R.string.car_canvas_size, saved.profile.width, saved.profile.height, saved.profile.density))
@@ -129,7 +130,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
 }
 
 @Composable private fun TeslaBrowserSettings(draft: RelaySettings, runtime: RelayRuntime,
-    openTrustedHttps: () -> Unit, change: (RelaySettings) -> Unit) {
+    openTrustedHttps: () -> Unit, openOutput: () -> Unit, change: (RelaySettings) -> Unit) {
     val name by runtime.publicName.view.collectAsState()
     val options = listOf(RadioOption(R.string.tesla_off, R.string.tesla_intro),
         RadioOption(R.string.tesla_virtual_name, R.string.tesla_virtual_name_hint),
@@ -156,8 +157,16 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
                     change(if (draft.teslaBrowser == TeslaBrowserMode.VIRTUAL_NAME) draft.copy(teslaVirtualAddress = it)
                         else draft.copy(teslaPublicAddress = it))
                 }
+                if (TeslaAddressPolicy.needsAndroid13Warning(Build.VERSION.SDK_INT, address))
+                    Hint(stringResource(R.string.tesla_address_android13))
             }
             Hint(stringResource(R.string.tesla_requirements))
+            if (draft.carlinkOutput && !draft.bothOutputs) {
+                Hint(stringResource(R.string.tesla_needs_browser))
+                TextButton(onClick = openOutput, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.tesla_open_output))
+                }
+            }
             if (!runtime.settingsStore.wireless(draft)) Hint(stringResource(R.string.tesla_needs_wireless))
             if (draft.wirelessNetwork.choice == WirelessNetworkChoice.EXISTING_WIFI)
                 Hint(stringResource(R.string.tesla_needs_phone_network))

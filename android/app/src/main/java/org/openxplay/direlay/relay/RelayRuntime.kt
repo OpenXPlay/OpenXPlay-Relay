@@ -332,7 +332,7 @@ class RelayRuntime(private val context: Context,
 
     fun teslaActivation(settings: RelaySettings, wireless: Boolean = settingsStore.wireless(settings)) =
         teslaBrowserActivation(settings.teslaBrowser, wireless, settings.wirelessNetwork.choice,
-            publicName.view.value.hasTrustedNameConfiguration())
+            publicName.view.value.hasTrustedNameConfiguration(), settings.carlinkOutput, settings.bothOutputs)
 
     fun needsVpnConsent(settings: RelaySettings, wireless: Boolean = settingsStore.wireless(settings)): Boolean =
         !wireless || teslaActivation(settings, wireless) == TeslaBrowserActivation.READY

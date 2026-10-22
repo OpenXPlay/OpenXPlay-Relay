@@ -31,8 +31,8 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { store ->
             val initial = store.load()
             assertEquals(TeslaBrowserMode.OFF, initial.teslaBrowser)
-            assertEquals("100.88.0.1", initial.teslaVirtualAddress)
-            assertEquals("3.3.3.1", initial.teslaPublicAddress)
+            assertEquals("169.254.88.1", initial.teslaVirtualAddress)
+            assertEquals("169.254.88.1", initial.teslaPublicAddress)
             for (mode in TeslaBrowserMode.entries) {
                 val chosen = initial.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",
                     car = CarSelection("tesla", model = "model-y-2025"))
@@ -50,7 +50,7 @@ class RelaySettingsTest {
 
     @Test fun teslaValidationRejectsASelectedPhoneAddressAndAllowsSwitchingOff() {
         val chosen = store.load().copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS)
-        assertThrows(IllegalArgumentException::class.java) { chosen.validate(wireless = false, phoneAddresses = setOf("3.3.3.1")) }
+        assertThrows(IllegalArgumentException::class.java) { chosen.validate(wireless = false, phoneAddresses = setOf("169.254.88.1")) }
         assertThrows(IllegalArgumentException::class.java) { chosen.copy(teslaPublicAddress = "192.168.1.9").validate(wireless = false) }
         chosen.copy(teslaBrowser = TeslaBrowserMode.OFF, teslaPublicAddress = "invalid").validate(wireless = false)
         context.getSharedPreferences("direlay", 0).edit().putString("teslaBrowser", "future-mode").commit()

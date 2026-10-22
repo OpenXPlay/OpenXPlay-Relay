@@ -131,7 +131,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 }
             }
             "settings/car" -> {
-                if (runtime != null) CarScreenSettings(draft, runtime, { open("settings/access/publicName") }) { draft = it }
+                if (runtime != null) CarScreenSettings(draft, runtime,
+                    openTrustedHttps = { open("settings/access/publicName") },
+                    openOutput = { open("settings/output") }) { draft = it }
             }
             "settings/picture" -> {
                 CollapsibleCard("resolution", stringResource(R.string.picture_resolution), resolutionSummary(draft),

@@ -672,15 +672,18 @@
     <string name="network_usb_role_problem">This phone is connected over USB as a device, so it cannot see the iPhone. The other end (an iPhone, computer or car port) is acting as the host. A USB-C iPhone on a USB-C to USB-C cable usually takes control. Use a USB-C OTG adapter (USB-C to USB-A) on this phone, then a USB-A to USB-C cable to the iPhone. If this phone has an OTG switch, turn it on, then unplug and plug in again. For a Lightning iPhone, use a USB-C to Lightning cable.</string>
 
     <string name="tesla_title">Tesla browser</string>
-    <string name="tesla_intro">Tesla’s browser does not open local-network addresses, so the relay page needs an address outside the private ranges. This phone adds one through a local VPN; nothing leaves the phone.</string>
+    <string name="tesla_intro">Tesla’s browser does not open local-network addresses, so the relay page needs another address. This phone adds one through a local VPN (by default 169.254.88.1); nothing leaves the phone.</string>
     <string name="tesla_off">Off</string>
     <string name="tesla_virtual_name">Virtual address with a trusted name (like TeslaMirror)</string>
     <string name="tesla_virtual_name_hint">Needs Trusted HTTPS. Your trusted name points to a virtual address on this phone, so the Tesla opens https://your-name:8443 without a certificate warning. The Tesla needs internet through this phone’s hotspot to look up the name.</string>
-    <string name="tesla_public_address">Public address (like TeslaAndroid)</string>
-    <string name="tesla_public_address_hint">No account needed. The relay also answers at an address outside the private ranges; open https://%1$s:8443 in the Tesla and continue past the certificate warning. This works only if the Tesla browser lets you continue.</string>
+    <string name="tesla_public_address">Direct address (like TeslaAndroid)</string>
+    <string name="tesla_public_address_hint">No account needed. Open https://%1$s:8443 in the Tesla and continue past the certificate warning. This works only if the Tesla browser lets you continue.</string>
     <string name="tesla_address">Address on this phone</string>
     <string name="tesla_address_invalid">Enter an IPv4 address outside 10.x, 172.16–31.x, 192.168.x and the other reserved ranges.</string>
+    <string name="tesla_address_android13">Android 13 and later drop connections to this address from the hotspot. Use an address from 169.254.1.0 to 169.254.254.255.</string>
     <string name="tesla_requirements">Connect the Tesla to this phone’s hotspot (5 GHz if possible) or its Wi-Fi Direct network, and turn on Remain Connected in Drive in the Tesla’s Wi-Fi settings. Needs MCU2 or later.</string>
+    <string name="tesla_needs_browser">A Tesla shows CarPlay in its browser: choose Browser (or Browser and Carlink) in Settings → Output.</string>
+    <string name="tesla_open_output">Open Output</string>
     <string name="tesla_needs_wireless">Tesla adaptation needs wireless CarPlay: the USB connection already uses Android’s only VPN.</string>
     <string name="tesla_needs_phone_network">Tesla adaptation needs this phone’s hotspot or Wi-Fi Direct. A shared Wi-Fi router does not pass the address to this phone.</string>
     <string name="tesla_needs_name">Set up Trusted HTTPS first.</string>

@@ -39,8 +39,8 @@ class TeslaAddressSessionTest {
         tick(false)
         assertTrue(vpn.started.isEmpty())
         tick(); tick()
-        assertEquals(listOf("3.3.3.1"), vpn.started)
-        assertEquals(TeslaAddress(TeslaBrowserMode.PUBLIC_ADDRESS, "3.3.3.1"), session.active)
+        assertEquals(listOf("169.254.88.1"), vpn.started)
+        assertEquals(TeslaAddress(TeslaBrowserMode.PUBLIC_ADDRESS, "169.254.88.1"), session.active)
         tick(false)
         assertNull(session.active); assertEquals(1, vpn.stopped)
         tick(); session.close()
@@ -51,9 +51,9 @@ class TeslaAddressSessionTest {
         session.prepare(settings, wireless = true)
         val next = settings.copy(teslaBrowser = TeslaBrowserMode.VIRTUAL_NAME, teslaVirtualAddress = "100.88.0.2")
         tick(value = next, wireless = false)
-        assertEquals("3.3.3.1", session.active?.address)
+        assertEquals("169.254.88.1", session.active?.address)
         tick(value = next)
-        assertEquals(listOf("3.3.3.1"), vpn.started)
+        assertEquals(listOf("169.254.88.1"), vpn.started)
         tick(false, next)
         session.prepare(next, wireless = true)
         tick(value = next)
@@ -72,7 +72,7 @@ class TeslaAddressSessionTest {
     }
 
     @Test fun readsLivePhoneAddressesOnlyAtStartAndRechecksThemOnRestart() {
-        var addresses = setOf("3.3.3.1")
+        var addresses = setOf("169.254.88.1")
         var reads = 0
         session.prepare(settings, wireless = true)
         addresses = emptySet()
@@ -82,7 +82,7 @@ class TeslaAddressSessionTest {
         assertNotNull(session.active)
         assertEquals(1, reads)
         session.tick(false, settings, true, true, source)
-        addresses = setOf("3.3.3.1")
+        addresses = setOf("169.254.88.1")
         session.tick(true, settings, true, true, source)
         assertNull(session.active)
         assertTrue(checkNotNull(session.failure).contains("already assigned"))
@@ -111,7 +111,28 @@ class TeslaAddressSessionTest {
         tick(value = named, name = false)
         assertTrue(vpn.started.isEmpty())
         tick(value = named, name = true)
-        assertEquals("100.88.0.1", session.active?.address)
+        assertEquals("169.254.88.1", session.active?.address)
+    }
+
+    @Test fun carlinkOnlyNeverStartsAVpnButBrowserAndCombinedOutputsDo() {
+        for (mode in listOf(TeslaBrowserMode.PUBLIC_ADDRESS, TeslaBrowserMode.VIRTUAL_NAME))
+            for ((carlink, both, browser) in listOf(Triple(false, false, true), Triple(false, true, true),
+                Triple(true, false, false), Triple(true, true, true))) {
+                val chosen = settings.copy(teslaBrowser = mode, carlinkOutput = carlink, bothOutputs = both)
+                val controller = Vpn()
+                TeslaAddressSession(controller).use { candidate ->
+                    candidate.prepare(chosen, wireless = true)
+                    repeat(2) { candidate.tick(true, chosen, true, true) { emptySet() } }
+                    if (browser) {
+                        assertEquals(listOf(chosen.teslaAddress()), controller.started)
+                        assertEquals(TeslaAddress(mode, checkNotNull(chosen.teslaAddress())), candidate.active)
+                    } else {
+                        assertTrue(controller.started.isEmpty())
+                        assertNull(candidate.active)
+                    }
+                    assertNull(candidate.failure)
+                }
+            }
     }
 
     @Test fun serviceFailureKeepsTheRawCauseWithoutRetryingOrThrowingIntoCarPlay() {
@@ -135,7 +156,7 @@ class TeslaAddressSessionTest {
         assertEquals(1, vpn.started.size)
         tick(false)
         vpn.failure = null
-        tick(addresses = setOf("3.3.3.1"))
+        tick(addresses = setOf("169.254.88.1"))
         assertTrue(checkNotNull(session.failure).contains("already assigned"))
         assertEquals(1, vpn.started.size)
         tick(false)

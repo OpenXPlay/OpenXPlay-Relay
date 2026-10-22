@@ -15,28 +15,69 @@ class TeslaBrowserTest {
             "255.255.255.255")) assertFalse(address, TeslaAddressPolicy.valid(address))
         assertFalse(TeslaAddressPolicy.valid("3.3.3.1", setOf("3.3.3.1", "192.168.43.1")))
         assertFalse(TeslaAddressPolicy.valid("100.88.0.1", setOf("100.88.0.1")))
+        assertFalse(TeslaAddressPolicy.valid("169.254.88.1", setOf("169.254.88.1")))
     }
 
-    @Test fun acceptsBothDefaultsAndAddressesJustOutsideExcludedRanges() {
-        assertEquals("100.88.0.1", TeslaAddressPolicy.DEFAULT_VIRTUAL)
-        assertEquals("3.3.3.1", TeslaAddressPolicy.DEFAULT_PUBLIC)
+    @Test fun bothModesDefaultToAUsableLinkLocalAddress() {
+        assertEquals("169.254.88.1", TeslaAddressPolicy.DEFAULT_VIRTUAL)
+        assertEquals("169.254.88.1", TeslaAddressPolicy.DEFAULT_PUBLIC)
+        assertTrue(TeslaAddressPolicy.valid(TeslaAddressPolicy.DEFAULT_VIRTUAL))
+        assertTrue(TeslaAddressPolicy.valid(TeslaAddressPolicy.DEFAULT_PUBLIC))
+    }
+
+    @Test fun acceptsOnlyTheRfc3927UsableLinkLocalRange() {
+        for (address in listOf("169.254.0.0", "169.254.0.1", "169.254.0.255",
+            "169.254.255.0", "169.254.255.254", "169.254.255.255"))
+            assertFalse(address, TeslaAddressPolicy.valid(address))
+        for (address in listOf("169.254.1.0", "169.254.1.255", "169.254.88.1", "169.254.254.0", "169.254.254.255"))
+            assertTrue(address, TeslaAddressPolicy.valid(address))
+    }
+
+    @Test fun acceptsAddressesJustOutsideExcludedRanges() {
         for (address in listOf("100.88.0.1", "3.3.3.1", "1.0.0.1", "169.253.255.255", "169.255.0.0",
             "172.15.255.255", "172.32.0.0", "192.167.255.255", "192.169.0.0", "223.255.255.255",
             "240.0.0.1", "255.255.255.254")) assertTrue(address, TeslaAddressPolicy.valid(address, setOf("192.168.43.1")))
     }
 
-    @Test fun activationCoversEveryModeTransportNetworkAndNameCombination() {
+    @Test fun nonLinkLocalAddressesRemainValidButWarnStartingAtAndroid13() {
+        for (address in listOf("100.88.0.1", "3.3.3.1", "169.253.255.255", "169.255.0.0")) {
+            assertTrue(address, TeslaAddressPolicy.valid(address))
+            for ((sdk, warning) in mapOf(28 to false, 32 to false, 33 to true, 34 to true, 35 to true, 36 to true))
+                assertEquals("sdk=$sdk address=$address", warning, TeslaAddressPolicy.needsAndroid13Warning(sdk, address))
+        }
+    }
+
+    @Test fun linkLocalAndInvalidAddressesDoNotShowTheAndroid13Warning() {
+        for (sdk in listOf(28, 32, 33, 34, 35, 36))
+            for (address in listOf("169.254.1.0", "169.254.88.1", "169.254.254.255",
+                "", "relay.example.org", "169.254.0.1", "169.254.255.0", "169.254.256.1", "10.0.0.1"))
+                assertFalse("sdk=$sdk address=$address", TeslaAddressPolicy.needsAndroid13Warning(sdk, address))
+    }
+
+    @Test fun activationCoversEveryModeBrowserOutputTransportNetworkAndNameCombination() {
         for (mode in TeslaBrowserMode.entries) for (wireless in listOf(false, true))
-            for (network in WirelessNetworkChoice.entries) for (name in listOf(false, true)) {
-                val expected = when {
-                    mode == TeslaBrowserMode.OFF -> TeslaBrowserActivation.OFF
-                    !wireless -> TeslaBrowserActivation.NEEDS_WIRELESS
-                    network == WirelessNetworkChoice.EXISTING_WIFI -> TeslaBrowserActivation.NEEDS_PHONE_NETWORK
-                    mode == TeslaBrowserMode.VIRTUAL_NAME && !name -> TeslaBrowserActivation.NEEDS_NAME
-                    else -> TeslaBrowserActivation.READY
+            for (network in WirelessNetworkChoice.entries) for (name in listOf(false, true))
+                for ((carlink, both) in listOf(false to false, false to true, true to true)) {
+                    val expected = when {
+                        mode == TeslaBrowserMode.OFF -> TeslaBrowserActivation.OFF
+                        !wireless -> TeslaBrowserActivation.NEEDS_WIRELESS
+                        network == WirelessNetworkChoice.EXISTING_WIFI -> TeslaBrowserActivation.NEEDS_PHONE_NETWORK
+                        mode == TeslaBrowserMode.VIRTUAL_NAME && !name -> TeslaBrowserActivation.NEEDS_NAME
+                        else -> TeslaBrowserActivation.READY
+                    }
+                    assertEquals("$mode carlink=$carlink both=$both wireless=$wireless network=$network name=$name", expected,
+                        teslaBrowserActivation(mode, wireless, network, name, carlink, both))
                 }
+    }
+
+    @Test fun carlinkOnlyNeedsBrowserBeforeTransportNetworkOrNameChecksUnlessOff() {
+        val expectedByMode = mapOf(TeslaBrowserMode.OFF to TeslaBrowserActivation.OFF,
+            TeslaBrowserMode.VIRTUAL_NAME to TeslaBrowserActivation.NEEDS_BROWSER,
+            TeslaBrowserMode.PUBLIC_ADDRESS to TeslaBrowserActivation.NEEDS_BROWSER)
+        for ((mode, expected) in expectedByMode) for (wireless in listOf(false, true))
+            for (network in WirelessNetworkChoice.entries) for (name in listOf(false, true)) {
                 assertEquals("$mode wireless=$wireless network=$network name=$name", expected,
-                    teslaBrowserActivation(mode, wireless, network, name))
+                    teslaBrowserActivation(mode, wireless, network, name, carlinkOutput = true, bothOutputs = false))
             }
     }
 
