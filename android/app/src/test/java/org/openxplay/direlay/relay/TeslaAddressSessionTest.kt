@@ -47,28 +47,94 @@ class TeslaAddressSessionTest {
         assertEquals(2, vpn.stopped); assertNull(session.active)
     }
 
-    @Test fun capturesModeAddressAndActualTransportAtTheNextStart() {
+    @Test fun liveModeAndAddressChangesKeepTheCapturedTransportNetworkAndOutputs() {
         session.prepare(settings, wireless = true)
-        val next = settings.copy(teslaBrowser = TeslaBrowserMode.VIRTUAL_NAME, teslaVirtualAddress = "100.88.0.2")
-        tick(value = next, wireless = false)
-        assertEquals("169.254.88.1", session.active?.address)
-        tick(value = next)
-        assertEquals(listOf("169.254.88.1"), vpn.started)
-        tick(false, next)
-        session.prepare(next, wireless = true)
-        tick(value = next)
-        assertEquals("100.88.0.2", session.active?.address)
-        assertEquals(TeslaBrowserMode.VIRTUAL_NAME, session.active?.mode)
+        tick()
+        for (mode in TeslaBrowserMode.entries.filter { it != TeslaBrowserMode.OFF }) {
+            val next = settings.copy(teslaBrowser = mode, connectionMode = ConnectionMode.USB,
+                wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.EXISTING_WIFI),
+                carlinkOutput = true, bothOutputs = false)
+            val starts = vpn.started.size
+            val stops = vpn.stopped
+            tick(value = next, wireless = false)
+            assertEquals(TeslaAddress(mode, checkNotNull(next.teslaAddress())), session.active)
+            assertEquals(starts + 1, vpn.started.size)
+            assertEquals(stops + 1, vpn.stopped)
+            tick(value = next, wireless = false)
+            assertEquals(starts + 1, vpn.started.size)
+        }
     }
 
-    @Test fun offStopsImmediatelyAndTurningItBackOnWaitsForAnotherStart() {
+    @Test fun switchingModesWithTheSameAddressIgnoresTheTunnelBeingRemoved() {
+        tick()
+        val named = settings.copy(teslaBrowser = TeslaBrowserMode.VIRTUAL_NAME)
+        tick(value = named, addresses = setOf("169.254.88.1"))
+        assertNull(session.failure)
+        assertEquals(TeslaAddress(TeslaBrowserMode.VIRTUAL_NAME, "169.254.88.1"), session.active)
+        assertEquals(listOf("169.254.88.1", "169.254.88.1"), vpn.started)
+        assertEquals(1, vpn.stopped)
+    }
+
+    @Test fun editingTheSelectedAddressReestablishesTheVpnInTheSameSession() {
+        tick()
+        val edited = settings.copy(teslaPublicAddress = "169.254.88.2")
+        tick(value = edited); tick(value = edited)
+        assertEquals(listOf("169.254.88.1", "169.254.88.2"), vpn.started)
+        assertEquals(1, vpn.stopped)
+        assertEquals(TeslaAddress(TeslaBrowserMode.PUBLIC_ADDRESS, "169.254.88.2"), session.active)
+        tick(value = edited.copy(teslaMirrorAddress = "100.88.0.2"))
+        assertEquals(2, vpn.started.size)
+    }
+
+    @Test fun offStopsImmediatelyAndTurningItBackOnStartsInTheSameSession() {
         tick()
         tick(value = settings.copy(teslaBrowser = TeslaBrowserMode.OFF))
         assertNull(session.active); assertEquals(1, vpn.stopped)
-        tick()
-        assertEquals(1, vpn.started.size)
-        tick(false); tick()
+        tick(); tick()
         assertEquals(2, vpn.started.size)
+        assertNotNull(session.active)
+    }
+
+    @Test fun aSessionStartedOffCanTurnOnAndExplicitStopStillDisablesIt() {
+        val off = settings.copy(teslaBrowser = TeslaBrowserMode.OFF)
+        session.prepare(off, wireless = true)
+        tick(value = off)
+        assertTrue(vpn.started.isEmpty())
+        tick()
+        assertNotNull(session.active)
+        session.stop()
+        tick(value = settings.copy(teslaBrowser = TeslaBrowserMode.TESLA_ANDROID))
+        assertNull(session.active)
+        assertEquals(1, vpn.started.size)
+    }
+
+    @Test fun aFailureAfterSwitchIsReportedAndALaterSwitchRetries() {
+        tick()
+        vpn.failure = SecurityException("VPN consent revoked")
+        val mirror = settings.copy(teslaBrowser = TeslaBrowserMode.TESLAMIRROR)
+        tick(value = mirror); tick(value = mirror)
+        assertNull(session.active)
+        assertEquals("VPN consent revoked", session.failure)
+        assertEquals(2, vpn.started.size)
+        vpn.failure = null
+        val direct = settings.copy(teslaBrowser = TeslaBrowserMode.TESLA_ANDROID)
+        tick(value = direct)
+        assertNull(session.failure)
+        assertEquals(TeslaAddress(TeslaBrowserMode.TESLA_ANDROID, "3.3.3.1"), session.active)
+        assertEquals(3, vpn.started.size)
+    }
+
+    @Test fun turningOnWithoutConsentReportsFailureUntilAnotherPairIsSelected() {
+        tick(value = settings.copy(teslaBrowser = TeslaBrowserMode.OFF))
+        vpn.failure = SecurityException("VPN consent required")
+        tick(); tick()
+        assertEquals("VPN consent required", session.failure)
+        assertEquals(1, vpn.started.size)
+        tick(value = settings.copy(teslaBrowser = TeslaBrowserMode.OFF))
+        assertNull(session.failure)
+        vpn.failure = null
+        tick()
+        assertNotNull(session.active)
     }
 
     @Test fun readsLivePhoneAddressesOnlyAtStartAndRechecksThemOnRestart() {
@@ -115,7 +181,7 @@ class TeslaAddressSessionTest {
     }
 
     @Test fun carlinkOnlyNeverStartsAVpnButBrowserAndCombinedOutputsDo() {
-        for (mode in listOf(TeslaBrowserMode.PUBLIC_ADDRESS, TeslaBrowserMode.VIRTUAL_NAME))
+        for (mode in TeslaBrowserMode.entries.filter { it != TeslaBrowserMode.OFF })
             for ((carlink, both, browser) in listOf(Triple(false, false, true), Triple(false, true, true),
                 Triple(true, false, false), Triple(true, true, true))) {
                 val chosen = settings.copy(teslaBrowser = mode, carlinkOutput = carlink, bothOutputs = both)
@@ -145,6 +211,10 @@ class TeslaAddressSessionTest {
         tick()
         assertTrue(checkNotNull(session.failure).contains("OEM reason"))
         assertEquals(1, vpn.started.size)
+        tick(value = settings.copy(teslaBrowser = TeslaBrowserMode.TESLA_ANDROID))
+        assertNull(session.failure)
+        assertEquals(TeslaAddress(TeslaBrowserMode.TESLA_ANDROID, "3.3.3.1"), session.active)
+        assertEquals(2, vpn.started.size)
         tick(false)
         assertNull(session.failure)
     }

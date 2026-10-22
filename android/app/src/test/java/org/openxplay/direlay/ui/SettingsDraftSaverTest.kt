@@ -23,16 +23,20 @@ class SettingsDraftSaverTest {
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
 
-    @Test fun teslaModeAndBothAddressesSurviveRotationAndOlderDraftsKeepDefaults() {
+    @Test fun teslaModeAndAllAddressesSurviveRotationAndOlderDraftsKeepDefaults() {
         for (mode in TeslaBrowserMode.entries) {
-            val chosen = base.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2")
+            val chosen = base.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",
+                teslaMirrorAddress = "100.88.0.3", teslaAndroidAddress = "3.3.3.3")
             val parcel = Parcel.obtain()
             try {
                 parcel.writeBundle(bundle(chosen)); parcel.setDataPosition(0)
                 assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
             } finally { parcel.recycle() }
         }
-        val old = bundle(base).apply { remove("teslaBrowser"); remove("teslaVirtualAddress"); remove("teslaPublicAddress") }
+        val old = bundle(base).apply {
+            remove("teslaBrowser"); remove("teslaVirtualAddress"); remove("teslaPublicAddress")
+            remove("teslaMirrorAddress"); remove("teslaAndroidAddress")
+        }
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
 

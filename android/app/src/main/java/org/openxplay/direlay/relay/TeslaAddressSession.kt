@@ -8,7 +8,7 @@ import org.openxplay.direlay.settings.*
 
 data class TeslaAddress(val mode: TeslaBrowserMode, val address: String)
 
-/** Captures next-start choices and isolates VPN failure from the CarPlay session. */
+/** Captures input choices, follows live Tesla settings and isolates VPN failure from CarPlay. */
 class TeslaAddressSession(private val vpn: TeslaAddressVpn, private val clock: () -> Long = System::nanoTime) : AutoCloseable {
     @Volatile var active: TeslaAddress? = null
         private set
@@ -19,6 +19,7 @@ class TeslaAddressSession(private val vpn: TeslaAddressVpn, private val clock: (
     private var running = false
     private var disabled = false
     private var attempted = false
+    private var requested: Pair<TeslaBrowserMode, String?>? = null
     private var request: Long? = null
     private var deadline = 0L
 
@@ -42,19 +43,25 @@ class TeslaAddressSession(private val vpn: TeslaAddressVpn, private val clock: (
             disabled = false; attempted = false; failure = null
             running = true
         }
-        if (settings.teslaBrowser == TeslaBrowserMode.OFF) { stop(); return }
         if (disabled) return
+        val previousAddress = active?.address
+        val next = settings.teslaBrowser to settings.teslaAddress()
+        if (requested != next) {
+            stopVpn()
+            active = null; failure = null; attempted = false
+            requested = next
+        }
         val (chosen, useWireless) = checkNotNull(session)
-        if (teslaBrowserActivation(chosen.teslaBrowser, useWireless, chosen.wirelessNetwork.choice,
+        if (teslaBrowserActivation(settings.teslaBrowser, useWireless, chosen.wirelessNetwork.choice,
                 trustedNameConfigured, chosen.carlinkOutput, chosen.bothOutputs) != TeslaBrowserActivation.READY) {
-            if (request != null) stop()
+            if (request != null) { stopVpn(); active = null; attempted = false }
             return
         }
         if (!attempted) {
             attempted = true
             try {
-                val address = checkNotNull(chosen.teslaAddress())
-                require(TeslaAddressPolicy.valid(address, phoneAddresses())) { "Invalid or already assigned Tesla address: $address" }
+                val address = checkNotNull(settings.teslaAddress())
+                require(TeslaAddressPolicy.valid(address, phoneAddresses() - listOfNotNull(previousAddress).toSet())) { "Invalid or already assigned Tesla address: $address" }
                 request = vpn.start(address)
                 deadline = clock() + 15_000_000_000L
             } catch (cause: Exception) { failure = failureText(cause) { it } }
@@ -62,25 +69,32 @@ class TeslaAddressSession(private val vpn: TeslaAddressVpn, private val clock: (
         val id = request ?: return
         val state = vpn.snapshot()
         when {
-            state.request == id && state.active -> active = TeslaAddress(chosen.teslaBrowser, checkNotNull(state.address))
+            state.request == id && state.active -> active = TeslaAddress(settings.teslaBrowser, checkNotNull(state.address))
             state.request == id && state.failure != null -> {
                 val cause = state.failure
-                stop()
+                stopVpn()
+                active = null
                 failure = cause
             }
             clock() >= deadline -> {
-                stop()
+                stopVpn()
+                active = null
                 failure = "Timed out waiting for the Tesla address VPN"
             }
         }
     }
 
-    /** Off and Stop remove the address immediately, even if the input service is still winding down. */
+    /** Stop removes the address immediately, even if the input service is still winding down. */
     @Synchronized fun stop() {
         prepared = null
         disabled = true
         active = null
         failure = null
+        requested = null
+        stopVpn()
+    }
+
+    private fun stopVpn() {
         if (request != null) {
             request = null
             try { vpn.stop() } catch (cause: Exception) { failure = failureText(cause) { it } }

@@ -18,11 +18,15 @@ class TeslaBrowserTest {
         assertFalse(TeslaAddressPolicy.valid("169.254.88.1", setOf("169.254.88.1")))
     }
 
-    @Test fun bothModesDefaultToAUsableLinkLocalAddress() {
+    @Test fun defaultsKeepLinkLocalAndReferenceRangeChoices() {
         assertEquals("169.254.88.1", TeslaAddressPolicy.DEFAULT_VIRTUAL)
         assertEquals("169.254.88.1", TeslaAddressPolicy.DEFAULT_PUBLIC)
         assertTrue(TeslaAddressPolicy.valid(TeslaAddressPolicy.DEFAULT_VIRTUAL))
         assertTrue(TeslaAddressPolicy.valid(TeslaAddressPolicy.DEFAULT_PUBLIC))
+        assertEquals("100.88.0.1", TeslaAddressPolicy.DEFAULT_MIRROR)
+        assertEquals("3.3.3.1", TeslaAddressPolicy.DEFAULT_ANDROID)
+        assertTrue(TeslaAddressPolicy.valid(TeslaAddressPolicy.DEFAULT_MIRROR))
+        assertTrue(TeslaAddressPolicy.valid(TeslaAddressPolicy.DEFAULT_ANDROID))
     }
 
     @Test fun acceptsOnlyTheRfc3927UsableLinkLocalRange() {
@@ -62,7 +66,7 @@ class TeslaBrowserTest {
                         mode == TeslaBrowserMode.OFF -> TeslaBrowserActivation.OFF
                         !wireless -> TeslaBrowserActivation.NEEDS_WIRELESS
                         network == WirelessNetworkChoice.EXISTING_WIFI -> TeslaBrowserActivation.NEEDS_PHONE_NETWORK
-                        mode == TeslaBrowserMode.VIRTUAL_NAME && !name -> TeslaBrowserActivation.NEEDS_NAME
+                        mode.usesTrustedName && !name -> TeslaBrowserActivation.NEEDS_NAME
                         else -> TeslaBrowserActivation.READY
                     }
                     assertEquals("$mode carlink=$carlink both=$both wireless=$wireless network=$network name=$name", expected,
@@ -71,9 +75,9 @@ class TeslaBrowserTest {
     }
 
     @Test fun carlinkOnlyNeedsBrowserBeforeTransportNetworkOrNameChecksUnlessOff() {
-        val expectedByMode = mapOf(TeslaBrowserMode.OFF to TeslaBrowserActivation.OFF,
-            TeslaBrowserMode.VIRTUAL_NAME to TeslaBrowserActivation.NEEDS_BROWSER,
-            TeslaBrowserMode.PUBLIC_ADDRESS to TeslaBrowserActivation.NEEDS_BROWSER)
+        val expectedByMode = TeslaBrowserMode.entries.associateWith {
+            if (it == TeslaBrowserMode.OFF) TeslaBrowserActivation.OFF else TeslaBrowserActivation.NEEDS_BROWSER
+        }
         for ((mode, expected) in expectedByMode) for (wireless in listOf(false, true))
             for (network in WirelessNetworkChoice.entries) for (name in listOf(false, true)) {
                 assertEquals("$mode wireless=$wireless network=$network name=$name", expected,
@@ -81,10 +85,12 @@ class TeslaBrowserTest {
             }
     }
 
-    @Test fun aPublicNameOverrideExistsOnlyForAnActiveVirtualNameAddress() {
-        for (mode in TeslaBrowserMode.entries) assertNull(teslaPublishedAddress(mode, null))
-        assertNull(teslaPublishedAddress(TeslaBrowserMode.OFF, "100.88.0.1"))
-        assertNull(teslaPublishedAddress(TeslaBrowserMode.PUBLIC_ADDRESS, "3.3.3.1"))
-        assertEquals("100.88.0.2", teslaPublishedAddress(TeslaBrowserMode.VIRTUAL_NAME, "100.88.0.2"))
+    @Test fun aPublicNameOverrideExistsOnlyForActiveTrustedNameModes() {
+        for (mode in TeslaBrowserMode.entries) {
+            assertNull(teslaPublishedAddress(mode, null))
+            val expected = if (mode in listOf(TeslaBrowserMode.VIRTUAL_NAME, TeslaBrowserMode.TESLAMIRROR)) "100.88.0.2" else null
+            assertEquals(expected, teslaPublishedAddress(mode, "100.88.0.2"))
+            assertEquals(expected != null, mode.usesTrustedName)
+        }
     }
 }

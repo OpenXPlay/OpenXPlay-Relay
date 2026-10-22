@@ -24,12 +24,13 @@ class AdminSettingsMappingTest {
     }
     @Test fun teslaSettingsRemainNativeAndSurviveUnrelatedAdminEdits() {
         val before = initial().copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS,
-            teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2")
+            teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",
+            teslaMirrorAddress = "100.88.0.3", teslaAndroidAddress = "3.3.3.3")
         assertFalse(AdminSettingsMapping.schema.flatMap { it.fields }.any { it.key.startsWith("tesla") })
         assertFalse(AdminSettingsMapping.values(before).keys.any { it.startsWith("tesla") })
         assertEquals(before.copy(autoStartOnBoot = true),
             AdminSettingsMapping.update(before, mapOf("bootStart" to true), true).settings)
-        for (key in listOf("teslaBrowser", "teslaVirtualAddress", "teslaPublicAddress"))
+        for (key in listOf("teslaBrowser", "teslaVirtualAddress", "teslaPublicAddress", "teslaMirrorAddress", "teslaAndroidAddress"))
             assertNull(AdminSettingsMapping.update(before, mapOf(key to "3.3.3.3"), true).settings)
     }
     @Test fun allSupportedSettingsRoundTripWithoutLosingNativeFields() {

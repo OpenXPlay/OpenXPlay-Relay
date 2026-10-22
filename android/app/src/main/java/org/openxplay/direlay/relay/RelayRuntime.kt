@@ -360,8 +360,8 @@ class RelayRuntime(private val context: Context,
 
     private fun webTlsAddresses(): Set<String> {
         val settings = settingsStore.snapshot.value
-        val addresses = if (settings == null) carIpv4 else teslaTlsAddresses(carIpv4, settings.teslaBrowser, settings.teslaPublicAddress)
-        return addresses + listOfNotNull(teslaAddress?.takeIf { it.mode == TeslaBrowserMode.PUBLIC_ADDRESS }?.address)
+        val addresses = if (settings == null) carIpv4 else teslaTlsAddresses(carIpv4, settings.teslaBrowser, settings.teslaAddress().orEmpty())
+        return addresses + listOfNotNull(teslaAddress?.takeIf { it.mode != TeslaBrowserMode.OFF && !it.mode.usesTrustedName }?.address)
     }
     @Volatile var localPreview = false
         private set
@@ -1046,11 +1046,10 @@ class RelayRuntime(private val context: Context,
     fun teslaUrl(): String? {
         if (!webEnabled || !serverState.startsWith("TLS enabled")) return null
         val active = teslaAddress ?: return null
-        val host = when (active.mode) {
-            TeslaBrowserMode.VIRTUAL_NAME -> publicName.status.value.takeIf { it.address == active.address }?.trustedName
-            TeslaBrowserMode.PUBLIC_ADDRESS -> active.address
-            TeslaBrowserMode.OFF -> null
-        } ?: return null
+        val host = if (active.mode.usesTrustedName)
+            publicName.status.value.takeIf { it.address == active.address }?.trustedName
+        else active.address
+        if (host == null) return null
         return "https://$host:${configuredWebPort ?: TlsStore.port(true)}/"
     }
 

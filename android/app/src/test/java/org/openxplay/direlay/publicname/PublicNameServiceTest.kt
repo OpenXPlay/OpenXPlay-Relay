@@ -191,8 +191,16 @@ class PublicNameServiceTest {
         activeTeslaAddress = "100.88.0.2"
         service.refreshAddress(); runQueued()
         assertEquals("address 100.88.0.2", provider.events.last())
-        teslaMode = TeslaBrowserMode.PUBLIC_ADDRESS
+        teslaMode = TeslaBrowserMode.TESLAMIRROR
+        activeTeslaAddress = "100.88.0.3"
+        service.refreshAddress(); runQueued()
+        assertEquals("address 100.88.0.3", provider.events.last())
+        teslaMode = TeslaBrowserMode.TESLA_ANDROID
         activeTeslaAddress = "3.3.3.1"
+        service.refreshAddress(); runQueued()
+        assertEquals("address 192.168.43.1", provider.events.last())
+        teslaMode = TeslaBrowserMode.PUBLIC_ADDRESS
+        activeTeslaAddress = "169.254.88.1"
         service.refreshAddress(); runQueued()
         assertEquals("address 192.168.43.1", provider.events.last())
         val count = provider.events.size

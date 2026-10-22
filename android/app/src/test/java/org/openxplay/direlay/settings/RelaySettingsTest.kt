@@ -33,8 +33,15 @@ class RelaySettingsTest {
             assertEquals(TeslaBrowserMode.OFF, initial.teslaBrowser)
             assertEquals("169.254.88.1", initial.teslaVirtualAddress)
             assertEquals("169.254.88.1", initial.teslaPublicAddress)
+            assertEquals("100.88.0.1", initial.teslaMirrorAddress)
+            assertEquals("3.3.3.1", initial.teslaAndroidAddress)
+            val addresses = mapOf(TeslaBrowserMode.OFF to null,
+                TeslaBrowserMode.VIRTUAL_NAME to "169.254.88.1", TeslaBrowserMode.PUBLIC_ADDRESS to "169.254.88.1",
+                TeslaBrowserMode.TESLAMIRROR to "100.88.0.1", TeslaBrowserMode.TESLA_ANDROID to "3.3.3.1")
+            for ((mode, address) in addresses) assertEquals(address, initial.copy(teslaBrowser = mode).teslaAddress())
             for (mode in TeslaBrowserMode.entries) {
                 val chosen = initial.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",
+                    teslaMirrorAddress = "100.88.0.3", teslaAndroidAddress = "3.3.3.3",
                     car = CarSelection("tesla", model = "model-y-2025"))
                 store.save(chosen)
                 assertEquals(chosen, store.load())
@@ -42,7 +49,11 @@ class RelaySettingsTest {
                 assertEquals(mode.name, preferences.getString("teslaBrowser", null))
                 assertEquals("100.88.0.2", preferences.getString("teslaVirtualAddress", null))
                 assertEquals("3.3.3.2", preferences.getString("teslaPublicAddress", null))
+                assertEquals("100.88.0.3", preferences.getString("teslaMirrorAddress", null))
+                assertEquals("3.3.3.3", preferences.getString("teslaAndroidAddress", null))
             }
+            assertNotEquals(initial, initial.copy(teslaMirrorAddress = "100.88.0.3"))
+            assertNotEquals(initial, initial.copy(teslaAndroidAddress = "3.3.3.3"))
             assertNotEquals(initial, initial.copy(teslaVirtualAddress = "100.88.0.2"))
             assertNotEquals(initial, initial.copy(teslaPublicAddress = "3.3.3.2"))
         }

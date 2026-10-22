@@ -82,6 +82,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("teslaBrowser", value.teslaBrowser.name)
         putString("teslaVirtualAddress", value.teslaVirtualAddress)
         putString("teslaPublicAddress", value.teslaPublicAddress)
+        putString("teslaMirrorAddress", value.teslaMirrorAddress)
+        putString("teslaAndroidAddress", value.teslaAndroidAddress)
         putString("carplayResolution", value.carplayResolution.name)
         putInt("carplayScreenWidth", value.carplayScreenWidth.mm)
         value.display?.let { putIntArray("display", intArrayOf(it.width, it.height, it.density)) }
@@ -99,6 +101,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == bundle.getString("teslaBrowser") } ?: base.teslaBrowser,
         teslaVirtualAddress = bundle.getString("teslaVirtualAddress") ?: base.teslaVirtualAddress,
         teslaPublicAddress = bundle.getString("teslaPublicAddress") ?: base.teslaPublicAddress,
+        teslaMirrorAddress = bundle.getString("teslaMirrorAddress") ?: base.teslaMirrorAddress,
+        teslaAndroidAddress = bundle.getString("teslaAndroidAddress") ?: base.teslaAndroidAddress,
         carlinkReconnectOnResize = bundle.getBoolean("carlinkReconnectOnResize", base.carlinkReconnectOnResize),
         videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == bundle.getString("videoCodec") } ?: base.videoCodec,
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,

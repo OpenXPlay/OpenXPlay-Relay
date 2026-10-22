@@ -48,7 +48,8 @@ fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (
     }
     check("settings/output", saved.copy(carlinkDeviceName = value.carlinkDeviceName))
     check("settings/car", saved.copy(teslaBrowser = value.teslaBrowser,
-        teslaVirtualAddress = value.teslaVirtualAddress, teslaPublicAddress = value.teslaPublicAddress))
+        teslaVirtualAddress = value.teslaVirtualAddress, teslaPublicAddress = value.teslaPublicAddress,
+        teslaMirrorAddress = value.teslaMirrorAddress, teslaAndroidAddress = value.teslaAndroidAddress))
     val network = saved.copy(connectionMode = value.connectionMode, wirelessNetwork = value.wirelessNetwork)
     if (settingsErrors(network, wireless(network)).isNotEmpty()) add("settings/connection/network")
     check("developer/video", saved.copy(displayMode = value.displayMode, display = value.display, fps = value.fps))

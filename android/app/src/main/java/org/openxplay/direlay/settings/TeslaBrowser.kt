@@ -3,7 +3,9 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.settings
 
-enum class TeslaBrowserMode { OFF, VIRTUAL_NAME, PUBLIC_ADDRESS }
+enum class TeslaBrowserMode(val usesTrustedName: Boolean = false) {
+    OFF, VIRTUAL_NAME(true), PUBLIC_ADDRESS, TESLAMIRROR(true), TESLA_ANDROID
+}
 
 enum class TeslaBrowserActivation { OFF, NEEDS_BROWSER, NEEDS_WIRELESS, NEEDS_PHONE_NETWORK, NEEDS_NAME, READY }
 
@@ -14,13 +16,15 @@ fun teslaBrowserActivation(mode: TeslaBrowserMode, wireless: Boolean, network: W
     carlinkOutput && !bothOutputs -> TeslaBrowserActivation.NEEDS_BROWSER
     !wireless -> TeslaBrowserActivation.NEEDS_WIRELESS
     network == WirelessNetworkChoice.EXISTING_WIFI -> TeslaBrowserActivation.NEEDS_PHONE_NETWORK
-    mode == TeslaBrowserMode.VIRTUAL_NAME && !trustedNameConfigured -> TeslaBrowserActivation.NEEDS_NAME
+    mode.usesTrustedName && !trustedNameConfigured -> TeslaBrowserActivation.NEEDS_NAME
     else -> TeslaBrowserActivation.READY
 }
 
 object TeslaAddressPolicy {
     const val DEFAULT_VIRTUAL = "169.254.88.1"
     const val DEFAULT_PUBLIC = "169.254.88.1"
+    const val DEFAULT_MIRROR = "100.88.0.1"
+    const val DEFAULT_ANDROID = "3.3.3.1"
 
     /** Numeric dotted quads only: never resolve a hostname or accept ambiguous shortened IPv4 forms. */
     fun valid(address: String, phoneAddresses: Set<String> = emptySet()): Boolean {
@@ -43,12 +47,14 @@ fun RelaySettings.teslaAddress(): String? = when (teslaBrowser) {
     TeslaBrowserMode.OFF -> null
     TeslaBrowserMode.VIRTUAL_NAME -> teslaVirtualAddress
     TeslaBrowserMode.PUBLIC_ADDRESS -> teslaPublicAddress
+    TeslaBrowserMode.TESLAMIRROR -> teslaMirrorAddress
+    TeslaBrowserMode.TESLA_ANDROID -> teslaAndroidAddress
 }
 
 /** Keep generated TLS ready before the VPN appears; TlsStore retains previously covered addresses. */
-fun teslaTlsAddresses(addresses: Set<String>, mode: TeslaBrowserMode, publicAddress: String): Set<String> =
-    if (mode == TeslaBrowserMode.PUBLIC_ADDRESS && TeslaAddressPolicy.valid(publicAddress)) addresses + publicAddress else addresses
+fun teslaTlsAddresses(addresses: Set<String>, mode: TeslaBrowserMode, address: String): Set<String> =
+    if (mode != TeslaBrowserMode.OFF && !mode.usesTrustedName && TeslaAddressPolicy.valid(address)) addresses + address else addresses
 
 /** Public DNS changes only after the local address was actually established. */
 fun teslaPublishedAddress(mode: TeslaBrowserMode, activeAddress: String?): String? =
-    activeAddress.takeIf { mode == TeslaBrowserMode.VIRTUAL_NAME }
+    activeAddress.takeIf { mode.usesTrustedName }
