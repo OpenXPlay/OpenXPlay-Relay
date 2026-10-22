@@ -137,18 +137,14 @@ import org.openxplay.direlay.settings.*
         Box(Modifier.fillMaxSize()) {
             SharedTransitionLayout {
                 navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), contentKey = { "${it.lastIndex}:${it.last()}" }, transitionSpec = {
-                    val duration = if (motion) 300 else 0
-                    val easing = CubicBezierEasing(.2f, 0f, 0f, 1f)
-                    val forward = targetState.size > initialState.size
-                    (slideInHorizontally(tween(duration, easing = easing)) { if (forward) it / 8 else -it / 8 } + fadeIn(tween(duration))) togetherWith
-                        (slideOutHorizontally(tween(duration, easing = easing)) { if (forward) -it / 8 else it / 8 } + fadeOut(tween(duration)))
+                    relayPageTransition(targetState.size > initialState.size, motion)
                 }) { stack ->
                     val route = stack.last()
                     val shared = if (motion) Modifier.sharedBounds(rememberSharedContentState("vehicle"),
                         animatedVisibilityScope = this, enter = EnterTransition.None,
-                        exit = ExitTransition.None, boundsTransform = { _, _ -> tween(300, easing = CubicBezierEasing(.2f, 0f, 0f, 1f)) }) else Modifier
+                        exit = ExitTransition.None, boundsTransform = { _, _ -> tween(RelayPageDurationMillis, easing = RelayPageEasing) }) else Modifier
                     val sharedContent = if (motion) Modifier.animateEnterExit(
-                        enter = fadeIn(tween(80, delayMillis = 220)), exit = fadeOut(tween(80))) else Modifier
+                        enter = fadeIn(tween(80, delayMillis = RelayPageDurationMillis - 80)), exit = fadeOut(tween(80))) else Modifier
                     savedStates.SaveableStateProvider("${stack.lastIndex}:$route") {
                         when {
                             route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic, { action -> if (action == SetupAction.SHARED_WIFI) open("settings:sharedWifi") else if (action == SetupAction.SETTINGS) open("settings:output") else if (action == SetupAction.CHOOSE_IPHONE) open("settings:iphone") else onSetup(action) },

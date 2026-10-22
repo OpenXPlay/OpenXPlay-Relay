@@ -5,8 +5,9 @@ package org.openxplay.direlay.ui
 
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -29,6 +30,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.bluetooth.BondedDevices
 import org.openxplay.direlay.settings.*
@@ -63,6 +65,10 @@ import org.openxplay.direlay.settings.*
     // The network page disappears with USB; land on the choice that removed it.
     val step = setupStep(stepKey)?.takeIf { it in steps } ?: SetupStep.CONNECTION
     val index = steps.indexOf(step)
+    val motion = LocalRelayMotion.current
+    val stepState = remember { SeekableTransitionState(index) }
+    val stepTransition = rememberTransition(stepState, label = "setup step")
+    LaunchedEffect(index) { stepState.animateTo(index) }
     var attempted by rememberSaveable(stepKey) { mutableStateOf(false) }
     var nextRequests by remember { mutableIntStateOf(0) }
     val compact = compactSetup(LocalConfiguration.current.screenHeightDp)
@@ -80,14 +86,22 @@ import org.openxplay.direlay.settings.*
             else -> if (setupStepErrors(step, errors).isEmpty() && !saving && !saveFailed) go(steps[index + 1])
         }
     }
-    BackHandler(index > 0) { previous() }
+    BackHandler(index > 0 && Build.VERSION.SDK_INT < 34) { previous() }
+    PredictiveBackHandler(index > 0 && Build.VERSION.SDK_INT >= 34) { events ->
+        val previousIndex = index - 1
+        try {
+            events.collect { if (motion) stepState.seekTo(it.progress, previousIndex) }
+            previous()
+        } catch (_: CancellationException) {
+            withContext(NonCancellable) { stepState.animateTo(index) }
+        }
+    }
     val ready = home.presentation.canStart || running
     val nextEnabled = !saving && when (step) {
         SetupStep.PREPARE -> ready
         SetupStep.START -> running || (home.presentation.canStart && !home.busy)
         else -> true
     }
-    val motion = LocalRelayMotion.current
     Scaffold(topBar = {
         Column {
             TopAppBar(expandedHeight = 64.dp * LocalDensity.current.fontScale.coerceAtLeast(1f), title = {
@@ -132,12 +146,9 @@ import org.openxplay.direlay.settings.*
             }
         }
     }) { padding ->
-        AnimatedContent(index, Modifier.fillMaxSize().padding(padding), transitionSpec = {
-            val duration = if (motion) 250 else 0
-            val forward = targetState > initialState
-            (slideInHorizontally(tween(duration)) { if (forward) it / 6 else -it / 6 } + fadeIn(tween(duration))) togetherWith
-                (slideOutHorizontally(tween(duration)) { if (forward) -it / 6 else it / 6 } + fadeOut(tween(duration)))
-        }, label = "setup step") { shown ->
+        stepTransition.AnimatedContent(Modifier.fillMaxSize().padding(padding), transitionSpec = {
+            relayPageTransition(targetState > initialState, motion)
+        }) { shown ->
             val current = steps.getOrElse(shown) { step }
             Box(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
                 Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {

@@ -7,11 +7,22 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import androidx.compose.animation.*
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Icon
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+
+const val RelayPageDurationMillis = 300
+val RelayPageEasing = CubicBezierEasing(.2f, 0f, 0f, 1f)
+fun relayPageTransition(forward: Boolean, motion: Boolean): ContentTransform {
+    val duration = if (motion) RelayPageDurationMillis else 0
+    return (slideInHorizontally(tween(duration, easing = RelayPageEasing)) { if (forward) it / 8 else -it / 8 } + fadeIn(tween(duration))) togetherWith
+        (slideOutHorizontally(tween(duration, easing = RelayPageEasing)) { if (forward) -it / 8 else it / 8 } + fadeOut(tween(duration)))
+}
 
 val LocalRelayMotion = staticCompositionLocalOf { true }
 @Composable fun rememberRelayMotion(): Boolean {
