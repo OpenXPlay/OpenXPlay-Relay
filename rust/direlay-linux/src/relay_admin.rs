@@ -157,6 +157,7 @@ pub struct LinuxRelayAdmin {
     carlink: Arc<Mutex<AdminCarlink>>,
     armed_pin: Arc<Mutex<Option<ArmedPin>>>,
     receivers: Arc<crate::receiver_diagnostics::ReceiverDiagnostics>,
+    trace_status: Arc<crate::admin::server::trace_files::TraceStatus>,
     /// Set when an admin operation finished: the main loop ticks at once.
     tick_wake: (Mutex<bool>, std::sync::Condvar),
     /// Held while a provisioning step must finish before the controller's AP starts.
@@ -357,6 +358,7 @@ impl LinuxRelayAdmin {
             apply_pending: AtomicBool::new(false),
             armed_pin: Arc::new(Mutex::new(None)),
             receivers: Arc::default(),
+            trace_status: Arc::default(),
             tick_wake: Default::default(),
             provisioning: Arc::default(),
             carlink: Arc::new(Mutex::new(AdminCarlink {
@@ -544,11 +546,15 @@ impl LinuxRelayAdmin {
         let stream = self.stream.clone();
         let timeline_events = self.events.clone();
         let receivers = self.receivers.clone();
+        let trace_status = self.trace_status.clone();
         let hotspot = self.hotspot_lifetime.clone();
         let event_sink: EventSink = Arc::new(move |mut event| {
             if event["type"] == "pairing-url" {
                 let rows = crate::linux_hotspot::interface_addresses().unwrap_or_default();
                 prefer_pairing_address(&mut event, &interface, &rows);
+            }
+            if trace_status.observe(&event) {
+                return;
             }
             if receiver_event(&receivers, &event) {
                 return;
@@ -1254,6 +1260,7 @@ pub fn settings_schema() -> Vec<Section> {
         ("carlinkAutoReconnect", "bool"),
         ("carlinkReconnectOnResize", "bool"),
         ("carlinkHevc", "choice"),
+        ("carlinkTrace", "choice"),
         ("autoStart", "bool"),
         ("videoStats", "choice"),
         ("carPlayViewAreas", "bool"),
@@ -1295,9 +1302,11 @@ pub fn settings_schema() -> Vec<Section> {
             .then(|| format!("hint.field.{key}"))
         },
         options: match key {
-            "carlinkHevc" | "videoStats" => Some(
+            "carlinkHevc" | "carlinkTrace" | "videoStats" => Some(
                 (if key == "carlinkHevc" {
                     vec!["auto", "off"]
+                } else if key == "carlinkTrace" {
+                    vec!["off", "on"]
                 } else {
                     vec!["off", "5", "15"]
                 })
@@ -1539,6 +1548,52 @@ pub fn update_settings(
     }
 }
 impl RelayAdmin for LinuxRelayAdmin {
+    fn carlink_trace(&self) -> Option<(bool, bool, serde_json::Value)> {
+        let enabled = self
+            .settings
+            .try_lock()
+            .is_ok_and(|s| s.carlink_trace == "on");
+        let running = self
+            .supervisor
+            .try_lock()
+            .is_ok_and(|s| s.as_ref().is_some_and(|s| s.trace_running()));
+        Some((enabled, running, self.trace_status.get()))
+    }
+    fn carlink_trace_control(&self, clear: bool, action: &str) -> AdminResult {
+        let _lifecycle = self
+            .lifecycle
+            .try_lock()
+            .map_err(|_| "error.carlinkTraceBusy".to_string())?;
+        let enabled = self
+            .settings
+            .try_lock()
+            .is_ok_and(|s| s.carlink_trace == "on");
+        let supervisor = self
+            .supervisor
+            .try_lock()
+            .map_err(|_| "error.carlinkTraceBusy".to_string())?;
+        let clear_files = || {
+            crate::admin::server::trace_files::clear(
+                &self.options.state_dir.join("carlink-trace"),
+            )?;
+            self.trace_status.reset();
+            Ok(())
+        };
+        if clear {
+            match supervisor.as_ref() {
+                Some(s) => s
+                    .clear_trace(clear_files)
+                    .map_err(|_| "error.carlinkTraceBusy".to_string()),
+                None => clear_files().map_err(|_: std::io::Error| "error.request".to_string()),
+            }
+        } else if let Some(s) = supervisor.as_ref().filter(|s| s.trace_running() && enabled) {
+            s.send_control(&serde_json::json!({"type":"clink-capture","action":action}))
+                .map_err(|_| "error.carlinkTraceBusy".to_string())
+        } else {
+            Err("error.carlinkTraceOff".into())
+        }
+    }
+
     fn public_name_import(
         &self,
         content: &str,
@@ -1879,6 +1934,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                     || next.carlink_name != current.carlink_name
                     || next.carlink_model != current.carlink_model
                     || next.carlink_hevc != current.carlink_hevc
+                    || next.carlink_trace != current.carlink_trace
                     || next.carlink_auto_reconnect != current.carlink_auto_reconnect;
                 let controller_changed = next.iphone != current.iphone
                     || next.rfcomm_channel != current.rfcomm_channel
@@ -2163,6 +2219,90 @@ mod tests {
         )
     }
     #[test]
+    fn trace_control_clear_off_running_and_busy_supervisor() {
+        use std::os::unix::fs::PermissionsExt;
+        let (a, dir) = fake();
+        let trace_dir = dir.join("carlink-trace");
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let name = "media-00000001-00000001-0.ts.part";
+        std::fs::write(trace_dir.join(name), b"partial").unwrap();
+        assert_eq!(
+            a.carlink_trace_control(false, "start"),
+            Err("error.carlinkTraceOff".into())
+        );
+        a.carlink_trace_control(true, "clear").unwrap();
+        assert!(!trace_dir.join(name).exists());
+        {
+            let _busy = a.supervisor.lock().unwrap();
+            let start = std::time::Instant::now();
+            assert_eq!(
+                a.carlink_trace_control(true, "clear"),
+                Err("error.carlinkTraceBusy".into())
+            );
+            assert!(!a.carlink_trace().unwrap().1);
+            assert!(start.elapsed() < Duration::from_secs(1));
+        }
+        let script = dir.join("child");
+        let commands = dir.join("commands");
+        // The fake consumer keeps its stdin open and records complete command lines.
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> '{}'; done\n",
+                commands.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut options = a.options.clone();
+        options.settings.output = "carlink".into();
+        options.settings.carlink_trace = "on".into();
+        options.oxp_relay = script;
+        let settings = crate::supervisor_settings::supervisor_settings(
+            &options,
+            vec![],
+            &[],
+            String::new(),
+            None,
+            false,
+        );
+        let mut supervisor =
+            RelaySupervisor::new(settings, Arc::new(ProcessChildFactory), Arc::new(|_| {}));
+        supervisor.connect_carlink();
+        supervisor.start().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !supervisor.trace_running() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        *a.supervisor.lock().unwrap() = Some(supervisor);
+        a.settings.lock().unwrap().carlink_trace = "on".into();
+        a.carlink_trace_control(false, "start").unwrap();
+        a.carlink_trace_control(true, "clear").unwrap();
+        loop {
+            let data = std::fs::read_to_string(&commands).unwrap_or_default();
+            if data.lines().count() == 3 {
+                let lines = data
+                    .lines()
+                    .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    lines,
+                    vec![
+                        serde_json::json!({"type":"clink-capture","action":"start"}),
+                        serde_json::json!({"type":"clink-capture","action":"stop"}),
+                        serde_json::json!({"type":"clink-trace","action":"clear"})
+                    ]
+                );
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{data}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        a.supervisor.lock().unwrap().take().unwrap().stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn linux_car_settings_schema_and_output_restart() {
         let (a, dir) = fake();
         let fields: Vec<_> = settings_schema()
@@ -2175,6 +2315,7 @@ mod tests {
             "carlinkAutoReconnect",
             "carlinkReconnectOnResize",
             "carlinkHevc",
+            "carlinkTrace",
             "autoStart",
             "videoStats",
             "receiverPort",
@@ -2197,6 +2338,7 @@ mod tests {
             ("carlinkName", serde_json::json!("Car")),
             ("carlinkModel", serde_json::json!("Model")),
             ("carlinkHevc", serde_json::json!("off")),
+            ("carlinkTrace", serde_json::json!("on")),
             ("carlinkAutoReconnect", serde_json::json!(false)),
             ("receiverPort", serde_json::json!(9443)),
         ] {

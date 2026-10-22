@@ -24,6 +24,7 @@ pub fn supervisor_settings(
     let carlink = if o.settings.output != "web" {
         Some(CarlinkSettings {
             name: o.settings.carlink_name.clone(),
+            trace: o.settings.carlink_trace == "on",
             model: o.settings.carlink_model.clone(),
             // Linux has no H.265 encoder; both outputs share the iPhone stream.
             hevc: if o.settings.carlink_hevc == "auto"

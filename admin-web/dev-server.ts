@@ -62,7 +62,7 @@ export function mockSettings(linux = false): Settings {
       field('carlinkAutoReconnect', 'bool', { hintKey: 'hint.field.carlinkAutoReconnect', visibleWhen: when('output', 'carlink', 'both') }),
       field('carlinkReconnectOnResize', 'bool', { hintKey: 'hint.field.carlinkReconnectOnResize', visibleWhen: when('output', 'carlink', 'both') }),
       choice('carlinkHevc', ['auto', 'off'], { hintKey: 'hint.field.carlinkHevc', visibleWhen: when('output', 'carlink', 'both') }),
-      choice('videoStats', ['off', '5', '15']), field('carPlayViewAreas', 'bool'),
+      choice('videoStats', ['off', '5', '15']), choice('carlinkTrace', ['off', 'on']), field('carPlayViewAreas', 'bool'),
       field('receiverPort', 'number', { min: 1, max: 65535 }),
     ] },
     { id: 'audio', titleKey: 'section.audio', fields: [field('carBluetoothAudio', 'bool', { hintKey: 'hint.field.carBluetoothAudio' })] },
@@ -73,7 +73,7 @@ export function mockSettings(linux = false): Settings {
     { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('hotspotChannel', 'number', { min: 0, max: 177, labelKey: 'field.wifiChannel', hintKey: 'hint.field.hotspotChannel' }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
   ], installedPlugins: [{ id: 'org.openxplay.clock', name: { en: 'Clock', 'zh-CN': '时钟' }, version: '1.0.0', license: 'Apache-2.0 OR MIT', icon: null, nonCommercialAssets: false },
     { id: 'org.openxplay.pet', name: { en: 'Pet', 'zh-CN': '宠物' }, version: '1.0.0', license: '(Apache-2.0 OR MIT) AND CC-BY-NC-SA-4.0', icon: null, nonCommercialAssets: true }],
-  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', hotspotChannel: 0, hotspotBand: 'auto', devicePreset: 'auto', rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: true, autoStart: true, carlinkName: 'OpenXPlay Linux', carlinkModel: 'OpenXPlay Relay Linux', carlinkAutoReconnect: true, carlinkReconnectOnResize: false, carlinkHevc: 'auto', videoStats: 'off', carPlayViewAreas: true, receiverPort: 8443, ...PUBLIC_NAME_OFF } };
+  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', hotspotChannel: 0, hotspotBand: 'auto', devicePreset: 'auto', rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: true, autoStart: true, carlinkName: 'OpenXPlay Linux', carlinkModel: 'OpenXPlay Relay Linux', carlinkAutoReconnect: true, carlinkReconnectOnResize: false, carlinkHevc: 'auto', carlinkTrace: 'on', videoStats: 'off', carPlayViewAreas: true, receiverPort: 8443, ...PUBLIC_NAME_OFF } };
   const schema: Section[] = [
     { id: 'connection', titleKey: 'section.connection', fields: [
       field('iphone', 'phone', { hintKey: 'hint.iphone' }), choice('transport', ['wireless', 'usb']),
@@ -138,6 +138,20 @@ export function previewStatus(base: Status, state: string): Status {
   if (state === 'error') { status.state = 'reconnecting'; status.notices = ['wifi.joinFailed.timeout']; status.carlink = { state: 'error', detail: '', trusted: false, lastError: 'error.request' }; }
   return status;
 }
+// Synthetic recorder events use only private addresses and a fictional head unit.
+const traceSamples = [
+  { type: 'Link', stage: 'link_joined', fields: { address: '02:00:00:00:00:01', name: 'Demo Aurora', ssid: 'Demo Aurora', interface: 'wlan0', headUnitIp: '192.168.49.1', localIp: '192.168.49.2' } },
+  { type: 'Socket', service: 'RTSP', event: 'connect', remoteAddress: '192.168.49.1', port: 7236, errorClass: null },
+  { type: 'Rtsp', direction: 'RX', startLine: 'OPTIONS * RTSP/1.0', headers: { CSeq: '1', 'User-Agent': 'Demo Aurora' }, body: '' },
+  { type: 'Frame', direction: 'TX', port: 7237, service: 'control', category: 1, method: 4, kind: 0, sequence: 2, bodySize: 0, fields: {} },
+  { type: 'Negotiation', mode: '1280x720@30', decoders: ['avc1.42E01F', 'hvc1.1.6.L120.B0'], audio: false, rtpPort: 19000, display: '1280x720' },
+  { type: 'Video', event: 'format', source: 'input_session', codec: 'H264', width: 1280, height: 720, sps: ['6742001f'], pps: ['68ce3c80'] },
+  { type: 'Media', liveFrames: 1800, placeholderFrames: 2, droppedFrames: 3, keyframes: 30, videoBytes: 2400000, rtpPackets: 1900, rtpBytes: 2523200, sendStalls: 1, audioFrames: 0, queueOverflows: 0 },
+  { type: 'Input', kind: 'touch_down', coordinates: [[0.5, 0.5]], rawCoordinates: [[640, 360]], streamSize: [1280, 720], viewSize: [1280, 720] },
+  { type: 'Error', code: 'session_failed', exceptionClass: 'ConnectionReset', location: 'rtsp' },
+  { type: 'Link', stage: 'link_lost', fields: { reason: 'head unit disconnected' } },
+].map((event, index) => JSON.stringify({ ...event, atNanos: 1000000000 + index * 100000000, session: 1 }));
+
 export function mockApi(linux = false): Plugin {
   const preview = process.env.DIRELAY_PREVIEW_STATES === '1';
   let outageUntil = 0;
@@ -158,6 +172,12 @@ export function mockApi(linux = false): Plugin {
   const sessions = new Set<string>();
   const attempts = new Map<string, { count: number; until: number }>();
   const settings = mockSettings(linux);
+  let traceLines = [...traceSamples];
+  let capturing = false;
+  const traceName = 'trace-00000001-1792695600000-00000001.jsonl';
+  const mediaName = 'media-00000001-00000001-1792695600000.ts';
+  const mediaBody = Buffer.alloc(188, 0xff); mediaBody.set([0x47, 0x1f, 0xff, 0x10]);
+  let mediaAvailable = true;
   const publicProviders = new Map<string, { name: string; token: string }>();
   const currentSsid = () => String(settings.values.networkMode) === 'shared-wifi' ? wifiClient.ssid : null;
   const redactNetworks = () => {
@@ -219,6 +239,49 @@ export function mockApi(linux = false): Plugin {
         if (body.current !== password) return send(403, { error: 'password' });
         if (typeof body.new !== 'string' || body.new.length < 8) return send(422, { error: 'error.passwordFormat' });
         password = body.new; defaultPassword = password === 'openxplay'; return send(200, { ok: true });
+      }
+      if (linux && (path === '/carlink-trace' || path.startsWith('/carlink-trace/'))) {
+        const enabled = settings.values.carlinkTrace === 'on';
+        const traceRunning = enabled && (preview || running);
+        const traceBody = traceLines.length ? traceLines.join('\n') + '\n' : '';
+        const files = [
+          ...(traceLines.length ? [{ name: traceName, kind: 'trace', size: Buffer.byteLength(traceBody), modified: 1792695600 }] : []),
+          ...(mediaAvailable ? [{ name: mediaName, kind: 'media', size: mediaBody.length, modified: 1792695600 }] : []),
+        ];
+        if (path === '/carlink-trace' && method === 'GET') return send(200, { enabled, running: traceRunning,
+          status: { type: 'clink-trace', lines: traceLines.length, bytes: Buffer.byteLength(traceBody), dropped: 3, failure: null,
+            capture: { state: capturing ? 'capturing' : 'idle', bytes: capturing ? 1880 : 188, file: capturing ? mediaName + '.part' : null, reason: null } }, files });
+        if (path === '/carlink-trace/tail' && method === 'GET') {
+          const type = url.searchParams.get('type');
+          const limit = Number(url.searchParams.get('limit') ?? 200);
+          if (!Number.isInteger(limit) || limit < 0 || limit > 500 || (type !== null && !['Rtsp', 'Frame', 'Socket', 'Negotiation', 'Media', 'Video', 'Input', 'Error', 'Link'].includes(type))) return send(422, { error: 'error.invalid' });
+          return send(200, { lines: traceLines.filter(line => !type || JSON.parse(line).type === type).slice().reverse().slice(0, limit) });
+        }
+        if (method === 'GET' && (path === '/carlink-trace/download' || path.startsWith('/carlink-trace/files/'))) {
+          const bundle = path === '/carlink-trace/download';
+          const name = path.slice('/carlink-trace/files/'.length);
+          if (!bundle && !files.some(file => file.name === name)) return send(404, { error: 'error.request' });
+          const media = !bundle && name === mediaName;
+          const data = media ? mediaBody : Buffer.from(traceBody);
+          res.statusCode = 200;
+          res.setHeader('Content-Type', media ? 'video/mp2t' : 'application/x-ndjson');
+          res.setHeader('Content-Disposition', `attachment; filename="${bundle ? 'carlink-trace-demo.jsonl' : name}"`);
+          res.setHeader('Content-Length', data.length);
+          res.setHeader('Cache-Control', 'no-store');
+          return res.end(data);
+        }
+        if (path === '/carlink-trace/clear' && method === 'POST') {
+          capturing = false; traceLines = []; mediaAvailable = false;
+          return send(200, { ok: true });
+        }
+        if (path === '/carlink-trace/capture' && method === 'POST') {
+          if (!['start', 'stop'].includes(String(body.action))) return send(422, { error: 'error.invalid' });
+          if (!traceRunning) return send(409, { error: 'error.carlinkTraceOff' });
+          capturing = body.action === 'start';
+          if (!capturing) mediaAvailable = true;
+          return send(200, { ok: true });
+        }
+        return send(404, { error: 'error.request' });
       }
       if (linux && path === '/hotspot' && method === 'PUT') {
         if (typeof body.ssid !== 'string' || typeof body.password !== 'string') return send(422, { error: 'error.invalid' });

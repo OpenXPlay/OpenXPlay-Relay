@@ -42,6 +42,7 @@ pub struct Settings {
     pub carlink_auto_reconnect: bool,
     pub carlink_reconnect_on_resize: bool,
     pub carlink_hevc: String,
+    pub carlink_trace: String,
     pub auto_start: bool,
     pub video_stats: String,
     #[serde(rename = "carPlayViewAreas")]
@@ -82,6 +83,7 @@ impl Default for Settings {
             carlink_auto_reconnect: true,
             carlink_reconnect_on_resize: false,
             carlink_hevc: "auto".into(),
+            carlink_trace: "off".into(),
             auto_start: true,
             video_stats: "off".into(),
             car_play_view_areas: true,
@@ -259,6 +261,9 @@ impl Settings {
         if !["auto", "off"].contains(&self.carlink_hevc.as_str()) {
             return Err(invalid("Invalid carlinkHevc"));
         }
+        if !["off", "on"].contains(&self.carlink_trace.as_str()) {
+            return Err(invalid("Invalid carlinkTrace"));
+        }
         if !["off", "5", "15"].contains(&self.video_stats.as_str()) {
             return Err(invalid("Invalid videoStats"));
         }
@@ -315,6 +320,7 @@ mod tests {
             ("carlinkAutoReconnect", serde_json::json!(true)),
             ("carlinkReconnectOnResize", serde_json::json!(false)),
             ("carlinkHevc", serde_json::json!("auto")),
+            ("carlinkTrace", serde_json::json!("off")),
             ("autoStart", serde_json::json!(true)),
             ("videoStats", serde_json::json!("off")),
             ("carPlayViewAreas", serde_json::json!(true)),
@@ -363,6 +369,7 @@ mod tests {
         }
         for (key, values) in [
             ("carlinkHevc", vec!["auto", "off"]),
+            ("carlinkTrace", vec!["off", "on"]),
             ("videoStats", vec!["off", "5", "15"]),
         ] {
             for value in values.into_iter().chain(["", "ON", "30"]) {
@@ -370,6 +377,8 @@ mod tests {
                 v[key] = value.into();
                 let valid = if key == "carlinkHevc" {
                     ["auto", "off"].contains(&value)
+                } else if key == "carlinkTrace" {
+                    ["off", "on"].contains(&value)
                 } else {
                     ["off", "5", "15"].contains(&value)
                 };
@@ -389,6 +398,23 @@ mod tests {
             };
             assert_eq!(s.validate().is_ok(), port != 0 && port != 6975);
         }
+    }
+    #[test]
+    fn trace_setting_persists_and_rejects_non_strings() {
+        let dir = std::env::temp_dir().join(format!(
+            "trace-settings-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let settings = Settings {
+            carlink_trace: "on".into(),
+            ..Default::default()
+        };
+        settings.save(&dir).unwrap();
+        assert_eq!(Settings::load(&dir).unwrap().carlink_trace, "on");
+        assert!(
+            serde_json::from_value::<Settings>(serde_json::json!({"carlinkTrace":true})).is_err()
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn low_receiver_port_still_loads() {

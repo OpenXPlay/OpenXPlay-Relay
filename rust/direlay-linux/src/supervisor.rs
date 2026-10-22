@@ -9,7 +9,7 @@ use std::{
     io::{self, BufRead, BufReader, Read},
     net::Ipv4Addr,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Condvar, Mutex,
@@ -23,6 +23,7 @@ pub struct CarlinkSettings {
     pub name: String,
     pub model: String,
     pub hevc: String,
+    pub trace: bool,
     pub auto_reconnect: bool,
     pub ble: Option<BleCarlinkSettings>,
     pub head_unit: Ipv4Addr,
@@ -114,6 +115,13 @@ impl SupervisorSettings {
             args.push("--pairing".into());
         }
         if let Some(c) = &self.carlink {
+            if c.trace {
+                args.extend([
+                    "--clink-trace".into(),
+                    self.state_dir.join("carlink-trace").into_os_string(),
+                    "--control-stdin".into(),
+                ]);
+            }
             args.extend([
                 "--state-dir".into(),
                 self.state_dir.join("carlink").into_os_string(),
@@ -235,7 +243,49 @@ impl SupervisorSettings {
         settings.arguments()
     }
 }
+/// A nonblocking pipe: one small atomic write, never waiting for a reader or another request.
+#[derive(Clone)]
+pub struct ControlPipe(Arc<Mutex<ChildStdin>>);
+impl ControlPipe {
+    fn new(stdin: ChildStdin) -> io::Result<Self> {
+        use std::os::fd::AsRawFd;
+        let fd = stdin.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self(Arc::new(Mutex::new(stdin))))
+    }
+    pub fn send_control(&self, value: &Value) -> io::Result<()> {
+        use std::os::fd::AsRawFd;
+        let mut bytes = serde_json::to_vec(value)?;
+        bytes.push(b'\n');
+        // POSIX guarantees atomic pipe writes of at least 512 bytes; our commands are much smaller.
+        if bytes.len() > 512 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "control too long",
+            ));
+        }
+        let pipe = self
+            .0
+            .try_lock()
+            .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
+        let written = unsafe { libc::write(pipe.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
+        if written < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if written as usize != bytes.len() {
+            return Err(io::Error::from(io::ErrorKind::WriteZero));
+        }
+        Ok(())
+    }
+}
 pub trait RelayChild: Send {
+    fn control(&self) -> Option<ControlPipe> {
+        None
+    }
+
     fn exited(&mut self) -> io::Result<bool>;
     fn stop(&mut self) -> io::Result<()>;
 }
@@ -251,6 +301,7 @@ pub struct ProcessChildFactory;
 struct ProcessChild {
     child: Child,
     readers: Vec<JoinHandle<()>>,
+    control: Option<ControlPipe>,
 }
 /// Ignore invalid/oversized event lines while keeping a bounded buffer.
 pub fn forward_json_lines(input: impl Read, events: &EventSink) -> io::Result<()> {
@@ -297,10 +348,22 @@ impl ChildFactory for ProcessChildFactory {
     ) -> io::Result<Box<dyn RelayChild>> {
         let mut child = Command::new(binary)
             .args(args)
-            .stdin(Stdio::null())
+            .stdin(if args.iter().any(|a| a == "--control-stdin") {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+        let control = match child.stdin.take().map(ControlPipe::new).transpose() {
+            Ok(control) => control,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let copy = events.clone();
@@ -312,10 +375,17 @@ impl ChildFactory for ProcessChildFactory {
                 let _ = forward_json_lines(stderr, &events);
             }),
         ];
-        Ok(Box::new(ProcessChild { child, readers }))
+        Ok(Box::new(ProcessChild {
+            child,
+            readers,
+            control,
+        }))
     }
 }
 impl RelayChild for ProcessChild {
+    fn control(&self) -> Option<ControlPipe> {
+        self.control.clone()
+    }
     fn exited(&mut self) -> io::Result<bool> {
         Ok(self.child.try_wait()?.is_some())
     }
@@ -454,6 +524,8 @@ pub struct RelaySupervisor {
     restart: Arc<AtomicBool>,
     band_backoff: CarlinkBackoff,
     hevc_disabled: Arc<AtomicBool>,
+    control: Arc<Mutex<Option<ControlPipe>>>,
+    tracing: Arc<AtomicBool>,
 }
 impl RelaySupervisor {
     pub fn new(
@@ -474,6 +546,8 @@ impl RelaySupervisor {
             restart: Arc::new(AtomicBool::new(false)),
             band_backoff: CarlinkBackoff::default(),
             hevc_disabled: Arc::new(AtomicBool::new(false)),
+            control: Arc::default(),
+            tracing: Arc::new(AtomicBool::new(false)),
         }
     }
     /// Shares the band backoff with earlier and later supervisors of the same relay.
@@ -502,6 +576,35 @@ impl RelaySupervisor {
     pub fn running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
+    pub fn trace_running(&self) -> bool {
+        self.tracing.load(Ordering::Acquire)
+    }
+    pub fn send_control(&self, value: &Value) -> io::Result<()> {
+        let control = self
+            .control
+            .try_lock()
+            .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
+        control
+            .as_ref()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?
+            .send_control(value)
+    }
+    /// Serialize offline clearing with child startup, without waiting for the lifecycle worker.
+    pub fn clear_trace(&self, when_stopped: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+        let control = self
+            .control
+            .try_lock()
+            .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
+        if self.trace_running() {
+            let pipe = control
+                .as_ref()
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?;
+            pipe.send_control(&json!({"type":"clink-capture","action":"stop"}))?;
+            pipe.send_control(&json!({"type":"clink-trace","action":"clear"}))
+        } else {
+            when_stopped()
+        }
+    }
     pub fn connect_carlink(&self) {
         // Restart the child with Carlink arguments for one explicit attempt, also during a band
         // backoff. Lift the backoff first: the worker reads it after taking `connect`.
@@ -525,6 +628,8 @@ impl RelaySupervisor {
             self.stop.clone(),
             self.running.clone(),
         );
+        let control = self.control.clone();
+        let tracing = self.tracing.clone();
         let connect = self.connect.clone();
         let restart = self.restart.clone();
         let fragment = self.pairing_fragment.clone();
@@ -658,10 +763,20 @@ impl RelaySupervisor {
                     } else {
                         launch.launch_arguments(attempt)
                     };
+                    {
+                        let _guard = control.lock().unwrap();
+                        tracing.store(arguments.iter().any(|a| a == "--control-stdin"), Ordering::Release);
+                    }
                     // Reset session observations before the child can emit its first event.
                     events(json!({"type":"receiver-starting"}));
                     match factory.spawn(&settings.binary, &arguments, child_events.clone()) {
                         Ok(mut child) => {
+                            let pipe = child.control();
+                            {
+                                let mut available = control.lock().unwrap();
+                                tracing.store(pipe.is_some(), Ordering::Release);
+                                *available = pipe;
+                            }
                             running.store(true, Ordering::Relaxed);
                             events(json!({"type": "receiver-started"}));
                             loop {
@@ -682,13 +797,18 @@ impl RelaySupervisor {
                                     }
                                 }
                             }
+                            *control.lock().unwrap() = None;
                             running.store(false, Ordering::Relaxed);
                             if let Err(e) = child.stop() {
                                 events(json!({"type": "receiver-error", "message": e.to_string()}));
                             }
+                            tracing.store(false, Ordering::Release);
                             events(json!({"type":"receiver-stopped"}));
                         }
-                        Err(e) => events(json!({"type": "receiver-error", "message": e.to_string()})),
+                        Err(e) => {
+                            tracing.store(false, Ordering::Release);
+                            events(json!({"type": "receiver-error", "message": e.to_string()}));
+                        },
                     }
                     *fragment.lock().unwrap() = None;
                     if *stop.0.lock().unwrap() { break; }
@@ -818,6 +938,7 @@ mod band_tests {
                     name: crate::branding::DEVICE_NAME.into(),
                     model: crate::branding::MODEL.into(),
                     hevc: "auto".into(),
+                    trace: false,
                     auto_reconnect: true,
                     ports: BTreeMap::new(),
                 }),
@@ -1060,6 +1181,7 @@ mod tls_tests {
                 name: "My 车".into(),
                 model: "Model 1".into(),
                 hevc: "off".into(),
+                trace: false,
                 auto_reconnect: false,
                 ble: ble.then(|| BleCarlinkSettings {
                     adapter: None,
@@ -1111,6 +1233,16 @@ mod tls_tests {
                 ]
             });
             assert_eq!(strings(settings.arguments()), expected);
+            settings.carlink.as_mut().unwrap().trace = true;
+            expected.splice(
+                6..6,
+                ["--clink-trace", "/state/carlink-trace", "--control-stdin"],
+            );
+            assert_eq!(strings(settings.arguments()), expected);
+            settings.carlink = None;
+            assert!(!strings(settings.arguments())
+                .iter()
+                .any(|arg| arg == "--control-stdin"));
         }
     }
     #[test]
@@ -1180,5 +1312,58 @@ mod tls_tests {
             .iter()
             .any(|a| a.starts_with("--tls")));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+    #[test]
+    fn pipe_is_only_created_with_trace_and_dead_or_stuck_children_never_block() {
+        let factory = ProcessChildFactory;
+        let sink: EventSink = Arc::new(|_| {});
+        let mut off = factory
+            .spawn(Path::new("/bin/cat"), &[], sink.clone())
+            .unwrap();
+        assert!(off.control().is_none());
+        off.stop().unwrap();
+        // sh ignores the flag and sleeps without reading stdin.
+        let args = ["-c", "exec sleep 30", "--control-stdin"].map(OsString::from);
+        let mut stuck = factory
+            .spawn(Path::new("/bin/sh"), &args, sink.clone())
+            .unwrap();
+        let pipe = stuck.control().unwrap();
+        let start = Instant::now();
+        let value = json!({"type":"clink-capture","action":"start"});
+        let mut full = false;
+        for _ in 0..100_000 {
+            if let Err(e) = pipe.send_control(&value) {
+                assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
+                full = true;
+                break;
+            }
+        }
+        assert!(full);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        stuck.stop().unwrap();
+        let start = Instant::now();
+        assert_eq!(
+            pipe.send_control(&value).unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+        let mut echo = factory
+            .spawn(
+                Path::new("/bin/sh"),
+                &[
+                    "-c".into(),
+                    "read line; printf '%s\\n' \"$line\"".into(),
+                    "--control-stdin".into(),
+                ],
+                sink,
+            )
+            .unwrap();
+        echo.control().unwrap().send_control(&value).unwrap();
+        echo.stop().unwrap();
     }
 }

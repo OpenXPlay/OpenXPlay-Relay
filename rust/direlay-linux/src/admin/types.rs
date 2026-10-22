@@ -462,6 +462,14 @@ pub enum AdminUpdate {
 pub type AdminResult = Result<(), String>;
 /// The shell implements this seam; the HTTP server never accesses receiver internals.
 pub trait RelayAdmin: Send + Sync + 'static {
+    /// Linux recorder support; absent on other platforms.
+    fn carlink_trace(&self) -> Option<(bool, bool, Value)> {
+        None
+    }
+    fn carlink_trace_control(&self, _clear: bool, _action: &str) -> AdminResult {
+        Err("error.carlinkTraceOff".into())
+    }
+
     /// Called on the request worker after the response has been flushed.
     fn response_sent(&self) {}
     /// Discard deferred actions if delivery of the response fails.

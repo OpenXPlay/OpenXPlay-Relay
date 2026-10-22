@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 // Source: admin-web/dev-server.ts.
+#[path = "carlink_trace.rs"]
+pub(crate) mod trace_files;
+
 use super::{
     auth::{self, LoginError, PasswordError},
     types::*,
@@ -60,6 +63,7 @@ pub struct Response {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
     pub body: Vec<u8>,
+    pub files: Vec<(fs::File, u64)>,
 }
 impl Response {
     fn json(status: u16, value: Value) -> Self {
@@ -70,6 +74,7 @@ impl Response {
                 ("Cache-Control".into(), "no-store".into()),
             ]),
             body: serde_json::to_vec(&value).unwrap(),
+            files: Vec::new(),
         }
     }
     fn error(status: u16, key: &str) -> Self {
@@ -95,12 +100,23 @@ impl Response {
             429 => "Too Many Requests",
             _ => "Internal Server Error",
         };
-        write!(out, "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n", self.status, reason, self.body.len())?;
+        write!(out, "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n", self.status, reason, self.body.len() as u64 + self.files.iter().map(|(_, size)| size).sum::<u64>())?;
         for (key, value) in &self.headers {
             write!(out, "{key}: {value}\r\n")?;
         }
         out.write_all(b"\r\n")?;
         out.write_all(&self.body)?;
+        let mut buffer = [0u8; 16 * 1024];
+        for (file, length) in &self.files {
+            let mut input = file.take(*length);
+            loop {
+                let n = input.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                out.write_all(&buffer[..n])?;
+            }
+        }
         out.flush()
     }
 }
@@ -189,6 +205,9 @@ impl AdminServer {
         } else {
             Values::new()
         };
+        if path == "/carlink-trace" || path.starts_with("/carlink-trace/") {
+            return self.trace_route(request, path, &body);
+        }
         let string = |key: &str| body.get(key).and_then(Value::as_str);
         match (method, path) {
             ("GET", "/session") => Response::json(
@@ -345,6 +364,128 @@ impl AdminServer {
             _ => Response::error(404, "error.request"),
         }
     }
+    fn trace_route(&self, request: &Request, path: &str, body: &Values) -> Response {
+        use trace_files as carlink_trace;
+        let Some((enabled, running, status)) = self.admin.carlink_trace() else {
+            return Response::error(404, "error.request");
+        };
+        let dir = self.config.state_dir.join("carlink-trace");
+        match (request.method.as_str(), path) {
+            ("GET", "/carlink-trace") => match carlink_trace::listing(&dir) {
+                Ok(files) => Response::json(
+                    200,
+                    json!({"enabled":enabled,"running":running,"status":status,"files":files}),
+                ),
+                Err(_) => Response::error(500, "error.request"),
+            },
+            ("GET", "/carlink-trace/tail") => {
+                let mut filter = None;
+                let mut limit = 200;
+                for pair in request
+                    .path
+                    .split_once('?')
+                    .map_or("", |(_, q)| q)
+                    .split('&')
+                    .filter(|p| !p.is_empty())
+                {
+                    match pair.split_once('=') {
+                        Some(("type", t))
+                            if [
+                                "Rtsp",
+                                "Frame",
+                                "Media",
+                                "Link",
+                                "Error",
+                                "Video",
+                                "Input",
+                                "Socket",
+                                "Negotiation",
+                            ]
+                            .contains(&t) =>
+                        {
+                            filter = Some(t)
+                        }
+                        Some(("limit", n)) => match n.parse::<usize>() {
+                            Ok(n) if n <= 500 => limit = n,
+                            _ => return Response::error(422, "error.invalid"),
+                        },
+                        _ => return Response::error(422, "error.invalid"),
+                    }
+                }
+                match carlink_trace::tail(&dir, filter, limit) {
+                    Ok(lines) => Response::json(200, json!({"lines":lines})),
+                    Err(_) => Response::error(500, "error.request"),
+                }
+            }
+            ("GET", "/carlink-trace/download") => {
+                let Ok(entries) = carlink_trace::listing(&dir) else {
+                    return Response::error(500, "error.request");
+                };
+                let names = entries
+                    .iter()
+                    .filter(|e| e["kind"] == "trace")
+                    .map(|e| e["name"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                self.trace_download(
+                    &dir,
+                    &names,
+                    &format!("carlink-trace-{}.jsonl", trace_timestamp()),
+                    "application/x-ndjson",
+                )
+            }
+            ("GET", path) if path.starts_with("/carlink-trace/files/") => {
+                let name = &path[21..];
+                let mime = match carlink_trace::kind(name) {
+                    Some("trace") => "application/x-ndjson",
+                    Some("media") => "video/mp2t",
+                    _ => return Response::error(404, "error.request"),
+                };
+                self.trace_download(&dir, &[name], name, mime)
+            }
+            ("POST", "/carlink-trace/clear") => {
+                result(self.admin.carlink_trace_control(true, "clear"))
+            }
+            ("POST", "/carlink-trace/capture") => {
+                match body.get("action").and_then(Value::as_str) {
+                    Some(action @ ("start" | "stop")) => {
+                        if !enabled || !running {
+                            return Response::error(409, "error.carlinkTraceOff");
+                        }
+                        result(self.admin.carlink_trace_control(false, action))
+                    }
+                    _ => Response::error(422, "error.invalid"),
+                }
+            }
+            _ => Response::error(404, "error.request"),
+        }
+    }
+    fn trace_download(&self, dir: &Path, names: &[&str], filename: &str, mime: &str) -> Response {
+        let mut files = Vec::new();
+        for name in names {
+            let Ok(mut file) = trace_files::open(dir, name) else {
+                return Response::error(404, "error.request");
+            };
+            let Ok(length) =
+                trace_files::snapshot_length(&mut file, trace_files::kind(name) == Some("trace"))
+            else {
+                return Response::error(500, "error.request");
+            };
+            files.push((file, length));
+        }
+        Response {
+            status: 200,
+            body: Vec::new(),
+            files,
+            headers: BTreeMap::from([
+                ("Content-Type".into(), mime.into()),
+                ("Cache-Control".into(), "no-store".into()),
+                (
+                    "Content-Disposition".into(),
+                    format!("attachment; filename=\"{filename}\""),
+                ),
+            ]),
+        }
+    }
     fn static_file(&self, method: &str, path: &str) -> Response {
         if method != "GET" {
             return Response::error(404, "error.request");
@@ -403,6 +544,7 @@ impl AdminServer {
                 Response {
                     status: 200,
                     body,
+                    files: Vec::new(),
                     headers: BTreeMap::from([
                         ("Content-Type".into(), mime.into()),
                         ("Cache-Control".into(), "no-cache".into()),
@@ -747,6 +889,29 @@ impl Drop for AdminServerHandle {
     }
 }
 
+fn trace_timestamp() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .try_into()
+        .unwrap_or(0);
+    let mut utc = std::mem::MaybeUninit::<libc::tm>::uninit();
+    if unsafe { libc::gmtime_r(&seconds, utc.as_mut_ptr()) }.is_null() {
+        return "19700101-000000".into();
+    }
+    let utc = unsafe { utc.assume_init() };
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        utc.tm_year + 1900,
+        utc.tm_mon + 1,
+        utc.tm_mday,
+        utc.tm_hour,
+        utc.tm_min,
+        utc.tm_sec
+    )
+}
+
 #[cfg(test)]
 mod sni_tests {
     use super::*;
@@ -919,5 +1084,87 @@ mod sni_tests {
         named.clear();
         assert_eq!(presented(&config, dns("myrelay.duckdns.org")), saved.cert);
         fs::remove_dir_all(state).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    struct Bounded {
+        bytes: Vec<u8>,
+        largest: usize,
+    }
+    impl Write for Bounded {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.largest = self.largest.max(buf.len());
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn trace_bundle_content_length_matches_complete_json_lines() {
+        let dir =
+            std::env::temp_dir().join(format!("trace-bundle-{}", auth::random_hex(8).unwrap()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut files = Vec::new();
+        for (name, body) in [
+            (
+                "trace-00000001-0-00000001.jsonl",
+                "{\"type\":\"Link\"}\n{\"type\":",
+            ),
+            ("trace-00000002-0-00000001.jsonl", "{\"type\":\"Error\"}\n"),
+        ] {
+            fs::write(dir.join(name), body).unwrap();
+            let mut file = trace_files::open(&dir, name).unwrap();
+            let size = trace_files::snapshot_length(&mut file, true).unwrap();
+            files.push((file, size));
+        }
+        let response = Response {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: vec![],
+            files,
+        };
+        let mut out = Vec::new();
+        response.write(&mut out).unwrap();
+        let split = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let body = &out[split..];
+        assert!(String::from_utf8_lossy(&out[..split])
+            .contains(&format!("Content-Length: {}\r\n", body.len())));
+        assert_eq!(body, b"{\"type\":\"Link\"}\n{\"type\":\"Error\"}\n");
+        for line in std::str::from_utf8(body).unwrap().lines() {
+            assert!(serde_json::from_str::<Value>(line).unwrap().is_object());
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn file_response_writes_headers_and_bounded_chunks_and_ignores_growth() {
+        let path =
+            std::env::temp_dir().join(format!("trace-stream-{}", auth::random_hex(8).unwrap()));
+        fs::write(&path, vec![0x47; 100_000]).unwrap();
+        let file = fs::File::open(&path).unwrap();
+        let response = Response {
+            status: 200,
+            headers: BTreeMap::from([
+                ("Content-Type".into(), "video/mp2t".into()),
+                ("Cache-Control".into(), "no-store".into()),
+            ]),
+            body: vec![],
+            files: vec![(file, 90_000)],
+        };
+        let mut out = Bounded {
+            bytes: vec![],
+            largest: 0,
+        };
+        response.write(&mut out).unwrap();
+        assert!(out.largest <= 16 * 1024);
+        let split = out.bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(out.bytes.len() - split, 90_000);
+        assert!(String::from_utf8_lossy(&out.bytes[..split]).contains("Content-Length: 90000"));
+        assert!(out.bytes[split..].iter().all(|b| *b == 0x47));
+        fs::remove_file(path).unwrap();
     }
 }

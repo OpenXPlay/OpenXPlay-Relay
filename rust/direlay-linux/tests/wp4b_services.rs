@@ -1018,6 +1018,7 @@ fn nmcli_real_runner_uses_utf8_c_locale_and_argument_vectors() {
 fn supervisor_carlink_arguments() {
     let mut settings = supervisor_settings();
     settings.carlink = Some(supervisor::CarlinkSettings {
+        trace: false,
         name: branding::DEVICE_NAME.into(),
         model: branding::MODEL.into(),
         hevc: "auto".into(),
@@ -1193,6 +1194,7 @@ fn provisioning_can_switch_between_client_networks() {
 fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
     let mut settings = supervisor_settings();
     settings.carlink = Some(supervisor::CarlinkSettings {
+        trace: false,
         name: branding::DEVICE_NAME.into(),
         model: branding::MODEL.into(),
         hevc: "auto".into(),
@@ -1400,6 +1402,7 @@ fn supervisor_trust_policy_and_single_user_attempt() {
     let mut settings = supervisor_settings();
     settings.state_dir = dir.clone();
     settings.carlink = Some(supervisor::CarlinkSettings {
+        trace: false,
         name: branding::DEVICE_NAME.into(),
         model: branding::MODEL.into(),
         hevc: "auto".into(),
@@ -1876,4 +1879,215 @@ fn plugin_arguments_off_golden_and_on_filtered_in_order() {
     assert_eq!(settings.arguments(), enabled);
     settings.plugins = None;
     assert_eq!(settings.arguments(), expected);
+}
+
+struct TraceAdmin {
+    dir: PathBuf,
+    platform: &'static str,
+    enabled: bool,
+    running: bool,
+    commands: Mutex<Vec<Value>>,
+}
+impl RelayAdmin for TraceAdmin {
+    fn status(&self) -> AdminStatus {
+        let mut s = FakeAdmin.status();
+        s.platform = self.platform.into();
+        s
+    }
+    fn settings(&self) -> AdminSettings {
+        FakeAdmin.settings()
+    }
+    fn update(&self, values: Values) -> AdminUpdate {
+        FakeAdmin.update(values)
+    }
+    fn action(&self, name: &str) -> AdminResult {
+        FakeAdmin.action(name)
+    }
+    fn phones(&self) -> Vec<AdminPhone> {
+        vec![]
+    }
+    fn wifi_status(&self) -> WifiClient {
+        FakeAdmin.wifi_status()
+    }
+    fn wifi_networks(&self) -> Result<Vec<WifiNetwork>, String> {
+        Ok(vec![])
+    }
+    fn wifi_join(&self, _: &str, _: Option<&str>) -> AdminResult {
+        Ok(())
+    }
+    fn carlink_trace(&self) -> Option<(bool, bool, Value)> {
+        if self.platform != "linux" {
+            return None;
+        }
+        Some((
+            self.enabled,
+            self.running,
+            json!({"type":"clink-trace","lines":1}),
+        ))
+    }
+    fn carlink_trace_control(&self, clear: bool, action: &str) -> AdminResult {
+        if clear && !self.running {
+            admin::server::trace_files::clear(&self.dir).unwrap();
+        }
+        self.commands
+            .lock()
+            .unwrap()
+            .push(json!({"clear":clear,"action":action}));
+        Ok(())
+    }
+}
+#[test]
+fn trace_routes_auth_csrf_platform_validation_commands_and_streams() {
+    use std::io::Read;
+    for (platform, enabled, running) in [
+        ("android", true, true),
+        ("linux", false, false),
+        ("linux", true, true),
+    ] {
+        let temp = Temp::new();
+        let dir = temp.0.join("carlink-trace");
+        fs::create_dir_all(&dir).unwrap();
+        let trace = "trace-00000001-99-00000001.jsonl";
+        let newer = "trace-00000002-0-00000001.jsonl";
+        let media = "media-00000001-00000001-0.ts";
+        let partial = "media-00000001-00000002-0.ts.part";
+        fs::write(dir.join(trace), b"{\"type\":\"Link\"}\n{\"type\":\"Fra").unwrap();
+        fs::write(dir.join(newer), b"{\"type\":\"Error\"}\n").unwrap();
+        fs::write(dir.join(media), b"TS").unwrap();
+        fs::write(dir.join(partial), b"partial").unwrap();
+        let backend = Arc::new(TraceAdmin {
+            dir: dir.clone(),
+            platform,
+            enabled,
+            running,
+            commands: Mutex::new(vec![]),
+        });
+        let server = AdminServer::new(
+            backend.clone(),
+            auth(&temp.0.join("auth")),
+            AdminServerConfig::new(temp.0.clone(), temp.0.clone(), vec![]),
+        );
+        let token = login(&server);
+        for path in [
+            "",
+            "/tail",
+            "/download",
+            "/files/trace-00000001-99-00000001.jsonl",
+        ] {
+            assert_eq!(
+                server
+                    .route(
+                        &req(
+                            "GET",
+                            &format!("/api/v0/carlink-trace{path}"),
+                            json!({}),
+                            ""
+                        ),
+                        2
+                    )
+                    .status,
+                401
+            );
+        }
+        for path in ["clear", "capture"] {
+            let mut request = req(
+                "POST",
+                &format!("/api/v0/carlink-trace/{path}"),
+                json!({"action":"start"}),
+                &token,
+            );
+            request.headers.remove("x-openxplay-admin");
+            assert_eq!(server.route(&request, 2).status, 403);
+        }
+        let route = |method: &str, path: &str, body: Value| {
+            server.route(
+                &req(
+                    method,
+                    &format!("/api/v0/carlink-trace{path}"),
+                    body,
+                    &token,
+                ),
+                3,
+            )
+        };
+        if platform == "android" {
+            for (method, path) in [
+                ("GET", ""),
+                ("GET", "/tail"),
+                ("GET", "/download"),
+                ("GET", "/files/a"),
+                ("POST", "/clear"),
+                ("POST", "/capture"),
+            ] {
+                assert_eq!(route(method, path, json!({})).status, 404);
+            }
+            continue;
+        }
+        let listing: Value = serde_json::from_slice(&route("GET", "", json!({})).body).unwrap();
+        assert_eq!(listing["enabled"], enabled);
+        assert_eq!(listing["running"], running);
+        assert_eq!(listing["files"].as_array().unwrap().len(), 4);
+        for name in [
+            "../settings.json",
+            "%2e%2e%2fsettings.json",
+            partial,
+            "wrong-00000001-0-00000001.jsonl",
+            "trace-1-0-1.jsonl",
+        ] {
+            assert_eq!(
+                route("GET", &format!("/files/{name}"), json!({})).status,
+                404
+            );
+        }
+        let bundle = route("GET", "/download", json!({}));
+        assert_eq!(bundle.status, 200);
+        assert!(bundle.body.is_empty());
+        assert_eq!(bundle.files.len(), 2);
+        assert_eq!(bundle.headers["Content-Type"], "application/x-ndjson");
+        assert_eq!(bundle.headers["Cache-Control"], "no-store");
+        assert!(bundle.headers["Content-Disposition"]
+            .starts_with("attachment; filename=\"carlink-trace-"));
+        let content_length: u64 = bundle.files.iter().map(|(_, size)| size).sum();
+        let single = route("GET", &format!("/files/{trace}"), json!({}));
+        assert_eq!(single.files[0].1, b"{\"type\":\"Link\"}\n".len() as u64);
+        let mut bytes = Vec::new();
+        for (file, size) in bundle.files {
+            file.take(size).read_to_end(&mut bytes).unwrap();
+        }
+        assert_eq!(bytes, b"{\"type\":\"Link\"}\n{\"type\":\"Error\"}\n");
+        assert_eq!(content_length, bytes.len() as u64);
+        for line in std::str::from_utf8(&bytes).unwrap().lines() {
+            assert!(serde_json::from_str::<Value>(line).unwrap().is_object());
+        }
+        assert_eq!(
+            route("GET", &format!("/files/{media}"), json!({})).headers["Content-Type"],
+            "video/mp2t"
+        );
+        let tail: Value =
+            serde_json::from_slice(&route("GET", "/tail?type=Link&limit=1", json!({})).body)
+                .unwrap();
+        assert_eq!(tail["lines"], json!(["{\"type\":\"Link\"}"]));
+        for query in ["limit=501", "limit=no", "type=Errors", "type=Unknown"] {
+            assert_eq!(
+                route("GET", &format!("/tail?{query}"), json!({})).status,
+                422
+            );
+        }
+        for action in ["start", "stop"] {
+            assert_eq!(
+                route("POST", "/capture", json!({"action":action})).status,
+                if enabled && running { 200 } else { 409 }
+            );
+        }
+        assert_eq!(
+            route("POST", "/capture", json!({"action":"other"})).status,
+            422
+        );
+        assert_eq!(route("POST", "/clear", json!({})).status, 200);
+        assert_eq!(
+            backend.commands.lock().unwrap().last().unwrap(),
+            &json!({"clear":true,"action":"clear"})
+        );
+        assert_eq!(dir.join(trace).exists(), running);
+    }
 }

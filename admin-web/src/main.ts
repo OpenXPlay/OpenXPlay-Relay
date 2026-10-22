@@ -7,6 +7,7 @@ import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
+import { mountTrace, traceFilters, traceVisible } from './carlink-trace';
 import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDetails, nearbyNetworksView } from './views';
 import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
@@ -21,6 +22,7 @@ import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
 import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
+let disposeTrace: (() => void) | null = null;
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let language: Language = defaultLanguage(navigator.language);
 const t = (key: string, parameters?: Record<string, string | number>) => translate(language, key, parameters);
@@ -105,6 +107,7 @@ function shell() {
   });
 }
 function render() {
+  disposeTrace?.(); disposeTrace = null;
   shell();
   if (switching) renderSwitching();
   else if (handoff) renderHandoff();
@@ -165,6 +168,13 @@ function renderReady() {
     document.getElementById('forget-all-wifi')!.addEventListener('click', () => void forgetAllWifi());
   }
   if (developer) { container.insertAdjacentHTML('beforeend', `<section class="card" id="diagnostics-card"><h2>${t('diag.title')}</h2><div id="diagnostics"></div></section>`); renderDiagnostics(); }
+  if (traceVisible(status?.platform, developer, currentView)) {
+    const section = container.querySelector('[data-section="developer"]');
+    section?.insertAdjacentHTML('beforeend', `<section class="card" id="carlink-debug"><h3>${t('trace.title')}</h3><div data-trace-toggle></div><div class="field"><label for="trace-filter">${t('trace.filter')}</label><select id="trace-filter" data-trace-filter>${traceFilters.map((value, i) => `<option value="${value}">${t(['trace.all', 'trace.rtsp', 'trace.frames', 'trace.media', 'trace.link', 'trace.errors'][i])}</option>`).join('')}</select></div><p class="error" role="alert" data-trace-error></p><div data-trace-content></div></section>`);
+    const card = document.getElementById('carlink-debug');
+    const toggle = document.getElementById(fieldId('carlinkTrace'))?.closest('.field');
+    if (card) { if (toggle) card.querySelector('[data-trace-toggle]')!.append(toggle); disposeTrace = mountTrace(card, t, errorKey); }
+  }
   bindPassword();
 }
 function updateDashboard() {
@@ -480,6 +490,7 @@ function fieldMarkup(field: Field): string {
   const attributes = `id="${id}" aria-describedby="${desc}" aria-invalid="${invalid}"`;
   let control = '';
   if (field.type === 'plugins') control = `<div ${attributes}>${pluginList(settings!, language, t, developer)}</div>`;
+  else if (field.key === 'carlinkTrace') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attributes} type="checkbox" role="switch" ${value === 'on' ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'bool') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attributes} type="checkbox" role="switch" ${value ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'choice') control = `<fieldset ${attributes}><legend>${label}</legend><div class="choices">${field.options?.map((option, i) => {
     const hint = (field.key === 'transport' ? usbTransportHint(status?.platform, option.value) : undefined)
@@ -497,6 +508,7 @@ function bindField(field: Field) {
     const input = event.target as HTMLInputElement;
     queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked));
   });
+  else if (field.key === 'carlinkTrace') el.addEventListener('change', () => queueSave(field, (el as HTMLInputElement).checked ? 'on' : 'off'));
   else if (field.type === 'phone') el.addEventListener('click', () => void pickPhone(field));
   else if (field.type === 'choice') el.addEventListener('change', event => queueSave(field, (event.target as HTMLInputElement).value));
   else el.addEventListener(field.type === 'bool' ? 'change' : 'input', () => {

@@ -84,7 +84,7 @@ export function publicNameUrl(status: Pick<Status, 'publicName' | 'receiverUrls'
   if (!name) return null;
   return status.receiverUrls.find(url => { try { return new URL(url).hostname === name; } catch { return false; } }) ?? `https://${name}:${status.receiverPort || 8443}/`;
 }
-const technicalFields = new Set(['carlinkModel', 'carlinkHevc', 'receiverPort', 'wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
+const technicalFields = new Set(['carlinkModel', 'carlinkHevc', 'carlinkTrace', 'receiverPort', 'wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
 export function settingsViews(settings: Settings, developer: boolean, platform?: Status['platform']) {
   const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).filter(f => platform !== 'linux' || f.key !== 'hotspotBand').map(field => {
     if (field.key !== 'networkMode') return field;
