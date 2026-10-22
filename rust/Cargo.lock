@@ -235,7 +235,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "carplay-airplay"
-version = "0.1.5-beta.1"
+version = "0.1.5-beta.2"
 dependencies = [
  "aes",
  "carplay-iap2",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "carplay-iap2"
-version = "0.1.5-beta.1"
+version = "0.1.5-beta.2"
 dependencies = [
  "cms",
  "der",
@@ -928,7 +928,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openxplay-relay"
-version = "0.1.5-beta.1"
+version = "0.1.5-beta.2"
 dependencies = [
  "base64ct",
  "carplay-airplay",

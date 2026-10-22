@@ -31,6 +31,7 @@ if "$prepare"; then
     apt-get install -y -qq --no-install-recommends bluez network-manager iw dnsmasq-base python3 systemd init-system-helpers >/dev/null
 fi
 python3 "$(dirname "$0")/host-tuning-test.py"
+python3 "$(dirname "$0")/update-test.py"
 work=$(mktemp -d)
 cp "$1" "$work/base.deb"
 pass=0; failed=0
@@ -77,6 +78,7 @@ done
 check 'canonical clock guard' "cmp '$(dirname "$0")/../host/clock-guard' '$work/x/usr/lib/openxplay-relay/clock-guard'"
 check 'clock guard mode' "[ \"\$(stat -c %a '$work/x/usr/lib/openxplay-relay/clock-guard')\" = 755 ]"
 update=$work/x/usr/sbin/openxplay-relay-update
+sh "$(dirname "$0")/dpkg-lock-test.sh" "$update"
 run() { "$@" > "$work/out" 2>&1; rc=$?; tail -n 1 "$work/out"; return $rc; }
 
 # A minimal 0.1.0 device package owns the old paths, including the clock drop-in.
