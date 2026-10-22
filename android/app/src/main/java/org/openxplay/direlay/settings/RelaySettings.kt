@@ -65,6 +65,7 @@ data class RelaySettings(
     val bothOutputs: Boolean = false,
     val vehicleInformation: Boolean = false,
     val carlinkAutoReconnect: Boolean = true,
+    val carlinkReconnectOnResize: Boolean = false,
     val displayMode: DisplayMode = if (display == null) DisplayMode.AUTOMATIC else DisplayMode.FIXED,
     val iphoneAddress: String? = null,
     val plugins: Boolean = false,
@@ -78,7 +79,7 @@ data class RelaySettings(
     val videoCodec: VideoCodecSetting = VideoCodecSetting.AUTO,
     val videoStats: VideoStatsWindow = VideoStatsWindow.OFF,
     /** Offer the iPhone no CarPlay audio, so music, navigation and calls stay on its Bluetooth link with the car. */
-    val carBluetoothAudio: Boolean = false,
+    val carBluetoothAudio: Boolean = true,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false) {
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
@@ -127,6 +128,11 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     }
     private val relay get() = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
     private val diplay get() = context.getSharedPreferences("diplay", Context.MODE_PRIVATE)
+
+    init {
+        // Synchronous at runtime construction, before application startup can launch a CarPlay activity or service.
+        CarBluetoothAudioDefaults.apply(context, relay)
+    }
 
     private val cached = kotlinx.coroutines.flow.MutableStateFlow<RelaySettings?>(null)
     val snapshot: kotlinx.coroutines.flow.StateFlow<RelaySettings?> = cached
@@ -208,6 +214,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             relay.getBoolean("bothOutputs", false),
             relay.getBoolean("vehicleInformation", false),
             carlinkAutoReconnect = relay.getBoolean("carlinkAutoReconnect", true),
+            carlinkReconnectOnResize = relay.getBoolean("carlinkReconnectOnResize", false),
             mode,
             relay.getString("iphoneAddress", null),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
@@ -263,6 +270,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("bothOutputs", settings.bothOutputs)
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
+            .putBoolean("carlinkReconnectOnResize", settings.carlinkReconnectOnResize)
             .putBoolean("carlinkTrace", settings.carlinkTrace)
             .putString("carlinkHevc", settings.carlinkHevc.name)
             .putBoolean("carPlayViewAreas", settings.viewAreas)

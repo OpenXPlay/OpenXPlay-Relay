@@ -77,6 +77,7 @@ class AboutResourcesTest {
         val context = RuntimeEnvironment.getApplication()
         val keys = listOf(R.string.option_browser_hint, R.string.option_carlink_hint,
             R.string.option_wireless_hint, R.string.option_usb_hint, R.string.option_direct_hint,
+            R.string.carlink_resize_reconnect, R.string.carlink_resize_reconnect_hint,
             R.string.setup_not_recommended, R.string.setup_usb_hint, R.string.setup_carlink_hotspot_tip, R.string.usb_confirm_title,
             R.string.usb_confirm_intro, R.string.usb_confirm_power_title, R.string.usb_confirm_power,
             R.string.usb_confirm_cable_title, R.string.usb_confirm_cable, R.string.usb_confirm_use,

@@ -365,6 +365,8 @@
     <string name="host_frame_rate_measured">设定 %1$s fps · 实测 %2$s fps</string>
     <string name="carlink_auto_reconnect">Carlink 自动重连</string>
     <string name="carlink_auto_reconnect_hint">连接断开后自动重新连接车机。</string>
+    <string name="carlink_resize_reconnect">窗口尺寸变化时重新连接</string>
+    <string name="carlink_resize_reconnect_hint">车机切换 Carlink 显示区域后（例如从三分之二屏切到全屏），第一次触摸屏幕时会重新连接，以适配新尺寸。重新连接时画面会中断几秒。</string>
     <string name="shared_wifi_not_saved">此 Wi-Fi 尚未保存用于 CarPlay</string>
     <string name="shared_wifi_save_current">保存此 Wi-Fi</string>
     <string name="shared_wifi_unreadable">无法读取当前 Wi-Fi 名称。请手动选择已保存的网络。</string>

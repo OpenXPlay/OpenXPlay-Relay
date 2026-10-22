@@ -417,6 +417,7 @@ class RelayRuntime(private val context: Context,
     @Volatile private var carlinkEnded = false
     private var carlinkRetiring = false
     private var carlinkRestartPending = false
+    private val carlinkResizePolicy = CarlinkResizePolicy()
 
     private var webStarting = false
     private var lastWebFailure: String? = null
@@ -638,6 +639,7 @@ class RelayRuntime(private val context: Context,
         if (closed) return
         configureVehicle()
         val settings = settingsStore.awaitSnapshot()
+        carlinkResizePolicy.enabled = settings.carlinkReconnectOnResize
         if (!settings.carlinkTrace && traceCapture.isInitialized()) carlinkMediaCapture.stop()
         val permitted = StartupPermissions.carlink(Build.VERSION.SDK_INT, true).all {
             context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
@@ -688,12 +690,27 @@ class RelayRuntime(private val context: Context,
         val reservation = AirPlayP2pReservation(context)
         val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation)
         val sessionDiagnostics = ClinkSessionDiagnostics(carlinkPins, carlinkTrust, diagnostics)
+        carlinkResizePolicy.startSession()
+        var resizePlaying = false
+        fun observeResize(change: () -> Unit) {
+            try { setup.execute {
+                if (closed || carlinkLink !== link || carlinkRetiring || carlinkEnded) return@execute
+                // Read the live snapshot before resolving a pending reconnect or making a new decision.
+                carlinkResizePolicy.enabled = settingsStore.snapshot.value?.carlinkReconnectOnResize == true
+                change()
+                carlinkResizePolicy.reconnect(resizePlaying)?.let { resize ->
+                    Log.i("DiRelayCarlink", "view resized window=${resize.window.width}x${resize.window.height} view=${resize.view.width}x${resize.view.height}; reconnecting")
+                    reconnectCarlink()
+                }
+            } } catch (_: java.util.concurrent.RejectedExecutionException) { }
+        }
         val output = ClinkOutput(link, sessionDiagnostics.pinProvider, sessionDiagnostics.trustStore,
             deviceId = id, deviceName = requested.name,
             vehicleData = settings.vehicleInformation,
             hevc = requested.hevc, trace = trace, mediaTap = if (settings.carlinkTrace) carlinkMediaCapture else null,
             listener = object : ClinkListener {
                 override fun state(state: ClinkState) {
+                    observeResize { resizePlaying = state == ClinkState.PLAYING }
                     sessionDiagnostics.state(state)
                     carlinkState = state.name
                     if (state == ClinkState.NEGOTIATING) carlinkPins.paired()
@@ -729,6 +746,9 @@ class RelayRuntime(private val context: Context,
                 // Output-side video diagnostics only (queue resets); session diagnostics stay in the diagnostics port.
                 override fun diagnostic(message: String) { if (message.startsWith("video ") || message.startsWith("audio ") || message.startsWith("frame ")) android.util.Log.i("DiRelayCarlink", message) }
                 override fun statistics(stats: ClinkStatistics) { carlinkStatistics = stats }
+                override fun viewSize(width: Int, height: Int) {
+                    observeResize { carlinkResizePolicy.viewSize(width, height) }
+                }
                 override fun profileMismatch(inputCodec: String, decoders: List<String>) {
                     carlinkFailed = true
                     carlinkDetail = (carlinkVideoDetail.takeIf { carlinkVideoFailed }
@@ -765,7 +785,9 @@ class RelayRuntime(private val context: Context,
             if (!carlinkVideoFailed) carlinkError = null
             Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
         }, observeCapabilities = { caps ->
-            carlinkScreen = caps?.displays?.get(org.openxplay.stream.core.ScreenId.MAIN)
+            val screen = caps?.displays?.get(org.openxplay.stream.core.ScreenId.MAIN)
+            carlinkScreen = screen
+            if (screen != null) observeResize { carlinkResizePolicy.windowSize(screen.widthPx, screen.heightPx) }
             val decoders = caps?.decoders.orEmpty()
             if (carlinkDecoders != decoders) {
                 carlinkDecoders = decoders

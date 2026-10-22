@@ -371,6 +371,8 @@
     <string name="host_frame_rate_measured">%1$s fps configured · %2$s fps measured</string>
     <string name="carlink_auto_reconnect">Carlink auto-reconnect</string>
     <string name="carlink_auto_reconnect_hint">Reconnect to the head unit automatically after the connection drops.</string>
+    <string name="carlink_resize_reconnect">Reconnect when the window size changes</string>
+    <string name="carlink_resize_reconnect_hint">After the car changes the Carlink area (for example from two thirds of the screen to full screen), the first touch reconnects Carlink to fit the new size. The picture stops for a few seconds while it reconnects.</string>
     <string name="shared_wifi_not_saved">This Wi-Fi isn\'t saved for CarPlay</string>
     <string name="shared_wifi_save_current">Save this Wi-Fi</string>
     <string name="shared_wifi_unreadable">The current Wi-Fi name is unavailable. Choose a saved network manually.</string>

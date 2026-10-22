@@ -124,6 +124,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                                 trailing = { LabeledSwitch(stringResource(R.string.vehicle_title), draft.vehicleInformation, { draft = draft.copy(vehicleInformation = it) }) })
                             SettingsRow(stringResource(R.string.carlink_auto_reconnect), stringResource(R.string.carlink_auto_reconnect_hint), R.drawable.symbol_sync,
                                 trailing = { LabeledSwitch(stringResource(R.string.carlink_auto_reconnect), draft.carlinkAutoReconnect, { draft = draft.copy(carlinkAutoReconnect = it) }) })
+                            SettingsRow(stringResource(R.string.carlink_resize_reconnect), stringResource(R.string.carlink_resize_reconnect_hint), R.drawable.symbol_sync,
+                                trailing = { LabeledSwitch(stringResource(R.string.carlink_resize_reconnect), draft.carlinkReconnectOnResize, { draft = draft.copy(carlinkReconnectOnResize = it) }) })
                         }
                     }
                 }
