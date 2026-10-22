@@ -292,7 +292,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         SettingsRow(stringResource(R.string.direlay_attribution), stringResource(R.string.about_project), R.drawable.symbol_info,
             { link(context.getString(R.string.direlay_project_url)) })
         SettingsRow(stringResource(R.string.about_source), stringResource(R.string.about_source_hint), R.drawable.symbol_code,
-            { link(context.getString(R.string.direlay_project_url)) })
+            { link(context.getString(R.string.direlay_source_url)) })
         SettingsRow(stringResource(R.string.about_licence), stringResource(R.string.about_licence_hint), R.drawable.symbol_info,
             { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
         SmallHeading(stringResource(R.string.direlay_acknowledgements))

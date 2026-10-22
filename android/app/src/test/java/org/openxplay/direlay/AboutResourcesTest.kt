@@ -38,7 +38,13 @@ class AboutResourcesTest {
         }
         assertEquals("About", context.getString(R.string.direlay_about))
         assertEquals("Powered by OpenXPlay.", context.getString(R.string.direlay_attribution))
-        assertEquals("https://github.com/OpenXPlay/OpenXPlay-Relay", context.getString(R.string.direlay_project_url))
+        assertEquals("https://openxplay.org/en/", context.getString(R.string.direlay_project_url))
+        val chinese = android.content.res.Configuration(context.resources.configuration).apply {
+            setLocale(Locale.SIMPLIFIED_CHINESE)
+        }
+        val localized = context.createConfigurationContext(chinese)
+        assertEquals("https://openxplay.org", localized.getString(R.string.direlay_project_url))
+        assertEquals("https://github.com/OpenXPlay/OpenXPlay-Relay", context.getString(R.string.direlay_source_url))
         assertEquals("https://github.com/shihabal3amri/DiPlay", context.getString(R.string.direlay_diplay_url))
         assertEquals("https://github.com/shilapi/xcertplay", context.getString(R.string.direlay_xcertplay_url))
         val trademark = context.getString(R.string.direlay_trademark)

@@ -3,6 +3,7 @@
      Created by riko chen on 2026-10-14 -->
 <resources>
     <string name="direlay_app_name">OpenXPlay Relay</string>
+    <string name="direlay_project_url">https://openxplay.org</string>
     <string name="direlay_identity">CarPlay 身份</string>
     <string name="direlay_identity_hint">选择 identity.pk8 和 certificate.p7b，可同时选择或先后选择，顺序不限；也可选择包含它们的 ZIP。</string>
     <string name="direlay_import">导入</string>

@@ -5,7 +5,8 @@
 <resources>
     <string name="direlay_app_name">OpenXPlay Relay</string>
     <string name="direlay_attribution">Powered by OpenXPlay.</string>
-    <string name="direlay_project_url" translatable="false">https://github.com/OpenXPlay/OpenXPlay-Relay</string>
+    <string name="direlay_project_url">https://openxplay.org/en/</string>
+    <string name="direlay_source_url" translatable="false">https://github.com/OpenXPlay/OpenXPlay-Relay</string>
     <string name="direlay_identity">CarPlay identity</string>
     <string name="direlay_identity_hint">Select identity.pk8 and certificate.p7b together or one after the other, in any order, or a ZIP containing them.</string>
     <string name="direlay_tls">TLS certificate</string>
