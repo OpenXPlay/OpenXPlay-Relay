@@ -33,6 +33,8 @@ data class WirelessNetworkSettings(
     val security: ManualHotspotSecurity = ManualHotspotSecurity.OPEN,
     val sharedWifiNetworks: List<SharedWifiNetwork> = emptyList(),
 ) {
+    override fun toString() = "WirelessNetworkSettings(choice=$choice, manualSsid=$manualSsid, manualPassphrase=[redacted], " +
+        "band=$band, channel=$channel, security=$security, sharedWifiNetworks=$sharedWifiNetworks)"
     fun validate(allowEmptySharedWifi: Boolean = false, allowIncompleteHotspot: Boolean = false) {
         SharedWifiNetworks.validate(sharedWifiNetworks)
         when (choice) {

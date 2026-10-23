@@ -45,10 +45,11 @@ class RelayAdminService(private val context: Context, private val runtime: Relay
         if (closed || !enabled) { stop(); return }
         try {
             val ip = runtime.carIpv4.sorted().firstOrNull()
-            if (ip == null) { advertiser.close(); advertisedHost = null }
+            if (ip == null) unadvertise()
             else {
                 advertiser.advertise(ip, runtime.settingsStore.awaitSnapshot().webPort ?: 8443, version)
                 advertisedHost = advertiser.host
+                advertisedHost?.let { runtime.connectionLog.transition("relay", "mdns", "mdns_published", "name=$it address=$ip") }
             }
         } catch (failure: Exception) { advertisedHost = advertiser.host; Log.w("OpenXPlay Relay", "Admin discovery unavailable", failure) }
         try {
@@ -58,12 +59,18 @@ class RelayAdminService(private val context: Context, private val runtime: Relay
             if (!listening) {
                 server.start(runtime.tlsStore.webContext(runtime.carIpv4, listOfNotNull(host).toSet()))
                 certificateHost = host; certificateFingerprint = runtime.tlsStore.revision(); listening = true
+                runtime.connectionLog.event("relay", "admin_listening", "port=${AdminServer.PORT}")
             }
         } catch (failure: Exception) { Log.w("OpenXPlay Relay", "Admin HTTPS unavailable", failure) }
     }
     private fun stop() {
         server.close(); listening = false
-        advertiser.close(); advertisedHost = null; certificateHost = null
+        unadvertise(); certificateHost = null
+    }
+    private fun unadvertise() {
+        val host = advertisedHost
+        advertiser.close(); advertisedHost = null
+        if (host != null) runtime.connectionLog.transition("relay", "mdns", "mdns_unpublished", "name=$host")
     }
     override fun close() {
         closed = true

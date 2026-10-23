@@ -12,10 +12,11 @@ import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
 import org.json.JSONArray
 import org.openxplay.stream.clink.trace.*
+import org.openxplay.direlay.logs.LogcatLines
 
 class CarlinkTraceRecorder(private val directory: File, private val mirror: (String) -> Unit = {},
     private val maxBytes: Long = 16L * 1024 * 1024, private val keepFiles: Int = 8,
-    private val ringSize: Int = 5000) : ClinkTrace, AutoCloseable {
+    private val ringSize: Int = 5000, private val clean: (String) -> String = { it }) : ClinkTrace, AutoCloseable {
     init { require(maxBytes > 0 && keepFiles > 0 && ringSize > 0) }
     private val queue = ConcurrentLinkedQueue<() -> Unit>()
     private val wake = Semaphore(0)
@@ -40,7 +41,7 @@ class CarlinkTraceRecorder(private val directory: File, private val mirror: (Str
             wake.drainPermits()
             while (true) {
                 val action = queue.poll() ?: break
-                try { action() } catch (e: Exception) { failure = e.javaClass.simpleName }
+                try { action() } catch (e: Throwable) { failure = e.javaClass.simpleName }
                 finally { pending.decrementAndGet() }
             }
         }
@@ -54,16 +55,15 @@ class CarlinkTraceRecorder(private val directory: File, private val mirror: (Str
     }
     override fun record(event: ClinkTraceEvent) {
         if (event.session > 0) session = event.session
+        val wall = System.currentTimeMillis()
         enqueue {
-            val line = encode(event)
+            val line = clean(encode(event, wall))
             val type = event.type
             synchronized(ringLock) {
                 if (ring.size == ringSize) ring.removeFirst()
                 ring.addLast(TraceLine(type, line))
             }
-            // Vehicle identity stays in the trace file/UI, including when the mirror writes to logcat.
-            if (event !is ClinkTraceEvent.Link || event.stage !in setOf("ble_advertisement", "ble_reply_name"))
-                runCatching { mirror(line.take(1000)) }
+            runCatching { LogcatLines.split(line).forEach { mirror(it) } }
             val bytes = line.toByteArray(Charsets.UTF_8).size + 1
             if (writer == null || size + bytes > maxBytes && size > 0) rotate()
             writer!!.apply { write(line); newLine(); flush() }; size += bytes
@@ -88,8 +88,9 @@ class CarlinkTraceRecorder(private val directory: File, private val mirror: (Str
 
     companion object {
         fun select(enabled: Boolean, recorder: () -> ClinkTrace): ClinkTrace = if (enabled) recorder() else ClinkTrace.NONE
-        fun encode(event: ClinkTraceEvent): String {
+        fun encode(event: ClinkTraceEvent, selectedAtMillis: Long? = System.currentTimeMillis()): String {
             val json = JSONObject().put("type", event.type).put("atNanos", event.atNanos).put("session", event.session)
+            selectedAtMillis?.let { json.put("atMillis", it) }
             fun put(name: String, value: Any?) { json.put(name, value ?: JSONObject.NULL) }
             fun map(values: Map<*, *>): JSONObject = JSONObject().also { obj -> values.forEach { (k, v) -> obj.put(k.toString(), v) } }
             when (event) {

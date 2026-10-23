@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-22 -->
+<resources>
+    <string name="logs_title">日志</string>
+    <string name="logs_summary">导出中继最近的日志</string>
+    <string name="logs_description">中继会在这部手机上保留最多 24 小时的日志。技术细节会保留；密码、密钥、电话号码、姓名、消息和精确位置会在存储前被替换。</string>
+    <string name="logs_export">导出日志…</string>
+    <string name="logs_choose_period">选择时间段</string>
+    <string name="logs_10_minutes">过去 10 分钟</string>
+    <string name="logs_30_minutes">过去 30 分钟</string>
+    <string name="logs_24_hours">过去 24 小时</string>
+    <string name="logs_export_confirm">导出日志</string>
+    <string name="logs_compressing">正在压缩日志…</string>
+    <string name="logs_ready">日志已就绪</string>
+    <string name="logs_save">保存…</string>
+    <string name="logs_saving">正在保存…</string>
+    <string name="logs_upload">上传并显示二维码</string>
+    <string name="logs_upload_hint">上传到 tmpfile.link，任何拿到链接的人都能在 7 天内下载该文件。</string>
+    <string name="logs_uploading">正在上传…</string>
+    <string name="logs_qr_title">下载日志</string>
+    <string name="logs_qr_description">下载链接的二维码</string>
+    <string name="logs_scan">扫码下载，链接 7 天后失效。</string>
+    <string name="logs_copy">复制链接</string>
+    <string name="logs_copied">链接已复制</string>
+    <string name="logs_done">完成</string>
+    <string name="logs_saved">日志已保存。</string>
+    <string name="logs_empty">这段时间没有记录到日志。</string>
+    <string name="logs_no_internet">没有可用的互联网连接。</string>
+    <string name="logs_too_large">文件超过 tmpfile.link 接受的大小（100 MB）。请选择更短的时间段或保存文件。</string>
+    <string name="logs_io_error">无法读取或写入日志文件。</string>
+    <string name="logs_upload_error">无法上传日志。请检查互联网连接后重试。</string>
+    <string name="logs_upload_http">上传失败（HTTP %1$d）。</string>
+</resources>

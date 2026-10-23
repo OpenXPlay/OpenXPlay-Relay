@@ -77,6 +77,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.bouncycastle)
+    implementation(libs.zxing.core)
     testImplementation(libs.junit)
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation(testFixtures("org.openxplay.stream:core"))

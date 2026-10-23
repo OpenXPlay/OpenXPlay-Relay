@@ -81,7 +81,7 @@ class CarlinkTraceRecorderTest {
             assertTrue(recorder.snapshot().isEmpty()); assertEquals(0, directory.listFiles()!!.size)
         } finally { recorder.close(); directory.deleteRecursively() }
     }
-    @Test fun vehicleIdentificationIsTraceOnly() {
+    @Test fun vehicleIdentificationIsMirrored() {
         val directory = Files.createTempDirectory("carlink-identification").toFile()
         val mirrored = mutableListOf<String>()
         val recorder = CarlinkTraceRecorder(directory, { mirrored += it })
@@ -92,7 +92,8 @@ class CarlinkTraceRecorderTest {
                 "carId" to "001122", "modelId" to "3344", "vendorData" to "5566", "name" to "Car"))
             diagnostics.traceLink("ble_reply_name", mapOf("name" to "Head Unit"))
             recorder.awaitIdle()
-            assertTrue(delegated.isEmpty()); assertTrue(mirrored.isEmpty())
+            assertTrue(delegated.isEmpty()); assertEquals(2, mirrored.size)
+            assertTrue(mirrored.first().contains("ble_advertisement")); assertTrue(mirrored.last().contains("Head Unit"))
             val content = recorder.currentFile!!.readText()
             assertTrue(content.contains("ble_advertisement")); assertTrue(content.contains("Head Unit"))
             assertFalse(content.contains("psk"))
