@@ -87,11 +87,15 @@ data class RelaySettings(
     val teslaPublicAddress: String = TeslaAddressPolicy.DEFAULT_PUBLIC,
     val teslaMirrorAddress: String = TeslaAddressPolicy.DEFAULT_MIRROR,
     val teslaAndroidAddress: String = TeslaAddressPolicy.DEFAULT_ANDROID,
+    val dlnaOutput: Boolean = false,
+    val dlnaRenderer: DlnaRendererChoice? = null,
+    val dlnaPicture: DlnaPicture = DlnaPicture.P720,
+    val miracastOutput: Boolean = false,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false,
         phoneAddresses: Set<String> = emptySet()) {
         teslaAddress()?.let { require(TeslaAddressPolicy.valid(it, phoneAddresses)) { "Invalid or already assigned Tesla address: $it" } }
-        if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
+        if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.usesWifiDirect(this))
         for (value in listOf(carlinkDeviceName, carlinkDeviceModel)) {
             require(value.isNotBlank() && value.toByteArray(Charsets.UTF_8).size <= 128 &&
                 value.none { Character.isISOControl(it) }) { "Carlink name and model must contain 1–128 UTF-8 bytes without control characters." }
@@ -248,6 +252,10 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             carlinkReconnectOnResize = relay.getBoolean("carlinkReconnectOnResize", false),
             mode,
             relay.getString("iphoneAddress", null),
+            dlnaOutput = relay.getBoolean("dlnaOutput", false),
+            dlnaRenderer = relay.getString("dlnaRendererUdn", null)?.let { DlnaRendererChoice(it, relay.getString("dlnaRendererName", "").orEmpty()) },
+            dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == relay.getString("dlnaPicture", null) } ?: DlnaPicture.P720,
+            miracastOutput = relay.getBoolean("miracastOutput", false),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
@@ -330,6 +338,11 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("microphoneSource", settings.microphoneSource.name)
             .putBoolean("carlinkOutput", settings.carlinkOutput)
             .putBoolean("bothOutputs", settings.bothOutputs)
+            .putBoolean("dlnaOutput", settings.dlnaOutput)
+            .putString("dlnaRendererUdn", settings.dlnaRenderer?.udn)
+            .putString("dlnaRendererName", settings.dlnaRenderer?.name)
+            .putString("dlnaPicture", settings.dlnaPicture.name)
+            .putBoolean("miracastOutput", settings.miracastOutput)
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
             .putBoolean("carlinkReconnectOnResize", settings.carlinkReconnectOnResize)
@@ -437,11 +450,14 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     fun wireless(settings: RelaySettings = cached.value ?: load()): Boolean =
         settings.connectionMode.wireless(AirPlayPersistence.loadWirelessEnabled(context))
 
-    /** Whether CarPlay's next start would put it on Wi-Fi Direct beside Carlink. Start validation and the
-     *  Carlink block both use it, so DiPlay's stale wireless flag cannot block a USB user. */
+    /** The Carlink runtime block only owns Carlink's platform join. */
     fun carlinkWifiDirectConflict(settings: RelaySettings = cached.value ?: load()): Boolean =
+        wifiDirectConflict(settings, miracast = false)
+
+    /** Resolve the transport so DiPlay's stale wireless flag cannot block a USB user. */
+    fun wifiDirectConflict(settings: RelaySettings = cached.value ?: load(), miracast: Boolean = settings.miracastOutput): Boolean =
         CarlinkConnectionPolicy.conflicts(CarlinkConnectionPolicy.enabled(settings), wireless(settings),
-            AirPlayPersistence.loadWirelessHotspotMode(context) == WirelessHotspotMode.WIFI_P2P)
+            AirPlayPersistence.loadWirelessHotspotMode(context) == WirelessHotspotMode.WIFI_P2P, miracast)
 
     fun prepareStart() {
         AirPlayPersistence.saveWirelessEnabled(context, wireless())

@@ -115,9 +115,10 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         if (runtime.autoStartSessions.tracker.running) return null
         val store = runtime.settingsStore
         val settings = store.awaitSnapshot()
-        if (store.carlinkWifiDirectConflict(settings)) {
-            runtime.status.inputFailed(IllegalStateException(CarlinkConnectionPolicy.REASON))
-            return CarlinkConnectionPolicy.REASON_KEY
+        if (store.wifiDirectConflict(settings)) {
+            val carlink = CarlinkConnectionPolicy.enabled(settings)
+            runtime.status.inputFailed(IllegalStateException(if (carlink) CarlinkConnectionPolicy.REASON else CarlinkConnectionPolicy.MIRACAST_REASON))
+            return if (carlink) CarlinkConnectionPolicy.REASON_KEY else CarlinkConnectionPolicy.MIRACAST_REASON_KEY
         }
         runtime.refreshIphoneBonds()
         val wireless = store.wireless(settings)

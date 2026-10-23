@@ -40,7 +40,7 @@ class RelayKeepAlivePolicy(private val start: () -> Boolean, private val stop: (
     }
 
     companion object {
-        fun needed(open: Boolean, webEnabled: Boolean, carlinkEnabled: Boolean) =
-            open && (webEnabled || carlinkEnabled)
+        fun needed(open: Boolean, webEnabled: Boolean, carlinkEnabled: Boolean, dlnaOutput: Boolean = false,
+            miracastOutput: Boolean = false) = open && (webEnabled || carlinkEnabled || dlnaOutput || miracastOutput)
     }
 }

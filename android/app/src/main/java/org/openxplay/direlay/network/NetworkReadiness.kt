@@ -27,7 +27,8 @@ data class NetworkReadiness(val wifi: Readiness = Readiness.OK, val hotspot: Rea
         if (hotspot == state) add(NetworkRequirement.HOTSPOT)
     }
     companion object {
-        fun read(carlink: Boolean, wireless: Boolean, phoneHotspot: Boolean, reader: NetworkStateReader): NetworkReadiness {
+        fun read(carlink: Boolean, wireless: Boolean, phoneHotspot: Boolean, reader: NetworkStateReader,
+            miracast: Boolean = false): NetworkReadiness {
             fun check(required: Boolean, read: () -> Boolean?): Readiness {
                 if (!required) return Readiness.OK
                 return when (runCatching(read).getOrNull()) {
@@ -36,7 +37,7 @@ data class NetworkReadiness(val wifi: Readiness = Readiness.OK, val hotspot: Rea
                     null -> Readiness.UNKNOWN
                 }
             }
-            return NetworkReadiness(check(carlink, reader::wifiEnabled),
+            return NetworkReadiness(check(carlink || miracast, reader::wifiEnabled),
                 check(wireless && phoneHotspot, reader::hotspotEnabled))
         }
     }

@@ -23,6 +23,49 @@ class CarlinkConnectionPolicyTest {
         return RelaySettingsStore(context).use { it.load() }.copy(connectionMode = ConnectionMode.WIRELESS,
             carlinkOutput = false, bothOutputs = false, wirelessNetwork = WirelessNetworkSettings())
     }
+    @Test fun miracastUsesWifiDirectWithoutChangingTheCarlinkEnabledMeaning() {
+        val before = initial()
+        for (carlink in listOf(false, true)) for (miracast in listOf(false, true))
+            for (wireless in listOf(false, true)) for (p2p in listOf(false, true)) {
+                assertEquals((carlink || miracast) && wireless && p2p,
+                    CarlinkConnectionPolicy.conflicts(carlink, wireless, p2p, miracast = miracast))
+            }
+        for (choice in WirelessNetworkChoice.entries) {
+            val candidate = before.copy(miracastOutput = true,
+                wirelessNetwork = before.wirelessNetwork.copy(choice = choice, manualSsid = "Phone", manualPassphrase = "password"))
+            val after = CarlinkConnectionPolicy.enabling(before, candidate, miracast = true)
+            assertFalse(CarlinkConnectionPolicy.enabled(after))
+            assertFalse(CarlinkConnectionPolicy.wifiDirectAllowed(after))
+            assertTrue(CarlinkConnectionPolicy.wifiDirectAllowed(after, miracast = false))
+            assertEquals(candidate.copy(wirelessNetwork = candidate.wirelessNetwork.copy(
+                choice = if (choice == WirelessNetworkChoice.WIFI_DIRECT) WirelessNetworkChoice.PHONE_HOTSPOT else choice)), after)
+            assertEquals(candidate, CarlinkConnectionPolicy.enabling(before, candidate, wireless = false, miracast = true))
+        }
+        val wired = before.copy(connectionMode = ConnectionMode.USB, miracastOutput = true)
+        assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT,
+            CarlinkConnectionPolicy.enabling(wired, wired.copy(connectionMode = ConnectionMode.WIRELESS)).wirelessNetwork.choice)
+        assertTrue(CarlinkConnectionPolicy.wifiDirectAllowed(before.copy(dlnaOutput = true)))
+    }
+    @Test fun miracastStartConflictReadsResolvedTransportAndSettingsSaveAllowsTheHotspotSwitch() {
+        val settings = initial().copy(miracastOutput = true)
+        val context = RuntimeEnvironment.getApplication()
+        AirPlayPersistence.saveWirelessHotspotMode(context, WirelessHotspotMode.WIFI_P2P)
+        AirPlayPersistence.saveWirelessEnabled(context, true)
+        RelaySettingsStore(context).use { store ->
+            assertTrue(store.wifiDirectConflict(settings))
+            assertFalse(store.carlinkWifiDirectConflict(settings))
+            assertFalse(store.wifiDirectConflict(settings, miracast = false))
+            assertFalse(store.wifiDirectConflict(settings.copy(connectionMode = ConnectionMode.USB)))
+            assertTrue(store.wifiDirectConflict(settings.copy(connectionMode = ConnectionMode.LAST_USED)))
+            AirPlayPersistence.saveWirelessEnabled(context, false)
+            assertFalse(store.wifiDirectConflict(settings.copy(connectionMode = ConnectionMode.LAST_USED)))
+            val switched = CarlinkConnectionPolicy.enabling(initial(), settings)
+            assertTrue(org.openxplay.direlay.ui.settingsSaveErrors(switched, true).isEmpty())
+            store.save(switched); assertEquals(switched, store.load())
+            assertTrue(runCatching { switched.validate(true) }.isFailure)
+        }
+    }
+
     @Test fun onlyWirelessP2pConflicts() {
         for (carlink in listOf(false, true)) for (wireless in listOf(false, true)) for (p2p in listOf(false, true))
             assertEquals(carlink && wireless && p2p, CarlinkConnectionPolicy.conflicts(carlink, wireless, p2p))

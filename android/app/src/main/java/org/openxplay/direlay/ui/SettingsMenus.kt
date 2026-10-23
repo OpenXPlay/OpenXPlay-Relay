@@ -132,4 +132,7 @@ fun codecSummary(draft: RelaySettings): String = listOf(stringResource(R.string.
     stringResource(R.string.picture_force_h265), stringResource(R.string.picture_force_h264))[draft.videoCodec.ordinal]
 
 @Composable
-fun outputSummary(draft: RelaySettings) = stringResource(if (draft.bothOutputs) R.string.menu_both_outputs else if (draft.carlinkOutput) R.string.ui_carlink else R.string.ui_browser)
+fun outputSummary(draft: RelaySettings): String {
+    val labels = outputSummaryLabels(draft).associateWith { stringResource(it) }
+    return outputSummary(draft, labels::getValue)
+}

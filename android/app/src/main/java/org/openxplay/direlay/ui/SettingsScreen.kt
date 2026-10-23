@@ -133,6 +133,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         }
                     }
                 }
+                WirelessDisplaySettings(draft, wireless(draft), runtime) { draft = it }
             }
             "settings/car" -> {
                 if (runtime != null) CarScreenSettings(draft, runtime,
@@ -203,7 +204,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                                     if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
                                         NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
                                     if (choice == WirelessNetworkChoice.WIFI_DIRECT && !CarlinkConnectionPolicy.wifiDirectAllowed(draft))
-                                        Hint(stringResource(R.string.carlink_wifi_direct_constraint))
+                                        Hint(stringResource(if (draft.miracastOutput) R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint))
                                 }, enabled = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)) {
                                 draft = draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice))
                             }

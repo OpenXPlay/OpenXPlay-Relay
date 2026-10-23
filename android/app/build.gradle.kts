@@ -67,6 +67,7 @@ dependencies {
     implementation("org.openxplay.stream:core")
     implementation("org.openxplay.stream:web-server")
     implementation("org.openxplay.stream:clink")
+    implementation("org.openxplay.stream:cast")
     // mDNS host name for the admin page (openxplay-android.local).
     implementation("org.jmdns:jmdns:3.6.3")
     implementation(platform(libs.androidx.compose.bom))

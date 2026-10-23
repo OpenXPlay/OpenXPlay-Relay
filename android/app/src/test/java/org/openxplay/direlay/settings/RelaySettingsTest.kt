@@ -27,6 +27,30 @@ class RelaySettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
+    @Test fun wirelessDisplaysDefaultOffAndPersistIndependentlyWithParkedReceiverAndPicture() {
+        store.use { store ->
+            val initial = store.load()
+            assertFalse(initial.dlnaOutput); assertFalse(initial.miracastOutput)
+            assertNull(initial.dlnaRenderer); assertEquals(DlnaPicture.P720, initial.dlnaPicture)
+            for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
+                for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                    val value = initial.copy(dlnaOutput = dlna, miracastOutput = miracast, dlnaPicture = picture, dlnaRenderer = receiver)
+                    value.validate(wireless = false)
+                    store.save(value)
+                    assertEquals(value, store.load())
+                    RelaySettingsStore(context).use { assertEquals(value, it.load()) }
+                    val prefs = context.getSharedPreferences("direlay", 0)
+                    assertEquals(dlna, prefs.getBoolean("dlnaOutput", !dlna))
+                    assertEquals(miracast, prefs.getBoolean("miracastOutput", !miracast))
+                    assertEquals(receiver?.udn, prefs.getString("dlnaRendererUdn", null))
+                    assertEquals(receiver?.name, prefs.getString("dlnaRendererName", null))
+                    assertEquals(picture.name, prefs.getString("dlnaPicture", null))
+                }
+            context.getSharedPreferences("direlay", 0).edit().putString("dlnaPicture", "future").commit()
+            assertEquals(DlnaPicture.P720, store.load().dlnaPicture)
+        }
+    }
+
     @Test fun teslaDefaultsAndEveryModeAndAddressRoundTripInRelayPreferences() {
         RelaySettingsStore(context).use { store ->
             val initial = store.load()

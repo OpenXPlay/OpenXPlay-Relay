@@ -16,7 +16,7 @@ fun settingsErrors(value: RelaySettings, wireless: Boolean, allowEmptySharedWifi
     }
     if (wireless) when (value.wirelessNetwork.choice) {
         WirelessNetworkChoice.PHONE_HOTSPOT -> credentials(value.wirelessNetwork.manualSsid, value.wirelessNetwork.manualPassphrase,
-            hotspot = true, allowEmptySsid = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(value))
+            hotspot = true, allowEmptySsid = allowEmptySharedWifi && CarlinkConnectionPolicy.usesWifiDirect(value))
         WirelessNetworkChoice.EXISTING_WIFI -> if (!allowEmptySharedWifi && value.wirelessNetwork.sharedWifiNetworks.isEmpty()) put("ssid", R.string.shared_wifi_empty)
         else -> Unit
     }

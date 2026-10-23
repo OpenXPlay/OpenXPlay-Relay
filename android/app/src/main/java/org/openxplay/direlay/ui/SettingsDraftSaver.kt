@@ -67,6 +67,11 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBooleanArray("flags", booleanArrayOf(value.autoStartOnBoot, value.autoStartWhenReady,
             value.localPreview, value.carlinkOutput, value.playCarPlayAudio, value.bothOutputs, value.vehicleInformation))
         putIntArray("numbers", intArrayOf(value.fps, value.webPort ?: 0, value.wirelessNetwork.channel))
+        putBoolean("dlnaOutput", value.dlnaOutput)
+        putString("dlnaRendererUdn", value.dlnaRenderer?.udn)
+        putString("dlnaRendererName", value.dlnaRenderer?.name)
+        putString("dlnaPicture", value.dlnaPicture.name)
+        putBoolean("miracastOutput", value.miracastOutput)
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkReconnectOnResize", value.carlinkReconnectOnResize)
         putBoolean("carlinkTrace", value.carlinkTrace)
@@ -103,6 +108,11 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         teslaPublicAddress = bundle.getString("teslaPublicAddress") ?: base.teslaPublicAddress,
         teslaMirrorAddress = bundle.getString("teslaMirrorAddress") ?: base.teslaMirrorAddress,
         teslaAndroidAddress = bundle.getString("teslaAndroidAddress") ?: base.teslaAndroidAddress,
+        dlnaOutput = bundle.getBoolean("dlnaOutput", base.dlnaOutput),
+        dlnaRenderer = if (bundle.containsKey("dlnaRendererUdn")) bundle.getString("dlnaRendererUdn")?.let {
+            DlnaRendererChoice(it, bundle.getString("dlnaRendererName").orEmpty()) } else base.dlnaRenderer,
+        dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == bundle.getString("dlnaPicture") } ?: base.dlnaPicture,
+        miracastOutput = bundle.getBoolean("miracastOutput", base.miracastOutput),
         carlinkReconnectOnResize = bundle.getBoolean("carlinkReconnectOnResize", base.carlinkReconnectOnResize),
         videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == bundle.getString("videoCodec") } ?: base.videoCodec,
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,
