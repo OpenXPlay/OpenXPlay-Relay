@@ -5,25 +5,30 @@
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
 import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
-import { validateHotspot, hotspotForm, restartRequired, restartView } from './hotspot-settings';
+import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
+import { connectionsView, editConnections } from './connections';
+import type { NetworkRolesSetting } from './schema';
+import { mountTrace, traceFilters, traceVisible } from './carlink-trace';
 import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDetails, nearbyNetworksView } from './views';
 import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
 import type { SavedNetwork } from './schema';
-import { api, ApiError, NetworkError, events, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
+import { api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
 import { isVisible, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, translate, type Language } from './i18n';
-import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, canConnectCarlink, validCarlinkPin } from './logic';
+import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
 import { icon } from './icons';
 import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
+import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-stats';
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
-import { publicNamePanel } from './public-name';
+import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
+let disposeTrace: (() => void) | null = null;
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let language: Language = defaultLanguage(navigator.language);
 const t = (key: string, parameters?: Record<string, string | number>) => translate(language, key, parameters);
-const esc = (value: unknown): string => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+import { esc } from './html';
 let developer = developerPreference(location.search, () => localStorage.getItem('openxplay.developer'));
 let session: SessionState | null = null;
 let defaultPassword = false;
@@ -46,6 +51,7 @@ let epoch = 0;
 let polling = false;
 let actionBusy = false;
 let pageError = '';
+const videoStats = new VideoStatsSnapshot();
 let carlinkError = '';
 let connectPin = '';
 let connectBusy = false;
@@ -53,13 +59,15 @@ let dismissedPin: number | null = null;
 let pairingBusy = false;
 let pairingError = '';
 let publicNameBusy = false;
-let publicNameMessage = '';
+let publicNameMessage: PublicNameMessage = '';
+let publicNameDrafts = new PublicNameDrafts();
+let publicNameWrite: Promise<unknown> | null = null;
 let reportCopied: { client: string; key: string; until: number } | null = null;
 const copied = new Map<string, { key: string; until: number }>();
 const phoneNames = new Map<string, string>();
 const feedback = new Map<string, string>();
 const pending = new Map<string, { value: Value; revision: number; timer?: ReturnType<typeof setTimeout>; busy: boolean }>();
-const fields = () => settings ? settingsViews(settings, developer).flatMap(section => section.fields) : [];
+const fields = () => settings ? settingsViews(settings, developer, status?.platform).flatMap(section => section.fields) : [];
 const fieldId = (key: string) => `field-${encodeURIComponent(key)}`;
 function result(key: string, message: string) {
   feedback.set(key, message);
@@ -76,13 +84,15 @@ events.addEventListener('online', () => { offline = false; banner(); });
 function resetSession(next: SessionState) {
   epoch++;
   for (const item of pending.values()) clearTimeout(item.timer);
+  videoStats.reset();
   needsRestart = false; pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null; publicNameBusy = false; publicNameMessage = '';
+  publicNameDrafts = new PublicNameDrafts(); publicNameWrite = null;
   document.querySelectorAll('dialog').forEach(dialog => { dialog.close(); dialog.remove(); });
   session = next; actionBusy = false; render();
 }
 events.addEventListener('unauthorized', () => { if (session === 'ready' && !handoff) resetSession('login'); });
-// Diagnostics only feed the developer section; the pairing deadline moves onto this browser's clock.
-async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(developer), Date.now() / 1000, status?.pairingDeadline ?? null); }
+// Anchor deadlines on this browser's clock; statistics are fetched only when displayed.
+async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(developer || videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
 function errorKey(error: unknown): string { return error instanceof ApiError ? error.key : error instanceof NetworkError ? 'error.network' : 'error.request'; }
 function shell() {
   document.documentElement.lang = language;
@@ -99,6 +109,7 @@ function shell() {
   });
 }
 function render() {
+  disposeTrace?.(); disposeTrace = null;
   shell();
   if (switching) renderSwitching();
   else if (handoff) renderHandoff();
@@ -128,19 +139,43 @@ async function loadReady() {
   phones.forEach(phone => phoneNames.set(phone.id, phone.name));
   status = nextStatus; settings = nextSettings; pageError = ''; render();
 }
+function bindConnections() {
+  document.getElementById('connections-edit')?.addEventListener('click', event => {
+    editConnections(status!, settings!.values.networkRoles as NetworkRolesSetting | undefined, t, loadReady, event.currentTarget as HTMLElement);
+  });
+}
+function renderConnections() {
+  const current = document.querySelector<HTMLElement>('[data-section="connections"]');
+  if (!current || !status) return;
+  const open = current.querySelector('details')?.open;
+  current.outerHTML = connectionsView(status, t);
+  const details = document.querySelector<HTMLDetailsElement>('.interface-inventory');
+  if (details) details.open = !!open;
+  bindConnections();
+}
 function renderReady() {
   renderRestart();
   document.getElementById('main')!.innerHTML = currentView === 'home' ? '<div id="dashboard"></div>' : `<section aria-label="${t('ui.settings')}"><div id="settings"></div></section>`;
   if (currentView === 'home') { updateDashboard(); return; }
   const container = document.getElementById('settings')!;
-  container.innerHTML = settingsViews(settings!, developer).map(section => `<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : section.id === 'publicName' ? '<div id="public-name-panel"></div>' : '')}</section>`).join('');
+  container.innerHTML = settingsViews(settings!, developer, status!.platform).map(section => `${section.id === 'output' ? connectionsView(status!, t) : ''}<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : section.id === 'publicName' ? '<div id="public-name-panel"></div>' : '')}</section>`).join('');
   for (const field of fields().filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key))) bindField(field);
+  bindConnections();
   renderNetworkPanel(); renderPairingPanel();
   updateVisibility(); renderPublicName();
   container.insertAdjacentHTML('beforeend', `<section class="card" id="password-card"><h2>${t('settings.security')}</h2><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form></section>`);
   container.insertAdjacentHTML('beforeend', `<section class="card"><h2>${t('settings.about')}</h2><p>${esc(status!.name)}</p><label class="switch-row"><span>${t('settings.developerOptions')}</span><input id="developer-options" type="checkbox" role="switch" ${developer ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>${developer ? `<p>${esc(status!.version)}</p><pre id="developer-state">${esc(status!.state)} · ${esc(status!.iphone.reason)}</pre><button id="developer-start">${t(status!.running ? 'ui.stop' : 'ui.start')}</button>` : ''}</section>`);
   document.getElementById('developer-options')!.addEventListener('change', event => { developer = (event.target as HTMLInputElement).checked; try { localStorage.setItem('openxplay.developer', developer ? '1' : '0'); } catch {} render(); });
   document.getElementById('developer-start')?.addEventListener('click', async () => { try { await api.action(status!.running ? 'stop' : 'start'); void tick(); } catch (e) { pageError = errorKey(e); updateDashboard(); } });
+  if (developer && status?.platform === 'linux' && settings?.schema.some(s => s.fields.some(f => f.key === 'carlinkName'))) {
+    const section = container.querySelector('[data-section="developer"]');
+    section?.insertAdjacentHTML('beforeend', `<button id="clear-saved-head-unit">${t('carlink.clearSaved')}</button><p id="clear-saved-result" role="status"></p>`);
+    document.getElementById('clear-saved-head-unit')?.addEventListener('click', async () => {
+      if (!window.confirm(t('carlink.clearSavedHint'))) return;
+      try { await api.action('clear-saved-head-unit'); document.getElementById('clear-saved-result')!.textContent = t('ui.saved'); }
+      catch (error) { document.getElementById('clear-saved-result')!.textContent = t(errorKey(error)); }
+    });
+  }
   if (developer) {
     const options = settings!.schema.flatMap(s => s.fields).find(f => f.key === 'networkMode')?.options ?? [];
     const section = container.querySelector('[data-section="developer"]') ?? container.appendChild(document.createElement('section'));
@@ -150,6 +185,13 @@ function renderReady() {
     document.getElementById('forget-all-wifi')!.addEventListener('click', () => void forgetAllWifi());
   }
   if (developer) { container.insertAdjacentHTML('beforeend', `<section class="card" id="diagnostics-card"><h2>${t('diag.title')}</h2><div id="diagnostics"></div></section>`); renderDiagnostics(); }
+  if (traceVisible(status?.platform, developer, currentView)) {
+    const section = container.querySelector('[data-section="developer"]');
+    section?.insertAdjacentHTML('beforeend', `<section class="card" id="carlink-debug"><h3>${t('trace.title')}</h3><div data-trace-toggle></div><div class="field"><label for="trace-filter">${t('trace.filter')}</label><select id="trace-filter" data-trace-filter>${traceFilters.map((value, i) => `<option value="${value}">${t(['trace.all', 'trace.rtsp', 'trace.frames', 'trace.media', 'trace.link', 'trace.errors'][i])}</option>`).join('')}</select></div><p class="error" role="alert" data-trace-error></p><div data-trace-content></div></section>`);
+    const card = document.getElementById('carlink-debug');
+    const toggle = document.getElementById(fieldId('carlinkTrace'))?.closest('.field');
+    if (card) { if (toggle) card.querySelector('[data-trace-toggle]')!.append(toggle); disposeTrace = mountTrace(card, t, errorKey); }
+  }
   bindPassword();
 }
 function updateDashboard() {
@@ -157,9 +199,9 @@ function updateDashboard() {
   if (!el || !status) return;
   const s = status;
   const raw = document.getElementById('developer-state'); if (raw) raw.textContent = `${s.state} · ${s.iphone.reason}`;
-  // Per-second receiver statistics belong to the developer section only.
+  const stats = videoStats.read(s, videoStatsInterval(settings, s.platform), performance.now());
   const { receivers: _receivers, ...summary } = s;
-  const signature = JSON.stringify([summary, developer, language, pageError, carlinkError, connectBusy, actionBusy, homeView(s).seconds > 0, defaultPassword]);
+  const signature = JSON.stringify([summary, stats, developer, language, pageError, carlinkError, connectBusy, actionBusy, homeView(s).seconds > 0, defaultPassword]);
   if (el.dataset.signature === signature) { syncPinDialog(); return; }
   el.dataset.signature = signature;
   const openDetails = [...el.querySelectorAll<HTMLDetailsElement>('.devices details')].map(d => d.open);
@@ -172,7 +214,8 @@ function updateDashboard() {
   const focused = document.activeElement?.id;
   const selection = document.activeElement instanceof HTMLInputElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   const view = homeView(s, undefined, defaultPassword);
-  el.innerHTML = statusView(s, t, defaultPassword) + addressesView(s, developer, t) + devicesView(s, developer, t);
+  el.innerHTML = statusView(s, t, defaultPassword) + addressesView(s, developer, t) + devicesView(s, developer, t) + videoStatsView(stats, t);
+  document.getElementById('home-start')?.addEventListener('click', async () => { try { await api.action('start'); void tick(); } catch (e) { pageError = errorKey(e); updateDashboard(); } });
   document.getElementById('action-result')!.textContent = pageError ? t(pageError) : '';
   const action = document.getElementById('context-action')!;
   if (view.action === 'car') renderCarlink();
@@ -245,6 +288,12 @@ function renderPublicName() {
   el.innerHTML = publicNamePanel(status, settings, publicNameBusy, publicNameMessage, t, language);
   document.getElementById('public-name-renew')?.addEventListener('click', () => void publicNameAction('public-name-renew'));
   document.getElementById('public-name-remove')?.addEventListener('click', confirmRemovePublicName);
+  document.getElementById('public-name-import')?.addEventListener('click', () => document.getElementById('public-name-file')?.click());
+  document.getElementById('public-name-file')?.addEventListener('change', event => {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (file) void importPublicName(file);
+  });
+  document.querySelectorAll<HTMLInputElement>('[data-section="publicName"] .field input, [data-section="publicName"] .field button').forEach(input => { input.disabled = publicNameBusy; });
   if (focused) (document.getElementById(focused) ?? document.getElementById(fieldId('publicNameEnabled')))?.focus();
 }
 async function publicNameAction(name: 'public-name-renew' | 'public-name-remove') {
@@ -252,6 +301,8 @@ async function publicNameAction(name: 'public-name-renew' | 'public-name-remove'
   const current = epoch;
   publicNameBusy = true; publicNameMessage = ''; renderPublicName();
   try {
+    if (name === 'public-name-remove') await settlePublicNameWrite();
+    else await publicNameWrite?.catch(() => {});
     await api.action(name);
     const [nextStatus, nextSettings] = await Promise.all([fetchStatus(), name === 'public-name-remove' ? api.settings() : Promise.resolve(null)]);
     if (current !== epoch) return;
@@ -259,10 +310,31 @@ async function publicNameAction(name: 'public-name-renew' | 'public-name-remove'
     if (nextSettings) {
       // The file is gone: unsaved edits of its fields go with it, others stay.
       for (const [key, item] of [...pending]) { if (key.startsWith('publicName')) { clearTimeout(item.timer); pending.delete(key); feedback.delete(key); } else nextSettings.values[key] = item.value; }
-      settings = nextSettings; publicNameBusy = false; render(); document.getElementById(fieldId('publicNameEnabled'))?.focus();
+      publicNameDrafts = new PublicNameDrafts(); settings = nextSettings; publicNameBusy = false; render(); document.getElementById(fieldId('publicNameEnabled'))?.focus();
     }
   } catch (error) { if (current === epoch) publicNameMessage = errorKey(error); }
   finally { if (current === epoch) { publicNameBusy = false; renderPublicName(); } }
+}
+async function settlePublicNameWrite() {
+  for (const [key, item] of [...pending]) if (key.startsWith('publicName')) { clearTimeout(item.timer); pending.delete(key); feedback.delete(key); }
+  await publicNameWrite?.catch(() => {});
+}
+async function importPublicName(file: File) {
+  if (publicNameBusy) return;
+  const current = epoch;
+  publicNameBusy = true; publicNameMessage = ''; renderPublicName();
+  try {
+    await publicNameWrite?.catch(() => {});
+    const imported = await importPublicNameFile(file);
+    const [nextStatus, nextSettings] = await Promise.all([fetchStatus(), api.settings()]);
+    if (current !== epoch) return;
+    await settlePublicNameWrite();
+    for (const [key, item] of pending) nextSettings.values[key] = item.value;
+    publicNameDrafts.imported(imported.provider, nextSettings.values); settings = nextSettings; status = nextStatus;
+    publicNameMessage = imported; render();
+  } catch (error) {
+    if (current === epoch) publicNameMessage = error instanceof ApiError && Object.keys(error.errors).length ? { errors: error.errors } : errorKey(error);
+  } finally { if (current === epoch) { publicNameBusy = false; renderPublicName(); } }
 }
 function confirmRemovePublicName() {
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'public-name-remove-title');
@@ -275,7 +347,7 @@ function confirmRemovePublicName() {
 }
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
-  const signature = JSON.stringify([status.video, status.receivers, status.bluetoothGuard, language]);
+  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, status.platform === 'linux' ? status.network : null, language]);
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   const open = new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-details]')].filter(d => d.open).map(d => d.dataset.details));
@@ -394,13 +466,14 @@ function syncPinDialog() {
         await api.carlinkPin(input.value);
         input.value = '';
         if (current === epoch && status?.carlink?.pinDeadline === deadline) {
-          status.carlink.pinRequested = false; status.carlink.pinDeadline = null;
-          carlinkError = ''; close(); updateDashboard();
+          status.carlink.pinRequested = false; status.carlink.pinDeadline = null; status.carlink.pinIncorrect = false;
+          carlinkError = ''; close(); dismissedPin = null; updateDashboard();
         }
       } catch (error) { errorEl.textContent = t(errorKey(error), error instanceof ApiError ? { seconds: error.retryAfter } : undefined); }
       finally { button.disabled = false; }
     });
   }
+  if (carlinkPinError(status?.carlink)) dialog.querySelector('#carlink-pin-error')!.textContent = t(carlinkPinError(status?.carlink));
   dialog.querySelector('#carlink-countdown')!.textContent = t('carlink.countdown', { seconds: view.seconds });
 }
 function confirmForgetCarlink() {
@@ -434,15 +507,17 @@ function fieldMarkup(field: Field): string {
   const attributes = `id="${id}" aria-describedby="${desc}" aria-invalid="${invalid}"`;
   let control = '';
   if (field.type === 'plugins') control = `<div ${attributes}>${pluginList(settings!, language, t, developer)}</div>`;
+  else if (field.key === 'carlinkTrace') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attributes} type="checkbox" role="switch" ${value === 'on' ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'bool') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attributes} type="checkbox" role="switch" ${value ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'choice') control = `<fieldset ${attributes}><legend>${label}</legend><div class="choices">${field.options?.map((option, i) => {
     const hint = (field.key === 'transport' ? usbTransportHint(status?.platform, option.value) : undefined)
       || option.hintKey || (field.key === 'output' ? `hint.option.output.${option.value}` : undefined);
-    return `<label class="choice"><div class="choice-label"><input type="radio" name="${id}" id="${id}-${i}" value="${esc(option.value)}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''} ${option.value === value ? 'checked' : ''}><span>${esc(t(option.labelKey))}</span></div>${hint ? `<p class="muted">${esc(t(hint))}</p>` : ''}${option.illustration ? topology(option.illustration) : ''}</label>`;
+    return `<label class="choice"><div class="choice-label"><input type="radio" name="${id}" id="${id}-${i}" value="${esc(option.value)}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''} ${option.value === value ? 'checked' : ''}><span>${esc(field.key === 'devicePreset' ? devicePresetLabel(String(option.value), status, t) : t(option.labelKey))}</span></div>${hint ? `<p class="muted">${esc(t(hint))}</p>` : ''}${option.illustration ? topology(option.illustration) : ''}</label>`;
   }).join('') ?? ''}</div></fieldset>`;
   else if (field.type === 'phone') control = `<label for="${id}">${label}</label><button ${attributes} class="picker-button" aria-haspopup="dialog">${icon('smartphone')}<span>${value === 'auto' ? t('ui.automatic') : esc(phoneNames.get(String(value)) ?? value)}</span>${icon('chevron-down')}</button>`;
   else control = `<label for="${id}">${label}</label><div class="input-row"><input ${attributes} type="${field.type === 'secret' ? 'password' : field.type}" value="${esc(value)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${field.type === 'secret' && settings!.values[`${field.key}Set`] === true ? `placeholder="${esc(t(`${field.labelKey}Saved`))}"` : ''}>${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button>` : ''}</div>`;
-  return `<div class="field" data-field="${esc(field.key)}">${control}${['output', 'transport'].includes(field.key) ? connectionConstraint(status?.platform, t) : ''}<p class="muted hint" id="${id}-hint">${field.hintKey ? esc(t(field.hintKey)) : ''}</p><p id="${id}-result" class="field-result ${invalid ? 'error' : ''}" role="status" aria-live="polite">${feedback.has(field.key) ? esc(t(feedback.get(field.key)!)) : ''}</p></div>`;
+  const hint = field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
+  return `<div class="field" data-field="${esc(field.key)}">${control}${['output', 'transport'].includes(field.key) ? connectionConstraint(status?.platform, t) : ''}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result ${invalid ? 'error' : ''}" role="status" aria-live="polite">${feedback.has(field.key) ? esc(t(feedback.get(field.key)!)) : ''}</p></div>`;
 }
 function bindField(field: Field) {
   const el = document.getElementById(fieldId(field.key))!;
@@ -450,6 +525,7 @@ function bindField(field: Field) {
     const input = event.target as HTMLInputElement;
     queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked));
   });
+  else if (field.key === 'carlinkTrace') el.addEventListener('change', () => queueSave(field, (el as HTMLInputElement).checked ? 'on' : 'off'));
   else if (field.type === 'phone') el.addEventListener('click', () => void pickPhone(field));
   else if (field.type === 'choice') el.addEventListener('change', event => queueSave(field, (event.target as HTMLInputElement).value));
   else el.addEventListener(field.type === 'bool' ? 'change' : 'input', () => {
@@ -494,7 +570,7 @@ function renderRestart() {
 }
 function editHotspot() {
   if (!status?.hotspot) return;
-  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t));
+  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t, status.wireless));
   const name = dialog.querySelector<HTMLInputElement>('#hotspot-name')!;
   const password = dialog.querySelector<HTMLInputElement>('#hotspot-password')!;
   dialog.querySelector('#hotspot-reveal')!.addEventListener('click', event => {
@@ -510,13 +586,14 @@ function editHotspot() {
     password.setAttribute('aria-invalid', String(error === 'error.hotspotPassword'));
     if (error) return;
     const ssid = name.value, secret = password.value;
+    const band = dialog.querySelector<HTMLSelectElement>('#hotspot-band')!.value as HotspotBand;
     const active = status!.network.mode === 'device-hotspot';
     // Keep the form open underneath so Cancel returns to the entered values.
     const confirmation = networkDialog(t('hotspot.confirm'), `<p>${esc(t(active ? 'hotspot.warning' : 'hotspot.later'))}</p><p>${esc(ssid)}</p><p class="error" role="alert"></p><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button data-confirm class="primary">${t('hotspot.apply')}</button></div>`);
     confirmation.dialog.querySelector<HTMLButtonElement>('[data-confirm]')!.addEventListener('click', async event => {
       const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
       try {
-        await api.hotspot(ssid, secret);
+        await api.hotspot(ssid, secret, band);
         status!.hotspot = { ...status!.hotspot!, ssid, password: secret, hasPassword: true };
         confirmation.close(); close();
         networkAnnouncement = t(active ? 'hotspot.reconnecting' : 'ui.saved'); renderNetworkPanel(); void tick();
@@ -528,13 +605,17 @@ function editHotspot() {
 function renderNetworkPanel() {
   const el = document.getElementById('network-panel'); if (!el || !settings || !status || switching) return;
   const v = networkPanelView(status, settings);
-  const signature = JSON.stringify([v, status.network.followingCarlink, status.hotspot, status.wifiControl, networks, networkError, networkAnnouncement, language]);
+  const signature = JSON.stringify([v, status.network.followingCarlink, status.hotspot, status.wireless, status.wifiControl, networks, networkError, networkAnnouncement, language]);
   if (el.dataset.signature === signature) return;
   const focused = el.contains(document.activeElement) ? (document.activeElement as HTMLElement).id : '';
   el.dataset.signature = signature;
   el.innerHTML = `<div class="field"><h3>${t('net.title')}</h3>${connectionConstraint(status?.platform, t)}${status.network.followingCarlink ? `<p>${t('network.followingCarlink')}</p>` : ''}<div class="network-current"><h3>${t(v.label)}</h3><p role="status" aria-live="polite">${esc(t(v.statusKey, v.parameters))}</p>${topology(v.mode as Illustration)}${!v.shared || status.wifiClient?.setupHotspot ? hotspotDetails(status, t) : ''}${!v.shared && status.platform === 'linux' ? `<button id="hotspot-edit" aria-haspopup="dialog">${t('hotspot.change')}</button>` : ''}${v.receiver && !v.shared ? `<p>${esc(t('net.carHint', { url: v.receiver }))}</p>` : ''}</div><p>${t(v.shared ? 'net.useHotspot' : 'net.useShared')}</p><button id="network-switch" ${networkOptionState(status?.platform, settings!.values, v.target)} aria-haspopup="dialog">${t(v.shared ? 'net.switchHotspot' : v.needsNetwork ? 'net.addSwitch' : 'net.switchShared')}</button><p id="network-mode-result" class="error" role="alert">${esc(t(networkError))}</p><p id="network-announcement" role="status" aria-live="polite"></p><h3>${t('net.saved')}</h3><p class="muted">${t('net.note')}</p><div id="saved-networks">${v.list.map((entry, index) => `<button class="phone-row" id="saved-network-${index}" data-network="${index}" aria-haspopup="dialog"><span>${esc(entry.ssid)}</span><span class="badges">${savedNetworkTags(entry, status!, networks).map(key => `<span class="tag">${t(key)}</span>`).join('')}</span></button>`).join('')}</div><button id="network-add" ${v.full ? 'disabled' : ''} aria-haspopup="dialog">${t('net.add')}</button>${v.full ? `<p>${t('net.limit')}</p>` : ''}</div>`;
   document.getElementById('hotspot-edit')?.addEventListener('click', editHotspot);
-  document.getElementById('network-switch')!.addEventListener('click', () => requestNetworkSwitch(v.target));
+  const switchButton = document.getElementById('network-switch')!;
+  if (status.platform === 'linux' && status.network.plan) {
+    switchButton.previousElementSibling?.remove();
+    switchButton.remove();
+  } else switchButton.addEventListener('click', () => requestNetworkSwitch(v.target));
   document.getElementById('network-add')!.addEventListener('click', () => editSharedNetwork(null));
   bindSharedNetworks(); bindCopies(el);
   requestAnimationFrame(() => { const announcement = document.getElementById('network-announcement'); if (announcement) announcement.textContent = networkAnnouncement; });
@@ -571,7 +652,7 @@ function bindSharedNetworks() {
 function editSharedNetwork(entry: SavedNetwork | null, afterSave?: () => void) {
   if (!settings || !status || (!entry && savedNetworks(settings).length >= 10)) return;
   const connect = !entry && addSavesAndConnects(status);
-  const { dialog, close } = networkDialog(t(entry ? 'net.change' : 'net.add'), `<form><label for="network-name">${t('net.wifiName')}</label><input id="network-name" value="${esc(entry?.ssid ?? '')}" ${entry ? 'readonly' : ''} required autocomplete="off">${!entry && status.platform === 'linux' ? `<p>${t('wifi.only24')}</p>` : ''}${!entry && status.wifiControl ? `<section class="nearby"><div class="nearby-heading"><h3>${t('net.scan')}</h3><button type="button" id="network-refresh" class="icon-button" aria-label="${t('net.refresh')}" title="${t('net.refresh')}">${icon('refresh-cw')}</button></div><p id="network-scan-status" role="status"></p><p class="muted" ${status.wifiScanStale || status.hotspot?.active || status.wifiClient?.setupHotspot ? '' : 'hidden'}>${t('net.stale')}</p><div id="network-scan"></div></section>` : ''}<div id="network-secret"><label for="network-password">${t('net.password')}</label><div class="input-row"><input id="network-password" type="password" autocomplete="new-password" placeholder="${entry?.hasPassword ? t('networks.keep') : ''}"><button type="button" id="network-reveal" class="icon-button" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button></div></div><label class="check-row"><input id="network-open" type="checkbox" ${entry && !entry.hasPassword ? 'checked' : ''}>${t('net.open')}</label><p id="network-error" class="error" role="alert"></p>${connect ? `<p>${t('net.saveConnect')}</p>` : ''}<div class="dialog-actions"><button type="button" data-close>${t('ui.cancel')}</button><button type="submit" class="primary">${t('net.save')}</button></div></form>`);
+  const { dialog, close } = networkDialog(t(entry ? 'net.change' : 'net.add'), `<form><label for="network-name">${t('net.wifiName')}</label><input id="network-name" value="${esc(entry?.ssid ?? '')}" ${entry ? 'readonly' : ''} required autocomplete="off">${!entry ? stationBandHint(status, t) : ''}${!entry && status.wifiControl ? `<section class="nearby"><div class="nearby-heading"><h3>${t('net.scan')}</h3><button type="button" id="network-refresh" class="icon-button" aria-label="${t('net.refresh')}" title="${t('net.refresh')}">${icon('refresh-cw')}</button></div><p id="network-scan-status" role="status"></p><p class="muted" ${status.wifiScanStale || status.hotspot?.active || status.wifiClient?.setupHotspot ? '' : 'hidden'}>${t('net.stale')}</p><div id="network-scan"></div></section>` : ''}<div id="network-secret"><label for="network-password">${t('net.password')}</label><div class="input-row"><input id="network-password" type="password" autocomplete="new-password" placeholder="${entry?.hasPassword ? t('networks.keep') : ''}"><button type="button" id="network-reveal" class="icon-button" aria-label="${t('ui.reveal')}" aria-pressed="false">${icon('eye')}</button></div></div><label class="check-row"><input id="network-open" type="checkbox" ${entry && !entry.hasPassword ? 'checked' : ''}>${t('net.open')}</label><p id="network-error" class="error" role="alert"></p>${connect ? `<p>${t('net.saveConnect')}</p>` : ''}<div class="dialog-actions"><button type="button" data-close>${t('ui.cancel')}</button><button type="submit" class="primary">${t('net.save')}</button></div></form>`);
   const name = dialog.querySelector<HTMLInputElement>('#network-name')!;
   const password = dialog.querySelector<HTMLInputElement>('#network-password')!;
   const open = dialog.querySelector<HTMLInputElement>('#network-open')!;
@@ -645,11 +726,25 @@ function updateVisibility() {
     const el = document.getElementById(fieldId(field.key))?.closest<HTMLElement>('.field');
     if (el) el.hidden = !isVisible(field, settings!.values);
   }
-  document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = !section.querySelector('#network-panel') && ![...section.querySelectorAll<HTMLElement>('.field')].some(field => !field.hidden); });
+  document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = section.dataset.section !== 'connections' && !section.querySelector('#network-panel') && ![...section.querySelectorAll<HTMLElement>('.field')].some(field => !field.hidden); });
   renderPublicName();
 }
 function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
+  if (field.key.startsWith('publicName')) {
+    if (publicNameBusy) return;
+    if (field.key === 'publicNameProvider') publicNameDrafts.select(String(value), settings!.values);
+    else {
+      settings!.values[field.key] = value;
+      if (field.key === 'publicName' || field.key === 'publicNameToken') publicNameDrafts.edit(String(settings!.values.publicNameProvider ?? ''), settings!.values);
+    }
+    // One serialized save submits the selected provider and its fields together.
+    queueValue(fields().find(f => f.key === 'publicNameProvider')!, settings!.values.publicNameProvider);
+    if (field.key === 'publicNameProvider') {
+      render(); document.querySelector<HTMLInputElement>(`input[name="${fieldId(field.key)}"]:checked`)?.focus();
+    }
+    return;
+  }
   if (field.key === 'transport' && needsUsbConfirmation(status?.platform, settings!.values.transport, value)) {
     if (!window.confirm(t('confirm.transport.usb.android'))) { render(); return; }
   }
@@ -673,22 +768,32 @@ function queueValue(field: Field, value: Value) {
 }
 async function save(key: string) {
   const item = pending.get(key); if (!item || item.busy || session !== 'ready' || handoff) return;
+  if (key.startsWith('publicName') && publicNameBusy) { item.timer = setTimeout(() => void save(key), 2000); return; }
   if (switching) { item.timer = setTimeout(() => void save(key), 2000); return; }
   item.busy = true; const revision = item.revision; const current = epoch;
+  const submitted = key === 'publicNameProvider' ? publicNameSubmission(settings!.values) : null;
   try {
-    const response = await api.save({ [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
+    const write = api.save(submitted ?? { [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
+    if (submitted) publicNameWrite = write;
+    const response = await write;
     if (current !== epoch) return;
+    if (submitted && settings) {
+      publicNameDrafts.saved(submitted, settings.values);
+      const token = document.getElementById(fieldId('publicNameToken')) as HTMLInputElement | null;
+      if (token) { token.value = String(settings.values.publicNameToken ?? ''); token.placeholder = settings.values.publicNameTokenSet ? t('publicName.tokenSaved') : ''; }
+      for (const field of fields().filter(f => f.key.startsWith('publicName'))) result(field.key, 'ui.saved');
+    }
     if (revision === item.revision) { pending.delete(key); needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
-    // A saved token is never shown again; the field then reads "Token saved".
-    if (key === 'publicNameToken' && item.value !== '' && settings) settings.values.publicNameTokenSet = true;
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {
       if (error instanceof NetworkError) result(key, 'ui.unsaved');
       else { pending.delete(key); result(key, error instanceof ApiError ? error.errors[key] ?? error.key : 'error.request'); }
+      if (submitted && error instanceof ApiError) for (const [field, message] of Object.entries(error.errors)) result(field, message);
     }
   } finally {
     item.busy = false;
+    if (submitted && current === epoch) publicNameWrite = null;
     if (pending.get(key) === item && current === epoch) item.timer = setTimeout(() => void save(key), revision === item.revision ? 2000 : 450);
   }
 }
@@ -792,8 +897,9 @@ async function tick() {
           networkAnnouncement = joinError ? '' : t('net.switched', { mode: t(next.network.mode === 'shared-wifi' ? 'net.shared' : 'net.hotspot') });
           settings = await api.settings();
           for (const [key, item] of pending) settings.values[key] = item.value;
+          if (pending.has('publicNameProvider')) publicNameDrafts.select(String(settings.values.publicNameProvider), settings.values);
           switching = null; render(); document.getElementById('network-switch')?.focus();
-        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); } }
+        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderConnections(); } }
     }
   } catch (error) { if (!(error instanceof NetworkError)) { pageError = errorKey(error); if (!status) render(); } }
   finally { polling = false; }
@@ -810,7 +916,7 @@ document.addEventListener('keydown', event => {
   const next = items[Math.max(0, Math.min(items.length - 1, index + direction))];
   if (next) { event.preventDefault(); next.focus(); }
 });
-setInterval(syncPinDialog, 1000);
+setInterval(() => { syncPinDialog(); if (videoStatsInterval(settings, status?.platform)) updateDashboard(); }, 1000);
 createCountdown(() => status?.pairingDeadline, seconds => {
   const time = formatRemaining(seconds);
   const home = document.getElementById('pair-countdown'); if (home) home.textContent = seconds ? t('home.pairCountdown', { time }) : '';

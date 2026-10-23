@@ -9,7 +9,7 @@ use std::{
     io::{self, BufRead, BufReader, Read},
     net::Ipv4Addr,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Condvar, Mutex,
@@ -20,6 +20,11 @@ use std::{
 pub type EventSink = Arc<dyn Fn(Value) + Send + Sync>;
 #[derive(Clone, Debug)]
 pub struct CarlinkSettings {
+    pub name: String,
+    pub model: String,
+    pub hevc: String,
+    pub trace: bool,
+    pub auto_reconnect: bool,
     pub ble: Option<BleCarlinkSettings>,
     pub head_unit: Ipv4Addr,
     pub local: Ipv4Addr,
@@ -38,6 +43,7 @@ pub struct BleCarlinkSettings {
 /// A certificate for the head-unit page from PEM files (the trusted-HTTPS name's).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PemTls {
+    pub name: String,
     pub cert: PathBuf,
     pub key: PathBuf,
 }
@@ -52,7 +58,7 @@ pub struct SupervisorSettings {
     pub addresses: Vec<Ipv4Addr>,
     pub pairing: bool,
     pub carlink: Option<CarlinkSettings>,
-    /// Serve this certificate instead of the self-signed one, while both files exist.
+    /// Serve this certificate for its SNI name while both files exist.
     pub pem_tls: Option<PemTls>,
 }
 impl SupervisorSettings {
@@ -75,20 +81,22 @@ impl SupervisorSettings {
                 "--web-bind".into(),
                 "0.0.0.0".into(),
             ];
-            match pem {
-                Some(pem) => args.extend([
+            if let Some(pem) = pem {
+                args.extend([
                     "--tls-cert".into(),
                     pem.cert.as_os_str().into(),
                     "--tls-key".into(),
                     pem.key.as_os_str().into(),
-                ]),
-                None => args.extend([
-                    "--tls-self-signed".into(),
-                    self.state_dir.join("receiver-tls").into_os_string(),
-                    "--tls-san".into(),
-                    "openxplay-linux.local".into(),
-                ]),
+                    "--tls-name".into(),
+                    pem.name.clone().into(),
+                ]);
             }
+            args.extend([
+                "--tls-self-signed".into(),
+                self.state_dir.join("receiver-tls").into_os_string(),
+                "--tls-san".into(),
+                "openxplay-linux.local".into(),
+            ]);
             args
         };
         args.extend([
@@ -100,20 +108,31 @@ impl SupervisorSettings {
         let mut ips = self.addresses.clone();
         ips.sort();
         ips.dedup();
-        // oxp-relay takes --tls-san only with --tls-self-signed.
-        for ip in ips
-            .into_iter()
-            .filter(|_| self.web_port != 0 && pem.is_none())
-        {
+        for ip in ips.into_iter().filter(|_| self.web_port != 0) {
             args.extend(["--tls-san".into(), ip.to_string().into()]);
         }
         if self.pairing && self.web_port != 0 {
             args.push("--pairing".into());
         }
         if let Some(c) = &self.carlink {
+            if c.trace {
+                args.extend([
+                    "--clink-trace".into(),
+                    self.state_dir.join("carlink-trace").into_os_string(),
+                    "--control-stdin".into(),
+                ]);
+            }
             args.extend([
                 "--state-dir".into(),
                 self.state_dir.join("carlink").into_os_string(),
+            ]);
+            args.extend([
+                "--clink-name".into(),
+                c.name.clone().into(),
+                "--clink-model".into(),
+                c.model.clone().into(),
+                "--clink-hevc".into(),
+                c.hevc.clone().into(),
             ]);
             if let Some(ble) = &c.ble {
                 args.extend([
@@ -121,10 +140,6 @@ impl SupervisorSettings {
                     "ble".into(),
                     "--clink-interface".into(),
                     ble.interface.clone().into(),
-                    "--clink-name".into(),
-                    crate::branding::DEVICE_NAME.into(),
-                    "--clink-model".into(),
-                    crate::branding::MODEL.into(),
                     "--clink-id".into(),
                     ble.id.clone().into(),
                     "--clink-band".into(),
@@ -228,7 +243,49 @@ impl SupervisorSettings {
         settings.arguments()
     }
 }
+/// A nonblocking pipe: one small atomic write, never waiting for a reader or another request.
+#[derive(Clone)]
+pub struct ControlPipe(Arc<Mutex<ChildStdin>>);
+impl ControlPipe {
+    fn new(stdin: ChildStdin) -> io::Result<Self> {
+        use std::os::fd::AsRawFd;
+        let fd = stdin.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self(Arc::new(Mutex::new(stdin))))
+    }
+    pub fn send_control(&self, value: &Value) -> io::Result<()> {
+        use std::os::fd::AsRawFd;
+        let mut bytes = serde_json::to_vec(value)?;
+        bytes.push(b'\n');
+        // POSIX guarantees atomic pipe writes of at least 512 bytes; our commands are much smaller.
+        if bytes.len() > 512 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "control too long",
+            ));
+        }
+        let pipe = self
+            .0
+            .try_lock()
+            .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
+        let written = unsafe { libc::write(pipe.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
+        if written < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if written as usize != bytes.len() {
+            return Err(io::Error::from(io::ErrorKind::WriteZero));
+        }
+        Ok(())
+    }
+}
 pub trait RelayChild: Send {
+    fn control(&self) -> Option<ControlPipe> {
+        None
+    }
+
     fn exited(&mut self) -> io::Result<bool>;
     fn stop(&mut self) -> io::Result<()>;
 }
@@ -244,6 +301,7 @@ pub struct ProcessChildFactory;
 struct ProcessChild {
     child: Child,
     readers: Vec<JoinHandle<()>>,
+    control: Option<ControlPipe>,
 }
 /// Ignore invalid/oversized event lines while keeping a bounded buffer.
 pub fn forward_json_lines(input: impl Read, events: &EventSink) -> io::Result<()> {
@@ -290,10 +348,22 @@ impl ChildFactory for ProcessChildFactory {
     ) -> io::Result<Box<dyn RelayChild>> {
         let mut child = Command::new(binary)
             .args(args)
-            .stdin(Stdio::null())
+            .stdin(if args.iter().any(|a| a == "--control-stdin") {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+        let control = match child.stdin.take().map(ControlPipe::new).transpose() {
+            Ok(control) => control,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let copy = events.clone();
@@ -305,10 +375,17 @@ impl ChildFactory for ProcessChildFactory {
                 let _ = forward_json_lines(stderr, &events);
             }),
         ];
-        Ok(Box::new(ProcessChild { child, readers }))
+        Ok(Box::new(ProcessChild {
+            child,
+            readers,
+            control,
+        }))
     }
 }
 impl RelayChild for ProcessChild {
+    fn control(&self) -> Option<ControlPipe> {
+        self.control.clone()
+    }
     fn exited(&mut self) -> io::Result<bool> {
         Ok(self.child.try_wait()?.is_some())
     }
@@ -446,6 +523,9 @@ pub struct RelaySupervisor {
     connect: Arc<AtomicBool>,
     restart: Arc<AtomicBool>,
     band_backoff: CarlinkBackoff,
+    hevc_disabled: Arc<AtomicBool>,
+    control: Arc<Mutex<Option<ControlPipe>>>,
+    tracing: Arc<AtomicBool>,
 }
 impl RelaySupervisor {
     pub fn new(
@@ -465,11 +545,19 @@ impl RelaySupervisor {
             connect: Arc::new(AtomicBool::new(false)),
             restart: Arc::new(AtomicBool::new(false)),
             band_backoff: CarlinkBackoff::default(),
+            hevc_disabled: Arc::new(AtomicBool::new(false)),
+            control: Arc::default(),
+            tracing: Arc::new(AtomicBool::new(false)),
         }
     }
     /// Shares the band backoff with earlier and later supervisors of the same relay.
     pub fn with_carlink_backoff(mut self, backoff: CarlinkBackoff) -> Self {
         self.band_backoff = backoff;
+        self
+    }
+    /// Keeps the codec fallback across supervisor replacements within one service run.
+    pub fn with_hevc_disabled(mut self, disabled: Arc<AtomicBool>) -> Self {
+        self.hevc_disabled = disabled;
         self
     }
     pub fn set_restart_policy(&mut self, policy: RestartPolicy) {
@@ -488,6 +576,35 @@ impl RelaySupervisor {
     pub fn running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
+    pub fn trace_running(&self) -> bool {
+        self.tracing.load(Ordering::Acquire)
+    }
+    pub fn send_control(&self, value: &Value) -> io::Result<()> {
+        let control = self
+            .control
+            .try_lock()
+            .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
+        control
+            .as_ref()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?
+            .send_control(value)
+    }
+    /// Serialize offline clearing with child startup, without waiting for the lifecycle worker.
+    pub fn clear_trace(&self, when_stopped: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+        let control = self
+            .control
+            .try_lock()
+            .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
+        if self.trace_running() {
+            let pipe = control
+                .as_ref()
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?;
+            pipe.send_control(&json!({"type":"clink-capture","action":"stop"}))?;
+            pipe.send_control(&json!({"type":"clink-trace","action":"clear"}))
+        } else {
+            when_stopped()
+        }
+    }
     pub fn connect_carlink(&self) {
         // Restart the child with Carlink arguments for one explicit attempt, also during a band
         // backoff. Lift the backoff first: the worker reads it after taking `connect`.
@@ -499,7 +616,8 @@ impl RelaySupervisor {
         self.stop.1.notify_all();
     }
     pub fn start(&mut self) -> io::Result<()> {
-        if self.worker.is_some() {
+        if self.worker.is_some() || (self.settings.web_port == 0 && self.settings.carlink.is_none())
+        {
             return Ok(());
         }
         *self.stop.0.lock().unwrap() = false;
@@ -511,19 +629,50 @@ impl RelaySupervisor {
             self.stop.clone(),
             self.running.clone(),
         );
+        let control = self.control.clone();
+        let tracing = self.tracing.clone();
         let connect = self.connect.clone();
         let restart = self.restart.clone();
         let fragment = self.pairing_fragment.clone();
         let linking = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
         let band_backoff = self.band_backoff.clone();
+        let hevc_disabled = self.hevc_disabled.clone();
         let child_events: EventSink = Arc::new({
             let events = events.clone();
             let fragment = fragment.clone();
             let restart = restart.clone();
             let state_dir = settings.state_dir.clone();
+            let paused = paused.clone();
+            let auto_reconnect = settings.carlink.as_ref().is_none_or(|c| c.auto_reconnect);
             let linking = linking.clone();
             let band_backoff = band_backoff.clone();
+            let hevc_disabled = hevc_disabled.clone();
+            let hevc_auto = settings.carlink.as_ref().is_some_and(|c| c.hevc == "auto");
             move |event| {
+                if event["type"] == "diagnostic" {
+                    if let Some(message) = event["message"].as_str() {
+                        if message.starts_with("codec mismatch expected=H265")
+                            && hevc_auto
+                            && !hevc_disabled.swap(true, Ordering::AcqRel)
+                        {
+                            eprintln!("oxp-relay: H.265 codec mismatch; restarting with Carlink H.265 off until settings change or service restart");
+                            restart.store(true, Ordering::Release);
+                        }
+                        if message.starts_with("oxp-relay:") {
+                            eprintln!("{message}");
+                        } else {
+                            eprintln!("oxp-relay: {message}");
+                        }
+                    }
+                }
+                if !auto_reconnect
+                    && linking.load(Ordering::Acquire)
+                    && carlink_attempt_failed(&event)
+                {
+                    paused.store(true, Ordering::Release);
+                    restart.store(true, Ordering::Release);
+                }
                 if event["type"] == "pairing-url" {
                     *fragment.lock().unwrap() = event["url"]
                         .as_str()
@@ -570,11 +719,13 @@ impl RelaySupervisor {
                 while !*stop.0.lock().unwrap() {
                     *fragment.lock().unwrap() = None;
                     let attempt = connect.swap(false, Ordering::AcqRel);
+                    if attempt { paused.store(false, Ordering::Release); }
+                    let manual_pause = paused.load(Ordering::Acquire);
                     // Connect lifted the backoff for this one attempt.
                     let backoff = band_backoff
                         .remaining(Instant::now())
                         .filter(|_| !attempt && settings.carlink.is_some());
-                    if let Some(remaining) = backoff.filter(|_| settings.web_port == 0) {
+                    if let Some(remaining) = backoff.filter(|_| settings.web_port == 0 && !manual_pause) {
                         // Carlink only: nothing to serve until the backoff ends or Connect.
                         let (lock, wake) = &*stop;
                         let state = lock.lock().unwrap();
@@ -582,12 +733,12 @@ impl RelaySupervisor {
                         continue;
                     }
                     // With the web receiver in the same child, keep it up without Carlink.
-                    let backing_off = backoff.is_some();
+                    let backing_off = backoff.is_some() || manual_pause;
                     let enabled = settings.carlink.is_some() && !backing_off && (attempt || has_trusted_carlink(&settings.state_dir));
                     linking.store(enabled, Ordering::Release);
-                    if settings.carlink.is_some() && !enabled && !backing_off {
+                    if settings.carlink.is_some() && !enabled && (!backing_off || manual_pause) {
                         if !unpaired_reported {
-                            events(json!({"type":"carlink-unpaired"}));
+                            events(json!({"type":if manual_pause { "carlink-paused" } else { "carlink-unpaired" }}));
                             unpaired_reported = true;
                         }
                         if settings.web_port == 0 {
@@ -602,35 +753,63 @@ impl RelaySupervisor {
                     let started = Instant::now();
                     remove_stale_socket(&settings.socket);
                     restart.store(false, Ordering::Release);
+                    let mut launch = settings.clone();
+                    if hevc_disabled.load(Ordering::Acquire) {
+                        if let Some(carlink) = launch.carlink.as_mut() {
+                            carlink.hevc = "off".into();
+                        }
+                    }
                     let arguments = if backing_off {
-                        SupervisorSettings { carlink: None, ..settings.clone() }.arguments()
+                        SupervisorSettings { carlink: None, ..launch }.arguments()
                     } else {
-                        settings.launch_arguments(attempt)
+                        launch.launch_arguments(attempt)
                     };
+                    {
+                        let _guard = control.lock().unwrap();
+                        tracing.store(arguments.iter().any(|a| a == "--control-stdin"), Ordering::Release);
+                    }
+                    // Reset session observations before the child can emit its first event.
+                    events(json!({"type":"receiver-starting"}));
                     match factory.spawn(&settings.binary, &arguments, child_events.clone()) {
                         Ok(mut child) => {
+                            let pipe = child.control();
+                            {
+                                let mut available = control.lock().unwrap();
+                                tracing.store(pipe.is_some(), Ordering::Release);
+                                *available = pipe;
+                            }
                             running.store(true, Ordering::Relaxed);
                             events(json!({"type": "receiver-started"}));
                             loop {
                                 if wait(policy.poll) || restart.load(Ordering::Acquire) { break; }
                                 // The web-only child makes way for Carlink when the backoff ends.
-                                if backing_off && band_backoff.remaining(Instant::now()).is_none() { break; }
+                                if backing_off && !manual_pause && band_backoff.remaining(Instant::now()).is_none() { break; }
                                 match child.exited() {
                                     Ok(false) => {},
-                                    Ok(true) => break,
+                                    Ok(true) => {
+                                        if enabled && settings.carlink.as_ref().is_some_and(|c| !c.auto_reconnect) {
+                                            paused.store(true, Ordering::Release);
+                                        }
+                                        break;
+                                    },
                                     Err(e) => {
                                         events(json!({"type": "receiver-error", "message": e.to_string()}));
                                         break;
                                     }
                                 }
                             }
+                            *control.lock().unwrap() = None;
                             running.store(false, Ordering::Relaxed);
                             if let Err(e) = child.stop() {
                                 events(json!({"type": "receiver-error", "message": e.to_string()}));
                             }
+                            tracing.store(false, Ordering::Release);
                             events(json!({"type":"receiver-stopped"}));
                         }
-                        Err(e) => events(json!({"type": "receiver-error", "message": e.to_string()})),
+                        Err(e) => {
+                            tracing.store(false, Ordering::Release);
+                            events(json!({"type": "receiver-error", "message": e.to_string()}));
+                        },
                     }
                     *fragment.lock().unwrap() = None;
                     if *stop.0.lock().unwrap() { break; }
@@ -675,6 +854,18 @@ mod band_tests {
     use super::*;
     use std::sync::mpsc::{channel, Receiver, Sender};
 
+    #[test]
+    fn missing_carlink_without_web_output_starts_no_child() {
+        let mut f = Fixture::new("missing-interface", 0);
+        f.settings.carlink = None;
+        let mut relay = f.supervisor(&CarlinkBackoff::default());
+        relay.start().unwrap();
+        relay.connect_carlink();
+        relay.start().unwrap();
+        assert!(f.spawns.try_recv().is_err());
+        assert!(!relay.running());
+        relay.stop();
+    }
     #[test]
     fn band_backoff_sequence_duplicate_failure_and_success_reset() {
         let mut backoff = BandBackoff::new(Duration::from_secs(60), Duration::from_secs(300));
@@ -757,6 +948,11 @@ mod band_tests {
                     head_unit: Ipv4Addr::LOCALHOST,
                     local: Ipv4Addr::LOCALHOST,
                     pin: None,
+                    name: crate::branding::DEVICE_NAME.into(),
+                    model: crate::branding::MODEL.into(),
+                    hevc: "auto".into(),
+                    trace: false,
+                    auto_reconnect: true,
                     ports: BTreeMap::new(),
                 }),
             };
@@ -823,6 +1019,44 @@ mod band_tests {
     }
 
     #[test]
+    fn codec_mismatch_disables_hevc_once_until_settings_rebuild() {
+        let mut f = Fixture::new("hevc-mismatch", 0);
+        f.trust();
+        let backoff = CarlinkBackoff::default();
+        let mut relay = f.supervisor(&backoff);
+        relay.start().unwrap();
+        let (args, sink) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        let has_hevc = |args: &[OsString], value: &str| {
+            args.windows(2)
+                .any(|a| a[0] == "--clink-hevc" && a[1] == value)
+        };
+        assert!(has_hevc(&args, "auto"));
+        sink(json!({"type":"diagnostic","message":"unrelated diagnostic"}));
+        assert!(f.spawns.recv_timeout(Duration::from_millis(30)).is_err());
+        let mismatch =
+            json!({"type":"diagnostic","message":"codec mismatch expected=H265 actual=Some(H264)"});
+        sink(mismatch.clone());
+        let (args, sink) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        sink(mismatch.clone());
+        assert!(f.spawns.recv_timeout(Duration::from_millis(30)).is_err());
+        relay.connect_carlink();
+        let (args, _) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        relay.stop();
+        // Settings changes replace the supervisor and re-evaluate the configured HEVC policy.
+        f.settings.carlink.as_mut().unwrap().name = "Changed name".into();
+        let mut relay = f.supervisor(&backoff);
+        relay.start().unwrap();
+        let (args, sink) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "auto"));
+        sink(mismatch);
+        let (args, _) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(has_hevc(&args, "off"));
+        relay.stop();
+    }
+
+    #[test]
     fn carlink_only_band_failure_blocks_respawn_until_connect_and_survives_restarts() {
         let f = Fixture::new("carlink-only", 0);
         let backoff = CarlinkBackoff::default();
@@ -859,6 +1093,31 @@ mod band_tests {
         assert!(f.spawns.recv_timeout(Duration::from_millis(100)).is_err());
         assert_eq!(f.backoff_delays(), [120000]);
         relay.stop();
+    }
+
+    #[test]
+    fn manual_reconnect_waits_after_session_end_and_connect_still_works() {
+        for port in [0, 8443] {
+            let mut f = Fixture::new("manual", port);
+            f.settings.carlink.as_mut().unwrap().auto_reconnect = false;
+            f.trust();
+            let mut relay = f.supervisor(&CarlinkBackoff::default());
+            relay.start().unwrap();
+            let (carlink, _, sink) = f.spawned();
+            assert!(carlink);
+            sink(json!({"type":"state","state":"Ended"}));
+            f.stops.recv_timeout(Duration::from_secs(2)).unwrap();
+            if port != 0 {
+                let (carlink, web, _) = f.spawned();
+                assert!(!carlink && web);
+            }
+            assert!(f.spawns.recv_timeout(Duration::from_millis(100)).is_err());
+            relay.connect_carlink();
+            let (carlink, web, _) = f.spawned();
+            assert!(carlink);
+            assert_eq!(web, port != 0);
+            relay.stop();
+        }
     }
 
     #[test]
@@ -927,6 +1186,79 @@ mod tls_tests {
             .collect()
     }
     #[test]
+    fn carlink_name_model_hevc_argument_lists_are_exact_for_both_links() {
+        for ble in [false, true] {
+            let mut settings = settings(Path::new("/state"));
+            settings.web_port = 0;
+            settings.carlink = Some(CarlinkSettings {
+                name: "My 车".into(),
+                model: "Model 1".into(),
+                hevc: "off".into(),
+                trace: false,
+                auto_reconnect: false,
+                ble: ble.then(|| BleCarlinkSettings {
+                    adapter: None,
+                    interface: "wlan0".into(),
+                    address: None,
+                    id: "id".into(),
+                    band: 1,
+                }),
+                head_unit: Ipv4Addr::new(192, 168, 43, 1),
+                local: Ipv4Addr::new(192, 168, 43, 2),
+                pin: None,
+                ports: BTreeMap::new(),
+            });
+            let mut expected = vec![
+                "--unix",
+                "/tmp/oxp-relay.sock",
+                "--relay-name",
+                crate::branding::DEVICE_NAME,
+                "--relay-version",
+                env!("CARGO_PKG_VERSION"),
+                "--state-dir",
+                "/state/carlink",
+                "--clink-name",
+                "My 车",
+                "--clink-model",
+                "Model 1",
+                "--clink-hevc",
+                "off",
+            ];
+            expected.extend(if ble {
+                vec![
+                    "--clink-link",
+                    "ble",
+                    "--clink-interface",
+                    "wlan0",
+                    "--clink-id",
+                    "id",
+                    "--clink-band",
+                    "1",
+                    "--pin-file",
+                    "/state/carlink/pin",
+                ]
+            } else {
+                vec![
+                    "--clink-head-unit",
+                    "192.168.43.1",
+                    "--clink-local",
+                    "192.168.43.2",
+                ]
+            });
+            assert_eq!(strings(settings.arguments()), expected);
+            settings.carlink.as_mut().unwrap().trace = true;
+            expected.splice(
+                6..6,
+                ["--clink-trace", "/state/carlink-trace", "--control-stdin"],
+            );
+            assert_eq!(strings(settings.arguments()), expected);
+            settings.carlink = None;
+            assert!(!strings(settings.arguments())
+                .iter()
+                .any(|arg| arg == "--control-stdin"));
+        }
+    }
+    #[test]
     fn without_a_trusted_certificate_the_arguments_are_exactly_as_before() {
         let dir = std::env::temp_dir().join(format!(
             "supervisor-tls-{}",
@@ -958,6 +1290,7 @@ mod tls_tests {
         assert_eq!(strings(settings(&dir).arguments()), legacy);
         // Configured but missing files (removed, or never issued) change nothing either.
         let pem = PemTls {
+            name: "myrelay.duckdns.org".into(),
             cert: dir.join("public-name/cert.pem"),
             key: dir.join("public-name/key.pem"),
         };
@@ -970,16 +1303,19 @@ mod tls_tests {
         std::fs::write(&pem.cert, "chain").unwrap();
         std::fs::write(&pem.key, "key").unwrap();
         let args = strings(with.arguments());
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--tls-cert", &format!("{state}/public-name/cert.pem")]));
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--tls-key", &format!("{state}/public-name/key.pem")]));
-        assert!(!args
-            .iter()
-            .any(|a| a == "--tls-self-signed" || a == "--tls-san"));
-        assert!(args.windows(2).any(|w| w == ["--web-port", "8443"]));
+        let mut expected: Vec<String> = legacy.iter().map(|s| s.to_string()).collect();
+        expected.splice(
+            8..8,
+            [
+                "--tls-cert".into(),
+                format!("{state}/public-name/cert.pem"),
+                "--tls-key".into(),
+                format!("{state}/public-name/key.pem"),
+                "--tls-name".into(),
+                "myrelay.duckdns.org".into(),
+            ],
+        );
+        assert_eq!(args, expected);
         // Carlink-only children take no TLS options at all.
         let carlink = SupervisorSettings {
             web_port: 0,
@@ -989,5 +1325,58 @@ mod tls_tests {
             .iter()
             .any(|a| a.starts_with("--tls")));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+    #[test]
+    fn pipe_is_only_created_with_trace_and_dead_or_stuck_children_never_block() {
+        let factory = ProcessChildFactory;
+        let sink: EventSink = Arc::new(|_| {});
+        let mut off = factory
+            .spawn(Path::new("/bin/cat"), &[], sink.clone())
+            .unwrap();
+        assert!(off.control().is_none());
+        off.stop().unwrap();
+        // sh ignores the flag and sleeps without reading stdin.
+        let args = ["-c", "exec sleep 30", "--control-stdin"].map(OsString::from);
+        let mut stuck = factory
+            .spawn(Path::new("/bin/sh"), &args, sink.clone())
+            .unwrap();
+        let pipe = stuck.control().unwrap();
+        let start = Instant::now();
+        let value = json!({"type":"clink-capture","action":"start"});
+        let mut full = false;
+        for _ in 0..100_000 {
+            if let Err(e) = pipe.send_control(&value) {
+                assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
+                full = true;
+                break;
+            }
+        }
+        assert!(full);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        stuck.stop().unwrap();
+        let start = Instant::now();
+        assert_eq!(
+            pipe.send_control(&value).unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+        let mut echo = factory
+            .spawn(
+                Path::new("/bin/sh"),
+                &[
+                    "-c".into(),
+                    "read line; printf '%s\\n' \"$line\"".into(),
+                    "--control-stdin".into(),
+                ],
+                sink,
+            )
+            .unwrap();
+        echo.control().unwrap().send_control(&value).unwrap();
+        echo.stop().unwrap();
     }
 }

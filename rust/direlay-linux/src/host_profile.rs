@@ -17,11 +17,14 @@ pub enum SecureConnectionsPolicy {
 #[serde(default, rename_all = "camelCase")]
 pub struct HostProfile {
     pub model: Option<String>,
+    pub device_preset: String,
     pub wifi_interface: String,
     pub carlink_interface: String,
     pub hotspot_channel: u8,
     pub bluetooth_adapter: Option<String>,
     pub hotspot_down_gap_seconds: u64,
+    #[serde(skip)]
+    pub hotspot_down_gap_explicit: bool,
     pub secure_connections: SecureConnectionsPolicy,
     pub bluetooth_guard_status: PathBuf,
 }
@@ -29,11 +32,13 @@ impl Default for HostProfile {
     fn default() -> Self {
         Self {
             model: None,
+            device_preset: "auto".into(),
             wifi_interface: "wlan0".into(),
             carlink_interface: String::new(),
-            hotspot_channel: 36,
+            hotspot_channel: 0,
             bluetooth_adapter: None,
             hotspot_down_gap_seconds: crate::hotspot_lifetime::AP_DOWN_GAP.as_secs(),
+            hotspot_down_gap_explicit: false,
             secure_connections: SecureConnectionsPolicy::PairingOff,
             bluetooth_guard_status: crate::bluetooth_guard::DEFAULT_STATUS_PATH.into(),
         }
@@ -42,6 +47,10 @@ impl Default for HostProfile {
 impl HostProfile {
     pub fn settings_defaults(&self) -> crate::settings::Settings {
         crate::settings::Settings {
+            device_preset: self.device_preset.clone(),
+            network_mode: crate::device_preset::preset(&self.device_preset)
+                .network_mode
+                .into(),
             wifi_interface: self.wifi_interface.clone(),
             carlink_interface: self.carlink_interface.clone(),
             hotspot_channel: self.hotspot_channel,
@@ -53,6 +62,7 @@ impl HostProfile {
         let object = value.as_object().ok_or("expected an object")?;
         let keys = [
             "model",
+            "devicePreset",
             "wifiInterface",
             "carlinkInterface",
             "hotspotChannel",
@@ -73,7 +83,9 @@ impl HostProfile {
         {
             return Err("profile fields cannot be null".into());
         }
-        let p: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let gap_explicit = object.contains_key("hotspotDownGapSeconds");
+        let mut p: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        p.hotspot_down_gap_explicit = gap_explicit;
         p.settings_defaults()
             .validate()
             .map_err(|e| e.to_string())?;
@@ -157,6 +169,13 @@ mod tests {
     }
     #[test]
     fn invalid_profiles_are_ignored_as_a_whole() {
+        assert_eq!(
+            HostProfile::parse(br#"{"hotspotChannel":0,"devicePreset":"auto"}"#)
+                .unwrap()
+                .0
+                .hotspot_channel,
+            0
+        );
         let dir = std::env::temp_dir().join(format!(
             "host-profile-{}",
             crate::admin::auth::random_hex(8).unwrap()
@@ -166,7 +185,7 @@ mod tests {
         let absent = LoadedHostProfile::load(&path);
         assert!(!absent.loaded && absent.error.is_none());
         assert_eq!(absent.profile.wifi_interface, "wlan0");
-        assert_eq!(absent.profile.hotspot_channel, 36);
+        assert_eq!(absent.profile.hotspot_channel, 0);
         assert_eq!(absent.profile.bluetooth_adapter, None);
         assert_eq!(absent.profile.hotspot_down_gap_seconds, 15);
         assert_eq!(
@@ -188,7 +207,8 @@ mod tests {
             r#"{"wifiInterface":null}"#,
             r#"{"carlinkInterface":"../wlan1"}"#,
             r#"{"carlinkInterface":null}"#,
-            r#"{"hotspotChannel":0}"#,
+            r#"{"devicePreset":"other"}"#,
+            r#"{"devicePreset":null}"#,
             r#"{"hotspotChannel":15}"#,
             r#"{"hotspotChannel":178}"#,
             r#"{"hotspotChannel":"36"}"#,

@@ -272,7 +272,8 @@ fn options_reject_unknown_missing_duplicate_and_invalid() {
         vec!["--rfcomm-channel", "0"],
         vec!["--pair", "3601"],
         vec!["--pair"],
-        vec!["--wifi-channel", "0"],
+        vec!["--wifi-channel", "15"],
+        vec!["--device-preset", "unknown"],
         vec!["--wifi-interface", "a;bad"],
         vec!["--pair", "1", "--pair", "2"],
     ] {
@@ -300,6 +301,14 @@ fn supports_openstick_channels_and_cli_precedence() {
     assert_eq!(o.wifi_interface, "wlan2");
     assert!(o.settings.require_pairing_code);
     assert_eq!(Settings::load(&p).unwrap().wifi_interface, "wlan1");
+    let automatic = Options::parse(&[
+        "--state-dir".into(),
+        p.to_str().unwrap().into(),
+        "--wifi-channel".into(),
+        "0".into(),
+    ])
+    .unwrap();
+    assert_eq!(automatic.wifi_channel, 0);
     std::fs::remove_dir_all(p).unwrap();
 }
 #[test]

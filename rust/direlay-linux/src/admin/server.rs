@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 // Source: admin-web/dev-server.ts.
+#[path = "carlink_trace.rs"]
+pub(crate) mod trace_files;
+
 use super::{
     auth::{self, LoginError, PasswordError},
     types::*,
@@ -23,6 +26,15 @@ use std::{
     time::Duration,
 };
 pub const MAX_BODY: usize = 16_384;
+// A 16 KiB file can expand sixfold when wrapped as a JSON string.
+const MAX_IMPORT_BODY: usize = crate::public_name::config::MAX_BYTES * 6 + 1024;
+fn body_limit(path: &str) -> usize {
+    if path.split('?').next() == Some("/api/v0/public-name/import") {
+        MAX_IMPORT_BODY
+    } else {
+        MAX_BODY
+    }
+}
 pub const MAX_HEADERS: usize = 8_192;
 pub const DEFAULT_PORT: u16 = 6975;
 const COOKIE: &str = "oxp_admin";
@@ -51,6 +63,7 @@ pub struct Response {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
     pub body: Vec<u8>,
+    pub files: Vec<(fs::File, u64)>,
 }
 impl Response {
     fn json(status: u16, value: Value) -> Self {
@@ -61,6 +74,7 @@ impl Response {
                 ("Cache-Control".into(), "no-store".into()),
             ]),
             body: serde_json::to_vec(&value).unwrap(),
+            files: Vec::new(),
         }
     }
     fn error(status: u16, key: &str) -> Self {
@@ -86,12 +100,23 @@ impl Response {
             429 => "Too Many Requests",
             _ => "Internal Server Error",
         };
-        write!(out, "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n", self.status, reason, self.body.len())?;
+        write!(out, "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n", self.status, reason, self.body.len() as u64 + self.files.iter().map(|(_, size)| size).sum::<u64>())?;
         for (key, value) in &self.headers {
             write!(out, "{key}: {value}\r\n")?;
         }
         out.write_all(b"\r\n")?;
         out.write_all(&self.body)?;
+        let mut buffer = [0u8; 16 * 1024];
+        for (file, length) in &self.files {
+            let mut input = file.take(*length);
+            loop {
+                let n = input.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                out.write_all(&buffer[..n])?;
+            }
+        }
         out.flush()
     }
 }
@@ -137,7 +162,7 @@ impl AdminServer {
         if !auth::private_address(request.peer) {
             return Response::error(403, "error.request");
         }
-        if request.body.len() > MAX_BODY {
+        if request.body.len() > body_limit(&request.path) {
             return Response::error(413, "error.request");
         }
         let path = request.path.split('?').next().unwrap_or("");
@@ -180,6 +205,9 @@ impl AdminServer {
         } else {
             Values::new()
         };
+        if path == "/carlink-trace" || path.starts_with("/carlink-trace/") {
+            return self.trace_route(request, path, &body);
+        }
         let string = |key: &str| body.get(key).and_then(Value::as_str);
         match (method, path) {
             ("GET", "/session") => Response::json(
@@ -258,6 +286,21 @@ impl AdminServer {
                 }
             }
             ("GET", "/settings") => Response::json(200, json!(self.admin.settings())),
+            ("POST", "/public-name/import") => {
+                use crate::public_name::service::ImportError;
+                let Some(content) = string("content") else {
+                    return Response::json(422, json!({"errors":{"file":"not-json"}}));
+                };
+                match self.admin.public_name_import(content) {
+                    Ok((provider, name)) => {
+                        Response::json(200, json!({"ok":true,"provider":provider,"name":name}))
+                    }
+                    Err(ImportError::Invalid(errors)) => {
+                        Response::json(422, json!({"errors":errors}))
+                    }
+                    Err(ImportError::Storage) => Response::error(500, "error.request"),
+                }
+            }
             ("GET", "/phones") => Response::json(200, json!(self.admin.phones())),
             ("PUT", "/settings") => match self.admin.update(body) {
                 AdminUpdate::AppliedNow => Response::json(200, json!({"ok":true,"applied":"now"})),
@@ -266,10 +309,36 @@ impl AdminServer {
                 }
                 AdminUpdate::Errors(errors) => Response::json(422, json!({"errors":errors})),
             },
+            ("PUT", "/network-roles") | ("POST", "/network-roles/preview") => {
+                use crate::network_roles::SaveResult;
+                let result = if path == "/network-roles/preview" {
+                    self.admin.network_roles_preview(body)
+                } else {
+                    self.admin.network_roles_update(body)
+                };
+                match result {
+                    Some(SaveResult::Saved(proposal)) => Response::json(200, json!(proposal)),
+                    Some(SaveResult::Probing) => Response::error(503, "probing"),
+                    Some(SaveResult::Invalid(error)) => {
+                        Response::json(400, json!({"error": error}))
+                    }
+                    Some(SaveResult::Checks(checks)) => {
+                        Response::json(400, json!({"checks": checks, "applied": false}))
+                    }
+                    Some(SaveResult::Storage) => Response::error(500, "error.request"),
+                    None => Response::error(404, "error.request"),
+                }
+            }
             ("PUT", "/hotspot") => match (string("ssid"), string("password")) {
+                _ if body
+                    .get("band")
+                    .is_some_and(|b| !matches!(b.as_str(), Some("auto" | "2.4" | "5"))) =>
+                {
+                    Response::error(422, "error.invalid")
+                }
                 (Some(ssid), Some(password)) => {
                     match validate_hotspot_credentials(ssid, password) {
-                        Ok(()) => result(self.admin.hotspot_update(ssid, password)),
+                        Ok(()) => result(self.admin.hotspot_update(ssid, password, string("band"))),
                         Err(key) => Response::error(422, key),
                     }
                 }
@@ -313,6 +382,128 @@ impl AdminServer {
                 }
             }
             _ => Response::error(404, "error.request"),
+        }
+    }
+    fn trace_route(&self, request: &Request, path: &str, body: &Values) -> Response {
+        use trace_files as carlink_trace;
+        let Some((enabled, running, status)) = self.admin.carlink_trace() else {
+            return Response::error(404, "error.request");
+        };
+        let dir = self.config.state_dir.join("carlink-trace");
+        match (request.method.as_str(), path) {
+            ("GET", "/carlink-trace") => match carlink_trace::listing(&dir) {
+                Ok(files) => Response::json(
+                    200,
+                    json!({"enabled":enabled,"running":running,"status":status,"files":files}),
+                ),
+                Err(_) => Response::error(500, "error.request"),
+            },
+            ("GET", "/carlink-trace/tail") => {
+                let mut filter = None;
+                let mut limit = 200;
+                for pair in request
+                    .path
+                    .split_once('?')
+                    .map_or("", |(_, q)| q)
+                    .split('&')
+                    .filter(|p| !p.is_empty())
+                {
+                    match pair.split_once('=') {
+                        Some(("type", t))
+                            if [
+                                "Rtsp",
+                                "Frame",
+                                "Media",
+                                "Link",
+                                "Error",
+                                "Video",
+                                "Input",
+                                "Socket",
+                                "Negotiation",
+                            ]
+                            .contains(&t) =>
+                        {
+                            filter = Some(t)
+                        }
+                        Some(("limit", n)) => match n.parse::<usize>() {
+                            Ok(n) if n <= 500 => limit = n,
+                            _ => return Response::error(422, "error.invalid"),
+                        },
+                        _ => return Response::error(422, "error.invalid"),
+                    }
+                }
+                match carlink_trace::tail(&dir, filter, limit) {
+                    Ok(lines) => Response::json(200, json!({"lines":lines})),
+                    Err(_) => Response::error(500, "error.request"),
+                }
+            }
+            ("GET", "/carlink-trace/download") => {
+                let Ok(entries) = carlink_trace::listing(&dir) else {
+                    return Response::error(500, "error.request");
+                };
+                let names = entries
+                    .iter()
+                    .filter(|e| e["kind"] == "trace")
+                    .map(|e| e["name"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                self.trace_download(
+                    &dir,
+                    &names,
+                    &format!("carlink-trace-{}.jsonl", trace_timestamp()),
+                    "application/x-ndjson",
+                )
+            }
+            ("GET", path) if path.starts_with("/carlink-trace/files/") => {
+                let name = &path[21..];
+                let mime = match carlink_trace::kind(name) {
+                    Some("trace") => "application/x-ndjson",
+                    Some("media") => "video/mp2t",
+                    _ => return Response::error(404, "error.request"),
+                };
+                self.trace_download(&dir, &[name], name, mime)
+            }
+            ("POST", "/carlink-trace/clear") => {
+                result(self.admin.carlink_trace_control(true, "clear"))
+            }
+            ("POST", "/carlink-trace/capture") => {
+                match body.get("action").and_then(Value::as_str) {
+                    Some(action @ ("start" | "stop")) => {
+                        if !enabled || !running {
+                            return Response::error(409, "error.carlinkTraceOff");
+                        }
+                        result(self.admin.carlink_trace_control(false, action))
+                    }
+                    _ => Response::error(422, "error.invalid"),
+                }
+            }
+            _ => Response::error(404, "error.request"),
+        }
+    }
+    fn trace_download(&self, dir: &Path, names: &[&str], filename: &str, mime: &str) -> Response {
+        let mut files = Vec::new();
+        for name in names {
+            let Ok(mut file) = trace_files::open(dir, name) else {
+                return Response::error(404, "error.request");
+            };
+            let Ok(length) =
+                trace_files::snapshot_length(&mut file, trace_files::kind(name) == Some("trace"))
+            else {
+                return Response::error(500, "error.request");
+            };
+            files.push((file, length));
+        }
+        Response {
+            status: 200,
+            body: Vec::new(),
+            files,
+            headers: BTreeMap::from([
+                ("Content-Type".into(), mime.into()),
+                ("Cache-Control".into(), "no-store".into()),
+                (
+                    "Content-Disposition".into(),
+                    format!("attachment; filename=\"{filename}\""),
+                ),
+            ]),
         }
     }
     fn static_file(&self, method: &str, path: &str) -> Response {
@@ -373,6 +564,7 @@ impl AdminServer {
                 Response {
                     status: 200,
                     body,
+                    files: Vec::new(),
                     headers: BTreeMap::from([
                         ("Content-Type".into(), mime.into()),
                         ("Cache-Control".into(), "no-cache".into()),
@@ -525,7 +717,7 @@ pub fn read_request(input: &mut impl Read, peer: IpAddr) -> Result<Request, u16>
         .transpose()
         .map_err(|_| 400u16)?
         .unwrap_or(0);
-    if length > MAX_BODY {
+    if length > body_limit(first[1]) {
         return Err(413);
     }
     let mut body = vec![0; length];
@@ -605,24 +797,51 @@ impl rustls::server::ResolvesServerCert for SniResolver {
 pub fn tls_config(state: &Path, addresses: &[Ipv4Addr]) -> io::Result<Arc<rustls::ServerConfig>> {
     tls_config_with(state, addresses, &NamedCertificate::default())
 }
+/// Oldest entries come first. Keep the current requirements and evict older extras at the cap.
+fn accumulated_sans(previous: &[String], names: &[String], addresses: &[Ipv4Addr]) -> Vec<String> {
+    let needed_names: Vec<_> = names.iter().take(8).cloned().collect();
+    let needed_addresses: Vec<_> = addresses.iter().take(16).map(ToString::to_string).collect();
+    let accumulate = |required: &[String], is_address: bool, cap: usize| {
+        let mut entries = Vec::new();
+        for entry in previous
+            .iter()
+            .filter(|s| s.parse::<IpAddr>().is_ok() == is_address)
+            .chain(required)
+        {
+            if !entries.contains(entry) {
+                entries.push(entry.clone());
+            }
+        }
+        while entries.len() > cap {
+            let index = entries.iter().position(|s| !required.contains(s)).unwrap();
+            entries.remove(index);
+        }
+        entries
+    };
+    let mut sans = accumulate(&needed_names, false, 8);
+    sans.extend(accumulate(&needed_addresses, true, 16));
+    sans
+}
 /// [`tls_config`] that also serves `named` for its own name.
 pub fn tls_config_with(
     state: &Path,
     addresses: &[Ipv4Addr],
     named: &NamedCertificate,
 ) -> io::Result<Arc<rustls::ServerConfig>> {
-    let mut sans = vec!["openxplay-linux.local".into(), "localhost".into()];
-    sans.extend(addresses.iter().map(ToString::to_string));
-    sans.sort();
-    sans.dedup();
+    let names = vec!["openxplay-linux.local".into(), "localhost".into()];
     let path = state.join("admin-tls.json");
     let saved = match fs::read(&path) {
         Ok(b) => Some(serde_json::from_slice::<SavedTls>(&b)?),
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
+    let sans = accumulated_sans(
+        saved.as_ref().map_or(&[], |s| s.sans.as_slice()),
+        &names,
+        addresses,
+    );
     let saved = match saved {
-        Some(s) if s.sans == sans => {
+        Some(s) if s.sans.len() == sans.len() && sans.iter().all(|name| s.sans.contains(name)) => {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
             s
@@ -690,6 +909,29 @@ impl Drop for AdminServerHandle {
     }
 }
 
+fn trace_timestamp() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .try_into()
+        .unwrap_or(0);
+    let mut utc = std::mem::MaybeUninit::<libc::tm>::uninit();
+    if unsafe { libc::gmtime_r(&seconds, utc.as_mut_ptr()) }.is_null() {
+        return "19700101-000000".into();
+    }
+    let utc = unsafe { utc.assume_init() };
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        utc.tm_year + 1900,
+        utc.tm_mon + 1,
+        utc.tm_mday,
+        utc.tm_hour,
+        utc.tm_min,
+        utc.tm_sec
+    )
+}
+
 #[cfg(test)]
 mod sni_tests {
     use super::*;
@@ -698,6 +940,61 @@ mod sni_tests {
         pki_types::{CertificateDer, ServerName, UnixTime},
         DigitallySignedStruct, SignatureScheme,
     };
+    #[test]
+    fn accumulating_identity_keeps_covered_sans_and_adds_the_hotspot_address() {
+        let state =
+            std::env::temp_dir().join(format!("admin-sans-{}", auth::random_hex(8).unwrap()));
+        let path = state.join("admin-tls.json");
+        let lan = Ipv4Addr::new(192, 168, 1, 2);
+        let hotspot = Ipv4Addr::new(10, 77, 0, 1);
+        tls_config(&state, &[lan]).unwrap();
+        let original = fs::read(&path).unwrap();
+        tls_config(&state, &[]).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original);
+        tls_config(&state, &[hotspot]).unwrap();
+        let updated = fs::read(&path).unwrap();
+        assert_ne!(updated, original);
+        let saved: SavedTls = serde_json::from_slice(&updated).unwrap();
+        for san in [
+            "localhost",
+            "openxplay-linux.local",
+            "192.168.1.2",
+            "10.77.0.1",
+        ] {
+            assert!(saved.sans.contains(&san.into()));
+        }
+        tls_config(&state, &[hotspot, lan]).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), updated);
+        fs::remove_dir_all(state).unwrap();
+    }
+    #[test]
+    fn accumulating_sans_evict_the_oldest_extras_at_separate_caps() {
+        let names = vec!["openxplay-linux.local".into(), "localhost".into()];
+        let mut previous = names.clone();
+        previous.extend((0..8).map(|i| format!("old-{i}.local")));
+        previous.extend((1..=16).map(|i| format!("192.168.1.{i}")));
+        let addresses = [Ipv4Addr::new(192, 168, 1, 1), Ipv4Addr::new(10, 77, 0, 1)];
+        let sans = accumulated_sans(&previous, &names, &addresses);
+        assert_eq!(
+            sans.iter().filter(|s| s.parse::<IpAddr>().is_err()).count(),
+            8
+        );
+        assert_eq!(
+            sans.iter().filter(|s| s.parse::<IpAddr>().is_ok()).count(),
+            16
+        );
+        for name in names {
+            assert!(sans.contains(&name));
+        }
+        for address in addresses {
+            assert!(sans.contains(&address.to_string()));
+        }
+        assert!(!sans.contains(&"old-0.local".into()));
+        assert!(!sans.contains(&"old-1.local".into()));
+        assert!(sans.contains(&"old-2.local".into()));
+        assert!(!sans.contains(&"192.168.1.2".into()));
+        assert!(sans.contains(&"192.168.1.3".into()));
+    }
     /// Accepts any certificate and remembers the leaf it was shown.
     #[derive(Debug, Default)]
     struct Recorder(Mutex<Option<Vec<u8>>>);
@@ -807,5 +1104,87 @@ mod sni_tests {
         named.clear();
         assert_eq!(presented(&config, dns("myrelay.duckdns.org")), saved.cert);
         fs::remove_dir_all(state).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    struct Bounded {
+        bytes: Vec<u8>,
+        largest: usize,
+    }
+    impl Write for Bounded {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.largest = self.largest.max(buf.len());
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn trace_bundle_content_length_matches_complete_json_lines() {
+        let dir =
+            std::env::temp_dir().join(format!("trace-bundle-{}", auth::random_hex(8).unwrap()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut files = Vec::new();
+        for (name, body) in [
+            (
+                "trace-00000001-0-00000001.jsonl",
+                "{\"type\":\"Link\"}\n{\"type\":",
+            ),
+            ("trace-00000002-0-00000001.jsonl", "{\"type\":\"Error\"}\n"),
+        ] {
+            fs::write(dir.join(name), body).unwrap();
+            let mut file = trace_files::open(&dir, name).unwrap();
+            let size = trace_files::snapshot_length(&mut file, true).unwrap();
+            files.push((file, size));
+        }
+        let response = Response {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: vec![],
+            files,
+        };
+        let mut out = Vec::new();
+        response.write(&mut out).unwrap();
+        let split = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let body = &out[split..];
+        assert!(String::from_utf8_lossy(&out[..split])
+            .contains(&format!("Content-Length: {}\r\n", body.len())));
+        assert_eq!(body, b"{\"type\":\"Link\"}\n{\"type\":\"Error\"}\n");
+        for line in std::str::from_utf8(body).unwrap().lines() {
+            assert!(serde_json::from_str::<Value>(line).unwrap().is_object());
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn file_response_writes_headers_and_bounded_chunks_and_ignores_growth() {
+        let path =
+            std::env::temp_dir().join(format!("trace-stream-{}", auth::random_hex(8).unwrap()));
+        fs::write(&path, vec![0x47; 100_000]).unwrap();
+        let file = fs::File::open(&path).unwrap();
+        let response = Response {
+            status: 200,
+            headers: BTreeMap::from([
+                ("Content-Type".into(), "video/mp2t".into()),
+                ("Cache-Control".into(), "no-store".into()),
+            ]),
+            body: vec![],
+            files: vec![(file, 90_000)],
+        };
+        let mut out = Bounded {
+            bytes: vec![],
+            largest: 0,
+        };
+        response.write(&mut out).unwrap();
+        assert!(out.largest <= 16 * 1024);
+        let split = out.bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(out.bytes.len() - split, 90_000);
+        assert!(String::from_utf8_lossy(&out.bytes[..split]).contains("Content-Length: 90000"));
+        assert!(out.bytes[split..].iter().all(|b| *b == 0x47));
+        fs::remove_file(path).unwrap();
     }
 }

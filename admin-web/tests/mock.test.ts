@@ -21,9 +21,9 @@ function relay(linux = false, state?: string) {
     Object.defineProperty(req, 'socket', { value: { remoteAddress: '127.0.0.1' } });
     const headers: Record<string, string> = {};
     return new Promise<{ status: number; data: any; headers: Record<string, string> }>((resolve, reject) => {
-      const res = { statusCode: 200, setHeader: (key: string, value: string) => { headers[key] = value; }, end: (raw: string) => {
+      const res = { statusCode: 200, setHeader: (key: string, value: string) => { headers[key] = value; }, end: (raw: string | Buffer) => {
         if (headers['Set-Cookie']) cookie = headers['Set-Cookie'].split(';')[0];
-        resolve({ status: res.statusCode, data: JSON.parse(raw), headers });
+        resolve({ status: res.statusCode, data: headers['Content-Type'] === 'application/json' ? JSON.parse(String(raw)) : raw, headers });
       } };
       handler(req, res as unknown as ServerResponse, error => reject(error ?? new Error('unhandled route')));
     });
@@ -137,9 +137,9 @@ it('uses the Linux settings schema for Linux preview states', async () => {
     const settings = (await call('/settings')).data;
     const keys = settings.schema.flatMap((section: { fields: { key: string }[] }) => section.fields.map(field => field.key));
     expect(keys).toContain('wifiInterface');
-    expect(keys).not.toContain('autoStart');
+    expect(keys).toContain('autoStart');
     expect(keys).not.toContain('bootStart');
-    expect(settings.values).not.toHaveProperty('autoStart');
+    expect(settings.values.autoStart).toBe(true);
     expect(settings.values).not.toHaveProperty('bootStart');
     expect(settings.schema.filter((section: { id: string }) => section.id === 'wifi')).toHaveLength(1);
     expect((await call('/status')).data.platform).toBe('linux');
@@ -192,9 +192,12 @@ it('validates Linux hotspot edits behind auth and reports the saved credentials'
   expect((await call('/hotspot', 'PUT', credentials, false)).status).toBe(403);
   expect((await call('/hotspot', 'PUT', { ...credentials, ssid: '中'.repeat(11) })).data.error).toBe('error.hotspotSsid');
   expect((await call('/hotspot', 'PUT', { ...credentials, password: 'short' })).data.error).toBe('error.hotspotPassword');
-  expect((await call('/hotspot', 'PUT', credentials)).status).toBe(200);
+  for (const band of ['6', 5, null]) expect((await call('/hotspot', 'PUT', { ...credentials, band })).status).toBe(422);
+  expect((await call('/hotspot', 'PUT', { ...credentials, band: '2.4' })).status).toBe(200);
   const status = (await call('/status')).data;
   expect(status.hotspot).toMatchObject({ ...credentials, hasPassword: true });
+  expect(status.wireless).toMatchObject({ preset: { id: 'phicomm-n1', source: 'detected' }, hotspot: { configuredBand: '2.4', band: '2.4', channel: 6 } });
+  expect((await call('/settings')).data.values.hotspotBand).toBe('2.4');
 });
 it('applies Linux output edits immediately while running', async () => {
   const call = relay(true);
@@ -240,4 +243,47 @@ it('applies Linux plugin switches immediately and validates installed IDs atomic
   }
   expect((await call('/settings')).data.values.pluginsEnabled).toEqual(['org.openxplay.pet', 'org.openxplay.clock']);
   expect((await call('/settings', 'PUT', { plugins: false })).data.applied).toBe('now');
+});
+
+it('serves all Linux trace types, downloads and mutable capture/clear preview state', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try {
+    const call = relay(true, 'working');
+    expect((await call('/settings')).data.values.carlinkTrace).toBe('on');
+    const snapshot = (await call('/carlink-trace')).data;
+    expect(snapshot).toMatchObject({ enabled: true, running: true, status: { dropped: 3, capture: { state: 'idle' } } });
+    expect(snapshot.files.map((file: { kind: string }) => file.kind)).toEqual(['trace', 'media']);
+    const lines = (await call('/carlink-trace/tail')).data.lines as string[];
+    const types = ['Rtsp', 'Frame', 'Socket', 'Negotiation', 'Media', 'Video', 'Input', 'Error', 'Link'];
+    expect(new Set(lines.map(line => JSON.parse(line).type))).toEqual(new Set(types));
+    for (const type of types) {
+      const filtered = (await call(`/carlink-trace/tail?type=${type}&limit=1`)).data.lines;
+      expect(filtered).toHaveLength(1); expect(JSON.parse(filtered[0]).type).toBe(type);
+    }
+    expect((await call('/carlink-trace/tail?limit=0')).data.lines).toEqual([]);
+    expect((await call('/carlink-trace/tail?limit=2')).data.lines).toEqual(lines.slice(0, 2));
+    for (const query of ['limit=501', 'type=Errors']) expect((await call('/carlink-trace/tail?' + query)).status).toBe(422);
+    const bundle = await call('/carlink-trace/download');
+    expect(bundle.headers['Content-Type']).toBe('application/x-ndjson');
+    expect(Number(bundle.headers['Content-Length'])).toBe(Buffer.byteLength(bundle.data));
+    expect(String(bundle.data).trim().split('\n').map(line => JSON.parse(line))).toHaveLength(lines.length);
+    expect((await call(`/carlink-trace/files/${snapshot.files[0].name}`)).data).toEqual(bundle.data);
+    const media = await call(`/carlink-trace/files/${snapshot.files[1].name}`);
+    expect(media.headers['Content-Type']).toBe('video/mp2t'); expect(media.data[0]).toBe(0x47);
+    for (const [action, state] of [['start', 'capturing'], ['stop', 'idle']]) {
+      await call('/carlink-trace/capture', 'POST', { action });
+      expect((await call('/carlink-trace')).data.status.capture.state).toBe(state);
+    }
+    await call('/settings', 'PUT', { carlinkTrace: 'off' });
+    expect((await call('/carlink-trace/capture', 'POST', { action: 'start' })).status).toBe(409);
+    await call('/carlink-trace/clear', 'POST');
+    expect((await call('/carlink-trace')).data.files).toEqual([]);
+    expect((await call('/carlink-trace/tail')).data.lines).toEqual([]);
+    expect((await call(`/carlink-trace/files/${snapshot.files[0].name}`)).status).toBe(404);
+  } finally { vi.unstubAllEnvs(); }
+});
+it('keeps trace routes absent from the Android mock', async () => {
+  const call = relay(); await call('/login', 'POST', { password: 'openxplay' });
+  for (const path of ['', '/tail', '/download', '/files/trace-00000001-0-00000001.jsonl']) expect((await call('/carlink-trace' + path)).status).toBe(404);
+  for (const path of ['/clear', '/capture']) expect((await call('/carlink-trace' + path, 'POST', { action: 'start' })).status).toBe(404);
 });

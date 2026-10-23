@@ -5,7 +5,7 @@
 import type { Status } from './api';
 import { icon } from './icons';
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+import { esc } from './html';
 
 // Re-anchor the relay's deadline on this browser's clock: head units often have the wrong time.
 // A drift of one second between polls keeps the previous deadline so the countdown never jumps back.

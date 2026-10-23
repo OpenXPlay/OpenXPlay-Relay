@@ -5,6 +5,7 @@
 
 /// Fallible protocol/platform operation; malformed data and I/O errors propagate.
 pub type Result<T> = std::io::Result<T>;
+mod carlink_resize;
 /// cli protocol module.
 #[path = "main.rs"]
 pub mod cli;
@@ -102,9 +103,15 @@ pub mod context;
 
 mod context_route;
 
+pub mod device_preset;
 pub mod host_profile;
 
 pub mod host_backends;
 pub mod host_capabilities;
 pub mod supervisor_settings;
 pub mod wifi_capabilities;
+
+pub mod admin_hotspot;
+pub mod net_inventory;
+pub mod network_roles;
+pub mod wifi_country;

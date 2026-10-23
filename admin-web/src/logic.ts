@@ -24,6 +24,9 @@ export function carlinkView(status: Pick<Status, 'output' | 'carlink'>, now = Da
   const visible = ['carlink', 'both'].includes(status.output);
   return { visible, seconds, pinRequested: visible && !!carlink?.pinRequested && seconds > 0 };
 }
+export function carlinkPinError(carlink: CarlinkStatus | null | undefined): string {
+  return carlink?.pinIncorrect ? 'carlink.pinIncorrect' : '';
+}
 export function validCarlinkPin(pin: string): boolean { return /^[0-9]{4,8}$/.test(pin); }
 
 export function carlinkDetail(carlink: CarlinkStatus | null): string {
@@ -49,7 +52,7 @@ export function homeView(status: Status, now = Date.now() / 1000, defaultPasswor
   const noNetwork = status.wifiClient?.setupHotspot === true || (status.network.mode === 'shared-wifi' && !status.network.wifi);
   const noPhone = ['none', 'unpaired'].includes(iphoneReason(status.iphone.reason));
   const action = noNetwork ? 'wifi' : noPhone ? (status.pairingAvailable ? 'pair' : null)
-    : ['carlink', 'both'].includes(status.output) && status.carlink?.trusted !== true ? 'car' : defaultPassword ? 'password' : null;
+    : ['carlink', 'both'].includes(status.output) && (status.carlink?.trusted !== true || (status.platform === 'linux' && status.carlink?.state === 'paused')) ? 'car' : defaultPassword ? 'password' : null;
   const active = ['active', 'Active', 'Streaming', 'WirelessActive'].includes(status.state);
   // The Bluetooth guard is only news while it recovers or after it gave up.
   const bluetooth = status.bluetoothGuard?.state === 'recovering' || status.bluetoothGuard?.state === 'failed' ? status.bluetoothGuard.state : null;
@@ -81,9 +84,9 @@ export function publicNameUrl(status: Pick<Status, 'publicName' | 'receiverUrls'
   if (!name) return null;
   return status.receiverUrls.find(url => { try { return new URL(url).hostname === name; } catch { return false; } }) ?? `https://${name}:${status.receiverPort || 8443}/`;
 }
-const technicalFields = new Set(['wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
-export function settingsViews(settings: Settings, developer: boolean) {
-  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).map(field => {
+const technicalFields = new Set(['carlinkModel', 'carlinkHevc', 'carlinkTrace', 'receiverPort', 'wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
+export function settingsViews(settings: Settings, developer: boolean, platform?: Status['platform']) {
+  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).filter(f => platform !== 'linux' || !['hotspotBand', 'wifiInterface', 'carlinkInterface'].includes(f.key)).map(field => {
     if (field.key !== 'networkMode') return field;
     const options = field.options?.filter(o => developer || o.value === 'shared-wifi' || o.value === 'device-hotspot' || o.value === 'wifi-direct').map(option => {
       const mode = option.value === 'wifi-direct' ? 'device-hotspot' : String(option.value);
@@ -91,7 +94,7 @@ export function settingsViews(settings: Settings, developer: boolean) {
     });
     return { ...field, options };
   });
-  const connection = new Set(['iphone', 'networkMode', 'sharedWifiNetworks', 'autoStart', 'bootStart']);
+  const connection = new Set(['iphone', 'networkMode', 'devicePreset', 'sharedWifiNetworks', 'autoStart', 'bootStart']);
   return [
     { id: 'connection', titleKey: 'settings.connection', fields: all.filter(f => connection.has(f.key) && !technicalFields.has(f.key)) },
     { id: 'output', titleKey: 'settings.screen', fields: all.filter(f => !connection.has(f.key) && !technicalFields.has(f.key)) },
@@ -108,7 +111,8 @@ export function developerPreference(search: string, read: () => string | null): 
 
 // Navigation links, collapsed menus and modal dialogs are outside the resting Home button budget.
 export function homeButtonCount(status: Status, defaultPassword = false): number {
-  return 1 + (homeView(status, undefined, defaultPassword).action ? 1 : 0) + (addressViews(status, false).length ? 3 : 0);
+  const adminUrls = status.platform === 'linux' ? status.adminUrls : undefined;
+  return 1 + (homeView(status, undefined, defaultPassword).action ? 1 : 0) + (addressViews(status, false).length ? adminUrls ? 2 : 3 : 0) + (adminUrls?.length ?? 0);
 }
 
 export function savedNetworks(settings: Settings): SavedNetwork[] { return Array.isArray(settings.values.sharedWifiNetworks) ? settings.values.sharedWifiNetworks as SavedNetwork[] : []; }
