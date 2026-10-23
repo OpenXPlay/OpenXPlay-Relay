@@ -10,6 +10,7 @@ import org.openxplay.direlay.relay.WebStartReason
 import org.openxplay.direlay.relay.WebStartFailure
 import org.openxplay.direlay.relay.RelayFailure
 import org.openxplay.direlay.relay.CarPlayError
+import org.openxplay.direlay.relay.CarPlayStage
 import org.openxplay.direlay.network.*
 import org.openxplay.direlay.clink.ClinkFailureReason
 import org.openxplay.stream.core.SessionPhase
@@ -58,6 +59,7 @@ data class HomeSnapshot(
     val problems: List<HomeProblem> = emptyList(),
     val networkReadiness: NetworkReadiness = NetworkReadiness(),
     val manualNetworkReminders: Set<NetworkRequirement> = emptySet(), val usbRoleProblem: Boolean = false,
+    val stage: CarPlayStage = CarPlayStage.NONE, val deviceName: String = settings.carlinkDeviceName,
 )
 
 fun connectionSummary(mode: List<ModeRow>, carlinkState: Int?, label: (Int) -> String): String =
@@ -180,12 +182,12 @@ fun presentHome(value: HomeSnapshot): HomePresentation {
     val ready = value.permissionsReady && value.identityReady && value.validSettings && value.sharedWifiReady && !value.checking
     val active = value.phase == SessionPhase.ACTIVE
     val running = active || value.phase in setOf(SessionPhase.CONNECTING, SessionPhase.RECONNECTING) || value.started
+    val connection = presentConnectionStatus(value.phase, value.stage, value.wireless, value.deviceName)
     val (headline, tone) = when {
         value.failure || webReason != null -> R.string.ui_error to StatusTone.ERROR
         !ready -> R.string.ui_setup_needed to StatusTone.ATTENTION
         active -> R.string.ui_running to StatusTone.RUNNING
-        value.phase in setOf(SessionPhase.CONNECTING, SessionPhase.RECONNECTING) -> R.string.ui_connecting to StatusTone.PROGRESS
-        value.started -> R.string.ui_waiting to StatusTone.PROGRESS
+        running && connection != null -> connection.headline to connection.tone
         !iphoneReady -> R.string.ui_setup_needed to StatusTone.ATTENTION
         else -> R.string.ui_ready to StatusTone.IDLE
     }
@@ -199,14 +201,17 @@ fun presentHome(value: HomeSnapshot): HomePresentation {
         active && value.settings.bothOutputs -> R.string.ui_showing_both
         active && value.settings.carlinkOutput -> R.string.ui_showing_carlink
         active -> R.string.ui_showing_browser
-        value.phase in setOf(SessionPhase.CONNECTING, SessionPhase.RECONNECTING) -> R.string.ui_connecting_hint
-        value.started -> if (value.wireless) R.string.ui_iphone_pairing else R.string.ui_usb_hint
+        running && connection != null -> connection.subline
         value.settings.autoStartWhenReady && value.autoStartPaused && !running -> R.string.ui_automatic_paused
         else -> R.string.ui_start_hint
     }
     return HomePresentation(headline, subline, tone, modeRows(value.settings, value.wireless),
         checklist, ready && iphoneReady, running, value.checking,
-        if (webReason?.failure == WebStartFailure.PORT_BUSY) listOf(webReason.port.toString()) else emptyList(),
+        when {
+            webReason?.failure == WebStartFailure.PORT_BUSY -> listOf(webReason.port.toString())
+            connection != null && subline == connection.subline -> connection.sublineArguments
+            else -> emptyList()
+        },
         if (tone == StatusTone.ERROR) value.problems.ifEmpty { listOf(HomeProblem(R.string.home_problem_connection)) } else emptyList(),
         (if (tone != StatusTone.ERROR) value.problems.filter { it.title == R.string.tesla_title } else emptyList()) +
             (if (running && !active && !value.wireless && value.usbRoleProblem) listOf(HomeProblem(R.string.home_problem_usb,

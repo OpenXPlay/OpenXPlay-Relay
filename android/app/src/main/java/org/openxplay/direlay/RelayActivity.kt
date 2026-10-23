@@ -252,7 +252,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val networkReadiness = runtime.networkReadiness(settings, network)
         val dlnaFailure = runtime.dlnaFailure.takeIf { settings.dlnaOutput }
         val miracastFailure = runtime.miracastFailure.takeIf { settings.miracastOutput }
-        val presentation = org.openxplay.direlay.ui.presentHome(org.openxplay.direlay.ui.HomeSnapshot(
+        val deviceName = cachedDeviceName ?: settings.carlinkDeviceName
+        val snapshot = org.openxplay.direlay.ui.HomeSnapshot(
             settings, wireless, missing.isEmpty() && !needsVpn, readyIdentity, !materialChecked, valid,
             phase, started || starting, failures.isNotEmpty() || carlinkFailed || webReason != null || carPlayError != null || dlnaFailure != null || miracastFailure != null, selection, autoStartPaused = runtime.autoStartGate.paused,
             webReason = webReason, webListening = runtime.serverState.startsWith("TLS enabled"),
@@ -261,16 +262,19 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 runtime.carlinkError, webReason, runtime.serverState, networkReadiness, runtime.teslaFailure,
                 runtime.carlinkErrorTrail, runtime.carlinkErrorAt, carPlayError, dlnaFailure, miracastFailure),
             networkReadiness = networkReadiness, manualNetworkReminders = runtime.networkStart.reminders,
-            // DiPlay does not export its discovery stage; observe a live wired wait with an empty Android USB list.
+            // Observe a live wired wait with an empty Android USB list.
             usbRoleProblem = org.openxplay.direlay.network.wiredUsbRoleProblem(wireless,
-                started || starting, network)))
+                started || starting, network), stage = runtime.carPlayStage.stage, deviceName = deviceName)
+        val presentation = org.openxplay.direlay.ui.presentHome(snapshot)
+        if (resumed) runtime.connectionLog.transition("ui", "home", "home_status",
+            org.openxplay.direlay.ui.statusLogDetail(presentation.headline, presentation.subline,
+                presentation.tone, snapshot, resources::getResourceEntryName))
         val carAddresses = runtime.carIpv4
         val urls = runtime.headUnitUrls()
         val ip = carAddresses.joinToString("\n")
             .ifEmpty { getString(R.string.ui_no_network) }
         // Without location access Android hides the network name, but the connection itself is known.
         val wifi = cachedWifi ?: getString(if (onWifi) R.string.ui_wifi_connected else R.string.ui_wifi_not_connected)
-        val deviceName = cachedDeviceName ?: settings.carlinkDeviceName
         content = org.openxplay.direlay.ui.HomeContent(presentation, urls,
             ip, wifi, deviceName, settings.autoStartWhenReady, settings.carlinkOutput, settings.bothOutputs,
             org.openxplay.direlay.ui.carlinkStateLabel(runtime.carlinkState, runtime.carlinkFailed,

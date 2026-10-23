@@ -72,6 +72,7 @@
     <string name="ui_ready">已就绪</string>
     <string name="ui_waiting">等待 iPhone</string>
     <string name="ui_connecting">正在连接</string>
+    <string name="ui_reconnecting">正在重新连接</string>
     <string name="ui_running">CarPlay 正在运行</string>
     <string name="ui_error">出现问题</string>
     <string name="ui_retry_hint">请检查车机连接，然后停止并重新启动。</string>
@@ -79,8 +80,13 @@
     <string name="ui_showing_browser">正在车载浏览器中显示</string>
     <string name="ui_showing_carlink">正在 Carlink 应用中显示</string>
     <string name="ui_showing_both">正在浏览器和 Carlink 应用中显示</string>
-    <string name="ui_connecting_hint">连接时请将 iPhone 放在附近。</string>
     <string name="ui_usb_hint">请使用 USB 线连接 iPhone。</string>
+    <string name="ui_waiting_wireless_hint">请将 iPhone 放在附近，并保持蓝牙和 Wi-Fi 开启，它会自动连接。如果没有连上，请在 iPhone 上打开“设置”→“蓝牙”，然后选择 %1$s。</string>
+    <string name="ui_bluetooth_connecting_hint">正在通过蓝牙连接 iPhone…</string>
+    <string name="ui_bluetooth_connected_hint">iPhone 已通过蓝牙连接，正在启动 CarPlay…</string>
+    <string name="ui_usb_connected_hint">iPhone 已通过 USB 连接，正在启动 CarPlay…</string>
+    <string name="ui_picture_waiting_hint">CarPlay 已启动，正在等待画面…</string>
+    <string name="ui_reconnecting_hint">CarPlay 已中断，正在等待 iPhone 重新连接…</string>
     <string name="ui_start_hint">准备好连接 iPhone 后，点击开始。</string>
     <string name="ui_browser">车载浏览器</string>
     <string name="ui_carlink">Carlink 应用</string>

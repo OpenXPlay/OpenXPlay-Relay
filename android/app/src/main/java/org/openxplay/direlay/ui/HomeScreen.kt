@@ -170,7 +170,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
         StatusTone.IDLE -> RelayGreen
     }, tween(ms), label = "status color")
     var pulse by remember { mutableFloatStateOf(1f) }
-    val connecting = state.headline == R.string.ui_connecting
+    val connecting = state.headline == R.string.ui_connecting || state.headline == R.string.ui_reconnecting
     LaunchedEffect(connecting, motion) { pulse = 1f }
     val scale = if (connecting && motion) {
         val animation = rememberInfiniteTransition(label = "connecting")
@@ -189,7 +189,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 Box(contentAlignment = Alignment.Center) {
                     Symbol(when (state.headline) {
                         R.string.ui_running -> R.drawable.symbol_car
-                        R.string.ui_connecting -> R.drawable.symbol_sync
+                        R.string.ui_connecting, R.string.ui_reconnecting -> R.drawable.symbol_sync
                         R.string.ui_waiting -> R.drawable.symbol_phone
                         R.string.ui_ready -> R.drawable.symbol_check
                         R.string.ui_setup_needed -> R.drawable.symbol_settings
@@ -210,7 +210,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                         value.iphoneName?.takeIf { it.isNotBlank() }?.let { Text(stringResource(R.string.ui_iphone_name, it)) }
                     }
                     state.hints.forEach { problem -> key(problem) { HomeProblemRow(problem) } }
-                    Hint(if (subline == R.string.ui_iphone_pairing) stringResource(subline, value.deviceName) else stringResource(subline, *arguments.toTypedArray()))
+                    Hint(stringResource(subline, *arguments.toTypedArray()))
                     state.reminders.forEach { Hint(stringResource(it)) }
                 }
             }

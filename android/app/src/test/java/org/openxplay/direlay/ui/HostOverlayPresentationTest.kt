@@ -10,6 +10,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.WebStartReason
 import org.openxplay.direlay.relay.WebStartFailure
 import org.openxplay.direlay.relay.RelayFailure
+import org.openxplay.direlay.relay.CarPlayStage
 import org.openxplay.direlay.relay.VideoMeasurement
 import org.openxplay.direlay.relay.VideoStatsSnapshot
 import org.openxplay.direlay.settings.CarPlayScreenWidth
@@ -53,7 +54,7 @@ class HostOverlayPresentationTest {
     @Test fun waitingAndConnectingOfferCancellationAndKeepThePhoneName() {
         for (phase in listOf(null, SessionPhase.CONNECTING)) {
             val result = presentHostOverlay(snapshot.copy(home = home.copy(phase = phase)))
-            assertEquals(R.string.host_connecting, result.headline)
+            assertEquals(if (phase == null) R.string.ui_waiting else R.string.ui_connecting, result.headline)
             assertEquals(StatusTone.PROGRESS, result.tone)
             assertEquals("My iPhone", result.iphoneName)
             assertEquals(HostOverlayButton(R.string.host_cancel, HostOverlayAction.STOP), result.buttons.last())
@@ -72,9 +73,9 @@ class HostOverlayPresentationTest {
 
     @Test fun reconnectAndErrorsReuseHomeCopyAndNeverClaimSuccess() {
         for (phase in listOf(SessionPhase.RECONNECTING, SessionPhase.ENDED)) {
-            val result = presentHostOverlay(snapshot.copy(home = home.copy(phase = phase)))
-            assertEquals(R.string.ui_connecting, result.headline)
-            assertEquals(R.string.ui_connecting_hint, result.hint)
+            val result = presentHostOverlay(snapshot.copy(home = home.copy(phase = phase, stage = CarPlayStage.INTERRUPTED)))
+            assertEquals(R.string.ui_reconnecting, result.headline)
+            assertEquals(R.string.ui_reconnecting_hint, result.hint)
             assertEquals(StatusTone.PROGRESS, result.tone)
         }
         val failed = home.copy(phase = SessionPhase.ACTIVE, failure = true)
@@ -85,6 +86,44 @@ class HostOverlayPresentationTest {
         assertEquals(R.string.ui_stop, result.buttons.last().label)
         assertNull(result.iphoneName)
         assertEquals(presentHome(failed).problems, result.problems)
+    }
+
+    @Test fun everyConnectionStatusRowMatchesTheHomeAndKeepsTheHintArguments() {
+        val deviceName = "Relay Bluetooth Name"
+        connectionStatusCases(deviceName).forEach { expected ->
+            val value = home.copy(phase = expected.phase, stage = expected.stage,
+                wireless = expected.wireless, deviceName = deviceName)
+            val result = presentHostOverlay(snapshot.copy(home = value))
+            assertEquals(expected.toString(), expected.headline, result.headline)
+            assertEquals(expected.toString(), expected.subline, result.hint)
+            assertEquals(expected.toString(), StatusTone.PROGRESS, result.tone)
+            assertEquals(expected.toString(), expected.arguments, result.hintArguments)
+            val homeResult = presentHome(value)
+            assertEquals(homeResult.headline, result.headline)
+            assertEquals(homeResult.subline, result.hint)
+            assertEquals(homeResult.sublineArguments, result.hintArguments)
+        }
+    }
+
+    @Test fun stoppedErrorAndActiveStatesWinOverEveryStage() {
+        for (stage in CarPlayStage.entries) {
+            val connecting = snapshot.copy(home = home.copy(stage = stage, deviceName = "Private name"))
+            val stopped = presentHostOverlay(connecting.copy(stopped = true))
+            assertEquals(R.string.host_stopped, stopped.headline)
+            assertEquals(StatusTone.IDLE, stopped.tone)
+            assertNull(stopped.hint)
+            assertTrue(stopped.hintArguments.isEmpty())
+            val error = presentHostOverlay(connecting.copy(stopped = true, home = connecting.home.copy(failure = true)))
+            assertEquals(R.string.ui_error, error.headline)
+            assertEquals(R.string.ui_retry_hint, error.hint)
+            assertEquals(StatusTone.ERROR, error.tone)
+            assertTrue(error.hintArguments.isEmpty())
+            val active = presentHostOverlay(connecting.copy(home = connecting.home.copy(phase = SessionPhase.ACTIVE)))
+            assertEquals(R.string.host_running, active.headline)
+            assertEquals(R.string.host_keep_running, active.hint)
+            assertEquals(StatusTone.RUNNING, active.tone)
+            assertTrue(active.hintArguments.isEmpty())
+        }
     }
 
     @Test fun outputsIncludeBothWhenEnabledAndUrlsOnlyForBrowser() {

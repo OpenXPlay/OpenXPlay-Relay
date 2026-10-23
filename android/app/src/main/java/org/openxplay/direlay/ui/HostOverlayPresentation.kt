@@ -37,19 +37,18 @@ data class HostOverlayPresentation(val headline: Int, val hint: Int?, val tone: 
 fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
     val home = presentHome(value.home)
     val stopped = value.stopped && home.tone != StatusTone.ERROR
-    val reconnecting = value.home.phase in setOf(SessionPhase.RECONNECTING, SessionPhase.ENDED)
     val tone = when {
         home.tone == StatusTone.ERROR -> StatusTone.ERROR
         stopped -> StatusTone.IDLE
         value.home.phase == SessionPhase.ACTIVE -> StatusTone.RUNNING
         else -> StatusTone.PROGRESS
     }
+    val connection = presentConnectionStatus(value.home.phase, value.home.stage, value.home.wireless, value.home.deviceName)
     val headline = when {
         tone == StatusTone.ERROR -> home.headline
         stopped -> R.string.host_stopped
         tone == StatusTone.RUNNING -> R.string.host_running
-        reconnecting -> R.string.ui_connecting
-        else -> R.string.host_connecting
+        else -> checkNotNull(connection).headline
     }
     val settings = value.home.settings
     val browser = !settings.carlinkOutput || settings.bothOutputs
@@ -93,7 +92,7 @@ fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
     return HostOverlayPresentation(headline, when (tone) {
         StatusTone.ERROR -> home.subline
         StatusTone.RUNNING -> R.string.host_keep_running
-        StatusTone.PROGRESS -> R.string.ui_connecting_hint
+        StatusTone.PROGRESS -> checkNotNull(connection).subline
         else -> null
     }, tone, value.iphoneName?.takeIf { tone != StatusTone.ERROR && it.isNotBlank() }, buildList {
         if (browser) add(R.string.ui_browser)
@@ -102,7 +101,11 @@ fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
         add(HostOverlayButton(R.string.host_back, HostOverlayAction.BACK))
         if (!stopped) add(HostOverlayButton(
             if (tone == StatusTone.PROGRESS) R.string.host_cancel else R.string.ui_stop, HostOverlayAction.STOP))
-    }, home.sublineArguments, when {
+    }, when (tone) {
+        StatusTone.ERROR -> home.sublineArguments
+        StatusTone.PROGRESS -> checkNotNull(connection).sublineArguments
+        else -> emptyList()
+    }, when {
         !browser || value.home.webReason != null -> null
         urls.isNotEmpty() -> R.string.ui_browser_https_hint
         value.home.webListening && !value.home.carNetworkAvailable -> R.string.ui_head_unit_network
