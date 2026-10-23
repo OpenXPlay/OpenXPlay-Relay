@@ -110,3 +110,6 @@ pub mod host_backends;
 pub mod host_capabilities;
 pub mod supervisor_settings;
 pub mod wifi_capabilities;
+
+pub mod net_inventory;
+pub mod network_roles;

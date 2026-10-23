@@ -140,6 +140,8 @@ pub struct AdminIphone {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminNetwork {
+    #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
+    pub planned: Option<crate::network_roles::NetworkStatus>,
     #[serde(default)]
     pub following_carlink: bool,
     pub mode: String,
@@ -474,6 +476,10 @@ pub trait RelayAdmin: Send + Sync + 'static {
     fn response_sent(&self) {}
     /// Discard deferred actions if delivery of the response fails.
     fn response_failed(&self) {}
+
+    fn network_roles_update(&self, _values: Values) -> Option<crate::network_roles::SaveResult> {
+        None
+    }
 
     fn status(&self) -> AdminStatus;
     fn settings(&self) -> AdminSettings;

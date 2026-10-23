@@ -261,3 +261,9 @@ a.copy-text { color: var(--text); text-decoration-color: var(--border); text-und
 .button[aria-disabled=true] { opacity: .6; cursor: default; }
 .trace-files { list-style: none; padding: 0; display: grid; gap: 8px; }
 .trace-files li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.network-table { overflow-x: auto; }
+.network-table table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+.network-table th, .network-table td { padding: .5rem; text-align: left; border-bottom: 1px solid var(--border); }
+.network-check-error { color: #b3261e; }
+@media (prefers-color-scheme: dark) { .network-check-error { color: #ffb4ab; } }

@@ -37,6 +37,28 @@ export interface Wireless {
   apStation: boolean | null; apStationChannels: number | null; p2pClient: boolean | null; ap5Channels: number[] | null;
   hotspot: { band: '2.4' | '5'; autoBand: '2.4' | '5'; channel: number; configuredBand: HotspotBand; configuredChannel: number; reason: string | null };
 }
+export interface PlannedRole { interface: { ref: string; name: string | null; mac: string | null } | null; missing: boolean; source: 'auto' | 'custom' | 'legacy' | 'cli' }
+export interface NetworkPlan {
+  source: 'auto' | 'custom'; output: string;
+  iphone: PlannedRole & { link: 'hotspot' | 'saved-network'; band: string; channel: number };
+  carBrowser: PlannedRole & { network: 'iphone' | 'interface' };
+  carlink: PlannedRole & { followOver: boolean };
+  adminHotspot: PlannedRole & { enabled: boolean; ssid: string; band: string; channel: number; timeSharedWith: 'carlink' | null; passwordSet: boolean };
+}
+export interface NetworkInterface {
+  name: string; mac: string | null; currentMac: string | null; macSource: 'permanent' | 'current'; driver: string | null; bus: string; product: string | null;
+  kind: 'wifi' | 'ethernet'; phy: string | null; operstate: string | null; ipv4: string[];
+  wifi: { ap: boolean; station: boolean; p2pClient: boolean; p2pGo: boolean; concurrency: string; modes: string[]; channels: HostChannel[];
+    combinations: { modes: string[]; channels: number | null; apStation: boolean; description: string }[];
+    bands: { band: string; stationChannels: number[]; apChannels: number[] }[] } | null;
+  activity: { kind: string; profile: string | null; ssid: string | null; mode: string | null; channel: number | null; width: string | null };
+}
+export interface NetworkCheck { level: 'error' | 'warning' | 'info'; code: string; roles: string[]; interfaces: string[]; params: Record<string, unknown> }
+export interface PlannedNetwork {
+  probedAt: number | null;
+  country: { global: string | null; configured: string | null; phys: { phy: string; country: string | null; selfManaged: boolean }[] };
+  interfaces: NetworkInterface[]; plan: NetworkPlan; checks: NetworkCheck[]; applied: false;
+}
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
@@ -53,7 +75,7 @@ export interface Status {
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;
   platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; hostCapabilities?: HostCapabilities; adminUrl: string; adminUrls?: string[]; receiverUrls: string[];
   state: 'idle' | 'waiting' | 'connecting' | 'active' | 'reconnecting'; running: boolean; autoStartPaused: boolean;
-  iphone: { name: string | null; reason: string }; network: { mode: string; wifi: string | null; followingCarlink?: boolean };
+  iphone: { name: string | null; reason: string }; network: { mode: string; wifi: string | null; followingCarlink?: boolean } & Partial<PlannedNetwork>;
   output: string; carlink: CarlinkStatus | null; notices: string[]; publicName?: PublicNameStatus; wireless?: Wireless;
 }
 export interface Phone { id: string; name: string; kind: 'phone' | 'car' | 'other'; connected: boolean; likelyIphone: boolean; selected: boolean }

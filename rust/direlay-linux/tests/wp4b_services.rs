@@ -12,8 +12,8 @@ mod mdns_host;
 #[path = "../src/provision.rs"]
 mod provision;
 use openxplay_relay::{
-    boot_timing, device_preset, host_capabilities, platform, plugins, public_name, settings,
-    wifi_capabilities,
+    boot_timing, device_preset, host_capabilities, network_roles, platform, plugins, public_name,
+    settings, wifi_capabilities,
 };
 #[path = "../src/supervisor.rs"]
 mod supervisor;

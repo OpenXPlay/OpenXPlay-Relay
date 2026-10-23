@@ -26,6 +26,9 @@ pub struct Settings {
     pub plugins: bool,
     pub plugins_enabled: Vec<String>,
     pub network_mode: String,
+    pub network_roles: crate::network_roles::NetworkRoles,
+    pub admin_hotspot_password: Option<String>,
+    pub wifi_country: String,
     pub device_preset: String,
     pub shared_wifi_networks: Vec<SharedWifiNetwork>,
     pub wifi_interface: String,
@@ -67,6 +70,9 @@ impl Default for Settings {
             plugins: false,
             plugins_enabled: Vec::new(),
             network_mode: "device-hotspot".into(),
+            network_roles: Default::default(),
+            admin_hotspot_password: None,
+            wifi_country: "00".into(),
             device_preset: "auto".into(),
             shared_wifi_networks: Vec::new(),
             wifi_interface: "wlan0".into(),
@@ -195,6 +201,17 @@ impl Settings {
     }
     pub fn validate(&self) -> Result<()> {
         let invalid = |s: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, s);
+        self.network_roles.validate()?;
+        if !crate::network_roles::valid_country(&self.wifi_country) {
+            return Err(invalid("Invalid wifiCountry"));
+        }
+        if self
+            .admin_hotspot_password
+            .as_deref()
+            .is_some_and(|p| !crate::network_roles::valid_password(p))
+        {
+            return Err(invalid("Invalid adminHotspotPassword"));
+        }
         if !["device-hotspot", "shared-wifi"].contains(&self.network_mode.as_str()) {
             return Err(invalid("Invalid networkMode"));
         }

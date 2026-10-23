@@ -123,6 +123,7 @@ pub struct LinuxRelayAdmin {
     options: Options,
     backends: crate::host_backends::HostBackends,
     capabilities: Arc<crate::host_capabilities::CapabilityCache>,
+    inventory: Arc<crate::net_inventory::InventoryCache>,
     settings: Mutex<Settings>,
     state: Arc<PersistentState>,
     events: Arc<JsonEvents>,
@@ -315,7 +316,14 @@ impl LinuxRelayAdmin {
             &options.state_dir,
             crate::public_name::Network::internet(),
         ));
+        let inventory = Arc::new(crate::net_inventory::InventoryCache::new(
+            Arc::new(ProcessCommandRunner::new()),
+            "/".into(),
+        ));
+        #[cfg(target_os = "linux")]
+        inventory.refresh();
         Ok(Self {
+            inventory,
             public_name,
             admin_certificate: Default::default(),
             receiver_tls: Mutex::new(None),
@@ -396,6 +404,36 @@ impl LinuxRelayAdmin {
             )?);
         }
         Ok(true)
+    }
+    fn network_status(&self, settings: &Settings) -> crate::network_roles::NetworkStatus {
+        let mut inventory = self.inventory.get();
+        inventory.country.configured = Some(settings.wifi_country.clone());
+        let mut options = self.options.clone();
+        options.settings = settings.clone();
+        let _ = options.apply_overrides();
+        let legacy = crate::network_roles::Legacy {
+            wifi_interface: &options.wifi_interface,
+            carlink_interface: &options.settings.carlink_interface,
+            network_mode: &options.settings.network_mode,
+            hotspot_band: &options.settings.hotspot_band,
+            hotspot_channel: options.wifi_channel,
+            cli: &options.overrides,
+        };
+        let preset = options.device_preset(self.capabilities.root());
+        let plan = crate::network_roles::resolve_plan(
+            &inventory,
+            settings,
+            &legacy,
+            &preset.id,
+            &options.settings.output,
+        );
+        let checks = crate::network_roles::checks(&plan, &inventory);
+        crate::network_roles::NetworkStatus {
+            inventory,
+            plan,
+            checks,
+            applied: false,
+        }
     }
     fn effective_options(&self) -> Result<Options> {
         let mut o = self.options.clone();
@@ -937,6 +975,8 @@ impl LinuxRelayAdmin {
         }
     }
     pub fn tick(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        self.inventory.refresh();
         self.apply_public_name();
         let playing = self.carlink.lock().unwrap().state == "playing";
         if self.input.display.lock().unwrap().resize.reconnect(playing) {
@@ -1246,6 +1286,9 @@ fn public_name_section() -> Section {
 pub fn settings_schema() -> Vec<Section> {
     let fields: Vec<Field> = [
         ("networkMode", "choice"),
+        ("networkRoles", "object"),
+        ("adminHotspotPassword", "secret"),
+        ("wifiCountry", "text"),
         ("devicePreset", "choice"),
         ("sharedWifiNetworks", "networks"),
         ("hotspotBand", "choice"),
@@ -1377,6 +1420,10 @@ pub fn settings_schema() -> Vec<Section> {
             _ => None,
         },
         visible_when: match key {
+            "networkRoles" | "adminHotspotPassword" | "wifiCountry" => Some(VisibleWhen {
+                key: "networkRoles".into(),
+                equals: vec![],
+            }),
             "carlinkHeadUnit" | "carlinkLocal" => Some(VisibleWhen {
                 key: "carlinkLink".into(),
                 equals: vec!["static".into()],
@@ -1783,6 +1830,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 reason: selection.reason().into(),
             },
             network: AdminNetwork {
+                planned: Some(self.network_status(&self.settings.lock().unwrap())),
                 following_carlink,
                 mode: options.settings.network_mode,
                 wifi: wifi.ssid.clone(),
@@ -1813,12 +1861,50 @@ impl RelayAdmin for LinuxRelayAdmin {
             public_name: Some(public_name),
         }
     }
+    fn network_roles_update(&self, values: Values) -> Option<crate::network_roles::SaveResult> {
+        use crate::network_roles::{SaveResult, Update};
+        let result = (|| {
+            if ["adminHotspotPassword", "wifiCountry"]
+                .iter()
+                .any(|key| values.get(*key).is_some_and(|v| !v.is_string()))
+            {
+                return SaveResult::Invalid("error.invalid".into());
+            }
+            let update: Update = match serde_json::from_value(serde_json::Value::Object(values)) {
+                Ok(update) => update,
+                Err(_) => return SaveResult::Invalid("error.invalid".into()),
+            };
+            let mut current = self.settings.lock().unwrap();
+            let mut next = current.clone();
+            next.network_roles = update.network_roles;
+            if let Some(password) = update.admin_hotspot_password {
+                next.admin_hotspot_password = Some(password);
+            }
+            if let Some(country) = update.wifi_country {
+                next.wifi_country = country;
+            }
+            if next.validate().is_err() {
+                return SaveResult::Invalid("error.invalid".into());
+            }
+            let status = self.network_status(&next);
+            if status.checks.iter().any(|c| c.level == "error") {
+                return SaveResult::Checks(status.checks);
+            }
+            if next.save(&self.options.state_dir).is_err() {
+                return SaveResult::Storage;
+            }
+            *current = next;
+            SaveResult::Saved(Box::new(status))
+        })();
+        Some(result)
+    }
     fn settings(&self) -> AdminSettings {
         let mut values = serde_json::to_value(self.settings.lock().unwrap().clone())
             .unwrap()
             .as_object()
             .unwrap()
             .clone();
+        values.remove("adminHotspotPassword");
         let current = self
             .provision
             .try_lock()
@@ -1850,6 +1936,16 @@ impl RelayAdmin for LinuxRelayAdmin {
         }
     }
     fn update(&self, mut values: Values) -> AdminUpdate {
+        // Role changes must pass the plan checks through the dedicated endpoint.
+        if values
+            .keys()
+            .any(|k| ["networkRoles", "adminHotspotPassword", "wifiCountry"].contains(&k.as_str()))
+        {
+            return AdminUpdate::Errors(BTreeMap::from([(
+                "settings".into(),
+                "error.invalid".into(),
+            )]));
+        }
         // Trusted HTTPS lives in its own file and applies at once.
         let public: Vec<String> = values
             .keys()
@@ -2195,6 +2291,118 @@ impl RelayAdmin for LinuxRelayAdmin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn network_roles_api_auth_checks_persistence_and_no_application() {
+        use std::os::unix::fs::PermissionsExt;
+        let (a, dir) = fake();
+        let original = a.effective_options().unwrap();
+        let mut auth = AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap();
+        let token = auth
+            .login("127.0.0.1".parse().unwrap(), "openxplay", 100)
+            .ok()
+            .unwrap();
+        let server = AdminServer::new(
+            a.clone(),
+            auth,
+            AdminServerConfig::new(dir.clone(), dir.clone(), vec![]),
+        );
+        let mut request = Request {
+            method: "PUT".into(), path: "/api/v0/network-roles".into(),
+            headers: BTreeMap::from([("content-type".into(), "application/json".into()), ("x-openxplay-admin".into(), "1".into())]),
+            body: br#"{"networkRoles":{"mode":"auto"},"wifiCountry":"CN","adminHotspotPassword":"private-admin-pass"}"#.to_vec(),
+            peer: "127.0.0.1".parse().unwrap(),
+        };
+        assert_eq!(server.route(&request, 100).status, 401);
+        request
+            .headers
+            .insert("cookie".into(), format!("oxp_admin={token}"));
+        request.headers.remove("x-openxplay-admin");
+        assert_eq!(server.route(&request, 100).status, 403);
+        request
+            .headers
+            .insert("x-openxplay-admin".into(), "1".into());
+        let response = server.route(&request, 100);
+        assert_eq!(response.status, 200);
+        let response: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(response["applied"], false);
+        assert!(!response.to_string().contains("private-admin-pass"));
+        let saved = Settings::load(&dir).unwrap();
+        assert_eq!(saved.wifi_country, "CN");
+        assert_eq!(
+            saved.admin_hotspot_password.as_deref(),
+            Some("private-admin-pass")
+        );
+        assert_eq!(
+            std::fs::metadata(dir.join("settings.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let status = serde_json::to_value(a.status()).unwrap();
+        assert!(status["network"]["interfaces"].is_array());
+        assert_eq!(status["network"]["country"]["configured"], "CN");
+        assert_eq!(
+            status["network"]["plan"]["adminHotspot"]["passwordSet"],
+            true
+        );
+        assert_eq!(status["network"]["applied"], false);
+        assert_eq!(status["network"]["mode"], original.settings.network_mode);
+        for value in [status, serde_json::to_value(a.settings()).unwrap()] {
+            assert!(!value.to_string().contains("private-admin-pass"));
+            assert!(!value.to_string().contains("adminHotspotPassword\":"));
+        }
+        request.body = serde_json::to_vec(&serde_json::json!({"networkRoles":{
+            "mode":"custom", "iphone":{"link":"saved-network","interface":"02:00:00:00:00:09"},
+            "carBrowser":{"network":"iphone","interface":null}, "carlink":{"interface":null},
+            "adminHotspot":{"enabled":false,"interface":null,"ssid":"Test-Admin","band":"2.4","channel":0}
+        }})).unwrap();
+        let custom = server.route(&request, 100);
+        assert_eq!(custom.status, 200);
+        let custom: serde_json::Value = serde_json::from_slice(&custom.body).unwrap();
+        assert_eq!(custom["plan"]["iphone"]["link"], "saved-network");
+        assert_eq!(custom["plan"]["iphone"]["missing"], true);
+        assert_eq!(Settings::load(&dir).unwrap().network_roles.mode, "custom");
+        assert_eq!(
+            Settings::load(&dir).unwrap().admin_hotspot_password,
+            saved.admin_hotspot_password
+        );
+        let before = std::fs::read(dir.join("settings.json")).unwrap();
+        for body in [
+            serde_json::json!({"networkRoles":{"mode":"auto","adminHotspot":{"enabled":true,"interface":null,"ssid":"Test-Admin","band":"5","channel":0}}}),
+            serde_json::json!({"networkRoles":{"mode":"auto"},"adminHotspotPassword":"short"}),
+            serde_json::json!({"networkRoles":{"mode":"auto"},"wifiCountry":"ZZ"}),
+            serde_json::json!({"networkRoles":{"mode":"auto"},"wifiCountry":null}),
+            serde_json::json!({"networkRoles":{"mode":"auto"},"adminHotspotPassword":null}),
+            serde_json::json!({"networkRoles":{"mode":"auto","extra":true}}),
+            serde_json::json!({"networkRoles":{"mode":"auto"},"extra":true}),
+        ] {
+            request.body = serde_json::to_vec(&body).unwrap();
+            let response = server.route(&request, 100);
+            assert_eq!(response.status, 400);
+            if body["networkRoles"]["adminHotspot"].is_object() {
+                let value: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+                assert!(value["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["level"] == "error" && c["code"] == "no-ap-channel"));
+            }
+            assert_eq!(std::fs::read(dir.join("settings.json")).unwrap(), before);
+        }
+        let after = a.effective_options().unwrap();
+        assert_eq!(after.wifi_interface, original.wifi_interface);
+        assert_eq!(after.settings.network_mode, original.settings.network_mode);
+        assert_eq!(
+            after.settings.carlink_interface,
+            original.settings.carlink_interface
+        );
+        assert!(a.pending.lock().unwrap().is_empty());
+        assert!(!a.restart_required.load(Ordering::Acquire));
+        assert!(!a.apply_pending.load(Ordering::Acquire));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     fn fake() -> (Arc<LinuxRelayAdmin>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "wp4a-admin-{}",

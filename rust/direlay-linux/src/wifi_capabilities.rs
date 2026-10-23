@@ -32,6 +32,41 @@ pub struct Combination {
     pub ap_station: bool,
     pub description: String,
 }
+impl Combination {
+    /// Check group and total limits, including chips that allow only one AP.
+    pub fn allows(&self, requested: &[&str]) -> bool {
+        if number_after(&self.description, "total <=")
+            .is_none_or(|n| usize::from(n) < requested.len())
+        {
+            return false;
+        }
+        let mut remaining = self.description.as_str();
+        let mut covered = vec![false; requested.len()];
+        while let Some((_, tail)) = remaining.split_once("#{") {
+            let Some((names, tail)) = tail.split_once('}') else {
+                return false;
+            };
+            let names: Vec<_> = names.split(',').map(str::trim).collect();
+            let count = requested
+                .iter()
+                .enumerate()
+                .filter(|(i, mode)| {
+                    if names.contains(mode) {
+                        covered[*i] = true;
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .count();
+            if number_after(tail, "<=").is_none_or(|n| usize::from(n) < count) {
+                return false;
+            }
+            remaining = tail;
+        }
+        covered.iter().all(|b| *b)
+    }
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PhyCapabilities {

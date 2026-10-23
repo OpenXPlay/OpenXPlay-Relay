@@ -309,6 +309,23 @@ impl AdminServer {
                 }
                 AdminUpdate::Errors(errors) => Response::json(422, json!({"errors":errors})),
             },
+            ("PUT", "/network-roles") => {
+                use crate::network_roles::SaveResult;
+                match self.admin.network_roles_update(body) {
+                    Some(SaveResult::Saved(status)) => Response::json(
+                        200,
+                        json!({"plan": status.plan, "checks": status.checks, "applied": false}),
+                    ),
+                    Some(SaveResult::Invalid(error)) => {
+                        Response::json(400, json!({"error": error}))
+                    }
+                    Some(SaveResult::Checks(checks)) => {
+                        Response::json(400, json!({"checks": checks, "applied": false}))
+                    }
+                    Some(SaveResult::Storage) => Response::error(500, "error.request"),
+                    None => Response::error(404, "error.request"),
+                }
+            }
             ("PUT", "/hotspot") => match (string("ssid"), string("password")) {
                 _ if body
                     .get("band")
