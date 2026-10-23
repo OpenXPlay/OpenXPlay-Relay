@@ -9,7 +9,7 @@ export interface TraceSnapshot {
   files: { name: string; kind: 'trace' | 'media' | 'media-partial'; size: number }[];
 }
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
-const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+import { esc } from './html';
 export const traceFilters = ['', 'Rtsp', 'Frame', 'Media', 'Link', 'Error'];
 export function traceVisible(platform: string | undefined, developer: boolean, view: string): boolean { return platform === 'linux' && developer && view === 'settings'; }
 function mediaSize(bytes: number): string {

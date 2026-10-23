@@ -11,6 +11,7 @@ use std::{
 #[derive(Default)]
 struct Fake {
     calls: Mutex<Vec<Vec<String>>>,
+    profiles: Mutex<Vec<String>>,
     attempts: Mutex<usize>,
     fail_5g: bool,
     fail_all: bool,
@@ -25,6 +26,12 @@ impl CommandRunner for Fake {
     fn run(&self, a: &[String], timeout: Duration) -> openxplay_relay::Result<CommandResult> {
         assert!(!timeout.is_zero());
         self.calls.lock().unwrap().push(a.to_vec());
+        if a.get(2).is_some_and(|s| s == "load") {
+            self.profiles
+                .lock()
+                .unwrap()
+                .push(std::fs::read_to_string(&a[3]).unwrap());
+        }
         let output = if a.starts_with(&["nmcli".into(), "connection".into(), "up".into()]) {
             let mut n = self.attempts.lock().unwrap();
             *n += 1;
@@ -89,6 +96,7 @@ fn temp() -> PathBuf {
 }
 fn manager(p: &std::path::Path, runner: Arc<Fake>) -> LinuxHotspot {
     LinuxHotspot::new(p.into(), runner, "wlan0".into(), 36)
+        .with_runtime_dirs(p.join("nm-keyfiles"), p.join("dnsmasq-shared.d"))
 }
 #[test]
 fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_ap() {
@@ -116,14 +124,14 @@ fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_
     let add = calls
         .iter()
         .position(|a| {
-            a.get(1).is_some_and(|s| s == "connection") && a.get(2).is_some_and(|s| s == "add")
+            a.get(1).is_some_and(|s| s == "connection") && a.get(2).is_some_and(|s| s == "load")
         })
         .unwrap();
     assert!(calls_before <= add);
-    let subnet = calls[add]
-        .windows(2)
-        .find(|w| w[0] == "ipv4.addresses")
-        .map(|w| w[1].clone())
+    let profiles = runner.profiles.lock().unwrap();
+    let subnet = profiles[0]
+        .lines()
+        .find_map(|l| l.strip_prefix("address1="))
         .unwrap();
     assert_eq!(subnet, format!("{address}/24"));
     drop(calls);
@@ -150,11 +158,24 @@ fn hotspot_persists_credentials_and_deletes_owned_connection() {
     assert_eq!(calls[calls.len() - 1][2], "delete");
     let add = calls
         .iter()
-        .find(|a| a.get(2).is_some_and(|s| s == "add"))
+        .find(|a| a.get(2).is_some_and(|s| s == "load"))
         .unwrap();
-    for v in ["ap", "rsn", "ccmp", "shared", "no"] {
-        assert!(add.iter().any(|s| s == v));
+    assert_eq!(&add[..3], ["nmcli", "connection", "load"]);
+    let profiles = runner.profiles.lock().unwrap();
+    for setting in [
+        "mode=ap",
+        "proto=rsn;",
+        "pairwise=ccmp;",
+        "group=ccmp;",
+        "method=shared",
+        "autoconnect=false",
+    ] {
+        assert!(profiles[0].contains(setting));
     }
+    assert!(calls
+        .iter()
+        .flatten()
+        .all(|a| !a.contains(&info.passphrase)));
     assert!(calls.iter().all(|a| a[0] != "ip"));
     drop(calls);
     let second = manager(&p, Arc::new(Fake::default()));
@@ -453,7 +474,7 @@ fn access_point_starts_once_networkmanager_can_use_the_wifi_device() {
     h.start(Duration::from_secs(60)).unwrap();
     let calls = runner.calls.lock().unwrap();
     let position = |test: &dyn Fn(&Vec<String>) -> bool| calls.iter().position(test).unwrap();
-    let add = position(&|a| a.get(2).is_some_and(|s| s == "add"));
+    let add = position(&|a| a.get(2).is_some_and(|s| s == "load"));
     let up = position(&|a| a.get(2).is_some_and(|s| s == "up"));
     let states: Vec<_> = calls
         .iter()
@@ -493,7 +514,7 @@ fn activation_waits_for_the_wifi_provisioning_but_the_profile_does_not() {
             .any(|a| a.get(2).is_some_and(|s| s == verb))
     };
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
-    while !called("add") {
+    while !called("load") {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -576,12 +597,11 @@ fn ufi003_resolves_before_activation_without_attempting_five_ghz() {
     let calls = runner.calls.lock().unwrap();
     let add = calls
         .iter()
-        .find(|a| a.get(2).is_some_and(|s| s == "add"))
+        .find(|a| a.get(2).is_some_and(|s| s == "load"))
         .unwrap();
-    assert!(add.windows(2).any(|w| w == ["802-11-wireless.band", "bg"]));
-    assert!(add
-        .windows(2)
-        .any(|w| w == ["802-11-wireless.channel", "6"]));
+    assert_eq!(&add[..3], ["nmcli", "connection", "load"]);
+    let profiles = runner.profiles.lock().unwrap();
+    assert!(profiles[0].contains("band=bg\n") && profiles[0].contains("channel=6\n"));
     assert!(!calls
         .iter()
         .any(|a| a.windows(2).any(|w| w == ["802-11-wireless.band", "a"])));
@@ -653,16 +673,19 @@ fn semantic_access_point_request_supplies_credentials_band_and_channel() {
     let calls = runner.calls.lock().unwrap();
     let add = calls
         .iter()
-        .find(|args| args.get(2).is_some_and(|s| s == "add"))
+        .find(|args| args.get(2).is_some_and(|s| s == "load"))
         .unwrap();
-    for pair in [
-        ["ssid", "Semantic AP"],
-        ["802-11-wireless-security.psk", "password123"],
-        ["802-11-wireless.band", "bg"],
-        ["802-11-wireless.channel", "11"],
-    ] {
-        assert!(add.windows(2).any(|w| w == pair));
+    assert_eq!(&add[..3], ["nmcli", "connection", "load"]);
+    let profiles = runner.profiles.lock().unwrap();
+    for setting in ["psk=password123\n", "band=bg\n", "channel=11\n"] {
+        assert!(profiles[0].contains(setting));
     }
+    let ssid = "Semantic AP"
+        .bytes()
+        .map(|b| format!("{b};"))
+        .collect::<String>();
+    assert!(profiles[0].contains(&format!("ssid={ssid}\n")));
+    assert!(calls.iter().flatten().all(|a| !a.contains("password123")));
     assert!(!root.join("hotspot.credentials").exists());
     std::fs::remove_dir_all(root).unwrap();
 }

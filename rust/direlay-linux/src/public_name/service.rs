@@ -589,8 +589,7 @@ impl Inner {
             (name, shared.hotspot)
         };
         let _ = match (name, hotspot) {
-            (Some(name), Some(address)) => local_dns::write(dir, &name, address),
-            (Some(_), None) => local_dns::remove(dir),
+            (Some(name), address) => local_dns::public_name(dir, &name, address),
             (None, _) => local_dns::remove(dir),
         };
     }
@@ -1643,24 +1642,25 @@ mod tests {
         let service = PublicNameService::new(&world.state.0, world.network());
         let dir = world.state.0.join("dnsmasq-shared.d");
         let conf = local_dns::path(&dir);
+        let hosts = local_dns::hosts_path(&dir);
         // Off: nothing written, also when the hotspot starts.
         service.before_hotspot(Ipv4Addr::new(10, 77, 0, 1));
         assert!(!conf.exists());
         world.configure();
         service.inner.reload(false);
-        assert!(std::fs::read_to_string(&conf)
+        assert!(std::fs::read_to_string(&hosts)
             .unwrap()
-            .contains(&format!("address=/{NAME}/10.77.0.1\n")));
+            .contains(&format!("10.77.0.1 {NAME}\n")));
         // The next activation brings its own address.
         service.before_hotspot(Ipv4Addr::new(10, 77, 3, 1));
-        assert!(std::fs::read_to_string(&conf)
+        assert!(std::fs::read_to_string(&hosts)
             .unwrap()
-            .contains("/10.77.3.1\n"));
+            .contains("10.77.3.1 "));
         // A separately selected browser interface updates DNS, and losing its IP removes it.
         service.head_unit_address(Some(Ipv4Addr::new(192, 0, 2, 2)));
-        assert!(std::fs::read_to_string(&conf)
+        assert!(std::fs::read_to_string(&hosts)
             .unwrap()
-            .contains("/192.0.2.2\n"));
+            .contains("192.0.2.2 "));
         service.head_unit_address(None);
         assert!(!conf.exists());
         service.head_unit_address(Some(Ipv4Addr::new(192, 0, 2, 2)));

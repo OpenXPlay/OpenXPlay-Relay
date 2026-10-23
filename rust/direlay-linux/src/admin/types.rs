@@ -54,6 +54,8 @@ pub struct AdminStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_capabilities: Option<crate::host_capabilities::HostCapabilities>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_hotspot: Option<AdminHotspotStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wireless: Option<AdminWireless>,
     pub admin_url: String,
     #[serde(default)]
@@ -74,6 +76,11 @@ pub struct AdminStatus {
     /// Trusted HTTPS with a free domain name; absent where the relay has no such feature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_name: Option<crate::public_name::PublicNameStatus>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdminHotspotStatus {
+    pub state: String,
+    pub reason: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

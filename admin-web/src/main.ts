@@ -28,7 +28,7 @@ let disposeTrace: (() => void) | null = null;
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let language: Language = defaultLanguage(navigator.language);
 const t = (key: string, parameters?: Record<string, string | number>) => translate(language, key, parameters);
-const esc = (value: unknown): string => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+import { esc } from './html';
 let developer = developerPreference(location.search, () => localStorage.getItem('openxplay.developer'));
 let session: SessionState | null = null;
 let defaultPassword = false;

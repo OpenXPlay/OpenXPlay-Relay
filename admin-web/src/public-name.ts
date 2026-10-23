@@ -8,7 +8,7 @@ import type { PublicNameProviders, Settings, Values } from './schema';
 import { publicNameUrl } from './logic';
 
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+import { esc } from './html';
 export const TERMS_URL = 'https://letsencrypt.org/repository/';
 export const PUBLIC_NAME_MAX_BYTES = 16 * 1024;
 export type PublicNameMessage = string | PublicNameImport | { errors: Record<string, string> };

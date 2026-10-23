@@ -164,6 +164,8 @@ pub fn parse_activity(text: &str, profile: Option<&str>, ethernet: bool) -> Acti
         "ethernet"
     } else if profile.is_some_and(|p| p.starts_with("oxp-carplay-")) {
         "relay-hotspot"
+    } else if profile.is_some_and(|p| p.starts_with("oxp-admin-")) {
+        "admin-hotspot"
     } else if profile.is_some_and(|p| p.starts_with("oxp-setup-")) {
         "setup-hotspot"
     } else if profile.is_some_and(|p| p.starts_with("oxp-client-")) {
@@ -507,6 +509,22 @@ impl InventoryCache {
         state.full_refreshed = Some(Instant::now());
         self.probed.notify_all();
     }
+    /// A country change must refresh channel capabilities, even during the activity-only interval.
+    pub fn reprobe(&self) {
+        let mut state = self.state.lock().unwrap();
+        while state.running {
+            state = self.probed.wait(state).unwrap();
+        }
+        #[cfg(target_os = "linux")]
+        let addresses = crate::linux_hotspot::interface_addresses().unwrap_or_default();
+        #[cfg(not(target_os = "linux"))]
+        let addresses = Vec::new();
+        state.snapshot = probe(self.runner.as_ref(), &self.root, &addresses);
+        state.names = Some(interface_names(&self.root));
+        state.full_refreshed = Some(Instant::now());
+        state.refreshed = Some(Instant::now());
+        self.probed.notify_all();
+    }
     pub fn refresh(self: &Arc<Self>) {
         self.request(false);
     }
@@ -548,6 +566,7 @@ impl InventoryCache {
                     let mut state = cache.state.lock().unwrap();
                     if !state.requested {
                         state.running = false;
+                        cache.probed.notify_all();
                         break;
                     }
                     state.requested = false;
@@ -580,6 +599,7 @@ impl InventoryCache {
             state.running = false;
             state.refreshed = None;
             state.full_refreshed = None;
+            self.probed.notify_all();
         }
     }
 }

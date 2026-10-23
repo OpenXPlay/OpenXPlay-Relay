@@ -72,7 +72,7 @@ impl Default for Settings {
             network_mode: "device-hotspot".into(),
             network_roles: Default::default(),
             admin_hotspot_password: None,
-            wifi_country: "00".into(),
+            wifi_country: "system".into(),
             device_preset: "auto".into(),
             shared_wifi_networks: Vec::new(),
             wifi_interface: "wlan0".into(),

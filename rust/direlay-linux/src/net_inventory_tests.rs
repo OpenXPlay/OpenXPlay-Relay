@@ -277,3 +277,36 @@ fn activity_refresh_keeps_identity_and_phy_without_capability_probes() {
         .any(|arg| arg == "phy" || arg == "reg" || arg == "ethtool" || arg == "udevadm")));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn country_reprobe_ignores_the_fresh_cache_and_refreshes_capabilities() {
+    let root = root();
+    device(&root, "wlan0", true, "sdio");
+    let runner = Arc::new(Fake::default());
+    let cache = InventoryCache::new(runner.clone(), root.clone());
+    cache.reprobe();
+    assert_eq!(cache.get().country.global.as_deref(), Some("CN"));
+    runner.calls.lock().unwrap().clear();
+    cache.reprobe();
+    let calls = runner.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.as_slice() == ["iw", "reg", "get"])
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.as_slice() == ["iw", "phy", "phy0", "info"])
+            .count(),
+        1
+    );
+    assert!(cache.get().interfaces[0]
+        .wifi
+        .as_ref()
+        .unwrap()
+        .ap_band("5"));
+    fs::remove_dir_all(root).unwrap();
+}

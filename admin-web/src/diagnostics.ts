@@ -6,7 +6,7 @@ import type { ReceiverReport, Status } from './api';
 import { icon } from './icons';
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
 type Info = Record<string, unknown>;
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+import { esc } from './html';
 // Receiver reports are browser-supplied JSON: read every field defensively.
 const record = (value: unknown): Info | null => value && typeof value === 'object' && !Array.isArray(value) ? value as Info : null;
 const num = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;

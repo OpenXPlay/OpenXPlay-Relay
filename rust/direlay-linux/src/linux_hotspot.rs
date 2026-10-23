@@ -113,10 +113,13 @@ pub const HOTSPOT_CONNECTION_PREFIX: &str = "oxp-carplay-";
 /// The relay's AP connections in `nmcli -t -f NAME,UUID,ACTIVE connection show` output, as
 /// `(uuid, active)`.
 pub fn hotspot_connections(rows: &str) -> Vec<(String, bool)> {
+    prefixed_connections(rows, HOTSPOT_CONNECTION_PREFIX)
+}
+fn prefixed_connections(rows: &str, prefix: &str) -> Vec<(String, bool)> {
     rows.lines()
         .filter_map(|line| {
             let fields = crate::provision::terse_fields(line);
-            (fields.len() == 3 && fields[0].starts_with(HOTSPOT_CONNECTION_PREFIX))
+            (fields.len() == 3 && fields[0].starts_with(prefix))
                 .then(|| (fields[1].clone(), fields[2] == "yes"))
         })
         .collect()
@@ -126,6 +129,9 @@ pub fn hotspot_connections(rows: &str) -> Vec<(String, bool)> {
 /// its first AP up every such connection is stale. Returns whether one of them was active, that
 /// is its AP was up until now; inactive leftovers are deleted on a best-effort basis.
 pub fn remove_stale_hotspots(runner: &dyn CommandRunner) -> Result<bool> {
+    remove_stale_prefix(runner, HOTSPOT_CONNECTION_PREFIX)
+}
+pub fn remove_stale_prefix(runner: &dyn CommandRunner, prefix: &str) -> Result<bool> {
     let rows = command(
         runner,
         &[
@@ -139,7 +145,7 @@ pub fn remove_stale_hotspots(runner: &dyn CommandRunner) -> Result<bool> {
         Duration::from_secs(10),
     )?;
     let mut was_up = false;
-    for (uuid, active) in hotspot_connections(&rows) {
+    for (uuid, active) in prefixed_connections(&rows, prefix) {
         // Deleting an active connection also takes its AP down.
         let deleted = command(
             runner,
@@ -287,8 +293,56 @@ pub fn device_state(text: &str) -> Option<u32> {
 pub fn device_available(state: u32) -> bool {
     state >= 30
 }
+/// NM keyfile strings use GLib escapes, including spaces at either edge and list separators.
+fn keyfile_string(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            '\\' => "\\\\".into(),
+            '\n' => "\\n".into(),
+            '\r' => "\\r".into(),
+            '\t' => "\\t".into(),
+            ' ' => "\\s".into(),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+struct ApKeyfile<'a> {
+    id: &'a str,
+    interface: &'a str,
+    mac: Option<&'a str>,
+    ssid: &'a str,
+    password: &'a str,
+    band: &'a str,
+    channel: &'a str,
+    subnet: &'a str,
+}
+impl ApKeyfile<'_> {
+    fn text(&self) -> Result<String> {
+        let random = crate::admin::auth::random_hex(16)?;
+        let uuid = format!(
+            "{}-{}-4{}-8{}-{}",
+            &random[..8],
+            &random[8..12],
+            &random[13..16],
+            &random[17..20],
+            &random[20..]
+        );
+        let binding = if self.mac.is_some() {
+            ""
+        } else {
+            self.interface
+        };
+        let mac = self
+            .mac
+            .map_or_else(String::new, |mac| format!("mac-address={mac}\n"));
+        Ok(format!("[connection]\nid={}\nuuid={uuid}\ntype=wifi\nautoconnect=false\ninterface-name={binding}\n\n[wifi]\n{mac}mode=ap\nssid={}\nband={}\nchannel={}\npowersave=2\n\n[wifi-security]\nkey-mgmt=wpa-psk\nproto=rsn;\npairwise=ccmp;\ngroup=ccmp;\npmf=1\npsk={}\n\n[ipv4]\nmethod=shared\naddress1={}\n\n[ipv6]\nmethod=disabled\n",
+            self.id, self.ssid.bytes().map(|b| format!("{b};")).collect::<String>(), self.band, self.channel, keyfile_string(self.password), self.subnet))
+    }
+}
 struct HotspotState {
     connection: Option<String>,
+    profile_loaded: bool,
     ready: Option<WirelessHotspotInfo>,
 }
 pub struct LinuxHotspot {
@@ -300,6 +354,9 @@ pub struct LinuxHotspot {
     closed: AtomicBool,
     provisioning: Option<Arc<crate::provision::ProvisioningGate>>,
     before_activation: Option<crate::host_backends::BeforeActivation>,
+    admin: Option<(String, crate::host_backends::AccessPointRequest)>,
+    keyfile_dir: PathBuf,
+    dns_dir: PathBuf,
     resolution: Option<(
         Arc<crate::host_capabilities::CapabilityCache>,
         crate::device_preset::HotspotResolution,
@@ -313,12 +370,24 @@ impl LinuxHotspot {
         channel: u8,
     ) -> Self {
         Self {
+            keyfile_dir: if cfg!(target_os = "linux") {
+                "/run/NetworkManager/system-connections".into()
+            } else {
+                state_dir.join("nm-keyfiles")
+            },
+            dns_dir: if cfg!(target_os = "linux") {
+                crate::public_name::local_dns::DIR.into()
+            } else {
+                state_dir.join("dnsmasq-shared.d")
+            },
+            admin: None,
             state_dir,
             runner,
             interface,
             channel,
             state: Mutex::new(HotspotState {
                 connection: None,
+                profile_loaded: false,
                 ready: None,
             }),
             closed: AtomicBool::new(false),
@@ -326,6 +395,20 @@ impl LinuxHotspot {
             before_activation: None,
             resolution: None,
         }
+    }
+    /// Admin APs keep their fixed subnet, MAC binding and requested band on activation failure.
+    pub fn with_admin(
+        mut self,
+        mac: String,
+        request: crate::host_backends::AccessPointRequest,
+    ) -> Self {
+        self.admin = Some((mac, request));
+        self
+    }
+    pub fn with_runtime_dirs(mut self, keyfiles: PathBuf, dns: PathBuf) -> Self {
+        self.keyfile_dir = keyfiles;
+        self.dns_dir = dns;
+        self
     }
     pub fn with_resolution(
         mut self,
@@ -348,6 +431,9 @@ impl LinuxHotspot {
         self
     }
     pub fn start(&self, timeout: Duration) -> Result<WirelessHotspotInfo> {
+        if let Some((_, request)) = &self.admin {
+            return self.start_requested(request, timeout);
+        }
         let hotspot = self
             .resolution
             .as_ref()
@@ -392,6 +478,24 @@ impl LinuxHotspot {
             }
             command(self.runner.as_ref(), args, remaining)
         };
+        if self.admin.is_some() {
+            let info = cmd(&["iw", "dev", &self.interface, "info"])?;
+            if info.lines().any(|line| line.trim() == "type AP") {
+                let profile = cmd(&[
+                    "nmcli",
+                    "-g",
+                    "GENERAL.CONNECTION",
+                    "device",
+                    "show",
+                    &self.interface,
+                ])?;
+                if !profile.trim().starts_with("oxp-admin-") {
+                    return Err(std::io::Error::other(
+                        "Admin hotspot interface is held by a foreign AP",
+                    ));
+                }
+            }
+        }
         let (ssid, password) = match &request.credentials {
             crate::host_backends::AccessPointCredentials::Saved(dir) => hotspot_credentials(dir)?,
             crate::host_backends::AccessPointCredentials::Supplied { ssid, password } => {
@@ -403,7 +507,11 @@ impl LinuxHotspot {
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
             .collect::<Vec<_>>();
-        let subnet = WifiOutput::free_hotspot_address(&occupied)?;
+        let subnet = if self.admin.is_some() {
+            "10.79.0.1/24".into()
+        } else {
+            WifiOutput::free_hotspot_address(&occupied)?
+        };
         if let (Some(hook), Some(address)) = (
             &self.before_activation,
             subnet.split('/').next().and_then(|a| a.parse().ok()),
@@ -411,8 +519,13 @@ impl LinuxHotspot {
             hook(address);
         }
         let id = format!(
-            "{HOTSPOT_CONNECTION_PREFIX}{}",
-            crate::admin::auth::random_hex(16)?
+            "{}{}",
+            if self.admin.is_some() {
+                "oxp-admin-"
+            } else {
+                HOTSPOT_CONNECTION_PREFIX
+            },
+            crate::admin::auth::random_hex(8)?
         );
         self.state.lock().unwrap().connection = Some(id.clone());
         let result = (|| {
@@ -425,46 +538,45 @@ impl LinuxHotspot {
             } else {
                 "bg"
             };
+            let keyfile = self.keyfile_dir.join(format!("{id}.nmconnection"));
+            let profile = ApKeyfile {
+                id: &id,
+                interface: &self.interface,
+                mac: self.admin.as_ref().map(|(mac, _)| mac.as_str()),
+                ssid: &ssid,
+                password: &password,
+                band,
+                channel: &channel,
+                subnet: &subnet,
+            };
+            // NM ignores dotfiles, including the atomic writer's temporary file.
+            let staging = self.keyfile_dir.join(format!(".{id}.nmconnection"));
+            private_state_file(&staging, profile.text()?.as_bytes())?;
+            if let Err(error) = std::fs::rename(&staging, &keyfile) {
+                let _ = std::fs::remove_file(&staging);
+                return Err(error);
+            }
+            // The PSK stays in the 0600 keyfile; neither argv nor command errors contain it.
             cmd(&[
                 "nmcli",
                 "connection",
-                "add",
-                "type",
-                "wifi",
-                "ifname",
-                &self.interface,
-                "con-name",
-                &id,
-                "ssid",
-                &ssid,
-                "connection.autoconnect",
-                "no",
-                "802-11-wireless.mode",
-                "ap",
-                "802-11-wireless.band",
-                band,
-                "802-11-wireless.channel",
-                &channel,
-                "802-11-wireless-security.key-mgmt",
-                "wpa-psk",
-                "802-11-wireless-security.proto",
-                "rsn",
-                "802-11-wireless-security.pairwise",
-                "ccmp",
-                "802-11-wireless-security.group",
-                "ccmp",
-                "802-11-wireless-security.psk",
-                &password,
-                "ipv4.method",
-                "shared",
-                "ipv4.addresses",
-                &subnet,
-                "ipv6.method",
-                "disabled",
+                "load",
+                keyfile
+                    .to_str()
+                    .ok_or_else(|| std::io::Error::other("Invalid keyfile path"))?,
             ])?;
+            self.state.lock().unwrap().profile_loaded = true;
             self.wait_for_provisioning(deadline);
             self.wait_for_device(deadline);
-            if cmd(&["nmcli", "connection", "up", "id", &id]).is_err() {
+            crate::public_name::local_dns::hotspot(
+                &self.dns_dir,
+                &self.interface,
+                subnet.split('/').next().and_then(|s| s.parse().ok()),
+            )?;
+            if let Err(error) = cmd(&["nmcli", "connection", "up", "id", &id]) {
+                if self.admin.is_some() {
+                    return Err(error);
+                }
                 if let Some((cache, hotspot)) = &self.resolution {
                     let mut fallback = hotspot.clone();
                     fallback.band = "2.4".into();
@@ -494,7 +606,9 @@ impl LinuxHotspot {
                     &self.interface,
                 ])?;
                 if let Some(a) = WifiOutput::ipv4(&output) {
-                    break a;
+                    if self.admin.is_none() || a == Ipv4Addr::new(10, 79, 0, 1) {
+                        break a;
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(250));
             };
@@ -662,14 +776,20 @@ impl LinuxHotspot {
                 &["nmcli", "connection", "down", "id", &id],
                 Duration::from_secs(10),
             );
-            command(
+            let deleted = command(
                 self.runner.as_ref(),
                 &["nmcli", "connection", "delete", "id", &id],
                 Duration::from_secs(10),
-            )?;
+            );
+            let _ = std::fs::remove_file(self.keyfile_dir.join(format!("{id}.nmconnection")));
+            if self.state.lock().unwrap().profile_loaded {
+                deleted?;
+            }
             let mut state = self.state.lock().unwrap();
             state.connection = None;
+            state.profile_loaded = false;
             state.ready = None;
+            crate::public_name::local_dns::hotspot(&self.dns_dir, &self.interface, None)?;
         }
         Ok(())
     }

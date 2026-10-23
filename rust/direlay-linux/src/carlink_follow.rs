@@ -7,7 +7,7 @@ use super::*;
 /// The Carlink link left the head unit's network: it went down, its session ended (oxp-relay then
 /// leaves the network and exits) or the child stopped. Errors and PIN timeouts alone leave the link
 /// up; the status shows them, and a real departure follows when they end the session.
-pub(super) fn carlink_link_left(event: &serde_json::Value) -> bool {
+pub(crate) fn carlink_link_left(event: &serde_json::Value) -> bool {
     (event["type"] == "link" && event["state"] == "lost")
         || event["type"] == "receiver-stopped"
         || (event["type"] == "state"

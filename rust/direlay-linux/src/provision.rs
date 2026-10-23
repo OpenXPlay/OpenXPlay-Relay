@@ -417,6 +417,12 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             }
         }
         self.status.setup_hotspot = false;
+        #[cfg(target_os = "linux")]
+        crate::public_name::local_dns::hotspot(
+            Path::new(crate::public_name::local_dns::DIR),
+            &format!("setup-{}", self.interface),
+            None,
+        )?;
         Ok(())
     }
     pub fn stop(&mut self) -> io::Result<()> {
@@ -674,7 +680,22 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             });
             self.save()?;
         }
-        self.up(&self.owned.ap.as_ref().unwrap().uuid)?;
+        #[cfg(target_os = "linux")]
+        crate::public_name::local_dns::hotspot(
+            Path::new(crate::public_name::local_dns::DIR),
+            &format!("setup-{}", self.interface),
+            Some(std::net::Ipv4Addr::new(10, 78, 0, 1)),
+        )?;
+        let activation = self.up(&self.owned.ap.as_ref().unwrap().uuid);
+        #[cfg(target_os = "linux")]
+        if activation.is_err() {
+            let _ = crate::public_name::local_dns::hotspot(
+                Path::new(crate::public_name::local_dns::DIR),
+                &format!("setup-{}", self.interface),
+                None,
+            );
+        }
+        activation?;
         self.status = WifiClient {
             ssid: None,
             ip: Some("10.78.0.1".into()),

@@ -59,7 +59,7 @@ export interface PlannedNetwork {
   country: { global: string | null; configured: string | null; phys: { phy: string; country: string | null; selfManaged: boolean }[] };
   interfaces: NetworkInterface[]; plan: NetworkPlan; checks: NetworkCheck[]; applied: boolean; probing?: boolean;
 }
-export interface NetworkProposal { plan: NetworkPlan; checks: NetworkCheck[]; changes: ('controller' | 'carlink' | 'carBrowserAddress')[]; applied?: true }
+export interface NetworkProposal { plan: NetworkPlan; checks: NetworkCheck[]; changes: ('controller' | 'carlink' | 'carBrowserAddress' | 'adminHotspot' | 'wifiCountry')[]; applied?: true }
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
@@ -67,6 +67,7 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 // trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
+  adminHotspot?: { state: 'up' | 'paused-carlink' | 'waiting-interface' | 'off' | 'failed'; reason: string | null };
   hostAddresses?: HostAddress[]; receiverPort?: number; adminPort?: number; pairingAvailable?: boolean; pairingDeadline?: number | null; screenConnected?: boolean;
   pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[];
   // Android 12+: the Nearby devices step of a pairing window, and whether the request waits in a notification.
@@ -83,7 +84,7 @@ export interface Phone { id: string; name: string; kind: 'phone' | 'car' | 'othe
 export interface Update { ok: boolean; applied: 'now' | 'next-start' }
 export interface PublicNameImport { ok: true; provider: string; name: string }
 export class ApiError extends Error {
-  constructor(public status: number, public key: string, public errors: Record<string, string> = {}, public retryAfter = 60) { super(key); }
+  constructor(public status: number, public key: string, public errors: Record<string, string> = {}, public retryAfter = 60, public checks: NetworkCheck[] = []) { super(key); }
 }
 export class NetworkError extends Error {}
 export const events = new EventTarget();
@@ -107,13 +108,13 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) events.dispatchEvent(new Event('unauthorized'));
-    throw new ApiError(response.status, response.status === 429 ? 'error.rateLimit' : data.error ?? 'error.request', data.errors ?? {}, Number(response.headers.get('Retry-After')) || 60);
+    throw new ApiError(response.status, response.status === 429 ? 'error.rateLimit' : data.error ?? 'error.request', data.errors ?? {}, Number(response.headers.get('Retry-After')) || 60, data.checks || []);
   }
   return data as T;
 }
 export const api = {
-  previewRoles: (networkRoles: NetworkRolesSetting) => request<NetworkProposal>('/network-roles/preview', 'POST', { networkRoles }, false),
-  saveRoles: (networkRoles: NetworkRolesSetting) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles }, false),
+  previewRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles/preview', 'POST', { networkRoles, ...extra }, false),
+  saveRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles, ...extra }, false),
   session: () => request<Session>('/session'),
   login: (password: string) => request('/login', 'POST', { password }),
   password: (current: string, next: string) => request('/password', 'POST', { current, new: next }, false),

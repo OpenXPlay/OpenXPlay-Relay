@@ -25,6 +25,7 @@ it('shows the Linux inventory, effective country without editing controls', () =
   expect(view).not.toMatch(/<(input|button|select|form)\b/);
   expect(view).not.toContain('<script>'); expect(view).not.toContain('<svg');
   expect(networkView(fixture('linux'), zh)).toContain('网络接口');
+  expect(networkView(fixture('linux'), zh)).not.toContain('尚未应用');
   expect(diagnosticsView(fixture('linux'), en)).not.toContain('network-table');
   expect(diagnosticsView(fixture('linux'), en)).toContain('&quot;interfaces&quot;');
 });
@@ -38,7 +39,7 @@ it('keeps Android diagnostics markup identical even if Linux network data is att
 });
 it('translates every check and its parameters in English and Chinese', () => {
   for (const code of NETWORK_CHECK_CODES) for (const t of [en, zh]) {
-    const message = networkCheckMessage({ level: 'warning', code, roles: ['iphone', 'adminHotspot'], interfaces: ['wlan0'], params: { ref: 'wlan9', band: '5', channels: [36, 40], phy: 'phy0', mhz: 40, connection: 'Foreign AP' } }, t);
+    const message = networkCheckMessage({ level: 'warning', code, roles: ['iphone', 'adminHotspot'], interfaces: ['wlan0'], params: { configured: 'CN', effective: '00', ref: 'wlan9', band: '5', channels: [36, 40], phy: 'phy0', mhz: 40, connection: 'Foreign AP' } }, t);
     expect(message).not.toContain('roles.check.'); expect(message).not.toMatch(/\{\w+\}/);
   }
   expect(networkCheckMessage({ level: 'warning', code: 'carlink-band-gap', roles: ['carlink'], interfaces: ['wlan1'], params: { channels: [36, 40, 44, 48] } }, en)).toContain('36, 40, 44, 48');

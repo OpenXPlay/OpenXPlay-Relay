@@ -6,7 +6,7 @@ import type { CarlinkStatus, Status } from './api';
 import type { Settings } from './schema';
 import { liveLine, windowLine } from './diagnostics';
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+import { esc } from './html';
 export function videoStatsInterval(settings: Settings | null, platform?: string): number {
   if (platform !== 'linux' || !settings?.schema.some(s => s.fields.some(f => f.key === 'videoStats'))) return 0;
   const value = settings.values.videoStats;

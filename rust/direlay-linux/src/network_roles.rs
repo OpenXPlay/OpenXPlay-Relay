@@ -52,7 +52,7 @@ pub struct Carlink {
     pub interface: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct AdminHotspot {
     pub enabled: bool,
     pub interface: Option<String>,
@@ -66,7 +66,7 @@ impl Default for AdminHotspot {
             enabled: false,
             interface: None,
             ssid: "OpenXPlay-Admin".into(),
-            band: "2.4".into(),
+            band: "auto".into(),
             channel: 0,
         }
     }
@@ -90,7 +90,7 @@ pub fn valid_password(value: &str) -> bool {
 pub fn valid_country(value: &str) -> bool {
     // ISO 3166-1 alpha-2 assignments, plus the world regulatory domain.
     const COUNTRIES: &str = "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW";
-    value == "00" || COUNTRIES.split_whitespace().any(|code| code == value)
+    value == "system" || value == "00" || COUNTRIES.split_whitespace().any(|code| code == value)
 }
 impl NetworkRoles {
     pub fn validate(&self) -> std::io::Result<()> {
@@ -130,11 +130,15 @@ impl NetworkRoles {
             return Err(bad());
         }
         if self.admin_hotspot.as_ref().is_some_and(|r| {
-            !["2.4", "5"].contains(&r.band.as_str())
+            !["auto", "2.4", "5"].contains(&r.band.as_str())
                 || !(1..=32).contains(&r.ssid.len())
                 || r.ssid.contains(['\0', '\r', '\n'])
                 || (r.channel != 0
-                    && !(if r.band == "5" { 32..=177 } else { 1..=14 }).contains(&r.channel))
+                    && !match r.band.as_str() {
+                        "5" => (32..=177).contains(&r.channel),
+                        "2.4" => (1..=14).contains(&r.channel),
+                        _ => (1..=14).contains(&r.channel) || (32..=177).contains(&r.channel),
+                    })
         }) {
             return Err(bad());
         }
@@ -247,7 +251,7 @@ impl AutomaticChoices {
             })
             .collect();
         let inputs = json!({
-            "roles": settings.network_roles,
+            "roles": if settings.network_roles.mode == "auto" { json!({"mode":"auto"}) } else { json!({ "mode": settings.network_roles.mode, "iphone": settings.network_roles.iphone, "carBrowser": settings.network_roles.car_browser, "carlink": settings.network_roles.carlink }) },
             "iphone": legacy.wifi_interface,
             "carlink": legacy.carlink_interface,
             "cli": legacy.cli,
@@ -460,9 +464,9 @@ fn resolve_with_choices(
         .iter()
         .filter(different_phy)
         .filter(|i| {
-            i.wifi
-                .as_ref()
-                .is_some_and(|w| w.capabilities.ap && w.ap_band(&admin.band))
+            i.wifi.as_ref().is_some_and(|w| {
+                w.capabilities.ap && (admin.band == "auto" || w.ap_band(&admin.band))
+            })
         })
         .collect();
     admin_candidates.sort_by_key(|i| {
@@ -473,11 +477,12 @@ fn resolve_with_choices(
     });
     let admin_ref = if !admin.enabled {
         None
-    } else if custom || admin.interface.is_some() {
+    } else if admin.interface.is_some() {
         admin.interface.as_deref()
     } else {
-        kept.map(|p| p.admin_hotspot.role.name())
-            .unwrap_or_else(|| admin_candidates.first().map(|i| i.name.as_str()))
+        kept.and_then(|p| p.admin_hotspot.role.name())
+            .filter(|name| admin_candidates.iter().any(|i| i.name == *name))
+            .or_else(|| admin_candidates.first().map(|i| i.name.as_str()))
     };
     let admin_role = resolve_interface(
         inventory,
@@ -488,6 +493,23 @@ fn resolve_with_choices(
             "auto"
         },
     );
+    let radio = entry(inventory, &admin_role).and_then(|i| i.wifi.as_ref());
+    let band = if admin.band == "auto" {
+        if radio.is_some_and(|w| w.ap_band("5")) {
+            "5"
+        } else {
+            "2.4"
+        }
+    } else {
+        &admin.band
+    };
+    let channel = if admin.channel == 0 {
+        radio
+            .and_then(|w| automatic_admin_channel(w, band, &hotspot.band, hotspot.channel))
+            .unwrap_or(0)
+    } else {
+        admin.channel
+    };
     let time_shared_with =
         (admin.enabled && same_phy(inventory, &admin_role, &carlink)).then(|| "carlink".into());
     let follow_over = same_interface(&iphone, &carlink);
@@ -512,11 +534,34 @@ fn resolve_with_choices(
             role: admin_role,
             enabled: admin.enabled,
             ssid: admin.ssid,
-            band: admin.band,
-            channel: admin.channel,
+            band: band.into(),
+            channel,
             time_shared_with,
-            password_set: settings.admin_hotspot_password.is_some(),
+            password_set: settings
+                .admin_hotspot_password
+                .as_deref()
+                .is_some_and(valid_password),
         },
+    }
+}
+/// Prefer the highest sufficiently separated AP channel, otherwise the farthest available one.
+fn automatic_admin_channel(
+    radio: &crate::net_inventory::Radio,
+    band: &str,
+    iphone_band: &str,
+    iphone_channel: u8,
+) -> Option<u8> {
+    let channels = &radio.bands.iter().find(|b| b.band == band)?.ap_channels;
+    if band == "5" && iphone_band == "5" && iphone_channel != 0 {
+        let distance = |c: u16| c.abs_diff(u16::from(iphone_channel)) * 5;
+        channels
+            .iter()
+            .filter(|&&c| distance(c) >= 80)
+            .max()
+            .or_else(|| channels.iter().max_by_key(|&&c| (distance(c), c)))
+            .and_then(|&c| c.try_into().ok())
+    } else {
+        channels.iter().max().and_then(|&c| c.try_into().ok())
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -573,14 +618,20 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
         if plan.carlink.role.source == "auto" {
             roles.push(("carlink", &role));
         }
-        if plan.admin_hotspot.role.source == "auto"
+        if plan.admin_hotspot.enabled
             && plan.admin_hotspot.role.name() == Some(interface.name.as_str())
         {
             roles.push(("adminHotspot", &role));
         }
         if !roles.is_empty() {
             add(
-                "info",
+                if roles.iter().any(|(name, _)| *name == "adminHotspot")
+                    && interface.activity.kind == "other-ap"
+                {
+                    "warning"
+                } else {
+                    "info"
+                },
                 "interface-busy",
                 &roles,
                 json!({
@@ -605,7 +656,7 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
             plan.admin_hotspot.channel,
         ),
     ];
-    for (name, role, enabled, band, _) in aps {
+    for (name, role, enabled, band, channel) in aps {
         if !enabled {
             continue;
         }
@@ -621,7 +672,14 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
                 || interface.wifi.as_ref().is_some_and(|w| !w.capabilities.ap)
             {
                 add("error", "no-ap-mode", &[(name, role)], json!({}));
-            } else if interface.wifi.as_ref().is_some_and(|w| !w.ap_band(band)) {
+            } else if interface.wifi.as_ref().is_some_and(|w| {
+                !w.ap_band(band)
+                    || (channel != 0
+                        && !w
+                            .bands
+                            .iter()
+                            .any(|b| b.band == band && b.ap_channels.contains(&u16::from(channel))))
+            }) {
                 add(
                     "error",
                     "no-ap-channel",
@@ -683,6 +741,14 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
         }
     }
     if plan.admin_hotspot.enabled {
+        if !plan.admin_hotspot.password_set {
+            add(
+                "error",
+                "admin-hotspot-password",
+                &[("adminHotspot", &plan.admin_hotspot.role)],
+                json!({}),
+            );
+        }
         add(
             "info",
             "admin-hotspot-nat",
@@ -747,7 +813,7 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
                 let allowed = radio.capabilities.combinations.iter().any(|c| {
                     c.allows(&[am, bm]) && c.channels.is_none_or(|n| n >= channels_needed)
                 });
-                if !allowed {
+                if !allowed || same_interface(ar, br) {
                     add(
                         "error",
                         "roles-conflict",
@@ -772,12 +838,27 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
                 .map_or(5000 + u32::from(channel) * 5, |c| c.frequency)
         };
         let spacing = frequency(aps[0].1, aps[0].4).abs_diff(frequency(aps[1].1, aps[1].4));
-        if spacing < 60 {
+        if spacing < 80 {
             add(
                 "warning",
                 "ap-spacing",
                 &[("iphone", aps[0].1), ("adminHotspot", aps[1].1)],
                 json!({"mhz": spacing, "channels": [aps[0].4, aps[1].4]}),
+            );
+        }
+    }
+    if let Some(configured) = inventory
+        .country
+        .configured
+        .as_deref()
+        .filter(|c| *c != "system")
+    {
+        if inventory.country.global.as_deref() != Some(configured) {
+            add(
+                "warning",
+                "country-not-applied",
+                &[],
+                json!({"configured": configured, "effective": inventory.country.global}),
             );
         }
     }
@@ -843,13 +924,29 @@ pub fn apply_plan(plan: &Plan, options: &mut crate::Options) {
     };
 }
 pub fn changes(before: &Plan, after: &Plan) -> Vec<String> {
-    RunningLinks::from_plan(before, |_| true).changes(&RunningLinks::from_plan(after, |_| true))
+    let mut changes = RunningLinks::from_plan(before, |_| true)
+        .changes(&RunningLinks::from_plan(after, |_| true));
+    if admin_inputs(&before.admin_hotspot) != admin_inputs(&after.admin_hotspot) {
+        changes.push("adminHotspot".into());
+    }
+    changes
+}
+fn admin_inputs(p: &AdminHotspotPlan) -> (bool, Option<&str>, &str, &str, u8, bool) {
+    (
+        p.enabled,
+        p.role.name(),
+        &p.ssid,
+        &p.band,
+        p.channel,
+        p.password_set,
+    )
 }
 /// Actual component inputs, including interface presence rather than diagnostic missing flags.
 #[derive(Clone)]
 pub struct RunningLinks {
     iphone: Option<String>,
     link: String,
+    hotspot: Option<(String, u8)>,
     carlink: Option<String>,
     follow_over: bool,
     browser: Option<String>,
@@ -861,6 +958,7 @@ impl RunningLinks {
         Self {
             iphone: name(&plan.iphone.role),
             link: plan.iphone.link.clone(),
+            hotspot: Some((plan.iphone.band.clone(), plan.iphone.channel)),
             carlink: name(&plan.carlink.role),
             follow_over: plan.carlink.follow_over,
             browser: name(&plan.car_browser.role),
@@ -877,6 +975,7 @@ impl RunningLinks {
                 "hotspot"
             }
             .into(),
+            hotspot: None,
             carlink: name(options.carlink_interface()),
             follow_over: options.shared_carlink_radio(),
             browser: name(&options.wifi_interface),
@@ -885,7 +984,9 @@ impl RunningLinks {
     }
     pub fn changes(&self, after: &Self) -> Vec<String> {
         let mut changes = Vec::new();
-        let iphone = self.iphone != after.iphone || self.link != after.link;
+        let iphone = self.iphone != after.iphone
+            || self.link != after.link
+            || (after.link == "hotspot" && self.hotspot.is_some() && self.hotspot != after.hotspot);
         if iphone {
             changes.push("controller".into());
         }

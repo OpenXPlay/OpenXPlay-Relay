@@ -111,5 +111,7 @@ pub mod host_capabilities;
 pub mod supervisor_settings;
 pub mod wifi_capabilities;
 
+pub mod admin_hotspot;
 pub mod net_inventory;
 pub mod network_roles;
+pub mod wifi_country;

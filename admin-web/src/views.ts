@@ -9,7 +9,7 @@ import { formatRemaining } from './pairing';
 import { carlinkStatsView } from './video-stats';
 import { videoLine } from './diagnostics';
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+import { esc } from './html';
 export function statusView(s: Status, t: Translate, defaultPassword = false) {
   const v = homeView(s, undefined, defaultPassword);
   const link = (connected: boolean, label: string) => `<span class="journey-link ${connected ? 'connected' : 'waiting'}"><span class="sr-only">${t(label)}: ${t(connected ? 'ui.connected' : 'home.disconnected')}</span></span>`;

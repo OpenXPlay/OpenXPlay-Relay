@@ -11,7 +11,7 @@ export function validateHotspot(ssid: string, password: string): string {
   if (!/^[\x20-\x7e]{8,63}$/.test(password)) return 'error.hotspotPassword';
   return '';
 }
-const esc = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+import { esc } from './html';
 export function hotspotBandSelect(wireless: Wireless | undefined, t: Translate): string {
   const band = wireless?.hotspot.configuredBand ?? 'auto';
   const automatic = wireless?.hotspot.autoBand ? t('hotspot.automatic', {

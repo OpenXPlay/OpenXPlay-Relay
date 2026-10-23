@@ -446,7 +446,7 @@ fn validation_covers_country_password_shape_and_refs() {
         serde_json::to_value(NetworkRoles::default()).unwrap(),
         json!({"mode":"auto"})
     );
-    for value in ["00", "CN", "US", "GB", "AX"] {
+    for value in ["system", "00", "CN", "US", "GB", "AX"] {
         assert!(valid_country(value));
     }
     for value in ["cn", "ZZ", "USA", "UK", "0", "99"] {
@@ -677,7 +677,14 @@ fn automatic_choices_survive_activity_but_reselect_on_adapter_and_capability_cha
                 usize::from(matches!(activity, "other-ap" | "other-network"))
             );
             for check in busy {
-                assert_eq!(check.level, "info");
+                assert_eq!(
+                    check.level,
+                    if activity == "other-ap" {
+                        "warning"
+                    } else {
+                        "info"
+                    }
+                );
                 assert_eq!(check.roles, ["carlink", "adminHotspot"]);
             }
             previous = next;
@@ -688,13 +695,13 @@ fn automatic_choices_survive_activity_but_reselect_on_adapter_and_capability_cha
     assert_eq!(next.carlink.role.name(), Some("wlan0"));
     assert!(next.carlink.follow_over);
     assert_eq!(next.admin_hotspot.role.name(), None);
-    assert_eq!(changes(&previous, &next), ["carlink"]);
+    assert_eq!(changes(&previous, &next), ["carlink", "adminHotspot"]);
     previous = next;
     inv.interfaces.push(usb());
     let next = cached_plan(&mut choices, &inv, &settings);
     assert_eq!(next.carlink.role.name(), Some("wlan1"));
     assert_eq!(next.admin_hotspot.role.name(), Some("wlan1"));
-    assert_eq!(changes(&previous, &next), ["carlink"]);
+    assert_eq!(changes(&previous, &next), ["carlink", "adminHotspot"]);
     previous = next;
     inv.interfaces[1].wifi = n1().wifi;
     inv.interfaces[1]
@@ -707,12 +714,12 @@ fn automatic_choices_survive_activity_but_reselect_on_adapter_and_capability_cha
     let next = cached_plan(&mut choices, &inv, &settings);
     assert_eq!(next.carlink.role.name(), Some("wlan0"));
     assert_eq!(next.admin_hotspot.role.name(), None);
-    assert_eq!(changes(&previous, &next), ["carlink"]);
+    assert_eq!(changes(&previous, &next), ["carlink", "adminHotspot"]);
     inv.interfaces[1] = usb();
     let restored = cached_plan(&mut choices, &inv, &settings);
     assert_eq!(restored.carlink.role.name(), Some("wlan1"));
     assert_eq!(restored.admin_hotspot.role.name(), Some("wlan1"));
-    assert_eq!(changes(&next, &restored), ["carlink"]);
+    assert_eq!(changes(&next, &restored), ["carlink", "adminHotspot"]);
 }
 
 #[test]
@@ -760,4 +767,91 @@ fn browser_address_and_phy_hold_follow_selected_network() {
     let inv = inventory(vec![n1(), virtual_radio]);
     p.carlink.role = resolve_interface(&inv, Some("wlan1"), "custom");
     assert!(shared_radio(&inv, &p));
+}
+
+#[test]
+fn admin_automatic_channels_follow_radio_band_and_eighty_mhz_spacing() {
+    let defaults: AdminHotspot = serde_json::from_value(json!({"enabled":true})).unwrap();
+    assert_eq!(defaults.ssid, "OpenXPlay-Admin");
+    assert_eq!(defaults.band, "auto");
+    assert_eq!(defaults.channel, 0);
+    let mut settings = Settings {
+        hotspot_band: "5".into(),
+        hotspot_channel: 149,
+        admin_hotspot_password: Some("synthetic-password".into()),
+        ..Default::default()
+    };
+    settings.network_roles.admin_hotspot = Some(AdminHotspot {
+        enabled: true,
+        ..Default::default()
+    });
+    let mut inv = inventory(vec![n1(), usb()]);
+    let p = plan(&inv, &settings, &BTreeMap::new());
+    assert_eq!(p.admin_hotspot.ssid, "OpenXPlay-Admin");
+    assert_eq!(
+        (
+            p.iphone.channel,
+            p.admin_hotspot.band.as_str(),
+            p.admin_hotspot.channel
+        ),
+        (149, "5", 165)
+    );
+    assert_eq!(p.admin_hotspot.time_shared_with.as_deref(), Some("carlink"));
+    assert!(!checks(&p, &inv).iter().any(|c| c.code == "ap-spacing"));
+    // With no 80 MHz choice, the farthest channel wins and remains a warning.
+    inv.interfaces[1].wifi = Some(Radio::from_phy(parse_phy("Supported interface modes:\n * managed\n * AP\nBand 2:\n * 5745 MHz [149] (20.0 dBm)\n * 5785 MHz [157] (20.0 dBm)\n")));
+    let p = plan(&inv, &settings, &BTreeMap::new());
+    assert_eq!(p.admin_hotspot.channel, 157);
+    assert!(checks(&p, &inv)
+        .iter()
+        .any(|c| c.code == "ap-spacing" && c.level == "warning"));
+    // An explicitly selected 2.4-only radio supplies the default band and a usable AP channel.
+    settings
+        .network_roles
+        .admin_hotspot
+        .as_mut()
+        .unwrap()
+        .interface = Some("wlan1".into());
+    inv.interfaces[1].wifi = Some(Radio::from_phy(parse_phy(include_str!(
+        "../tests/fixtures/iw-phy-ufi003.txt"
+    ))));
+    let p = plan(&inv, &settings, &BTreeMap::new());
+    assert_eq!(p.admin_hotspot.band, "2.4");
+    assert!(inv.interfaces[1]
+        .wifi
+        .as_ref()
+        .unwrap()
+        .bands
+        .iter()
+        .any(|b| b.band == "2.4" && b.ap_channels.contains(&u16::from(p.admin_hotspot.channel))));
+}
+#[test]
+fn admin_password_busy_country_and_restart_checks_are_independent() {
+    let mut inv = inventory(vec![n1(), usb()]);
+    inv.country.configured = Some("CN".into());
+    inv.country.global = Some("00".into());
+    let mut settings = Settings::default();
+    settings.network_roles.admin_hotspot = Some(admin(Some("wlan1"), 165));
+    let p = plan(&inv, &settings, &BTreeMap::new());
+    let found = checks(&p, &inv);
+    assert!(found
+        .iter()
+        .any(|c| c.code == "admin-hotspot-password" && c.level == "error"));
+    assert!(found
+        .iter()
+        .any(|c| c.code == "country-not-applied" && c.level == "warning"));
+    inv.country.configured = Some("system".into());
+    inv.interfaces[1].activity.kind = "other-ap".into();
+    assert!(checks(&p, &inv).iter().any(|c| c.code == "interface-busy"
+        && c.level == "warning"
+        && c.roles.contains(&"adminHotspot".into())));
+    assert!(!checks(&p, &inv)
+        .iter()
+        .any(|c| c.code == "country-not-applied"));
+    let mut next = p.clone();
+    next.admin_hotspot.ssid = "Changed".into();
+    assert_eq!(changes(&p, &next), ["adminHotspot"]);
+    next = p.clone();
+    next.iphone.channel = 165;
+    assert_eq!(changes(&p, &next), ["controller", "carBrowserAddress"]);
 }

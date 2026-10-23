@@ -21,7 +21,7 @@ function fixture(): Status {
 it('shows N1 and RTL8822BU Connections with a collapsed inventory', () => {
   const s = fixture(); const html = connectionsView(s, t);
   for (const text of ['Connections', 'Bluetooth hci0', 'relay hotspot on wlan0', '5 GHz', 'channel 149', 'Realtek RTL8822BU (USB) · 2.4/5 GHz', 'no follow-over', 'Automatic', '192.0.2.2']) expect(html).toContain(text);
-  expect(html).toMatch(/<details class="interface-inventory">/); expect(html).not.toContain('Admin hotspot</dt>');
+  expect(html).toMatch(/<details class="interface-inventory">/); expect(html).toContain('Admin hotspot</dt>');
   expect(connectionsView(s, zh)).toContain('连接方式');
   s.output = 'web'; expect(connectionsView(s, t)).not.toContain('Carlink</dt>');
   s.network.plan!.iphone.link = 'saved-network'; expect(connectionsView(s, t)).toContain('saved network on wlan0');
@@ -39,7 +39,7 @@ it('offers stable MAC selections and Ethernet only for the car browser', () => {
   expect(form).toContain('value="02:00:00:00:00:02" selected'); expect(form).toContain('Realtek RTL8822BU (USB)');
   const iphone = /data-role="iphone">(.*?)<\/select>/.exec(form)![1]; const browser = /data-role="carBrowser">(.*?)<\/select>/.exec(form)![1];
   expect(iphone).not.toContain('eth0'); expect(browser).toContain('eth0'); expect(browser).toContain('iPhone');
-  expect(form).toMatch(/id="roles-save"[^>]+disabled/); expect(form).not.toContain('adminHotspot');
+  expect(form).toMatch(/id="roles-save"[^>]+disabled/); expect(form).toContain('id="admin-enabled"');
   expect(interfaceLabel({ ...s.network.interfaces![1], product: '<test>' })).toContain('<test>');
   s.network.interfaces![1].product = '<test>'; expect(connectionsForm(s, draft, t)).toContain('&lt;test&gt;');
 });
@@ -65,4 +65,29 @@ it('keeps Android markup and developer interface fields unchanged', () => {
   const android = settingsViews(settings, true, 'android');
   expect(android.flatMap(section => section.fields).map(f => f.key)).toEqual(['wifiInterface', 'carlinkInterface']);
   expect(settingsViews(settings, true, 'linux').flatMap(section => section.fields)).toEqual([]);
+});
+
+it('shows the admin AP state, settings, channels, URLs and country choices in both languages', () => {
+  const s = fixture();
+  s.network.interfaces![1].wifi!.bands[1].apChannels = [149, 153, 157, 161, 165];
+  s.network.plan!.adminHotspot = { ...role('wlan1', 2), enabled: true, ssid: 'Synthetic <Admin>', band: '5', channel: 165, timeSharedWith: 'carlink', passwordSet: true };
+  s.adminHotspot = { state: 'paused-carlink', reason: null };
+  const saved = { ...roleDraft(s), adminHotspot: { enabled: true, interface: '02:00:00:00:00:02', ssid: 'Synthetic <Admin>', band: '5' as const, channel: 0 } };
+  for (const tr of [t, zh]) {
+    const row = connectionsView(s, tr), form = connectionsForm(s, saved, tr);
+    expect(row).toContain('Synthetic &lt;Admin&gt;'); expect(row).toContain('165');
+    expect(row).toContain('https://openxplay-linux.local:6975'); expect(row).toContain('https://10.79.0.1:6975');
+    for (const id of ['admin-enabled', 'admin-interface', 'admin-ssid', 'admin-password', 'admin-band', 'admin-channel', 'wifi-country']) expect(form).toContain(`id="${id}"`);
+    expect(form).toContain('value="165"'); expect(form).toContain('value="system" selected'); expect(form).toContain('value="00"'); expect(form).toContain('value="CN"'); expect(form).toContain('value="ZW"');
+    expect(form).toMatch(/id="admin-password" type="password"[^>]+autocomplete="new-password"/);
+    expect(form).not.toMatch(/id="admin-password"[^>]+value=/);
+    expect(form).not.toMatch(/connections\.|country\./);
+  }
+  const next = structuredClone(s.network.plan!); next.adminHotspot.ssid = 'Changed';
+  s.network.interfaces![1].ipv4 = ['10.79.0.1'];
+  expect(ownAddressWarning(s, next, '10.79.0.1')).toBe(true);
+  const passwordOnly: NetworkProposal = { plan: s.network.plan!, checks: [], changes: ['adminHotspot'] };
+  expect(proposalView(s, passwordOnly, '10.79.0.1', t)).toContain('It may disconnect');
+  s.publicName = { state: 'ready', trustedName: 'synthetic.example.org' };
+  expect(proposalView(s, passwordOnly, 'synthetic.example.org', t)).toContain('It may disconnect');
 });

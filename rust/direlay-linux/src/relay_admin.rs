@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 #[path = "carlink_follow.rs"]
-mod carlink_follow;
+pub(crate) mod carlink_follow;
 use carlink_follow::CarlinkFollow;
 type Provision = Box<dyn crate::host_backends::StationBackend>;
 /// The admin page opens Bluetooth pairing for ten minutes.
@@ -125,6 +125,8 @@ pub struct LinuxRelayAdmin {
     backends: crate::host_backends::HostBackends,
     capabilities: Arc<crate::host_capabilities::CapabilityCache>,
     inventory: Arc<crate::net_inventory::InventoryCache>,
+    admin_hotspot: Arc<crate::admin_hotspot::AdminHotspot>,
+    wifi_country: crate::wifi_country::WifiCountry,
     automatic_choices: Mutex<crate::network_roles::AutomaticChoices>,
     running_links: Mutex<Option<crate::network_roles::RunningLinks>>,
     browser_target: Arc<Mutex<Option<String>>>,
@@ -327,6 +329,14 @@ impl LinuxRelayAdmin {
         #[cfg(target_os = "linux")]
         inventory.refresh();
         Ok(Self {
+            admin_hotspot: Arc::new(crate::admin_hotspot::AdminHotspot::new(
+                options.state_dir.clone(),
+                Duration::from_secs(options.hotspot_down_gap_seconds()),
+                Arc::new(ProcessCommandRunner::new()),
+            )),
+            wifi_country: crate::wifi_country::WifiCountry::new(Arc::new(
+                ProcessCommandRunner::new(),
+            )),
             inventory,
             automatic_choices: Mutex::default(),
             running_links: Mutex::new(None),
@@ -474,6 +484,15 @@ impl LinuxRelayAdmin {
         let mut next = current.clone();
         next.network_roles = update.network_roles;
         if let Some(password) = update.admin_hotspot_password {
+            if !crate::network_roles::valid_password(&password) {
+                return SaveResult::Checks(vec![crate::network_roles::Check {
+                    level: "error".into(),
+                    code: "admin-hotspot-password".into(),
+                    roles: vec!["adminHotspot".into()],
+                    interfaces: Vec::new(),
+                    params: serde_json::json!({}),
+                }]);
+            }
             next.admin_hotspot_password = Some(password);
         }
         if let Some(country) = update.wifi_country {
@@ -483,10 +502,37 @@ impl LinuxRelayAdmin {
             return SaveResult::Invalid("error.invalid".into());
         }
         let before = self.network_status(&current);
-        // Preview and save both make a fresh choice; only a successful save installs it.
-        let mut choices = crate::network_roles::AutomaticChoices::default();
+        // Editing only admin settings must not reassign the running phone or Carlink links.
+        let mut old_roles = current.network_roles.clone();
+        old_roles.admin_hotspot = next.network_roles.admin_hotspot.clone();
+        let admin_or_country_changed = current.network_roles.admin_hotspot
+            != next.network_roles.admin_hotspot
+            || current.admin_hotspot_password != next.admin_hotspot_password
+            || current.wifi_country != next.wifi_country;
+        let same_links = old_roles == next.network_roles
+            || (current.network_roles.mode == "auto" && next.network_roles.mode == "auto");
+        let mut choices = if same_links && admin_or_country_changed {
+            self.automatic_choices.lock().unwrap().clone()
+        } else {
+            crate::network_roles::AutomaticChoices::default()
+        };
         let status = self.network_status_with_choices(&next, &mut choices);
-        let changes = crate::network_roles::changes(&before.plan, &status.plan);
+        let mut changes = crate::network_roles::changes(&before.plan, &status.plan);
+        if next.wifi_country != current.wifi_country {
+            changes.push("wifiCountry".into());
+        }
+        if next.admin_hotspot_password != current.admin_hotspot_password
+            && !changes.iter().any(|c| c == "adminHotspot")
+        {
+            changes.push("adminHotspot".into());
+        }
+        if status
+            .checks
+            .iter()
+            .any(|c| c.code == "admin-hotspot-password")
+        {
+            return SaveResult::Checks(status.checks);
+        }
         if save {
             if status.checks.iter().any(|c| c.level == "error") {
                 return SaveResult::Checks(status.checks);
@@ -542,6 +588,14 @@ impl LinuxRelayAdmin {
         self.start_services_with_probe_timeout(Duration::from_secs(10))
     }
     fn start_services_with_probe_timeout(self: &Arc<Self>, timeout: Duration) -> Result<()> {
+        self.apply_wifi_country();
+        #[cfg(target_os = "linux")]
+        {
+            crate::public_name::local_dns::reset(std::path::Path::new(
+                crate::public_name::local_dns::DIR,
+            ))?;
+            self.admin_hotspot.prepare()?;
+        }
         self.inventory.wait_for_probe(timeout);
         // Secure Connections on from the start, and again whenever bluetoothd resets the adapter.
         self.secure_connections.start(Some(&self.bluetooth_wake))?;
@@ -697,6 +751,7 @@ impl LinuxRelayAdmin {
         let receivers = self.receivers.clone();
         let trace_status = self.trace_status.clone();
         let hotspot = self.hotspot_lifetime.clone();
+        let admin_hotspot = self.admin_hotspot.clone();
         let event_sink: EventSink = Arc::new(move |mut event| {
             if event["type"] == "pairing-url" {
                 let rows = crate::linux_hotspot::interface_addresses().unwrap_or_default();
@@ -723,6 +778,7 @@ impl LinuxRelayAdmin {
                     input.display.lock().unwrap().resize.view_size(size);
                 }
             }
+            admin_hotspot.observe(&event, &carlink_interface);
             if (event["type"] == "link"
                 && matches!(event["state"].as_str(), Some("joined" | "lost")))
                 || carlink_follow::carlink_link_left(&event)
@@ -797,7 +853,18 @@ impl LinuxRelayAdmin {
     }
     fn perform_operation(&self, op: Operation) -> Result<()> {
         match op {
-            Operation::Roles(changes) => {
+            Operation::Roles(mut changes) => {
+                if changes.iter().any(|c| c == "wifiCountry") {
+                    self.apply_wifi_country();
+                    let (options, status) = self.effective_options_with_status()?;
+                    if let Some(old) = self.running_links.lock().unwrap().as_ref() {
+                        for change in old.changes(&self.links(&options, &status)) {
+                            if !changes.contains(&change) {
+                                changes.push(change);
+                            }
+                        }
+                    }
+                }
                 let network =
                     changes
                         .iter()
@@ -816,6 +883,7 @@ impl LinuxRelayAdmin {
                     *self.running_links.lock().unwrap() = Some(self.links(&options, &status));
                 }
                 self.public_name.head_unit_address(self.head_unit_address());
+                self.reconcile_admin_hotspot();
             }
             Operation::Startup => {
                 if !self.prepare_wifi()? {
@@ -1047,6 +1115,17 @@ impl LinuxRelayAdmin {
     /// TLS also covers the CarPlay-facing address, which mDNS intentionally leaves out.
     pub fn admin_addresses(&self) -> Result<Vec<std::net::Ipv4Addr>> {
         let mut addresses = self.host_addresses()?;
+        if self
+            .settings
+            .lock()
+            .unwrap()
+            .network_roles
+            .admin_hotspot
+            .as_ref()
+            .is_some_and(|a| a.enabled)
+        {
+            addresses.push(std::net::Ipv4Addr::new(10, 79, 0, 1));
+        }
         if let Some(address) = self.head_unit_address() {
             addresses.retain(|a| *a != address);
             addresses.insert(0, address);
@@ -1140,6 +1219,28 @@ impl LinuxRelayAdmin {
                 .log("receiver certificate changed; restarting the head-unit page");
         }
     }
+    fn apply_wifi_country(&self) {
+        let country = self.settings.lock().unwrap().wifi_country.clone();
+        if self
+            .wifi_country
+            .apply(&country, || self.inventory.reprobe())
+            .is_err()
+        {
+            self.events
+                .log("Wi-Fi country could not be applied; see the network checks");
+        }
+    }
+    fn reconcile_admin_hotspot(&self) {
+        let settings = self.settings.lock().unwrap().clone();
+        let status = self.network_status(&settings);
+        if !status.probing {
+            self.admin_hotspot.reconcile(
+                &status.plan.admin_hotspot,
+                settings.admin_hotspot_password.as_deref(),
+                &status.inventory,
+            );
+        }
+    }
     pub fn tick(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
         self.inventory.refresh();
@@ -1175,6 +1276,9 @@ impl LinuxRelayAdmin {
                 }
                 *self.running_links.lock().unwrap() = Some(links);
             }
+        }
+        if !self.busy.load(Ordering::Acquire) && self.pending.lock().unwrap().is_empty() {
+            self.reconcile_admin_hotspot();
         }
         self.public_name.head_unit_address(self.head_unit_address());
         if self.busy.load(Ordering::Acquire)
@@ -1324,6 +1428,7 @@ impl LinuxRelayAdmin {
             let _ = worker.join();
         }
         self.stop_controller();
+        let _ = self.admin_hotspot.close();
         // After the controller's `--pair` window has closed too.
         self.secure_connections.close("relay-stop");
         if let Some(p) = self.provision.lock().unwrap().as_mut() {
@@ -1978,6 +2083,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             name: crate::branding::DEVICE_NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
             host: "openxplay-linux.local".into(),
+            admin_hotspot: Some(self.admin_hotspot.status()),
             host_capabilities: self.capabilities.get(),
             wireless: Some({
                 let wifi = self.capabilities.cached_wifi(&options.wifi_interface);
@@ -2569,6 +2675,15 @@ mod tests {
             assert!(!value.to_string().contains("private-admin-pass"));
             assert!(!value.to_string().contains("adminHotspotPassword\":"));
         }
+        let pending = a
+            .pending
+            .lock()
+            .unwrap()
+            .remove(&std::thread::current().id())
+            .unwrap();
+        assert!(
+            matches!(pending, Operation::Roles(ref changes) if changes.contains(&"wifiCountry".into()) && changes.contains(&"adminHotspot".into()))
+        );
         request.body = serde_json::to_vec(&serde_json::json!({"networkRoles":{
             "mode":"custom", "iphone":{"link":"saved-network","interface":"02:00:00:00:00:09"},
             "carBrowser":{"network":"iphone","interface":null}, "carlink":{"interface":null},
@@ -5850,6 +5965,79 @@ esac
         assert_eq!(active.token.as_deref(), Some("dyn-secret"));
         a.public_name.remove().unwrap();
         assert!(!dir.join("public-name").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn admin_api_requires_password_hides_it_and_preserves_other_automatic_links() {
+        use crate::network_roles::{AdminHotspot, SaveResult};
+        let (a, dir) = fake();
+        let mut inv = role_inventory();
+        inv.interfaces[1].activity.kind = "other-ap".into();
+        a.inventory.set(inv.clone());
+        {
+            let mut settings = a.settings.lock().unwrap();
+            settings.network_roles.admin_hotspot = Some(AdminHotspot {
+                enabled: true,
+                ..Default::default()
+            });
+        }
+        let values = || {
+            serde_json::json!({"networkRoles":a.settings.lock().unwrap().network_roles})
+                .as_object()
+                .unwrap()
+                .clone()
+        };
+        for save in [false, true] {
+            let SaveResult::Checks(checks) = a.propose_roles(values(), save) else {
+                panic!("password required");
+            };
+            assert!(checks
+                .iter()
+                .any(|c| c.code == "admin-hotspot-password" && c.level == "error"));
+        }
+        a.settings.lock().unwrap().admin_hotspot_password =
+            Some("synthetic-private-password".into());
+        let before = a.network_status(&a.settings.lock().unwrap());
+        assert_eq!(before.plan.carlink.role.name(), Some("wlan0"));
+        // The foreign profile was removed and the admin AP can use the adapter, but an admin edit
+        // must preserve the existing automatic Carlink assignment.
+        inv.interfaces[1].activity.kind = "idle".into();
+        a.inventory.set(inv);
+        let mut update = values();
+        // The UI includes resolved role fields even in Automatic mode; those fields are ignored.
+        update["networkRoles"]["iphone"] =
+            serde_json::json!({"link":"hotspot","interface":"wlan0"});
+        update["networkRoles"]["carBrowser"] =
+            serde_json::json!({"network":"iphone","interface":null});
+        update["networkRoles"]["carlink"] = serde_json::json!({"interface":"wlan0"});
+        update["networkRoles"]["adminHotspot"]["ssid"] = "Changed Admin".into();
+        update.insert(
+            "adminHotspotPassword".into(),
+            "new-synthetic-private-password".into(),
+        );
+        let SaveResult::Saved(preview) = a.propose_roles(update.clone(), false) else {
+            panic!("valid preview");
+        };
+        assert_eq!(preview.changes, ["adminHotspot"]);
+        assert_eq!(preview.plan.carlink.role.name(), Some("wlan0"));
+        assert!(!serde_json::to_string(&preview)
+            .unwrap()
+            .contains("private-password"));
+        let SaveResult::Saved(saved) = a.propose_roles(update, true) else {
+            panic!("valid save");
+        };
+        assert_eq!(saved.changes, ["adminHotspot"]);
+        assert!(saved.plan.admin_hotspot.password_set);
+        assert!(!serde_json::to_string(&a.status())
+            .unwrap()
+            .contains("private-password"));
+        assert!(!serde_json::to_string(&a.settings())
+            .unwrap()
+            .contains("private-password"));
+        assert!(a
+            .admin_addresses()
+            .unwrap()
+            .contains(&std::net::Ipv4Addr::new(10, 79, 0, 1)));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
