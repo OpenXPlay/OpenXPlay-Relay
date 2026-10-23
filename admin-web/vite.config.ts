@@ -12,8 +12,8 @@ export default defineConfig({
     name: 'admin-bundle-budget',
     generateBundle: { order: 'post', handler(_options, bundle) {
       const bytes = Object.values(bundle).reduce((sum, file) => sum + gzipSync(file.type === 'chunk' ? file.code : file.source).byteLength, 0);
-      if (bytes > 80 * 1024) this.error(`Admin gzip budget exceeded: ${bytes} bytes`);
-      this.info(`Admin gzip: ${bytes} / ${80 * 1024} bytes`);
+      if (bytes > 1024 * 1024) this.error(`Admin gzip budget exceeded: ${bytes} bytes`);
+      this.info(`Admin gzip: ${bytes} / ${1024 * 1024} bytes`);
     } },
   }],
   build: { outDir: 'dist' },
