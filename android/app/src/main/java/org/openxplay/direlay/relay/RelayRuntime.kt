@@ -100,6 +100,12 @@ class RelayRuntime(private val context: Context,
         }
     })
     val pluginContext = org.openxplay.direlay.plugins.PluginContextObserver(input::context)
+    val logSecrets: org.openxplay.direlay.logs.LogSecrets by lazy {
+        org.openxplay.direlay.logs.RelayLogSecrets(context.applicationContext, settingsStore, tlsStore) {
+            carlinkPins.redactFailureMessage(carlinkFailureRedactor(it))
+        }.secrets
+    }
+    val logs: org.openxplay.direlay.logs.LogFiles by lazy { org.openxplay.direlay.logs.LogFiles(context.applicationContext, logSecrets) }
     @Volatile private var configuredPlugins: Pair<Boolean, List<String>> = false to emptyList()
 
     fun prepareCarPlayFrameRate() { AirPlayPersistence.saveFps(context, negotiatedFps) }
@@ -388,7 +394,7 @@ class RelayRuntime(private val context: Context,
     @Volatile private var closed = false
     private val lifecycle = Any()
     private var web: WebOutput? = null
-    val carlinkPins = DialogPinProvider()
+    val carlinkPins = DialogPinProvider().apply { onSecret = { logSecrets.remember(listOf(it), allowShort = true) } }
     private val carlinkTrust = PrivateClinkTrustStore(context.noBackupFilesDir)
     @Volatile var carlinkState = "Disabled"
         private set
@@ -801,7 +807,8 @@ class RelayRuntime(private val context: Context,
             clinkDiagnostics.emit(event)
         }, trace, { if (traceRecorder.isInitialized()) carlinkTraceRecorder.session else 0 })
         val reservation = AirPlayP2pReservation(context)
-        val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation)
+        val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation,
+            onSecret = { logSecrets.remember(listOf(it)) })
         val sessionDiagnostics = ClinkSessionDiagnostics(carlinkPins, carlinkTrust, diagnostics)
         carlinkResizePolicy.startSession()
         var resizePlaying = false

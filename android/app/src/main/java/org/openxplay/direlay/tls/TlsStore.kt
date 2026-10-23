@@ -37,6 +37,12 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
     /** Every install is a new generation directory, so its canonical path identifies the parsed material. */
     private var acmeCache: Pair<File, AcmeMaterial?>? = null
 
+    /** Lock-free on purpose: the log recorder must never wait for a keystore load holding this store's lock. */
+    fun logPasswords(): List<String> = listOf(store.directory, generated.directory).mapNotNull {
+        val file = File(it, "password")
+        if (file.isFile && file.length() <= MAX_PASSWORD_CHARS * 4L) file.readText(Charsets.UTF_8) else null
+    }
+
     /** Imported material always wins, even if invalid; never silently replace a user's certificate. */
     @Synchronized fun ensureDefault(addresses: Set<String>, hostNames: Set<String> = emptySet()): Boolean {
         if (java.nio.file.Files.exists(store.directory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false

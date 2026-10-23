@@ -106,6 +106,11 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             "settings/configFiles" -> if (runtime != null) ConfigFilesScreen(remember(runtime) {
                 org.openxplay.direlay.config.ConfigFiles(runtimeContext, runtime.settingsStore, runtime.publicName, runtime.tlsStore)
             })
+            "settings/logs" -> if (runtime != null) LogsScreen(runtime.logs, remember(runtime) {
+                org.openxplay.direlay.logs.TmpfileLinkUploader(org.openxplay.direlay.logs.InternetUploadConnection(
+                    runtimeContext.getSystemService(android.net.ConnectivityManager::class.java)),
+                    runtimeContext.packageManager.getPackageInfo(runtimeContext.packageName, 0).versionName.orEmpty())
+            })
             "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
             "settings/output" -> {
                 CollapsibleCard("output", stringResource(R.string.ui_output), outputSummary(draft),

@@ -38,6 +38,9 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
         keepAlive = AndroidRelayKeepAlive(this)
         runtime = RelayRuntime(this, pairing = PairingWindow(AndroidBluetoothVisibility(this, ::showRelayScreen)),
             keepAlive = keepAlive)
+        // Log recording must never stop the relay itself.
+        if (android.os.Build.VERSION.SDK_INT < 28 || Application.getProcessName() == packageName) runCatching { runtime.logs.start() }
+            .onFailure { android.util.Log.e("OXP-Logs", "Log recorder unavailable", it) }
         runtime.carlinkPins.onPending = { showPendingPin() }
         runtime.carlinkPins.onCancel = runtime::cancelCarlinkPairing
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
@@ -104,6 +107,7 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
     }
 
     override fun onTerminate() {
+        if (android.os.Build.VERSION.SDK_INT < 28 || Application.getProcessName() == packageName) runCatching { runtime.logs.recorder.close() }
         runtime.close()
         super.onTerminate()
     }
