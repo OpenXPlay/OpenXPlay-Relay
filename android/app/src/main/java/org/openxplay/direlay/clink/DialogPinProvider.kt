@@ -16,9 +16,10 @@ class DialogPinProvider : PinProvider {
     }
     @Volatile var onCancel: (() -> Unit)? = null
     @Volatile var onPending: (() -> Unit)? = null
+    @Volatile var onSecret: (String) -> Unit = {}
     private var accepting = true
-    private var lastPinRequest: Request? = null
-    private var retryPin: Pair<String, String>? = null
+    @Volatile private var lastPinRequest: Request? = null
+    @Volatile private var retryPin: Pair<String, String>? = null
     @Volatile var rejected = 0
         private set
     @Volatile var successes = 0
@@ -28,6 +29,7 @@ class DialogPinProvider : PinProvider {
         if (previous.answer.getNow(null) == null) return
         rejected++
         pending = Request(previous.headUnitId, false, afterResponse = { value ->
+            if (value != null) onSecret(value)
             synchronized(this) {
                 pending = null
                 if (value != null) retryPin = previous.headUnitId to value
@@ -40,7 +42,7 @@ class DialogPinProvider : PinProvider {
 
     @Volatile var pending: Request? = null
         private set
-    @Synchronized internal fun redactFailureMessage(text: String): String =
+    internal fun redactFailureMessage(text: String): String =
         listOfNotNull(lastPinRequest?.answer?.getNow(null), retryPin?.second)
             .filter { it.isNotEmpty() }.fold(text) { value, pin -> value.replace(pin, "[redacted]") }
 
@@ -48,7 +50,7 @@ class DialogPinProvider : PinProvider {
         synchronized(this) {
             retryPin?.takeIf { it.first == headUnitId }?.let {
                 retryPin = null
-                val request = Request(headUnitId, false)
+                val request = Request(headUnitId, false, afterResponse = { value -> if (value != null) onSecret(value) })
                 request.respond(it.second)
                 lastPinRequest = request
                 return it.second
@@ -59,7 +61,8 @@ class DialogPinProvider : PinProvider {
     }
     override fun confirmPairing(headUnitId: String): Boolean = ask(headUnitId, true) == "approved"
     private fun ask(id: String, confirmation: Boolean): String? {
-        val request = Request(id, confirmation, onCancel = { cancel(); onCancel?.invoke() })
+        val request = Request(id, confirmation, afterResponse = { value -> if (!confirmation && value != null) onSecret(value) },
+            onCancel = { cancel(); onCancel?.invoke() })
         synchronized(this) {
             if (pending?.answer?.isDone == true) pending = null
             if (!accepting || pending != null) return null

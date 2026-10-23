@@ -12,6 +12,8 @@ data class RelayFailure(val outputId: String?, val text: String, val atMillis: L
 /** Model-only observer supplements HubListener, which has no frame or connection callbacks. */
 class RelayStatus(private val redactFailure: (String) -> String = { redactFailureText(it) },
     private val wallClock: () -> Long = System::currentTimeMillis,
+    private val connectionLog: org.openxplay.direlay.logs.ConnectionLog? = null,
+    private val browser: org.openxplay.direlay.logs.BrowserTimeline? = null,
     private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
     override val id = "relay-status"
     private val frames = ConcurrentHashMap<ScreenId, AtomicLong>()
@@ -56,6 +58,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
         if (outputId == "web") rememberWeb(stats)
     }
     override fun receiverDiagnostics(outputId: String, origin: Origin, type: String, json: String) {
+        if (outputId == "web") runCatching { browser?.report(origin.clientId, type, json) }
         receivers.report(origin.clientId, type, json)
         if (type == "fullscreen-exit") android.util.Log.i("OpenXPlay Relay", "Fullscreen exit ${origin.clientId}: $json")
     }
@@ -72,7 +75,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     }
     override fun open(host: OutputHost) = Unit
     override fun onSession(state: SessionState, config: SessionConfig) {
-        if (session?.id != state.id) { frames.clear(); bytes.set(0); clearFailure() }
+        if (session?.id != state.id) { frames.clear(); bytes.set(0); clearFailure(); awaitingFirstVideo = true }
         if (session?.id != state.id || state.phase == SessionPhase.ENDED) { videoCodec = null; videoFormat = null }
         session = state
     }
@@ -80,6 +83,10 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
         if (screen == ScreenId.MAIN) { videoCodec = format?.codec; videoFormat = format }
     }
     override fun onVideoFrame(frame: VideoFrame) {
+        if (awaitingFirstVideo && frame.screen == ScreenId.MAIN && frame.session == session?.id && session?.phase == SessionPhase.ACTIVE) {
+            awaitingFirstVideo = false
+            runCatching { connectionLog?.phone("first_video", "codec=$videoCodec size=${videoFormat?.width}x${videoFormat?.height}") }
+        }
         if (countVideoBytes && frame.screen == ScreenId.MAIN && frame.session == session?.id && session?.phase == SessionPhase.ACTIVE)
             bytes.addAndGet(frame.data.size.toLong())
         if (frame.session == session?.id && session?.phase == SessionPhase.ACTIVE) {
@@ -90,4 +97,5 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     override fun onAudioPacket(packet: AudioPacket) = Unit
     override fun onMicrophone(stream: Int, request: MicRequest?) = Unit
     override fun close() { countVideoBytes = false; synchronized(this) { webReports.clear() }; receivers.clear() }
+    @Volatile private var awaitingFirstVideo = false
 }

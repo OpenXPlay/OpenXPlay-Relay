@@ -756,7 +756,7 @@
     <string name="experimental_keep_scanning">Keep scanning for the car</string>
     <string name="experimental_keep_scanning_hint">While Carlink is on and not connected, scan without pauses instead of 8-second scans with growing waits.</string>
     <string name="experimental_record_advertisements">Record all Bluetooth advertisements</string>
-    <string name="experimental_record_advertisements_hint">Writes every nearby Bluetooth advertisement to the Carlink debug log while scanning. Needs Carlink debug on and this phone\'s screen on. Other people\'s nearby devices are recorded too; the log stays on this phone.</string>
+    <string name="experimental_record_advertisements_hint">Writes every nearby Bluetooth advertisement to the Carlink debug log while scanning. Needs Carlink debug on and this phone\'s screen on. Other people\'s nearby devices are recorded too, and exported logs include them.</string>
     <string name="experimental_send_address">Send this phone\'s Bluetooth address</string>
     <string name="experimental_send_address_hint">Sends the address you enter to the car instead of the generated one. Find it on the phone\'s About phone or Status page. Pair this phone with the car in Bluetooth settings to test whether the car then reconnects by itself.</string>
     <string name="experimental_bluetooth_address">Bluetooth address</string>

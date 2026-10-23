@@ -747,7 +747,7 @@
     <string name="experimental_keep_scanning">持续扫描车机</string>
     <string name="experimental_keep_scanning_hint">Carlink 开启且未连接时不间断扫描，不再是每次 8 秒、间隔越来越长的扫描。</string>
     <string name="experimental_record_advertisements">记录所有蓝牙广播</string>
-    <string name="experimental_record_advertisements_hint">扫描期间把附近所有蓝牙广播写入 Carlink 调试日志。需要打开 Carlink 调试，并保持本机亮屏。附近其他人的设备也会被记录；日志只保存在本机。</string>
+    <string name="experimental_record_advertisements_hint">扫描期间把附近所有蓝牙广播写入 Carlink 调试日志。需要打开 Carlink 调试，并保持本机亮屏。附近其他人的设备也会被记录，导出的日志里也会包含。</string>
     <string name="experimental_send_address">发送本机蓝牙地址</string>
     <string name="experimental_send_address_hint">把你填写的地址发给车，代替自动生成的地址。可在手机的“关于手机”或“状态信息”页面找到。再在蓝牙设置里把本机和车配对，测试车是否会自己重连。</string>
     <string name="experimental_bluetooth_address">蓝牙地址</string>

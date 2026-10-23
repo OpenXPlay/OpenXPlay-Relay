@@ -43,6 +43,7 @@ data class AdminHostAddress(val interfaceName: String, val ipv4: String, val dev
     override fun json() = obj("interface" to interfaceName, "ipv4" to ipv4, "developerOnly" to developerOnly)
 }
 data class AdminHotspot(val ssid: String, val password: String, val ip: String?, val active: Boolean) : AdminJson {
+    override fun toString() = "AdminHotspot(ssid=$ssid, password=[redacted], ip=$ip, active=$active)"
     override fun json() = obj("ssid" to ssid, "password" to password, "ip" to ip, "active" to active)
 }
 data class AdminPairedDevice(val name: String, val connected: Boolean, val iphone: Boolean) : AdminJson {

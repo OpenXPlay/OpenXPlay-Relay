@@ -27,6 +27,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     private val deviceName: String, private val deviceModel: String,
     private val diagnostics: ClinkDiagnostics = ClinkDiagnostics.NONE,
     private val p2pReservation: P2pReservation = P2pReservation { false },
+    private val onSecret: (String) -> Unit = {},
     experimental: ExperimentalOptions = ExperimentalOptions()) : ClinkLink {
     private val context = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
@@ -141,6 +142,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             }
             val (carId, reply) = checkNotNull(handoff)
             failurePassphrase = reply.psk
+            onSecret(reply.psk)
             diagnostics.handoff(reply.ssid, reply.psk.length)
             // No PIN/UI pause here; return immediately after DHCP so clink can start AUTH.
             val endpoints = diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) { join(run, reply) }

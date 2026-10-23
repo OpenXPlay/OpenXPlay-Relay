@@ -75,8 +75,14 @@ fun settingsPageTitle(route: String) = when (route) {
     "settings/access" -> R.string.menu_access
     "settings/identity" -> R.string.menu_identity
     "settings/configFiles" -> R.string.config_title
+    "settings/logs" -> R.string.logs_title
     else -> R.string.direlay_settings
 }
+
+internal data class SettingsFilePage(val title: Int, val summary: Int, val route: String)
+internal val settingsFilePages = listOf(
+    SettingsFilePage(R.string.config_title, R.string.config_summary, "settings/configFiles"),
+    SettingsFilePage(R.string.logs_title, R.string.logs_summary, "settings/logs"))
 
 @Composable
 fun SettingsMenuRow(title: Int, summary: String, icon: Int, error: Boolean = false, action: () -> Unit) {
@@ -115,7 +121,9 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
     SettingsMenuRow(R.string.menu_access, accessSummary, R.drawable.symbol_link) { open("settings/access") }
     SettingsMenuRow(R.string.menu_identity, stringResource(identityStatus), R.drawable.symbol_code,
         "settings/identity" in invalidPages) { open("settings/identity") }
-    SettingsMenuRow(R.string.config_title, stringResource(R.string.config_summary), R.drawable.symbol_code) { open("settings/configFiles") }
+    settingsFilePages.forEach { page ->
+        SettingsMenuRow(page.title, stringResource(page.summary), R.drawable.symbol_code) { open(page.route) }
+    }
     SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
     SettingsMenuRow(R.string.ui_developer, stringResource(R.string.menu_developer_summary, draft.fps, draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), R.drawable.symbol_code,
         invalidPages.any { it.startsWith("developer/") }) { open("developer") }

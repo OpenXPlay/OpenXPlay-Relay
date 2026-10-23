@@ -54,14 +54,17 @@ class RelayRuntime(private val context: Context,
     /** One Bluetooth pairing window shared by the app and the admin page. */
     val pairing: org.openxplay.direlay.admin.PairingWindow = org.openxplay.direlay.admin.PairingWindow(
         org.openxplay.direlay.admin.AndroidBluetoothVisibility(context.applicationContext) { false }),
-    val keepAlive: RelayKeepAlive = RelayKeepAlive.None) : AutoCloseable {
+    val keepAlive: RelayKeepAlive = RelayKeepAlive.None,
+    val connectionLog: org.openxplay.direlay.logs.ConnectionLog = org.openxplay.direlay.logs.ConnectionLog()) : AutoCloseable {
     @Volatile var iphoneBonds: List<BondedDevice> = emptyList()
         private set
     fun refreshIphoneBonds() { iphoneBonds = bondedDevices.read() }
     fun iphoneSelection(choice: String? = settingsStore.snapshot.value?.iphoneAddress) =
         IphoneSelection.select(choice, iphoneBonds)
     private val traceRecorder = lazy { CarlinkTraceRecorder(checkNotNull(context.getExternalFilesDir("carlink-trace")),
-        { line -> Log.i("OXP-CarlinkTrace", line) }) }
+        { line -> Log.i("OXP-CarlinkTrace", line) }, clean = ::cleanTrace) }
+    private val traceRedactor by lazy { org.openxplay.direlay.logs.LogRedactor(logSecrets) }
+    private fun cleanTrace(line: String) = org.openxplay.direlay.logs.TracePrivacy.redact(line, traceRedactor)
     val carlinkTraceRecorder get() = traceRecorder.value
     private val traceCapture = lazy { CarlinkMediaCapture(checkNotNull(context.getExternalFilesDir("carlink-trace"))) }
     val carlinkMediaCapture get() = traceCapture.value
@@ -100,8 +103,15 @@ class RelayRuntime(private val context: Context,
             add(AirPlayPersistence.loadManualHotspotPassphrase(context))
             add(AirPlayPersistence.loadExistingWifiPassphrase(context))
         }
-    })
+    }, timeline = connectionLog)
     val pluginContext = org.openxplay.direlay.plugins.PluginContextObserver(input::context)
+    val logSecrets: org.openxplay.direlay.logs.LogSecrets by lazy {
+        org.openxplay.direlay.logs.RelayLogSecrets(context.applicationContext, settingsStore, tlsStore) {
+            carlinkPins.redactFailureMessage(carlinkFailureRedactor(it))
+        }.secrets
+    }
+    val logs: org.openxplay.direlay.logs.LogFiles by lazy { org.openxplay.direlay.logs.LogFiles(context.applicationContext, logSecrets,
+        traceDirectory = { if (settingsStore.snapshot.value?.carlinkTrace == true) context.getExternalFilesDir("carlink-trace") else null }) }
     @Volatile private var configuredPlugins: Pair<Boolean, List<String>> = false to emptyList()
 
     fun prepareCarPlayFrameRate() { AirPlayPersistence.saveFps(context, negotiatedFps) }
@@ -117,7 +127,8 @@ class RelayRuntime(private val context: Context,
         val redacted = redactFailureText(text, secrets)
         return carlinkPins.redactFailureMessage(carlinkFailureRedactor(redacted))
     }
-    val status = RelayStatus(redactFailure = ::redactFailureMessage)
+    private val browserTimeline = org.openxplay.direlay.logs.BrowserTimeline(connectionLog)
+    val status = RelayStatus(redactFailure = ::redactFailureMessage, connectionLog = connectionLog, browser = browserTimeline)
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }
@@ -224,6 +235,7 @@ class RelayRuntime(private val context: Context,
         activeAreaIndex = index
         val value = org.openxplay.stream.web.ViewArea(0, 0, area.width, area.height, areas[0].width, areas[0].height)
         activeArea = value; updateCarlinkArea(value); areaListeners.forEach { it(value) }
+        connectionLog.transition("browser", "view-area", "view_area", "source=view-area-port clients=aggregate view=${value.width}x${value.height} canvas=${value.canvasWidth}x${value.canvasHeight}")
     }
     data class AreaSwitch(val time: Long, val index: Int, val accepted: Boolean)
     private val areaSwitches = ArrayDeque<AreaSwitch>()
@@ -404,7 +416,7 @@ class RelayRuntime(private val context: Context,
     @Volatile private var closed = false
     private val lifecycle = Any()
     private var web: WebOutput? = null
-    val carlinkPins = DialogPinProvider()
+    val carlinkPins = DialogPinProvider().apply { onSecret = { logSecrets.remember(listOf(it), allowShort = true) } }
     private val carlinkTrust = PrivateClinkTrustStore(context.noBackupFilesDir)
     @Volatile var carlinkState = "Disabled"
         private set
@@ -572,6 +584,7 @@ class RelayRuntime(private val context: Context,
         setup.execute {
             loadRememberedDisplay()
             val initial = settingsStore.awaitSnapshot()
+            connectionLog.event("relay", "settings_loaded")
             configuredPlugins = initial.plugins to initial.pluginsEnabled
             runCatching { bundledPlugins.root() }
                 .onFailure { Log.w("OpenXPlay Relay", "Plugin bundle installation failed", it) }
@@ -589,6 +602,7 @@ class RelayRuntime(private val context: Context,
             configureVehicle()
             configureCarlink()
             configureDlna(); configureMiracast()
+            connectionLog.event("relay", "runtime_ready")
         }
         setup.scheduleWithFixedDelay({
             try {
@@ -890,6 +904,7 @@ class RelayRuntime(private val context: Context,
         // Picture size is frozen until the next connection. Experimental choices are captured below,
         // outside this comparison, so editing them never restarts a running link.
         if (!force && requested.copy(pictureSize = carlinkConfig?.pictureSize ?: requested.pictureSize) == carlinkConfig && !carlinkRestartPending) return
+        connectionLog.transition("relay", "carlink_output", "carlink_output", if (requested.enabled) "enabled" else "disabled")
         carlinkConfig = requested
         if (carlinkRetiring) { carlinkRestartPending = true; return }
         carlink?.let { output ->
@@ -926,18 +941,34 @@ class RelayRuntime(private val context: Context,
         val id = preferences.getString("clinkDeviceId", null) ?: java.util.UUID.randomUUID().toString().also {
             check(preferences.edit().putString("clinkDeviceId", it).commit())
         }
-        val trace = CarlinkTraceRecorder.select(settings.carlinkTrace) { carlinkTraceRecorder }
+        val logConnection = ++carlinkLogConnection
+        val summary = CarlinkSummaryTrace(
+            mirror = { line -> org.openxplay.direlay.logs.LogcatLines.split(line).forEach { Log.i("OXP-Carlink", it) } },
+            clean = ::cleanTrace, timeline = { connectionLog.carlink(it, logConnection) },
+            car = { connectionLog.carlink("car $it", logConnection) }, emitEvents = !settings.carlinkTrace)
+        carlinkSummary?.close(); carlinkSummary = summary
+        val full = runCatching { CarlinkTraceRecorder.select(settings.carlinkTrace) { carlinkTraceRecorder } }
+            .onFailure { connectionLog.transition("relay", "full_trace_failure", "logging_unavailable", "component=carlink_trace") }
+            .getOrDefault(org.openxplay.stream.clink.trace.ClinkTrace.NONE)
+        val traceSession = java.util.concurrent.atomic.AtomicLong()
+        val trace = org.openxplay.stream.clink.trace.ClinkTrace { event ->
+            if (event.session > 0) traceSession.set(event.session)
+            runCatching { summary.record(event) }
+            if (full !== org.openxplay.stream.clink.trace.ClinkTrace.NONE) runCatching { full.record(event) }
+        }
         val diagnostics = TracingClinkDiagnostics(ClinkDiagnostics { event ->
+            connectionLog.carlink(event.line(), logConnection)
             carlinkTrail.record(event.line(), event == ClinkStage.LINK_START, System.currentTimeMillis(), System.nanoTime())
             if (event is ClinkDiagnostic.Failure) {
                 carlinkAttemptDetail = event.code
                 if (carlinkError == null) carlinkDetail = event.code
             }
             clinkDiagnostics.emit(event)
-        }, trace, { if (traceRecorder.isInitialized()) carlinkTraceRecorder.session else 0 })
+        }, trace, traceSession::get)
         val reservation = AirPlayP2pReservation(context)
         val experiments = settings.experimental.effective(settings.carlinkTrace)
-        val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation, experiments)
+        val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation,
+            onSecret = { logSecrets.remember(listOf(it)) }, experimental = experiments)
         val sessionDiagnostics = ClinkSessionDiagnostics(carlinkPins, carlinkTrust, diagnostics)
         carlinkResizePolicy.startSession()
         var resizePlaying = false
@@ -999,13 +1030,17 @@ class RelayRuntime(private val context: Context,
                     if (rejected) carlinkPins.reject(::reconnectCarlink)
                     else carlinkPins.cancel()
                 }
-                // E3 forwards AUTH diagnostics through the diagnostics port; output counters stay in logcat.
+                // E3 also puts AUTH diagnostics on the Carlink trail and trace.
                 override fun diagnostic(message: String) {
                     link.sessionDiagnostic(message)
-                    if (message.startsWith("video ") || message.startsWith("audio ") || message.startsWith("frame ")) android.util.Log.i("DiRelayCarlink", message)
+                    connectionLog.diagnostic(message)
                 }
-                override fun statistics(stats: ClinkStatistics) { carlinkStatistics = stats }
+                override fun statistics(stats: ClinkStatistics) {
+                    carlinkStatistics = stats
+                    summary.video(stats.codec?.name ?: "unknown", stats.width, stats.height, stats.liveFrames)
+                }
                 override fun viewSize(width: Int, height: Int) {
+                    summary.view(width, height)
                     observeResize { carlinkResizePolicy.viewSize(width, height) }
                 }
                 override fun profileMismatch(inputCodec: String, decoders: List<String>) {
@@ -1070,6 +1105,8 @@ class RelayRuntime(private val context: Context,
         hub.addOutput(videoOutput)
     }
 
+    private var carlinkSummary: CarlinkSummaryTrace? = null
+    private var carlinkLogConnection = 0L
     @Volatile var carlinkStatistics: ClinkStatistics? = null
         private set
     @Volatile var carlinkVideoDecision: CarlinkVideoDecision? = null
@@ -1087,7 +1124,8 @@ class RelayRuntime(private val context: Context,
         if (closed || !settings.carlinkAutoReconnect || !(settings.carlinkOutput || settings.bothOutputs)) return
         val delay = carlinkBackoff.next()
         carlinkTrail.record(ClinkDiagnostic.Retry(delay).line(), false, System.currentTimeMillis(), System.nanoTime())
-        clinkDiagnostics.emit(ClinkDiagnostic.Retry(delay))
+        connectionLog.carlink(ClinkDiagnostic.Retry(delay).line(), carlinkLogConnection)
+        runCatching { clinkDiagnostics.emit(ClinkDiagnostic.Retry(delay)) }
         try { setup.schedule({ if (carlinkEnded && !closed) configureCarlink(true) }, delay, java.util.concurrent.TimeUnit.MILLISECONDS) }
         catch (_: java.util.concurrent.RejectedExecutionException) { }
     }
@@ -1116,6 +1154,7 @@ class RelayRuntime(private val context: Context,
         if (closed || webStarting || web != null) return
         if (!webEnabled) { serverReason = null; serverState = "Web receiver disabled"; return }
         webStarting = true
+        val requestedAt = android.os.SystemClock.elapsedRealtime()
         val port = configuredWebPort ?: TlsStore.port(true)
         try {
             carIpv4 = ipv4Addresses(includeIphoneLink = false)
@@ -1128,17 +1167,20 @@ class RelayRuntime(private val context: Context,
             val output = WebOutput(WebOutputConfig(
                 // Includes the local Tesla TUN address; no interface-specific listener is needed.
                 bindAddress = "0.0.0.0", port = port, sslContext = ssl,
-                staticAssetRoot = root.toPath(), plugins = plugins, displaySettings = settingsStore, viewArea = viewAreaPort,
+                staticAssetRoot = root.toPath(), plugins = plugins,
+                displaySettings = org.openxplay.direlay.logs.TimelineDisplaySettingsPort(settingsStore, connectionLog), viewArea = viewAreaPort,
                 sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay",
                 relay = org.openxplay.stream.web.RelayInfo("Android", appVersion()),
             ))
             synchronized(lifecycle) {
                 if (closed) return
                 web = output
-                val destination = if (plugins == null) output else org.openxplay.direlay.plugins.AndroidPluginOutput(output)
+                val observed = org.openxplay.direlay.logs.TimelineWebOutput(output, browserTimeline)
+                val destination = if (plugins == null) observed else org.openxplay.direlay.plugins.AndroidPluginOutput(observed)
                 hub.addOutput(TranscodingOutput(destination, MediaCodecPipeline.factory))
             }
             output.awaitListening()
+            connectionLog.event("relay", "web_listening", "port=$port ms=${android.os.SystemClock.elapsedRealtime() - requestedAt}")
             if (closed) return
             serverReason = null
             lastWebFailure = null
@@ -1155,6 +1197,7 @@ class RelayRuntime(private val context: Context,
         } catch (failure: Exception) {
             pluginContext.configure(false)
             serverReason = webStartReason(failure, port)
+            connectionLog.event("relay", "web_failed", "reason=$serverReason exception=${failure.javaClass.simpleName}")
             val root = generateSequence<Throwable>(failure) { it.cause }.last()
             val reason = "$serverReason: ${root.javaClass.name}: ${root.message}"
             if (reason != lastWebFailure) {
@@ -1303,6 +1346,9 @@ class RelayRuntime(private val context: Context,
             pluginContext.close()
             if (traceCapture.isInitialized()) carlinkMediaCapture.close()
             if (traceRecorder.isInitialized()) carlinkTraceRecorder.close()
+            browserTimeline.close()
+            carlinkSummary?.close()
+            connectionLog.close()
             settingsStore.close()
             hub.stop()
             input.close()
