@@ -76,6 +76,12 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putInt("wirelessPictureWidth", value.wirelessPictureSize.width)
         putInt("wirelessPictureHeight", value.wirelessPictureSize.height)
         putBoolean("miracastStretch", value.miracastStretch)
+        putBoolean("experimental.active", value.experimental.active)
+        putBoolean("experimental.rememberSubscription", value.experimental.rememberSubscription)
+        putBoolean("experimental.keepScanning", value.experimental.keepScanning)
+        putBoolean("experimental.recordAdvertisements", value.experimental.recordAdvertisements)
+        putBoolean("experimental.sendBluetoothAddress", value.experimental.sendBluetoothAddress)
+        putString("experimental.bluetoothAddress", value.experimental.bluetoothAddress)
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkReconnectOnResize", value.carlinkReconnectOnResize)
         putBoolean("carlinkTrace", value.carlinkTrace)
@@ -101,7 +107,14 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
     val text = requireNotNull(bundle.getStringArrayList("text"))
     val flags = requireNotNull(bundle.getBooleanArray("flags"))
     val numbers = requireNotNull(bundle.getIntArray("numbers"))
-    base.copy(connectionMode = ConnectionMode.valueOf(text[0]), mfiTarget = MfiTarget.valueOf(text[1]),
+    base.copy(experimental = ExperimentalOptions(
+        active = bundle.getBoolean("experimental.active", base.experimental.active),
+        rememberSubscription = bundle.getBoolean("experimental.rememberSubscription", base.experimental.rememberSubscription),
+        keepScanning = bundle.getBoolean("experimental.keepScanning", base.experimental.keepScanning),
+        recordAdvertisements = bundle.getBoolean("experimental.recordAdvertisements", base.experimental.recordAdvertisements),
+        sendBluetoothAddress = bundle.getBoolean("experimental.sendBluetoothAddress", base.experimental.sendBluetoothAddress),
+        bluetoothAddress = bundle.getString("experimental.bluetoothAddress") ?: base.experimental.bluetoothAddress),
+        connectionMode = ConnectionMode.valueOf(text[0]), mfiTarget = MfiTarget.valueOf(text[1]),
         i2cPath = text[2], remoteServer = text[3], remoteToken = text[4], carlinkDeviceName = text[5], carlinkDeviceModel = text[6],
         microphoneSource = MicrophoneSource.valueOf(text[7]),
         autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],

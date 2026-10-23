@@ -41,6 +41,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   webPortEnabled, carlinkDeviceModelEnabled are booleans; carlinkHevc, carlinkPictureSize,
  *   microphoneSource use enumWires; fps and webPort use the ranges above;
  *   physicalWidthOverrideMm is 0 or 100–400 in steps of 25; carlinkDeviceModel uses the name rule.
+ * - experimental: active, rememberSubscription, keepScanning, recordAdvertisements and
+ *   sendBluetoothAddress are booleans; bluetoothAddress is a user-entered unicast Bluetooth address.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
  * Android aliases: iphoneConnection, mfiI2cPath, mfiRemoteServer and hotspot*.
  * All other keys match Kotlin properties; developer contains every remembered override.
@@ -123,6 +125,15 @@ object UserConfigCodec {
         .put("hotspotChannel", s.wirelessNetwork.channel)
         .put("hotspotSecurity", wire(s.wirelessNetwork.security))
         .put("developer", developerValues(d))
+        .put("experimental", experimentalValues(s.experimental))
+
+    private fun experimentalValues(e: ExperimentalOptions): JSONObject = JSONObject()
+        .put("active", e.active)
+        .put("rememberSubscription", e.rememberSubscription)
+        .put("keepScanning", e.keepScanning)
+        .put("recordAdvertisements", e.recordAdvertisements)
+        .put("sendBluetoothAddress", e.sendBluetoothAddress)
+        .put("bluetoothAddress", e.bluetoothAddress)
 
     private fun developerValues(d: DeveloperOverrides): JSONObject = JSONObject()
         .put("active", d.active)
@@ -151,7 +162,7 @@ object UserConfigCodec {
 
     fun decode(text: String, current: RelaySettings, choices: DeveloperOverrides = DeveloperOverrides(),
         wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS): UserConfigImport {
-        var s = current
+        var s = current.copy(experimental = ExperimentalOptions())
         var d = choices
         val errors = linkedMapOf<String, String>()
         val ignored = mutableListOf<String>()
@@ -223,6 +234,22 @@ object UserConfigCodec {
                     else s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(channel = value))
                 }
                 "hotspotSecurity" -> { val value = enumValue<ManualHotspotSecurity>(j.string(key)); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(security = value)) }
+                "experimental" -> {
+                    val objectValue = j.getJSONObject(key)
+                    var e = ExperimentalOptions()
+                    for (field in objectValue.keys().asSequence().toList()) try {
+                        e = when (field) {
+                            "active" -> e.copy(active = objectValue.bool(field))
+                            "rememberSubscription" -> e.copy(rememberSubscription = objectValue.bool(field))
+                            "keepScanning" -> e.copy(keepScanning = objectValue.bool(field))
+                            "recordAdvertisements" -> e.copy(recordAdvertisements = objectValue.bool(field))
+                            "sendBluetoothAddress" -> e.copy(sendBluetoothAddress = objectValue.bool(field))
+                            "bluetoothAddress" -> e.copy(bluetoothAddress = objectValue.string(field))
+                            else -> { ignored.add("experimental.$field"); e }
+                        }
+                    } catch (_: Exception) { errors.putIfAbsent("experimental.$field", "invalid") }
+                    s = s.copy(experimental = e)
+                }
                 "developer" -> {
                     val j = j.getJSONObject(key)
                     for (key in j.keys().asSequence().toList()) try {
@@ -253,6 +280,7 @@ object UserConfigCodec {
             }
         } catch (_: Exception) { errors.putIfAbsent(key, "invalid") }
         fun check(key: String, test: () -> Unit) { try { test() } catch (_: Exception) { errors.putIfAbsent(key, "invalid") } }
+        check("experimental.bluetoothAddress") { require(!s.experimental.invalidAddress) }
         check("fps") { require(s.fps in 30..60 && s.fps % 5 == 0) }
         check("receiverPort") { require(s.webPort?.let { it in 1024..65535 } != false) }
         check("iphone") { require(s.iphoneAddress == null || Regex("[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}").matches(s.iphoneAddress!!)) }
@@ -285,10 +313,13 @@ object UserConfigCodec {
         // Run the same full validation and incomplete-network allowance as the editor.
         if (errors.isEmpty()) check("settings") { s.validate(useWireless, allowEmptySharedWifi = true); d.effectiveSettings(s).validate(useWireless, allowEmptySharedWifi = true) }
         val after = values(s, d)
-        var changed = before.keys().asSequence().filter { it != "developer" }.count { before.get(it).toString() != after.get(it).toString() }
+        var changed = before.keys().asSequence().filter { it !in setOf("developer", "experimental") }.count { before.get(it).toString() != after.get(it).toString() }
         val oldDev = before.getJSONObject("developer")
         val newDev = after.getJSONObject("developer")
         changed += oldDev.keys().asSequence().count { oldDev.get(it).toString() != newDev.get(it).toString() }
+        val oldExperimental = before.getJSONObject("experimental")
+        val newExperimental = after.getJSONObject("experimental")
+        changed += oldExperimental.keys().asSequence().count { oldExperimental.get(it).toString() != newExperimental.get(it).toString() }
         return if (errors.isEmpty()) UserConfigImport(s, d, changed, ignored.sorted(), errors)
         else UserConfigImport(current, choices, 0, ignored.sorted(), errors)
     }

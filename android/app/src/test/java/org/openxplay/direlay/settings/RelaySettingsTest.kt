@@ -635,4 +635,32 @@ class RelaySettingsTest {
         context.getSharedPreferences("direlay", android.content.Context.MODE_PRIVATE).edit().putBoolean("requirePairingCode", true).commit()
         assertEquals(before, RelaySettingsStore(context).load())
     }
+    @Test fun experimentalDefaultsDoNotWritePreferencesAndParkedChoicesPersistUnderTheirOwnKeys() {
+        store.use { store ->
+            val initial = store.load()
+            val prefs = context.getSharedPreferences("direlay", 0)
+            assertEquals(ExperimentalOptions(), initial.experimental)
+            assertTrue(prefs.all.keys.none { it.startsWith("experimental.") })
+            store.save(initial.copy(autoStartOnBoot = !initial.autoStartOnBoot))
+            assertTrue(prefs.all.keys.none { it.startsWith("experimental.") })
+            val choices = ExperimentalOptions(active = false, rememberSubscription = true, keepScanning = true,
+                recordAdvertisements = true, sendBluetoothAddress = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
+            store.save(store.load().copy(experimental = choices))
+            RelaySettingsStore(context).use { assertEquals(choices, it.load().experimental) }
+            assertEquals(false, prefs.getBoolean("experimental.active", true))
+            assertEquals(true, prefs.getBoolean("experimental.rememberSubscription", false))
+            assertEquals(true, prefs.getBoolean("experimental.keepScanning", false))
+            assertEquals(true, prefs.getBoolean("experimental.recordAdvertisements", false))
+            assertEquals(true, prefs.getBoolean("experimental.sendBluetoothAddress", false))
+            assertEquals(choices.bluetoothAddress, prefs.getString("experimental.bluetoothAddress", null))
+            val writes = mutableListOf<String>()
+            val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key -> key?.let(writes::add) }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            try {
+                store.save(store.load().copy(autoStartOnBoot = initial.autoStartOnBoot))
+                assertTrue(writes.none { it.startsWith("experimental.") })
+            } finally { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+    }
+
 }

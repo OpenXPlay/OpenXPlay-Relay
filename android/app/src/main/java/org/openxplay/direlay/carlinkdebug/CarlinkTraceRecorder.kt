@@ -63,7 +63,9 @@ class CarlinkTraceRecorder(private val directory: File, private val mirror: (Str
                 if (ring.size == ringSize) ring.removeFirst()
                 ring.addLast(TraceLine(type, line))
             }
-            runCatching { LogcatLines.split(line).forEach { mirror(it) } }
+            // Raw advertisement records (experimental) stay in the trace file/UI; they would flood logcat.
+            if (event !is ClinkTraceEvent.Link || event.stage !in setOf("ble_raw", "ble_raw_dropped", "ble_raw_failed", "ble_raw_skipped"))
+                runCatching { LogcatLines.split(line).forEach { mirror(it) } }
             val bytes = line.toByteArray(Charsets.UTF_8).size + 1
             if (writer == null || size + bytes > maxBytes && size > 0) rotate()
             writer!!.apply { write(line); newLine(); flush() }; size += bytes

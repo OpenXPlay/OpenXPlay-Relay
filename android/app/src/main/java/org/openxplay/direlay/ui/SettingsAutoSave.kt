@@ -20,6 +20,7 @@ fun settingsErrors(value: RelaySettings, wireless: Boolean, allowEmptySharedWifi
         WirelessNetworkChoice.EXISTING_WIFI -> if (!allowEmptySharedWifi && value.wirelessNetwork.sharedWifiNetworks.isEmpty()) put("ssid", R.string.shared_wifi_empty)
         else -> Unit
     }
+    if (value.experimental.invalidAddress) put("experimental.bluetoothAddress", R.string.experimental_address_error)
     if (value.carlinkDeviceName.isBlank() || value.carlinkDeviceName.toByteArray(Charsets.UTF_8).size > 128 ||
         value.carlinkDeviceName.any { Character.isISOControl(it) }) put("name", R.string.settings_name_error)
     if (runCatching { value.wirelessPictureSize.validate() }.isFailure) put("wirelessPictureSize", R.string.settings_advanced_error)
@@ -44,6 +45,7 @@ class SettingsAutoSave(initial: RelaySettings, private val publish: (RelaySettin
 
 /** Validate groups against the last valid draft so one invalid page cannot hide another page's error. */
 fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (RelaySettings) -> Boolean): Set<String> = buildSet {
+    if (value.experimental.invalidAddress) add("experimental")
     fun check(page: String, candidate: RelaySettings) {
         if (settingsSaveErrors(candidate, wireless(candidate)).isNotEmpty()) add(page)
     }

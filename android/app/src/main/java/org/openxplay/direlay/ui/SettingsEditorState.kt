@@ -67,6 +67,10 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
         draft.value = next.effectiveSettings(draft.value)
     }
 
+    fun changeExperimental(change: (ExperimentalOptions) -> ExperimentalOptions) {
+        draft.value = draft.value.copy(experimental = change(draft.value.experimental))
+    }
+
     /** Field text errors belong to that field; the typed draft contains only parsed values. */
     fun editNumber(key: String, text: String, valid: (String) -> Boolean, change: (String) -> Unit) {
         numberText[key] = text

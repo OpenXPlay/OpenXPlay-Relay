@@ -94,6 +94,7 @@ data class RelaySettings(
     val wirelessPicture: WirelessPictureMode = WirelessPictureMode.AUTO,
     val wirelessPictureSize: WirelessPictureSize = WirelessPictureSize(),
     val miracastStretch: Boolean = false,
+    val experimental: ExperimentalOptions = ExperimentalOptions(),
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false,
         phoneAddresses: Set<String> = emptySet()) {
@@ -264,6 +265,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             wirelessPictureSize = WirelessPictureSize(relay.getInt("wirelessPictureWidth", 1280), relay.getInt("wirelessPictureHeight", 720))
                 .takeIf { runCatching { it.validate() }.isSuccess } ?: WirelessPictureSize(),
             miracastStretch = relay.getBoolean("miracastStretch", false),
+            experimental = loadExperimentalOptions(),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
@@ -385,7 +387,26 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             edit.putInt("displayWidth", it.width).putInt("displayHeight", it.height).putInt("displayDensity", it.density)
         }
         writeDeveloperOverrides(edit, choices)
+        if (settings.experimental != current.experimental) writeExperimentalOptions(edit, settings.experimental)
         edit.apply()
+    }
+
+    private fun loadExperimentalOptions() = ExperimentalOptions(
+        active = relay.getBoolean("experimental.active", false),
+        rememberSubscription = relay.getBoolean("experimental.rememberSubscription", false),
+        keepScanning = relay.getBoolean("experimental.keepScanning", false),
+        recordAdvertisements = relay.getBoolean("experimental.recordAdvertisements", false),
+        sendBluetoothAddress = relay.getBoolean("experimental.sendBluetoothAddress", false),
+        bluetoothAddress = relay.getString("experimental.bluetoothAddress", "").orEmpty(),
+    )
+
+    private fun writeExperimentalOptions(edit: android.content.SharedPreferences.Editor, value: ExperimentalOptions) {
+        edit.putBoolean("experimental.active", value.active)
+            .putBoolean("experimental.rememberSubscription", value.rememberSubscription)
+            .putBoolean("experimental.keepScanning", value.keepScanning)
+            .putBoolean("experimental.recordAdvertisements", value.recordAdvertisements)
+            .putBoolean("experimental.sendBluetoothAddress", value.sendBluetoothAddress)
+            .putString("experimental.bluetoothAddress", value.bluetoothAddress)
     }
 
     private fun loadDeveloperOverrides(stored: RelaySettings): DeveloperOverrides {

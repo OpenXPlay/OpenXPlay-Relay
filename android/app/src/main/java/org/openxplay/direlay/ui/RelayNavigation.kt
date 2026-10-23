@@ -13,7 +13,7 @@ data class RelayBackStack(val entries: List<String> = listOf("home")) {
         val parents = relayRouteParents(route)
         if (parents.isEmpty() && route != "settings") return copy(entries = entries + route)
         // Replace the current menu branch while retaining the screen that opened Settings.
-        val root = entries.indexOfFirst { it == "settings" || it.startsWith("settings/") || it.startsWith("developer") }
+        val root = entries.indexOfFirst { it == "settings" || it.startsWith("settings/") || it.startsWith("developer") || it == "experimental" }
         val prefix = if (root >= 0) entries.take(root) else entries
         val retainedParents = parents.mapIndexed { index, parent ->
             entries.getOrNull(prefix.size + index)?.takeIf { it.substringBefore('#') == parent } ?: parent
@@ -46,6 +46,7 @@ fun relayRoute(entry: String): String = when {
         "identity" -> "settings/identity"
         "about" -> "settings/about"
         "developer" -> "developer"
+        "experimental" -> "experimental"
         else -> "settings"
     }
     entry == "publicName" -> "settings/access/publicName"
@@ -58,7 +59,7 @@ fun relayRouteParents(route: String): List<String> = when (route.substringBefore
     "settings" -> emptyList()
     "settings/connection/network" -> listOf("settings", "settings/connection")
     "settings/access/publicName" -> listOf("settings", "settings/access")
-    "developer" -> listOf("settings")
+    "developer", "experimental" -> listOf("settings")
     else -> when {
         route.startsWith("developer/") -> listOf("settings", "developer")
         route.startsWith("settings/") -> listOf("settings")
@@ -66,10 +67,10 @@ fun relayRouteParents(route: String): List<String> = when (route.substringBefore
     }
 }
 
-fun settingsSessionActive(entries: List<String>) = entries.any { it.startsWith("settings") || it.startsWith("developer") }
+fun settingsSessionActive(entries: List<String>) = entries.any { it.startsWith("settings") || it.startsWith("developer") || it == "experimental" }
 
 fun firstSettingsErrorPage(errors: Set<String>) = listOf("settings/output", "settings/connection/network",
-    "settings/identity", "developer/video", "developer/connection").firstOrNull { it in errors } ?: "settings"
+    "settings/identity", "developer/video", "developer/connection", "experimental").firstOrNull { it in errors } ?: "settings"
 
 fun showsDeveloperDiagnostics(route: String) = route in setOf("developer", "developer/diagnostics", "developer/carlink", "settings/identity")
 

@@ -103,4 +103,23 @@ class SettingsEditorStateTest {
         assertTrue(state.draft.value.carBluetoothAudio)
         assertTrue(state.errorPages { false }.isEmpty())
     }
+    @Test fun experimentalAddressErrorsFollowThePageAndMasterOffRetainsChoices() {
+        val state = editor()
+        state.synchronize(initial, true)
+        state.changeExperimental { it.copy(active = true, keepScanning = true, sendBluetoothAddress = true, bluetoothAddress = "bad") }
+        assertEquals(setOf("experimental"), state.errorPages { false })
+        assertTrue(settingsSaveErrors(state.draft.value, false).containsKey("experimental.bluetoothAddress"))
+        val stack = RelayBackStack().open("experimental").open("settings/startup")
+        state.synchronize(initial, settingsSessionActive(stack.entries))
+        assertEquals("bad", state.draft.value.experimental.bluetoothAddress)
+        state.changeExperimental { it.copy(active = false) }
+        assertTrue(state.errorPages { false }.isEmpty())
+        assertTrue(state.draft.value.experimental.keepScanning)
+        assertTrue(state.draft.value.experimental.sendBluetoothAddress)
+        assertEquals(ExperimentalOptions(), state.draft.value.experimental.effective())
+        state.changeExperimental { it.copy(active = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5") }
+        assertTrue(state.errorPages { false }.isEmpty())
+        assertNull(settingsFeedback(initial, state.draft.value, carlinkConnected = true, running = true))
+    }
+
 }
