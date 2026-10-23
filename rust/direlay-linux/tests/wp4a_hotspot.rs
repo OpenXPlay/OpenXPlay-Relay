@@ -95,8 +95,10 @@ fn temp() -> PathBuf {
     p
 }
 fn manager(p: &std::path::Path, runner: Arc<Fake>) -> LinuxHotspot {
-    LinuxHotspot::new(p.into(), runner, "wlan0".into(), 36)
-        .with_runtime_dirs(p.join("nm-keyfiles"), p.join("dnsmasq-shared.d"))
+    LinuxHotspot::new(p.into(), runner, "wlan0".into(), 36).with_runtime_dirs(
+        p.join("nm-keyfiles"),
+        openxplay_relay::public_name::local_dns::Paths::in_dir(p.join("dnsmasq-shared.d")),
+    )
 }
 #[test]
 fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_ap() {
@@ -328,9 +330,9 @@ fn shared_wifi_restart_recreates_attachment_without_disconnect() {
     let platform = || {
         LinuxWirelessPlatform::new(
             options.clone(),
-            openxplay_relay::host_backends::HostBackends::linux(
+            openxplay_relay::host_backends::HostBackends::linux_with_runtime_paths(
                 &options,
-                runner.clone(),
+                openxplay_relay::runtime_paths::RuntimePaths::in_state_dir(&p, runner.clone()),
                 events.clone(),
             ),
             state.identity().unwrap(),
@@ -580,9 +582,9 @@ fn ufi003_resolves_before_activation_without_attempting_five_ghz() {
     let wifi = cache.wifi("wlan0");
     let hotspot = device_preset::resolve_hotspot("auto", 36, "msm8916", wifi.capabilities.as_ref());
     let options = Options::parse(&["--state-dir".into(), p.to_str().unwrap().into()]).unwrap();
-    let backends = HostBackends::linux(
+    let backends = HostBackends::linux_with_runtime_paths(
         &options,
-        runner.clone(),
+        openxplay_relay::runtime_paths::RuntimePaths::in_state_dir(&p, runner.clone()),
         Arc::new(JsonEvents::new(Arc::new(|_| {}))),
     );
     let manager = backends.access_point.access_point(AccessPointConfig {

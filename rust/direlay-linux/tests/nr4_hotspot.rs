@@ -67,7 +67,10 @@ fn root() -> PathBuf {
 }
 fn admin(root: &std::path::Path, runner: Arc<Runner>) -> LinuxHotspot {
     LinuxHotspot::new(root.into(), runner, "wlan9".into(), 165)
-        .with_runtime_dirs(root.join("nm-keyfiles"), root.join("dnsmasq-shared.d"))
+        .with_runtime_dirs(
+            root.join("nm-keyfiles"),
+            openxplay_relay::public_name::local_dns::Paths::in_dir(root.join("dnsmasq-shared.d")),
+        )
         .with_admin(
             "02:00:00:00:00:09".into(),
             AccessPointRequest {

@@ -205,6 +205,7 @@ pub struct WifiProvisioner<C: NetworkManagerCli> {
     cached_networks: Vec<WifiNetwork>,
     saved: Vec<SharedWifiNetwork>,
     carlink_held: bool,
+    local_dns: Option<crate::public_name::local_dns::Paths>,
 }
 impl<C: NetworkManagerCli> WifiProvisioner<C> {
     pub fn new(cli: C, interface: String, mac: &str, state_dir: &Path) -> io::Result<Self> {
@@ -236,6 +237,7 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             Err(e) => return Err(e),
         };
         Ok(Self {
+            local_dns: crate::runtime_paths::RuntimePaths::new(state_dir).managed_dns(),
             carlink_held: false,
             cli,
             interface,
@@ -258,6 +260,10 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             cached_networks: Vec::new(),
             saved: Vec::new(),
         })
+    }
+    pub fn with_local_dns(mut self, paths: Option<crate::public_name::local_dns::Paths>) -> Self {
+        self.local_dns = paths;
+        self
     }
     /// Only manifest UUIDs belong to the relay. Persist each successful move so retries are safe.
     fn repoint_owned(&mut self) -> io::Result<()> {
@@ -417,12 +423,13 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             }
         }
         self.status.setup_hotspot = false;
-        #[cfg(target_os = "linux")]
-        crate::public_name::local_dns::hotspot(
-            Path::new(crate::public_name::local_dns::DIR),
-            &format!("setup-{}", self.interface),
-            None,
-        )?;
+        if let Some(paths) = &self.local_dns {
+            crate::public_name::local_dns::hotspot(
+                paths,
+                &format!("setup-{}", self.interface),
+                None,
+            )?;
+        }
         Ok(())
     }
     pub fn stop(&mut self) -> io::Result<()> {
@@ -680,20 +687,22 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             });
             self.save()?;
         }
-        #[cfg(target_os = "linux")]
-        crate::public_name::local_dns::hotspot(
-            Path::new(crate::public_name::local_dns::DIR),
-            &format!("setup-{}", self.interface),
-            Some(std::net::Ipv4Addr::new(10, 78, 0, 1)),
-        )?;
-        let activation = self.up(&self.owned.ap.as_ref().unwrap().uuid);
-        #[cfg(target_os = "linux")]
-        if activation.is_err() {
-            let _ = crate::public_name::local_dns::hotspot(
-                Path::new(crate::public_name::local_dns::DIR),
+        if let Some(paths) = &self.local_dns {
+            crate::public_name::local_dns::hotspot(
+                paths,
                 &format!("setup-{}", self.interface),
-                None,
-            );
+                Some(std::net::Ipv4Addr::new(10, 78, 0, 1)),
+            )?;
+        }
+        let activation = self.up(&self.owned.ap.as_ref().unwrap().uuid);
+        if activation.is_err() {
+            if let Some(paths) = &self.local_dns {
+                let _ = crate::public_name::local_dns::hotspot(
+                    paths,
+                    &format!("setup-{}", self.interface),
+                    None,
+                );
+            }
         }
         activation?;
         self.status = WifiClient {

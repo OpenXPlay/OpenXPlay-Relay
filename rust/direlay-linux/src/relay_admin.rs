@@ -20,6 +20,7 @@ use std::{
 };
 #[path = "carlink_follow.rs"]
 pub(crate) mod carlink_follow;
+use crate::runtime_paths::InventoryRefresh;
 use carlink_follow::CarlinkFollow;
 type Provision = Box<dyn crate::host_backends::StationBackend>;
 /// The admin page opens Bluetooth pairing for ten minutes.
@@ -125,6 +126,7 @@ pub struct LinuxRelayAdmin {
     backends: crate::host_backends::HostBackends,
     capabilities: Arc<crate::host_capabilities::CapabilityCache>,
     inventory: Arc<crate::net_inventory::InventoryCache>,
+    runtime: crate::runtime_paths::RuntimePaths,
     admin_hotspot: Arc<crate::admin_hotspot::AdminHotspot>,
     wifi_country: crate::wifi_country::WifiCountry,
     automatic_choices: Mutex<crate::network_roles::AutomaticChoices>,
@@ -192,15 +194,19 @@ impl LinuxRelayAdmin {
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
     ) -> Result<Self> {
-        let backends = crate::host_backends::HostBackends::linux(
+        let runtime = crate::runtime_paths::RuntimePaths::new(&options.state_dir);
+        let backends = crate::host_backends::HostBackends::linux_with_runtime_paths(
             &options,
-            Arc::new(ProcessCommandRunner::new()),
+            runtime.clone(),
             events.clone(),
         );
-        let provision = match std::fs::read_to_string(format!(
-            "/sys/class/net/{}/address",
-            options.wifi_interface
-        )) {
+        let provision = match std::fs::read_to_string(
+            runtime
+                .root
+                .join("sys/class/net")
+                .join(&options.wifi_interface)
+                .join("address"),
+        ) {
             Ok(mac) => Some(backends.station.saved(
                 &options.wifi_interface,
                 mac.trim(),
@@ -209,7 +215,7 @@ impl LinuxRelayAdmin {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(e),
         };
-        let admin = Self::with_host_backends(options, state, events, provision, backends)?;
+        let admin = Self::with_host_backends(options, state, events, provision, backends, runtime)?;
         // Without BlueZ changes the controller's Bluetooth waits only poll.
         let signals = crate::linux_bluetooth::BluezSignals::new(admin.events.clone());
         if let Err(e) = admin.bluetooth_wake.listen(&signals) {
@@ -225,8 +231,10 @@ impl LinuxRelayAdmin {
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
         provision: WifiProvisioner<ProcessNetworkManagerCli>,
+        runtime: crate::runtime_paths::RuntimePaths,
     ) -> Result<Self> {
-        Self::with_optional_provisioner(options, state, events, Some(Box::new(provision)))
+        let provision = provision.with_local_dns(runtime.managed_dns());
+        Self::with_optional_provisioner(options, state, events, Some(Box::new(provision)), runtime)
     }
     #[cfg(test)]
     fn with_optional_provisioner(
@@ -234,13 +242,14 @@ impl LinuxRelayAdmin {
         state: Arc<PersistentState>,
         events: Arc<JsonEvents>,
         provision: Option<Provision>,
+        runtime: crate::runtime_paths::RuntimePaths,
     ) -> Result<Self> {
-        let backends = crate::host_backends::HostBackends::linux(
+        let backends = crate::host_backends::HostBackends::linux_with_runtime_paths(
             &options,
-            Arc::new(ProcessCommandRunner::new()),
+            runtime.clone(),
             events.clone(),
         );
-        Self::with_host_backends(options, state, events, provision, backends)
+        Self::with_host_backends(options, state, events, provision, backends, runtime)
     }
     fn with_host_backends(
         options: Options,
@@ -248,6 +257,7 @@ impl LinuxRelayAdmin {
         events: Arc<JsonEvents>,
         provision: Option<Provision>,
         backends: crate::host_backends::HostBackends,
+        runtime: crate::runtime_paths::RuntimePaths,
     ) -> Result<Self> {
         let input = Arc::new(DiPlayInput::with_plugins(
             events.clone(),
@@ -300,14 +310,14 @@ impl LinuxRelayAdmin {
             options.host_profile.profile.bluetooth_adapter.clone(),
         );
         let capabilities = Arc::new(crate::host_capabilities::CapabilityCache::new(
-            Arc::new(ProcessCommandRunner::new()),
-            "/".into(),
+            runtime.runner.clone(),
+            runtime.root.clone(),
             selection.clone(),
         ));
         let sc_backend = backends.bluetooth.clone();
         let secure_connections = Arc::new(
             crate::secure_connections::SecureConnections::new(
-                Arc::new(ProcessCommandRunner::new()),
+                runtime.runner.clone(),
                 events.clone(),
             )
             .with_control(backends.bluetooth.clone())
@@ -320,23 +330,26 @@ impl LinuxRelayAdmin {
         );
         let public_name = Arc::new(crate::public_name::PublicNameService::new(
             &options.state_dir,
-            crate::public_name::Network::internet(),
+            crate::public_name::Network::internet(runtime.managed_dns()),
         ));
-        let inventory = Arc::new(crate::net_inventory::InventoryCache::new(
-            Arc::new(ProcessCommandRunner::new()),
-            "/".into(),
-        ));
-        #[cfg(target_os = "linux")]
-        inventory.refresh();
+        let inventory = Arc::new(
+            crate::net_inventory::InventoryCache::new(runtime.runner.clone(), runtime.root.clone())
+                .with_addresses(runtime.addresses.clone())
+                .with_refresh(runtime.inventory_refresh != InventoryRefresh::Manual),
+        );
+        if runtime.inventory_refresh == InventoryRefresh::Automatic {
+            inventory.refresh();
+        }
         Ok(Self {
-            admin_hotspot: Arc::new(crate::admin_hotspot::AdminHotspot::new(
-                options.state_dir.clone(),
-                Duration::from_secs(options.hotspot_down_gap_seconds()),
-                Arc::new(ProcessCommandRunner::new()),
-            )),
-            wifi_country: crate::wifi_country::WifiCountry::new(Arc::new(
-                ProcessCommandRunner::new(),
-            )),
+            admin_hotspot: Arc::new(
+                crate::admin_hotspot::AdminHotspot::new(
+                    options.state_dir.clone(),
+                    Duration::from_secs(options.hotspot_down_gap_seconds()),
+                    runtime.runner.clone(),
+                )
+                .with_runtime_paths(runtime.clone()),
+            ),
+            wifi_country: crate::wifi_country::WifiCountry::new(runtime.runner.clone()),
             inventory,
             automatic_choices: Mutex::default(),
             running_links: Mutex::new(None),
@@ -352,7 +365,8 @@ impl LinuxRelayAdmin {
             capabilities,
             secure_connections,
             provision_interface: Mutex::new(options.wifi_interface.clone()),
-            net_root: "/sys/class/net".into(),
+            net_root: runtime.root.join("sys/class/net"),
+            runtime,
             options,
             settings: Mutex::new(settings.clone()),
             state,
@@ -589,11 +603,8 @@ impl LinuxRelayAdmin {
     }
     fn start_services_with_probe_timeout(self: &Arc<Self>, timeout: Duration) -> Result<()> {
         self.apply_wifi_country();
-        #[cfg(target_os = "linux")]
-        {
-            crate::public_name::local_dns::reset(std::path::Path::new(
-                crate::public_name::local_dns::DIR,
-            ))?;
+        if self.runtime.network_services {
+            crate::public_name::local_dns::reset(&self.runtime.local_dns)?;
             self.admin_hotspot.prepare()?;
         }
         self.inventory.wait_for_probe(timeout);
@@ -666,12 +677,12 @@ impl LinuxRelayAdmin {
             self.reconcile_carlink_network()?;
         }
         self.input.set_plugins_enabled(o.settings.plugins);
-        let addresses = crate::linux_hotspot::interface_addresses()?
+        let addresses = (self.runtime.addresses)()?
             .into_iter()
             .filter(|(_, a, _)| !a.is_loopback())
             .map(|(_, a, _)| a)
             .collect::<Vec<_>>();
-        let occupied = crate::linux_hotspot::interface_addresses()?
+        let occupied = (self.runtime.addresses)()?
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
             .collect::<Vec<_>>();
@@ -699,7 +710,7 @@ impl LinuxRelayAdmin {
         };
         let station_5ghz = ble
             && crate::linux_hotspot::supports_5ghz(
-                &ProcessCommandRunner::new(),
+                self.runtime.runner.as_ref(),
                 o.carlink_interface(),
             );
         let shared_phy =
@@ -752,9 +763,10 @@ impl LinuxRelayAdmin {
         let trace_status = self.trace_status.clone();
         let hotspot = self.hotspot_lifetime.clone();
         let admin_hotspot = self.admin_hotspot.clone();
+        let addresses = self.runtime.addresses.clone();
         let event_sink: EventSink = Arc::new(move |mut event| {
             if event["type"] == "pairing-url" {
-                let rows = crate::linux_hotspot::interface_addresses().unwrap_or_default();
+                let rows = addresses().unwrap_or_default();
                 if let Some(target) = browser_target.lock().unwrap().as_deref() {
                     prefer_pairing_address(&mut event, target, &rows);
                 }
@@ -1101,7 +1113,7 @@ impl LinuxRelayAdmin {
         let carplay_hotspot = !following_carlink
             && options.settings.network_mode == "device-hotspot"
             && self.controller.lock().unwrap().is_some();
-        let mut addresses = crate::linux_hotspot::interface_addresses()?
+        let mut addresses = (self.runtime.addresses)()?
             .into_iter()
             .filter(|(i, a, _)| {
                 !a.is_loopback() && (!carplay_hotspot || i != &options.wifi_interface)
@@ -1152,7 +1164,7 @@ impl LinuxRelayAdmin {
     /// address in shared-Wi-Fi mode.
     fn head_unit_address(&self) -> Option<std::net::Ipv4Addr> {
         let (options, status) = self.effective_options_with_status().ok()?;
-        let addresses = crate::linux_hotspot::interface_addresses().unwrap_or_default();
+        let addresses = (self.runtime.addresses)().unwrap_or_default();
         let iphone = self
             .controller
             .lock()
@@ -1242,8 +1254,9 @@ impl LinuxRelayAdmin {
         }
     }
     pub fn tick(&self) -> Result<()> {
-        #[cfg(target_os = "linux")]
-        self.inventory.refresh();
+        if self.runtime.inventory_refresh == InventoryRefresh::Automatic {
+            self.inventory.refresh();
+        }
         self.apply_public_name();
         let playing = self.carlink.lock().unwrap().state == "playing";
         if self.input.display.lock().unwrap().resize.reconnect(playing) {
@@ -1375,12 +1388,13 @@ impl LinuxRelayAdmin {
                 let public_name = self.public_name.clone();
                 let target = self.browser_target.clone();
                 let iphone = self.effective_options()?.wifi_interface;
+                let addresses = self.runtime.addresses.clone();
                 Arc::new(move |address| {
                     let target = target.lock().unwrap();
                     let selected = if target.as_deref() == Some(&iphone) {
                         Some(address)
                     } else {
-                        crate::linux_hotspot::interface_addresses()
+                        addresses()
                             .unwrap_or_default()
                             .iter()
                             .find(|(name, _, _)| Some(name) == target.as_ref())
@@ -2047,12 +2061,12 @@ impl RelayAdmin for LinuxRelayAdmin {
             video: self.input.video_status(),
             hotspot,
             wifi_control: true,
-            host_addresses: crate::linux_hotspot::interface_addresses()
+            host_addresses: (self.runtime.addresses)()
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|(interface, a, _)| {
                     let flags =
-                        std::fs::read_to_string(format!("/sys/class/net/{interface}/flags"))
+                        std::fs::read_to_string(self.net_root.join(interface).join("flags"))
                             .ok()
                             .and_then(|flags| {
                                 u32::from_str_radix(flags.trim().trim_start_matches("0x"), 16).ok()
@@ -2753,6 +2767,23 @@ mod tests {
         assert!(!a.apply_pending.load(Ordering::Acquire));
         std::fs::remove_dir_all(dir).unwrap();
     }
+    struct RuntimeRunner;
+    impl CommandRunner for RuntimeRunner {
+        fn run(&self, _: &[String], _: Duration) -> Result<CommandResult> {
+            Ok(CommandResult {
+                exit_code: 0,
+                output: String::new(),
+            })
+        }
+    }
+    fn runtime_paths(dir: &std::path::Path) -> crate::runtime_paths::RuntimePaths {
+        let mut paths =
+            crate::runtime_paths::RuntimePaths::in_state_dir(dir, Arc::new(RuntimeRunner));
+        // Most admin tests supply inventory snapshots, including the initial probing state.
+        paths.inventory_refresh = InventoryRefresh::Manual;
+        paths.local_dns.hosts = dir.join("run/hotspot-hosts");
+        paths
+    }
     fn fake() -> (Arc<LinuxRelayAdmin>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "wp4a-admin-{}",
@@ -2771,12 +2802,105 @@ mod tests {
             &dir,
         )
         .unwrap();
-        let mut admin =
-            LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap();
+        let mut admin = LinuxRelayAdmin::with_provisioner(
+            options,
+            state,
+            events,
+            provision,
+            runtime_paths(&dir),
+        )
+        .unwrap();
         admin.net_root = dir.join("present-net");
         std::fs::create_dir_all(admin.net_root.join("wlan0")).unwrap();
         std::fs::write(admin.net_root.join("wlan0/address"), "02:00:00:00:00:01").unwrap();
         (Arc::new(admin), dir)
+    }
+    #[test]
+    fn runtime_paths_isolate_startup_dns_and_inventory_refresh() {
+        struct Runner(Mutex<Vec<Vec<String>>>);
+        impl CommandRunner for Runner {
+            fn run(&self, args: &[String], _: Duration) -> Result<CommandResult> {
+                self.0.lock().unwrap().push(args.to_vec());
+                Ok(CommandResult {
+                    exit_code: 0,
+                    output: String::new(),
+                })
+            }
+        }
+        let (old, dir) = fake();
+        Settings {
+            auto_start: false,
+            ..Default::default()
+        }
+        .save(&dir)
+        .unwrap();
+        let runner = Arc::new(Runner(Mutex::default()));
+        let mut runtime = runtime_paths(&dir);
+        runtime.runner = runner.clone();
+        runtime.inventory_refresh = InventoryRefresh::Automatic;
+        let net = runtime.root.join("sys/class/net");
+        let add_interface = |name: &str| {
+            let path = net.join(name);
+            let device = runtime.root.join("sys/devices").join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::create_dir_all(&device).unwrap();
+            std::os::unix::fs::symlink(device, path.join("device")).unwrap();
+            std::fs::write(path.join("type"), "1\n").unwrap();
+            std::fs::write(path.join("address"), "02:00:00:00:00:09\n").unwrap();
+        };
+        add_interface("eth9");
+        let mut a = Arc::new(
+            LinuxRelayAdmin::with_optional_provisioner(
+                old.options.clone(),
+                old.state.clone(),
+                old.events.clone(),
+                None,
+                runtime.clone(),
+            )
+            .unwrap(),
+        );
+        drop(old);
+        let _children = link_children(&mut a);
+        assert!(a.inventory.wait_for_probe(Duration::from_secs(2)));
+        assert_eq!(a.inventory.get().interfaces[0].name, "eth9");
+        crate::public_name::local_dns::hotspot(
+            &runtime.local_dns,
+            "stale",
+            Some("10.79.0.1".parse().unwrap()),
+        )
+        .unwrap();
+        a.start_services_with_probe_timeout(Duration::from_secs(2))
+            .unwrap();
+        await_startup(&a);
+        assert_eq!(std::fs::read(&runtime.local_dns.hosts).unwrap(), b"");
+        assert!(!crate::public_name::local_dns::path(&runtime.local_dns.dir).exists());
+        assert!(runner.0.lock().unwrap().iter().any(|args| args
+            == &[
+                "nmcli",
+                "-t",
+                "-f",
+                "NAME,UUID,ACTIVE",
+                "connection",
+                "show"
+            ]));
+        add_interface("eth8");
+        a.tick().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while a.inventory.get().interfaces.len() != 2 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            a.inventory
+                .get()
+                .interfaces
+                .iter()
+                .map(|i| i.name.as_str())
+                .collect::<Vec<_>>(),
+            ["eth8", "eth9"]
+        );
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn trace_control_clear_off_running_and_busy_supervisor() {
@@ -2941,7 +3065,14 @@ mod tests {
         let events = a.events.clone();
         drop(a);
         let mut a = Arc::new(
-            LinuxRelayAdmin::with_optional_provisioner(options, state, events, None).unwrap(),
+            LinuxRelayAdmin::with_optional_provisioner(
+                options,
+                state,
+                events,
+                None,
+                runtime_paths(&dir),
+            )
+            .unwrap(),
         );
         let _children = link_children(&mut a);
         assert!(!a.desired.load(Ordering::Acquire));
@@ -3237,11 +3368,16 @@ mod tests {
             a.child_factory = outputs.clone();
             a.net_root = dir.join("net");
             a.backends.station = crate::host_backends::station_with_cli(
-                Arc::new(ProcessCommandRunner::new()),
+                a.runtime.runner.clone(),
                 "/usr/bin/true".into(),
+                a.runtime.clone(),
             );
             *a.provision.lock().unwrap() = None;
         }
+        a.inventory.set(crate::net_inventory::Inventory {
+            probed_at: Some(1),
+            ..Default::default()
+        });
         a.start_supervisor().unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while outputs.launches.lock().unwrap().is_empty() {
@@ -3330,8 +3466,14 @@ mod tests {
             let state = a.state.clone();
             let events = a.events.clone();
             drop(a);
-            let a =
-                LinuxRelayAdmin::with_optional_provisioner(options, state, events, None).unwrap();
+            let a = LinuxRelayAdmin::with_optional_provisioner(
+                options,
+                state,
+                events,
+                None,
+                runtime_paths(&dir),
+            )
+            .unwrap();
             assert_eq!(a.settings().values["wifiInterface"], "wlan7");
             assert_eq!(a.settings().values["hotspotChannel"], 11);
             assert!(matches!(
@@ -3457,8 +3599,14 @@ mod tests {
             &dir,
         )
         .unwrap();
-        let mut admin =
-            LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap();
+        let mut admin = LinuxRelayAdmin::with_provisioner(
+            options,
+            state,
+            events,
+            provision,
+            runtime_paths(&dir),
+        )
+        .unwrap();
         admin.net_root = dir.join("present-net");
         std::fs::create_dir_all(admin.net_root.join("wlan0")).unwrap();
         std::fs::write(admin.net_root.join("wlan0/address"), "02:00:00:00:00:01").unwrap();
@@ -3605,7 +3753,8 @@ esac
                     "AA:BB:CC:DD:EE:FF",
                     &dir,
                 )
-                .unwrap(),
+                .unwrap()
+                .with_local_dns(a.runtime.managed_dns()),
             ));
             {
                 let mut settings = a.settings.lock().unwrap();
@@ -4845,7 +4994,14 @@ esac
             &dir,
         )
         .unwrap();
-        let guarded = LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap();
+        let guarded = LinuxRelayAdmin::with_provisioner(
+            options,
+            state,
+            events,
+            provision,
+            runtime_paths(&dir),
+        )
+        .unwrap();
         assert!(serde_json::to_value(guarded.status())
             .unwrap()
             .get("bluetoothGuard")

@@ -356,7 +356,7 @@ pub struct LinuxHotspot {
     before_activation: Option<crate::host_backends::BeforeActivation>,
     admin: Option<(String, crate::host_backends::AccessPointRequest)>,
     keyfile_dir: PathBuf,
-    dns_dir: PathBuf,
+    dns: crate::public_name::local_dns::Paths,
     resolution: Option<(
         Arc<crate::host_capabilities::CapabilityCache>,
         crate::device_preset::HotspotResolution,
@@ -369,17 +369,10 @@ impl LinuxHotspot {
         interface: String,
         channel: u8,
     ) -> Self {
+        let paths = crate::runtime_paths::RuntimePaths::new(&state_dir);
         Self {
-            keyfile_dir: if cfg!(target_os = "linux") {
-                "/run/NetworkManager/system-connections".into()
-            } else {
-                state_dir.join("nm-keyfiles")
-            },
-            dns_dir: if cfg!(target_os = "linux") {
-                crate::public_name::local_dns::DIR.into()
-            } else {
-                state_dir.join("dnsmasq-shared.d")
-            },
+            keyfile_dir: paths.keyfiles,
+            dns: paths.local_dns,
             admin: None,
             state_dir,
             runner,
@@ -405,9 +398,13 @@ impl LinuxHotspot {
         self.admin = Some((mac, request));
         self
     }
-    pub fn with_runtime_dirs(mut self, keyfiles: PathBuf, dns: PathBuf) -> Self {
+    pub fn with_runtime_dirs(
+        mut self,
+        keyfiles: PathBuf,
+        dns: crate::public_name::local_dns::Paths,
+    ) -> Self {
         self.keyfile_dir = keyfiles;
-        self.dns_dir = dns;
+        self.dns = dns;
         self
     }
     pub fn with_resolution(
@@ -569,7 +566,7 @@ impl LinuxHotspot {
             self.wait_for_provisioning(deadline);
             self.wait_for_device(deadline);
             crate::public_name::local_dns::hotspot(
-                &self.dns_dir,
+                &self.dns,
                 &self.interface,
                 subnet.split('/').next().and_then(|s| s.parse().ok()),
             )?;
@@ -789,7 +786,7 @@ impl LinuxHotspot {
             state.connection = None;
             state.profile_loaded = false;
             state.ready = None;
-            crate::public_name::local_dns::hotspot(&self.dns_dir, &self.interface, None)?;
+            crate::public_name::local_dns::hotspot(&self.dns, &self.interface, None)?;
         }
         Ok(())
     }

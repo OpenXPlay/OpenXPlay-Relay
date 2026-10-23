@@ -86,10 +86,10 @@ pub struct Network {
     pub settle: Duration,
     /// Where NetworkManager's shared-mode dnsmasq reads extra configuration (the local DNS
     /// answer in device-hotspot mode); `None` writes nothing.
-    pub local_dns: Option<PathBuf>,
+    pub local_dns: Option<local_dns::Paths>,
 }
 impl Network {
-    pub fn internet() -> Self {
+    pub fn internet(local_dns: Option<local_dns::Paths>) -> Self {
         Self {
             http: Arc::new(UreqHttp::new(true)),
             endpoints: Endpoints::production(),
@@ -102,7 +102,7 @@ impl Network {
             acme: acme::Timing::default(),
             tick: Duration::from_secs(5),
             settle: Duration::from_secs(3),
-            local_dns: cfg!(target_os = "linux").then(|| PathBuf::from(local_dns::DIR)),
+            local_dns,
         }
     }
 }
@@ -1251,7 +1251,9 @@ mod tests {
                 },
                 tick: Duration::from_millis(20),
                 settle: Duration::from_millis(10),
-                local_dns: Some(self.state.0.join("dnsmasq-shared.d")),
+                local_dns: Some(local_dns::Paths::in_dir(
+                    self.state.0.join("dnsmasq-shared.d"),
+                )),
             }
         }
         fn write(&self, value: Value) {
@@ -1642,7 +1644,7 @@ mod tests {
         let service = PublicNameService::new(&world.state.0, world.network());
         let dir = world.state.0.join("dnsmasq-shared.d");
         let conf = local_dns::path(&dir);
-        let hosts = local_dns::hosts_path(&dir);
+        let hosts = dir.join("hotspot-hosts");
         // Off: nothing written, also when the hotspot starts.
         service.before_hotspot(Ipv4Addr::new(10, 77, 0, 1));
         assert!(!conf.exists());

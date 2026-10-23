@@ -95,6 +95,7 @@ pub mod provision;
 pub mod public_name;
 pub mod receiver_diagnostics;
 pub mod relay_admin;
+pub mod runtime_paths;
 pub mod secure_connections;
 pub mod settings;
 pub mod supervisor;

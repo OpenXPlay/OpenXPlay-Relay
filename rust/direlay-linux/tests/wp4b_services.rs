@@ -13,7 +13,7 @@ mod mdns_host;
 mod provision;
 use openxplay_relay::{
     boot_timing, device_preset, host_capabilities, network_roles, platform, plugins, public_name,
-    settings, wifi_capabilities,
+    runtime_paths, settings, wifi_capabilities,
 };
 #[path = "../src/supervisor.rs"]
 mod supervisor;
@@ -666,7 +666,11 @@ impl provision::NetworkManagerCli for FakeNm {
     }
 }
 fn provisioner(nm: FakeNm, path: &Path) -> provision::WifiProvisioner<FakeNm> {
-    provision::WifiProvisioner::new(nm, "wlan0".into(), "02:11:22:33:ab:cd", path).unwrap()
+    provision::WifiProvisioner::new(nm, "wlan0".into(), "02:11:22:33:ab:cd", path)
+        .unwrap()
+        .with_local_dns(Some(
+            openxplay_relay::public_name::local_dns::Paths::in_dir(path.join("dnsmasq-shared.d")),
+        ))
 }
 #[test]
 fn provisioning_without_config_creates_open_24ghz_ap() {

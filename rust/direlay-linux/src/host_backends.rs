@@ -189,10 +189,21 @@ impl HostBackends {
         runner: Arc<dyn CommandRunner>,
         events: Arc<JsonEvents>,
     ) -> Self {
+        let mut paths = crate::runtime_paths::RuntimePaths::new(&options.state_dir);
+        paths.runner = runner;
+        Self::linux_with_runtime_paths(options, paths, events)
+    }
+    pub fn linux_with_runtime_paths(
+        options: &Options,
+        paths: crate::runtime_paths::RuntimePaths,
+        events: Arc<JsonEvents>,
+    ) -> Self {
+        let runner = paths.runner.clone();
         let selection = AdapterSelection(options.host_profile.profile.bluetooth_adapter.clone());
         let nm = Arc::new(NetworkManagerBackend {
             runner: runner.clone(),
             station_cli: "nmcli".into(),
+            paths,
         });
         Self {
             access_point: nm.clone(),
@@ -212,15 +223,18 @@ impl HostBackends {
 struct NetworkManagerBackend {
     runner: Arc<dyn CommandRunner>,
     station_cli: PathBuf,
+    paths: crate::runtime_paths::RuntimePaths,
 }
 #[cfg(test)]
 pub(crate) fn station_with_cli(
     runner: Arc<dyn CommandRunner>,
     station_cli: PathBuf,
+    paths: crate::runtime_paths::RuntimePaths,
 ) -> Arc<dyn StationFactory> {
     Arc::new(NetworkManagerBackend {
         runner,
         station_cli,
+        paths,
     })
 }
 impl AccessPointFactory for NetworkManagerBackend {
@@ -240,7 +254,8 @@ impl AccessPointFactory for NetworkManagerBackend {
             self.runner.clone(),
             config.interface,
             config.hotspot.channel,
-        );
+        )
+        .with_runtime_dirs(self.paths.keyfiles.clone(), self.paths.local_dns.clone());
         let ap = match config.capabilities {
             Some(cache) => ap.with_resolution(cache, config.hotspot),
             None => ap,
@@ -269,14 +284,17 @@ impl AccessPointFactory for NetworkManagerBackend {
 }
 impl StationFactory for NetworkManagerBackend {
     fn saved(&self, interface: &str, mac: &str, state: &Path) -> Result<Box<dyn StationBackend>> {
-        Ok(Box::new(WifiProvisioner::new(
-            provision::ProcessNetworkManagerCli {
-                executable: self.station_cli.clone(),
-            },
-            interface.into(),
-            mac,
-            state,
-        )?))
+        Ok(Box::new(
+            WifiProvisioner::new(
+                provision::ProcessNetworkManagerCli {
+                    executable: self.station_cli.clone(),
+                },
+                interface.into(),
+                mac,
+                state,
+            )?
+            .with_local_dns(self.paths.managed_dns()),
+        ))
     }
     fn shared(
         &self,

@@ -15,6 +15,21 @@ use std::{
 pub const DIR: &str = "/etc/NetworkManager/dnsmasq-shared.d";
 pub const FILE: &str = "openxplay-public-name.conf";
 pub const HOSTS: &str = "/run/openxplay/hotspot-hosts";
+#[derive(Clone)]
+pub struct Paths {
+    pub dir: PathBuf,
+    pub hosts: PathBuf,
+    pub reload: bool,
+}
+impl Paths {
+    pub fn in_dir(dir: PathBuf) -> Self {
+        Self {
+            hosts: dir.join("hotspot-hosts"),
+            dir,
+            reload: false,
+        }
+    }
+}
 #[derive(Default)]
 struct Names {
     hotspots: BTreeMap<String, Ipv4Addr>,
@@ -23,13 +38,6 @@ struct Names {
 static NAMES: LazyLock<Mutex<BTreeMap<PathBuf, Names>>> = LazyLock::new(Mutex::default);
 pub fn path(dir: &Path) -> PathBuf {
     dir.join(FILE)
-}
-pub fn hosts_path(dir: &Path) -> PathBuf {
-    if dir == Path::new(DIR) {
-        HOSTS.into()
-    } else {
-        dir.join("hotspot-hosts")
-    }
 }
 pub fn text(hosts: &Path) -> String {
     format!("# openxplay-relay: subnet-local names on every relay hotspot.\naddn-hosts={}\nlocalise-queries\n", hosts.display())
@@ -83,10 +91,11 @@ fn atomic_write(target: &Path, text: &str) -> io::Result<bool> {
     }
     result.map(|()| true)
 }
-fn sync(dir: &Path, names: &Names) -> io::Result<()> {
-    let hosts = hosts_path(dir);
+fn sync(paths: &Paths, names: &Names) -> io::Result<()> {
+    let dir = &paths.dir;
+    let hosts = &paths.hosts;
     // Install hosts first: a new dnsmasq must never see a missing addn-hosts file.
-    let changed = atomic_write(&hosts, &hosts_text(names))?;
+    let changed = atomic_write(hosts, &hosts_text(names))?;
     if names.hotspots.is_empty()
         && names
             .public
@@ -98,16 +107,15 @@ fn sync(dir: &Path, names: &Names) -> io::Result<()> {
             _ => {}
         }
     } else {
-        atomic_write(&path(dir), &text(&hosts))?;
+        atomic_write(&path(dir), &text(hosts))?;
     }
-    if changed && dir == Path::new(DIR) {
+    if changed && paths.reload {
         reload_shared_dnsmasq();
     }
     Ok(())
 }
 /// Reload only NM's shared dnsmasq instances; addn-hosts is reread on SIGHUP.
 fn reload_shared_dnsmasq() {
-    #[cfg(target_os = "linux")]
     if let Ok(entries) = std::fs::read_dir("/proc") {
         for entry in entries.flatten() {
             let Some(pid) = entry
@@ -136,35 +144,35 @@ fn reload_shared_dnsmasq() {
     }
 }
 /// Set or remove an AP before activation / after teardown. Interface keys keep APs independent.
-pub fn hotspot(dir: &Path, interface: &str, address: Option<Ipv4Addr>) -> io::Result<()> {
+pub fn hotspot(paths: &Paths, interface: &str, address: Option<Ipv4Addr>) -> io::Result<()> {
     let mut all = NAMES.lock().unwrap();
-    let names = all.entry(dir.into()).or_default();
+    let names = all.entry(paths.dir.clone()).or_default();
     if let Some(address) = address {
         names.hotspots.insert(interface.into(), address);
     } else {
         names.hotspots.remove(interface);
     }
-    sync(dir, names)
+    sync(paths, names)
 }
-pub fn reset(dir: &Path) -> io::Result<()> {
+pub fn reset(paths: &Paths) -> io::Result<()> {
     let mut all = NAMES.lock().unwrap();
-    all.insert(dir.into(), Names::default());
-    sync(dir, &all[dir])
+    all.insert(paths.dir.clone(), Names::default());
+    sync(paths, &all[&paths.dir])
 }
-pub fn write(dir: &Path, name: &str, address: Ipv4Addr) -> io::Result<()> {
-    public_name(dir, name, Some(address))
+pub fn write(paths: &Paths, name: &str, address: Ipv4Addr) -> io::Result<()> {
+    public_name(paths, name, Some(address))
 }
-pub fn public_name(dir: &Path, name: &str, address: Option<Ipv4Addr>) -> io::Result<()> {
+pub fn public_name(paths: &Paths, name: &str, address: Option<Ipv4Addr>) -> io::Result<()> {
     let mut all = NAMES.lock().unwrap();
-    let names = all.entry(dir.into()).or_default();
+    let names = all.entry(paths.dir.clone()).or_default();
     names.public = Some((name.into(), address));
-    sync(dir, names)
+    sync(paths, names)
 }
-pub fn remove(dir: &Path) -> io::Result<()> {
+pub fn remove(paths: &Paths) -> io::Result<()> {
     let mut all = NAMES.lock().unwrap();
-    let names = all.entry(dir.into()).or_default();
+    let names = all.entry(paths.dir.clone()).or_default();
     names.public = None;
-    sync(dir, names)
+    sync(paths, names)
 }
 
 #[cfg(test)]
@@ -175,59 +183,65 @@ mod tests {
     fn writes_one_address_line_and_removes_it() {
         let root = TempDir::new("local-dns");
         let dir = root.0.join("dnsmasq-shared.d");
-        remove(&dir).unwrap();
-        write(&dir, "myrelay.duckdns.org", Ipv4Addr::new(10, 77, 0, 1)).unwrap();
+        let dns = Paths {
+            hosts: root.0.join("run/hotspot-hosts"),
+            ..Paths::in_dir(dir.clone())
+        };
+        remove(&dns).unwrap();
+        write(&dns, "myrelay.duckdns.org", Ipv4Addr::new(10, 77, 0, 1)).unwrap();
         let written = std::fs::read_to_string(path(&dir)).unwrap();
-        assert_eq!(written, text(&hosts_path(&dir)));
+        assert_eq!(written, text(&dns.hosts));
         assert_eq!(
-            std::fs::read_to_string(hosts_path(&dir)).unwrap(),
+            std::fs::read_to_string(&dns.hosts).unwrap(),
             "10.77.0.1 myrelay.duckdns.org\n"
         );
         assert_eq!(written.lines().filter(|l| !l.starts_with('#')).count(), 2);
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path(&dir)), 0o644);
         assert_eq!(mode(&dir), 0o755);
-        write(&dir, "myrelay.duckdns.org", Ipv4Addr::new(10, 77, 1, 1)).unwrap();
-        assert!(std::fs::read_to_string(hosts_path(&dir))
+        write(&dns, "myrelay.duckdns.org", Ipv4Addr::new(10, 77, 1, 1)).unwrap();
+        assert!(std::fs::read_to_string(&dns.hosts)
             .unwrap()
             .contains("10.77.1.1 myrelay.duckdns.org\n"));
         assert_eq!(
             std::fs::read_dir(&dir).unwrap().count(),
-            2,
+            1,
             "no temporary file left"
         );
-        remove(&dir).unwrap();
+        remove(&dns).unwrap();
         assert!(!path(&dir).exists());
     }
     #[test]
     fn every_hotspot_has_local_names_and_public_name_survives_on_admin_alone() {
         let root = TempDir::new("hotspot-dns");
         let dir = root.0.join("dnsmasq-shared.d");
-        reset(&dir).unwrap();
+        let dns = Paths {
+            hosts: root.0.join("run/hotspot-hosts"),
+            ..Paths::in_dir(dir.clone())
+        };
+        reset(&dns).unwrap();
         let admin = Ipv4Addr::new(10, 79, 0, 1);
         let carplay = Ipv4Addr::new(10, 77, 0, 1);
-        hotspot(&dir, "wlan9", Some(admin)).unwrap();
-        hotspot(&dir, "wlan8", Some(carplay)).unwrap();
-        public_name(&dir, "synthetic.example.org", None).unwrap();
-        let content = std::fs::read_to_string(hosts_path(&dir)).unwrap();
+        hotspot(&dns, "wlan9", Some(admin)).unwrap();
+        hotspot(&dns, "wlan8", Some(carplay)).unwrap();
+        public_name(&dns, "synthetic.example.org", None).unwrap();
+        let content = std::fs::read_to_string(&dns.hosts).unwrap();
         assert_eq!(content, "10.77.0.1 openxplay-linux.local synthetic.example.org\n10.79.0.1 openxplay-linux.local synthetic.example.org\n");
         let conf = std::fs::read_to_string(path(&dir)).unwrap();
-        assert_eq!(conf, text(&hosts_path(&dir)));
+        assert_eq!(conf, text(&dns.hosts));
         assert!(conf.contains("localise-queries\n"));
         assert!(!conf.contains("address="));
-        hotspot(&dir, "wlan8", None).unwrap();
+        hotspot(&dns, "wlan8", None).unwrap();
         assert_eq!(
-            std::fs::read_to_string(hosts_path(&dir)).unwrap(),
+            std::fs::read_to_string(&dns.hosts).unwrap(),
             "10.79.0.1 openxplay-linux.local synthetic.example.org\n"
         );
-        remove(&dir).unwrap();
+        remove(&dns).unwrap();
         assert_eq!(
-            std::fs::read_to_string(hosts_path(&dir)).unwrap(),
+            std::fs::read_to_string(&dns.hosts).unwrap(),
             "10.79.0.1 openxplay-linux.local\n"
         );
-        hotspot(&dir, "wlan9", None).unwrap();
-        assert!(std::fs::read_to_string(hosts_path(&dir))
-            .unwrap()
-            .is_empty());
+        hotspot(&dns, "wlan9", None).unwrap();
+        assert!(std::fs::read_to_string(&dns.hosts).unwrap().is_empty());
     }
 }

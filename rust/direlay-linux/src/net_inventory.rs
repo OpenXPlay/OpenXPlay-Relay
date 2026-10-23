@@ -473,6 +473,8 @@ pub struct InventoryCache {
     probed: Condvar,
     runner: Arc<dyn CommandRunner>,
     root: PathBuf,
+    addresses: crate::runtime_paths::InterfaceAddresses,
+    refresh_enabled: bool,
 }
 impl InventoryCache {
     pub fn new(runner: Arc<dyn CommandRunner>, root: PathBuf) -> Self {
@@ -481,7 +483,21 @@ impl InventoryCache {
             probed: Condvar::new(),
             runner,
             root,
+            addresses: if cfg!(target_os = "linux") {
+                Arc::new(crate::linux_hotspot::interface_addresses)
+            } else {
+                Arc::new(|| Ok(Vec::new()))
+            },
+            refresh_enabled: true,
         }
+    }
+    pub fn with_addresses(mut self, addresses: crate::runtime_paths::InterfaceAddresses) -> Self {
+        self.addresses = addresses;
+        self
+    }
+    pub fn with_refresh(mut self, enabled: bool) -> Self {
+        self.refresh_enabled = enabled;
+        self
     }
     pub fn get(&self) -> Inventory {
         self.state.lock().unwrap().snapshot.clone()
@@ -511,14 +527,14 @@ impl InventoryCache {
     }
     /// A country change must refresh channel capabilities, even during the activity-only interval.
     pub fn reprobe(&self) {
+        if !self.refresh_enabled {
+            return;
+        }
         let mut state = self.state.lock().unwrap();
         while state.running {
             state = self.probed.wait(state).unwrap();
         }
-        #[cfg(target_os = "linux")]
-        let addresses = crate::linux_hotspot::interface_addresses().unwrap_or_default();
-        #[cfg(not(target_os = "linux"))]
-        let addresses = Vec::new();
+        let addresses = (self.addresses)().unwrap_or_default();
         state.snapshot = probe(self.runner.as_ref(), &self.root, &addresses);
         state.names = Some(interface_names(&self.root));
         state.full_refreshed = Some(Instant::now());
@@ -532,6 +548,9 @@ impl InventoryCache {
         self.request(true);
     }
     fn request(self: &Arc<Self>, force: bool) {
+        if !self.refresh_enabled {
+            return;
+        }
         let names = interface_names(&self.root);
         let mut state = self.state.lock().unwrap();
         let full = state.names.as_ref() != Some(&names)
@@ -575,10 +594,7 @@ impl InventoryCache {
                         state.snapshot.clone(),
                     )
                 };
-                #[cfg(target_os = "linux")]
-                let addresses = crate::linux_hotspot::interface_addresses().unwrap_or_default();
-                #[cfg(not(target_os = "linux"))]
-                let addresses = Vec::new();
+                let addresses = (cache.addresses)().unwrap_or_default();
                 if full {
                     snapshot = probe(cache.runner.as_ref(), &cache.root, &addresses);
                 } else {

@@ -37,9 +37,11 @@ pub struct AdminHotspot {
     lifetime: HotspotLifetime,
     state_dir: PathBuf,
     runner: Arc<dyn CommandRunner>,
+    paths: crate::runtime_paths::RuntimePaths,
 }
 impl AdminHotspot {
     pub fn new(state_dir: PathBuf, gap: Duration, runner: Arc<dyn CommandRunner>) -> Self {
+        let paths = crate::runtime_paths::RuntimePaths::new(&state_dir);
         Self {
             lifetime: HotspotLifetime::with_down_gap(
                 gap,
@@ -47,6 +49,7 @@ impl AdminHotspot {
             ),
             state_dir,
             runner,
+            paths,
             state: Mutex::new(State {
                 inputs: None,
                 shared: false,
@@ -58,6 +61,10 @@ impl AdminHotspot {
                 },
             }),
         }
+    }
+    pub fn with_runtime_paths(mut self, paths: crate::runtime_paths::RuntimePaths) -> Self {
+        self.paths = paths;
+        self
     }
     pub fn status(&self) -> Status {
         self.state.lock().unwrap().status.clone()
@@ -130,6 +137,7 @@ impl AdminHotspot {
                     inputs.interface.clone(),
                     inputs.channel,
                 )
+                .with_runtime_dirs(self.paths.keyfiles.clone(), self.paths.local_dns.clone())
                 .with_admin(inputs.mac.clone(), request),
             )
         });
