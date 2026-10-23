@@ -114,8 +114,10 @@ class UserConfigCodecTest {
             iphoneAddress = "12:34:56:78:9A:BC", plugins = true, pluginsEnabled = listOf("test.plugin"),
             carlinkTrace = true, carlinkHevc = ClinkHevcMode.SIGNAL, carlinkPictureSize = ClinkPictureSize.MODE,
             carplayResolution = CarPlayResolution.P720, carplayScreenWidth = CarPlayScreenWidth.MM300, viewAreas = false,
-            car = CarSelection("other", "Test brand", "other", "Test car"), videoCodec = VideoCodecSetting.H264,
-            videoStats = VideoStatsWindow.SECONDS_15, carBluetoothAudio = false)
+            car = CarSelection("tesla", "", "model-y-2025", ""), videoCodec = VideoCodecSetting.H264,
+            videoStats = VideoStatsWindow.SECONDS_15, carBluetoothAudio = false, teslaBrowser = TeslaBrowserMode.TESLA_ANDROID,
+            teslaVirtualAddress = "169.254.88.2", teslaPublicAddress = "169.254.88.3",
+            teslaMirrorAddress = "100.88.0.2", teslaAndroidAddress = "3.3.3.2")
         val developer = DeveloperOverrides(active = false, carlinkTrace = true, carlinkHevcEnabled = true,
             carlinkHevc = ClinkHevcMode.OFF, carlinkPictureSizeEnabled = true, carlinkPictureSize = ClinkPictureSize.MODE,
             physicalWidthEnabled = true, physicalWidthOverrideMm = 250, fpsEnabled = true, fps = 55, localPreview = true,
@@ -137,6 +139,7 @@ class UserConfigCodecTest {
         assertEquals("wireless", json.getString("iphoneConnection"))
         assertEquals("720p", json.getString("carplayResolution"))
         assertEquals("mm300", json.getString("carplayScreenWidth"))
+        assertEquals("tesla-android", json.getString("teslaBrowser"))
         assertTrue(json.getJSONArray("sharedWifiNetworks").getJSONObject(0).has("password"))
         assertFalse(json.has("webPort"))
     }
@@ -162,6 +165,52 @@ class UserConfigCodecTest {
         assertEquals(0, result.changedCount)
         assertEquals(listOf("developer.unknown", "hotspotChannel", "unknown"), result.ignoredKeys)
         for (value in listOf<Any>("false", 1, JSONObject.NULL)) assertTrue(decode(JSONObject().put("plugins", value)).errors.containsKey("plugins"))
+    }
+    @Test fun teslaModesUsePinnedWiresAndInvalidAddressesRejectWithTheirKey() {
+        val modes = listOf(Triple(TeslaBrowserMode.VIRTUAL_NAME, "virtual-name", "teslaVirtualAddress"),
+            Triple(TeslaBrowserMode.PUBLIC_ADDRESS, "public-address", "teslaPublicAddress"),
+            Triple(TeslaBrowserMode.TESLAMIRROR, "teslamirror", "teslaMirrorAddress"),
+            Triple(TeslaBrowserMode.TESLA_ANDROID, "tesla-android", "teslaAndroidAddress"))
+        assertEquals("off", JSONObject(UserConfigCodec.encode(base, DeveloperOverrides(), meta)).getJSONObject("settings").getString("teslaBrowser"))
+        for ((mode, wire, key) in modes) {
+            val valid = decode(JSONObject().put("teslaBrowser", wire).put(key, "169.254.88.2"))
+            assertTrue(valid.errors.toString(), valid.errors.isEmpty())
+            assertEquals(mode, valid.settings.teslaBrowser)
+            assertEquals(wire, JSONObject(UserConfigCodec.encode(valid.settings, valid.developer, meta)).getJSONObject("settings").getString("teslaBrowser"))
+            val invalid = decode(JSONObject().put("teslaBrowser", wire).put(key, "192.168.1.1").put("fps", 60))
+            assertEquals(mapOf(key to "invalid"), invalid.errors)
+            assertTrue(invalid.settings == base)
+            assertEquals(0, invalid.changedCount)
+            for (value in listOf<Any>(1, JSONObject.NULL)) assertTrue(decode(JSONObject().put(key, value)).errors.containsKey(key))
+        }
+        for (value in listOf<Any>("unknown", "TESLA_ANDROID", 1, JSONObject.NULL))
+            assertEquals("invalid", decode(JSONObject().put("teslaBrowser", value)).errors["teslaBrowser"])
+    }
+    @Test fun missingTeslaKeysKeepCurrentValuesIncludingAnAssignedActiveAddress() {
+        val current = base.copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS, teslaVirtualAddress = "169.254.88.2",
+            teslaPublicAddress = "169.254.88.3", teslaMirrorAddress = "100.88.0.2", teslaAndroidAddress = "3.3.3.2")
+        val result = UserConfigCodec.decode(wrapped(JSONObject().put("fps", 60)), current,
+            phoneAddresses = setOf(current.teslaPublicAddress))
+        assertTrue(result.errors.toString(), result.errors.isEmpty())
+        assertTrue(result.settings == current.copy(fps = 60))
+        assertEquals(1, result.changedCount)
+    }
+    @Test fun changedActiveTeslaAddressRejectsPhoneCollisions() {
+        val address = "169.254.88.2"
+        val text = wrapped(JSONObject().put("teslaBrowser", "public-address").put("teslaPublicAddress", address))
+        val result = UserConfigCodec.decode(text.toByteArray(Charsets.UTF_8), base, phoneAddresses = setOf(address))
+        assertEquals(mapOf("teslaPublicAddress" to "invalid"), result.errors)
+        assertTrue(result.settings == base)
+        assertEquals(0, result.changedCount)
+        val current = base.copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS)
+        assertEquals("invalid", UserConfigCodec.decode(text, current, phoneAddresses = setOf(address)).errors["teslaPublicAddress"])
+        val remembered = base.copy(teslaPublicAddress = address)
+        assertEquals("invalid", UserConfigCodec.decode(wrapped(JSONObject().put("teslaBrowser", "public-address")), remembered,
+            phoneAddresses = setOf(address)).errors["teslaPublicAddress"])
+        val unchanged = UserConfigCodec.decode(text, remembered.copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS), phoneAddresses = setOf(address))
+        assertTrue(unchanged.errors.toString(), unchanged.errors.isEmpty())
+        val inactive = UserConfigCodec.decode(wrapped(JSONObject().put("teslaPublicAddress", address)), base, phoneAddresses = setOf(address))
+        assertTrue(inactive.errors.toString(), inactive.errors.isEmpty())
     }
     @Test fun envelopesAndUtf8AreStrict() {
         val valid = JSONObject(wrapped(JSONObject()))
