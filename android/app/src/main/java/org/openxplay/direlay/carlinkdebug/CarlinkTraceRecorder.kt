@@ -62,7 +62,7 @@ class CarlinkTraceRecorder(private val directory: File, private val mirror: (Str
                 ring.addLast(TraceLine(type, line))
             }
             // Vehicle identity stays in the trace file/UI, including when the mirror writes to logcat.
-            if (event !is ClinkTraceEvent.Link || event.stage !in setOf("ble_advertisement", "ble_reply_name"))
+            if (event !is ClinkTraceEvent.Link || event.stage !in setOf("ble_advertisement", "ble_reply_name", "ble_raw", "ble_raw_dropped", "ble_raw_failed", "ble_raw_skipped"))
                 runCatching { mirror(line.take(1000)) }
             val bytes = line.toByteArray(Charsets.UTF_8).size + 1
             if (writer == null || size + bytes > maxBytes && size > 0) rotate()

@@ -196,6 +196,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                                 { edit -> withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.save(edit) }.getOrNull() } },
                                 importPublicName, runtime.publicName::renewNow,
                                 { withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.remove() }.isSuccess } })
+                            route == "experimental" -> ExperimentalScreen(settingsEditor, ::back, store::wireless)
                             route.startsWith("developer") -> DeveloperScreen(settingsEditor, diagnostics, route, ::back, ::open, ::copy,
                                 onReconnect,
                                 runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless, runtime)

@@ -228,4 +228,17 @@ class SettingsDraftSaverTest {
         assertEquals(listOf(SharedWifiNetwork("Legacy", "legacy-password")),
             requireNotNull(relaySettingsSaver(base).restore(bundle)).wirelessNetwork.sharedWifiNetworks)
     }
+    @Test fun experimentalChoicesAndIncompleteAddressSurviveParcelRoundTrip() {
+        val options = ExperimentalOptions(active = false, rememberSubscription = true, keepScanning = true,
+            recordAdvertisements = true, sendBluetoothAddress = true, bluetoothAddress = "A0:B1:")
+        val chosen = base.copy(experimental = options)
+        val parcel = Parcel.obtain()
+        try {
+            parcel.writeBundle(bundle(chosen)); parcel.setDataPosition(0)
+            assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+        } finally { parcel.recycle() }
+        val old = bundle(base).apply { keySet().toList().filter { it.startsWith("experimental.") }.forEach { remove(it) } }
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
+
 }

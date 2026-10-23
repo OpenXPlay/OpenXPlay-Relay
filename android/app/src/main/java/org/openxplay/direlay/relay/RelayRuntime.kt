@@ -887,7 +887,8 @@ class RelayRuntime(private val context: Context,
             settings.carlinkDeviceName, settings.carlinkDeviceModel,
             carlinkBlock.blocked(CarlinkConnectionPolicy.enabled(settings),
                 settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running), settings.carlinkTrace, settings.carlinkHevc, settings.carlinkPictureSize)
-        // Picture size is frozen until the next connection.
+        // Picture size is frozen until the next connection. Experimental choices are captured below,
+        // outside this comparison, so editing them never restarts a running link.
         if (!force && requested.copy(pictureSize = carlinkConfig?.pictureSize ?: requested.pictureSize) == carlinkConfig && !carlinkRestartPending) return
         carlinkConfig = requested
         if (carlinkRetiring) { carlinkRestartPending = true; return }
@@ -935,7 +936,8 @@ class RelayRuntime(private val context: Context,
             clinkDiagnostics.emit(event)
         }, trace, { if (traceRecorder.isInitialized()) carlinkTraceRecorder.session else 0 })
         val reservation = AirPlayP2pReservation(context)
-        val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation)
+        val experiments = settings.experimental.effective(settings.carlinkTrace)
+        val link = AndroidClinkLink(context, id, requested.name, requested.model, diagnostics, reservation, experiments)
         val sessionDiagnostics = ClinkSessionDiagnostics(carlinkPins, carlinkTrust, diagnostics)
         carlinkResizePolicy.startSession()
         var resizePlaying = false
@@ -960,7 +962,10 @@ class RelayRuntime(private val context: Context,
                     observeResize { resizePlaying = state == ClinkState.PLAYING }
                     sessionDiagnostics.state(state)
                     carlinkState = state.name
-                    if (state == ClinkState.NEGOTIATING) carlinkPins.paired()
+                    if (state == ClinkState.NEGOTIATING) {
+                        carlinkPins.paired()
+                        link.authenticated()
+                    }
                     // A reconnected session clears the previous failure shown on the status screens.
                     if (state == ClinkState.PLAYING) {
                         carlinkBackoff.succeeded()
@@ -994,8 +999,11 @@ class RelayRuntime(private val context: Context,
                     if (rejected) carlinkPins.reject(::reconnectCarlink)
                     else carlinkPins.cancel()
                 }
-                // Output-side video diagnostics only (queue resets); session diagnostics stay in the diagnostics port.
-                override fun diagnostic(message: String) { if (message.startsWith("video ") || message.startsWith("audio ") || message.startsWith("frame ")) android.util.Log.i("DiRelayCarlink", message) }
+                // E3 forwards AUTH diagnostics through the diagnostics port; output counters stay in logcat.
+                override fun diagnostic(message: String) {
+                    link.sessionDiagnostic(message)
+                    if (message.startsWith("video ") || message.startsWith("audio ") || message.startsWith("frame ")) android.util.Log.i("DiRelayCarlink", message)
+                }
                 override fun statistics(stats: ClinkStatistics) { carlinkStatistics = stats }
                 override fun viewSize(width: Int, height: Int) {
                     observeResize { carlinkResizePolicy.viewSize(width, height) }

@@ -174,4 +174,47 @@ class UserConfigCodecTest {
         for (text in listOf("{} trailing", "{unquoted:1}", "{'format':'x'}", "{\"a\":1,}", "{\"a\":1,\"a\":2}"))
             assertEquals("not-json", UserConfigCodec.decode(text, base).errors["file"])
     }
+    @Test fun experimentalRoundTripPreservesEveryChoiceAndOldFilesImportDefaults() {
+        val options = ExperimentalOptions(active = true, rememberSubscription = true, keepScanning = true,
+            recordAdvertisements = true, sendBluetoothAddress = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
+        for (active in listOf(false, true)) {
+            val chosen = base.copy(experimental = options.copy(active = active))
+            val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
+            val json = JSONObject(text).getJSONObject("settings").getJSONObject("experimental")
+            assertEquals(setOf("active", "rememberSubscription", "keepScanning", "recordAdvertisements", "sendBluetoothAddress", "bluetoothAddress"),
+                json.keys().asSequence().toSet())
+            val result = UserConfigCodec.decode(text, base)
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            assertEquals(chosen, result.settings)
+            assertTrue(result.ignoredKeys.isEmpty())
+            assertEquals(if (active) 6 else 5, result.changedCount)
+            assertEquals(0, UserConfigCodec.decode(text, chosen).changedCount)
+            val legacy = UserConfigCodec.decode(wrapped(JSONObject()), chosen)
+            assertTrue(legacy.errors.isEmpty())
+            assertEquals(ExperimentalOptions(), legacy.settings.experimental)
+        }
+    }
+
+    @Test fun experimentalRejectsInvalidTypesAndActiveInvalidAddressesAtomically() {
+        for (value in listOf<Any>(JSONObject.NULL, true, "on", org.json.JSONArray())) {
+            val result = decode(JSONObject().put("experimental", value))
+            assertEquals(mapOf("experimental" to "invalid"), result.errors)
+        }
+        for (key in listOf("active", "rememberSubscription", "keepScanning", "recordAdvertisements", "sendBluetoothAddress", "bluetoothAddress")) {
+            val result = decode(JSONObject().put("experimental", JSONObject().put(key, 1)).put("autoStartOnBoot", true))
+            assertEquals(mapOf("experimental.$key" to "invalid"), result.errors)
+            assertEquals(base, result.settings)
+        }
+        val invalid = JSONObject().put("active", true).put("sendBluetoothAddress", true).put("bluetoothAddress", "02:00:00:00:00:00")
+        val result = decode(JSONObject().put("experimental", invalid))
+        assertEquals(mapOf("experimental.bluetoothAddress" to "invalid"), result.errors)
+        assertEquals(base, result.settings)
+        invalid.put("active", false).put("future", true)
+        val parked = decode(JSONObject().put("experimental", invalid))
+        assertTrue(parked.errors.isEmpty())
+        assertEquals(listOf("experimental.future"), parked.ignoredKeys)
+        assertTrue(parked.settings.experimental.sendBluetoothAddress)
+        assertFalse(parked.settings.experimental.effective().sendBluetoothAddress)
+    }
+
 }

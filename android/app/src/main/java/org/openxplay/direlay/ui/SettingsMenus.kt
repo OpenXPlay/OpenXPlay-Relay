@@ -97,6 +97,7 @@ fun SettingsMenuRow(title: Int, summary: String, icon: Int, error: Boolean = fal
 @Composable
 fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Boolean,
     accessSummary: String, carSummary: String, identityStatus: Int, open: (String) -> Unit) {
+    val experimental = draft.experimental
     val context = LocalContext.current
     val version = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() }
     SettingsMenuRow(R.string.ui_output, outputSummary(draft),
@@ -118,6 +119,9 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
     SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
     SettingsMenuRow(R.string.ui_developer, stringResource(R.string.menu_developer_summary, draft.fps, draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), R.drawable.symbol_code,
         invalidPages.any { it.startsWith("developer/") }) { open("developer") }
+    SettingsMenuRow(R.string.experimental_title,
+        if (experimental.active) stringResource(R.string.experimental_summary, experimental.optionCount) else stringResource(R.string.menu_off),
+        R.drawable.symbol_settings, "experimental" in invalidPages) { open("experimental") }
 }
 
 @Composable

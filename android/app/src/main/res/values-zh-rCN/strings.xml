@@ -736,4 +736,20 @@
     <string name="wireless_picture_fixed">CarPlay 正在使用车机屏幕设置中的固定尺寸。</string>
     <string name="miracast_fill_screen">铺满屏幕</string>
     <string name="miracast_fill_screen_hint">如果车机会把投屏画面拉伸到全屏，请打开此项。中继会将 CarPlay 拉伸铺满投屏画面，让车机显示出正确的比例。</string>
+    <string name="experimental_title">实验功能</string>
+    <string name="experimental_summary">开 · %1$d 项</string>
+    <string name="experimental_use_options">使用实验功能</string>
+    <string name="experimental_use_options_hint">关闭时，Carlink 的连接方式和没有这些选项时完全相同。你的选择会保留。</string>
+    <string name="experimental_carlink">Carlink 快速连接</string>
+    <string name="experimental_carlink_hint">用于排查已配对的车为什么只在显示六位码时才能连上。更改在下一次 Carlink 连接时生效。</string>
+    <string name="experimental_remember_subscription">记住蓝牙订阅方式</string>
+    <string name="experimental_remember_subscription_hint">对从不响应订阅的车（如小鹏 G6）跳过 2 秒等待。</string>
+    <string name="experimental_keep_scanning">持续扫描车机</string>
+    <string name="experimental_keep_scanning_hint">Carlink 开启且未连接时不间断扫描，不再是每次 8 秒、间隔越来越长的扫描。</string>
+    <string name="experimental_record_advertisements">记录所有蓝牙广播</string>
+    <string name="experimental_record_advertisements_hint">扫描期间把附近所有蓝牙广播写入 Carlink 调试日志。需要打开 Carlink 调试，并保持本机亮屏。附近其他人的设备也会被记录；日志只保存在本机。</string>
+    <string name="experimental_send_address">发送本机蓝牙地址</string>
+    <string name="experimental_send_address_hint">把你填写的地址发给车，代替自动生成的地址。可在手机的“关于手机”或“状态信息”页面找到。再在蓝牙设置里把本机和车配对，测试车是否会自己重连。</string>
+    <string name="experimental_bluetooth_address">蓝牙地址</string>
+    <string name="experimental_address_error">请输入有效的蓝牙地址：XX:XX:XX:XX:XX:XX。</string>
 </resources>

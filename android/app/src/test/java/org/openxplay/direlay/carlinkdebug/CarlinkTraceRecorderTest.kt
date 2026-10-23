@@ -145,4 +145,30 @@ class CarlinkTraceRecorderTest {
             assertTrue(directory.listFiles()!!.single().readBytes().all { it == 0x47.toByte() })
         } finally { capture.close(); directory.deleteRecursively() }
     }
+    @Test fun experimentalRawRecordsStayInJsonlWhileExperimentAndAuthLinesReachTrailAndTrace() {
+        val directory = Files.createTempDirectory("carlink-experiments").toFile()
+        val mirrored = mutableListOf<String>()
+        val delegated = mutableListOf<String>()
+        val recorder = CarlinkTraceRecorder(directory, { mirrored += it })
+        try {
+            val diagnostics = TracingClinkDiagnostics(ClinkDiagnostics { delegated += it.line() }, recorder)
+            diagnostics.emit(ClinkStage.LINK_START)
+            diagnostics.emit(ClinkDiagnostic.Experiments(listOf("keep_scanning", "record_advertisements")))
+            diagnostics.traceLink("ble_raw", mapOf("address" to "AA:BB:CC:DD:EE:FF", "raw" to "010203"))
+            diagnostics.traceLink("ble_raw_dropped", mapOf("count" to "2"))
+            diagnostics.traceLink("ble_raw_skipped", mapOf("reason" to "scan_budget", "count" to "3"))
+            diagnostics.emit(ClinkDiagnostic.Auth("auth repin reason=peer_key_changed"))
+            recorder.awaitIdle()
+            assertEquals(listOf("link_start", "experiments keep_scanning,record_advertisements", "auth repin reason=peer_key_changed"), delegated)
+            assertEquals(3, mirrored.size)
+            assertFalse(mirrored.any { it.contains("AA:BB:CC:DD:EE:FF") || it.contains("ble_raw") })
+            val events = recorder.currentFile!!.readLines().map { JSONObject(it) }
+            assertEquals(listOf("link_start", "experiments", "ble_raw", "ble_raw_dropped", "ble_raw_skipped", "auth"), events.map { it.getString("stage") })
+            assertEquals("010203", events[2].getJSONObject("fields").getString("raw"))
+            assertEquals("scan_budget", events[4].getJSONObject("fields").getString("reason"))
+            assertEquals("3", events[4].getJSONObject("fields").getString("count"))
+            assertEquals("auth repin reason=peer_key_changed", events.last().getJSONObject("fields").getString("detail"))
+        } finally { recorder.close(); directory.deleteRecursively() }
+    }
+
 }

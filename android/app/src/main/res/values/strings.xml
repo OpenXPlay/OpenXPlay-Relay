@@ -745,4 +745,20 @@
     <string name="wireless_picture_fixed">CarPlay uses the fixed size from Car screen settings.</string>
     <string name="miracast_fill_screen">Fill the screen</string>
     <string name="miracast_fill_screen_hint">Turn on if the car stretches the picture to its screen; the relay then stretches CarPlay to the whole cast picture so the car shows it in the right proportions.</string>
+    <string name="experimental_title">Experimental</string>
+    <string name="experimental_summary">On · %1$d options</string>
+    <string name="experimental_use_options">Use experimental options</string>
+    <string name="experimental_use_options_hint">Off: Carlink connects exactly as it does without these options. Your choices are kept for next time.</string>
+    <string name="experimental_carlink">Carlink quick connect</string>
+    <string name="experimental_carlink_hint">For finding out why a paired car connects only while it shows the six-digit code. Changes apply to the next Carlink connection.</string>
+    <string name="experimental_remember_subscription">Remember the Bluetooth subscription method</string>
+    <string name="experimental_remember_subscription_hint">Skips the 2-second subscription wait on cars that never answer it, such as the Xpeng G6.</string>
+    <string name="experimental_keep_scanning">Keep scanning for the car</string>
+    <string name="experimental_keep_scanning_hint">While Carlink is on and not connected, scan without pauses instead of 8-second scans with growing waits.</string>
+    <string name="experimental_record_advertisements">Record all Bluetooth advertisements</string>
+    <string name="experimental_record_advertisements_hint">Writes every nearby Bluetooth advertisement to the Carlink debug log while scanning. Needs Carlink debug on and this phone\'s screen on. Other people\'s nearby devices are recorded too; the log stays on this phone.</string>
+    <string name="experimental_send_address">Send this phone\'s Bluetooth address</string>
+    <string name="experimental_send_address_hint">Sends the address you enter to the car instead of the generated one. Find it on the phone\'s About phone or Status page. Pair this phone with the car in Bluetooth settings to test whether the car then reconnects by itself.</string>
+    <string name="experimental_bluetooth_address">Bluetooth address</string>
+    <string name="experimental_address_error">Enter a valid Bluetooth address: XX:XX:XX:XX:XX:XX.</string>
 </resources>
