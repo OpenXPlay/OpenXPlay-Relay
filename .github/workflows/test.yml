@@ -16,13 +16,30 @@ defaults:
     shell: bash
 
 # The Rust and Android builds reference OpenXPlay-Stream and OpenXPlay-DiPlay by relative path,
-# so those jobs check the repositories out side by side; Stream at the commit in stream.lock.
+# so those jobs check the repositories out side by side, at the commits in stream.lock and diplay.lock.
 jobs:
   reuse:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: fsfe/reuse-action@v5
+
+  # A lock change brings in every commit in between, so the summary lists them. A locked commit that is not on
+  # its repository's main yet is only a warning here; the release workflows refuse it.
+  sources:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check that the locked commits are on main
+        run: scripts/sources.sh on-main --warn stream diplay
+      - name: List lock changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/sources.sh summary "$BASE" >> "$GITHUB_STEP_SUMMARY"
 
   rust:
     runs-on: ubuntu-latest
@@ -33,9 +50,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: OpenXPlay-Relay
-      - name: Read the pinned Stream commit
+      - name: Read the locked Stream commit
         id: pin
-        run: echo "stream=$(tr -d '[:space:]' < OpenXPlay-Relay/stream.lock)" >> "$GITHUB_OUTPUT"
+        run: |
+          stream=$(OpenXPlay-Relay/scripts/sources.sh read stream)
+          echo "stream=$stream" >> "$GITHUB_OUTPUT"
         working-directory: .
       - uses: actions/checkout@v4
         with:
@@ -75,10 +94,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: OpenXPlay-Relay
-      - name: Read the pinned Stream commit
+      - name: Read the locked commits
         id: pin
-        run: echo "stream=$(tr -d '[:space:]' < OpenXPlay-Relay/stream.lock)" >> "$GITHUB_OUTPUT"
-        working-directory: .
+        run: |
+          stream=$(OpenXPlay-Relay/scripts/sources.sh read stream)
+          diplay=$(OpenXPlay-Relay/scripts/sources.sh read diplay)
+          { echo "stream=$stream"; echo "diplay=$diplay"; } >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: OpenXPlay/OpenXPlay-Stream
@@ -87,6 +108,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: OpenXPlay/OpenXPlay-DiPlay
+          ref: ${{ steps.pin.outputs.diplay }}
           path: OpenXPlay-DiPlay
       - uses: actions/setup-node@v4
         with:
@@ -106,4 +128,4 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests
         working-directory: OpenXPlay-Relay/android
-        run: ./gradlew testDebugUnitTest
+        run: ./gradlew testDebugUnitTest -Prelay.strictSources=true
