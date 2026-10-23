@@ -25,6 +25,8 @@ interface RelayActions {
     val restarting: Boolean
     fun action(name: String, manual: Boolean = true): String?
     fun start(manual: Boolean = false): String?
+    /** Set before an automatic start that the boot path triggered; only the timeline reads it. */
+    var bootStart: Boolean
 }
 /** Shared command path for local buttons and browser actions; Android consent remains local. */
 class RelaySessionActions(private val context: Context, private val runtime: RelayRuntime) : RelayActions, AutoCloseable {
@@ -36,6 +38,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
     @Volatile private var generation = 0L
     val networkStart = ManualNetworkStart()
     private var manualRestart = false
+    @Volatile override var bootStart = false
     @Synchronized override fun action(name: String, manual: Boolean): String? = when (name) {
         "start" -> start(manual)
         "stop" -> {
@@ -43,7 +46,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             restarting = false
             generation++
             runtime.autoStartSessions.pause("Stop requested")
-            stop(); null
+            stop(if (manual) "manual" else "auto"); null
         }
         "restart" -> {
             if (runtime.startRequest.pending || restarting || networkStart.pending != null) "error.conflict" else {
@@ -51,14 +54,15 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
                 runtime.autoStartSessions.tracker.restarting()
                 restarting = true
                 manualRestart = manual
-                stop()
+                stop(if (manual) "manual" else "auto")
                 awaitStopped(System.nanoTime() + TimeUnit.SECONDS.toNanos(15))
                 null
             }
         }
         else -> "error.invalid"
     }
-    private fun stop() {
+    private fun stop(source: String) {
+        runtime.connectionLog.event("relay", "carplay_stop", "source=$source")
         runtime.stopTeslaAddress()
         runtime.input.expectStop()
         context.startService(Intent(context, DiPlaySessionService::class.java).setAction(DiPlaySessionService.ACTION_STOP))
@@ -141,6 +145,8 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             return null
         }
         if (!runtime.startRequest.begin()) return "error.conflict"
+        val source = if (manual) "manual" else if (bootStart) "boot" else "auto"
+        bootStart = false
         val launchGeneration = ++generation
         try {
             runtime.status.clearFailure()
@@ -153,7 +159,10 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             runtime.prepareTeslaAddress(settings, wireless)
             main.post {
                 try {
-                    if (!closed && launchGeneration == generation) context.startActivity(Intent(context, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    if (!closed && launchGeneration == generation) {
+                        runtime.connectionLog.event("relay", "carplay_start", "source=$source")
+                        context.startActivity(Intent(context, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
                 } catch (failure: RuntimeException) { startFailed(failure) }
                 finally { runtime.startRequest.finish() }
             }

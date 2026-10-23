@@ -18,8 +18,8 @@ class DialogPinProvider : PinProvider {
     @Volatile var onPending: (() -> Unit)? = null
     @Volatile var onSecret: (String) -> Unit = {}
     private var accepting = true
-    private var lastPinRequest: Request? = null
-    private var retryPin: Pair<String, String>? = null
+    @Volatile private var lastPinRequest: Request? = null
+    @Volatile private var retryPin: Pair<String, String>? = null
     @Volatile var rejected = 0
         private set
     @Volatile var successes = 0
@@ -42,7 +42,7 @@ class DialogPinProvider : PinProvider {
 
     @Volatile var pending: Request? = null
         private set
-    @Synchronized internal fun redactFailureMessage(text: String): String =
+    internal fun redactFailureMessage(text: String): String =
         listOfNotNull(lastPinRequest?.answer?.getNow(null), retryPin?.second)
             .filter { it.isNotEmpty() }.fold(text) { value, pin -> value.replace(pin, "[redacted]") }
 

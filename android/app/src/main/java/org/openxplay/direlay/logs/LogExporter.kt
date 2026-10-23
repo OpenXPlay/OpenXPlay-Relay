@@ -21,7 +21,8 @@ enum class LogRange(val millis: Long, val suffix: String) {
 
 class LogExporter(private val directory: File, private val store: LogSegmentStore, private val redactor: LogRedactor,
     private val metadata: () -> String, private val now: () -> Long = System::currentTimeMillis,
-    private val zone: () -> ZoneId = ZoneId::systemDefault, private val flush: () -> Unit = store::flush) {
+    private val zone: () -> ZoneId = ZoneId::systemDefault, private val flush: () -> Unit = store::flush,
+    private val traceDirectory: () -> File? = { null }) {
     suspend fun export(range: LogRange): File? = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext()
         job.ensureActive()
@@ -61,6 +62,10 @@ class LogExporter(private val directory: File, private val store: LogSegmentStor
                         }
                     }
                     zip.closeEntry()
+                    val traces = traceDirectory()
+                    if (traces != null) {
+                        count += TraceLogExport.append(zip, traces, cutoff, time, redactor) { job.ensureActive() }
+                    }
                     if (count > 0) {
                         job.ensureActive()
                         val info = buildString {

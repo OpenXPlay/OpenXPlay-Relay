@@ -13,11 +13,12 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class LogFiles(private val context: Context, secrets: LogSecrets) {
+class LogFiles(private val context: Context, secrets: LogSecrets, traceDirectory: () -> File? = { null }) {
     private val redactor = LogRedactor(secrets)
     private val store = LogSegmentStore(File(context.noBackupFilesDir, "logs"))
     val recorder = LogRecorder(store, redactor)
-    private val exporter = LogExporter(File(context.cacheDir, "log-exports"), store, redactor, ::metadata, flush = recorder::flush)
+    private val exporter = LogExporter(File(context.cacheDir, "log-exports"), store, redactor, ::metadata,
+        flush = recorder::flush, traceDirectory = traceDirectory)
     suspend fun export(range: LogRange) = exporter.export(range)
     fun failureMessage(failure: Exception): String = runCatching {
         failure.message.orEmpty().lineSequence().take(4).joinToString("\n") { redactor.redact(it) }

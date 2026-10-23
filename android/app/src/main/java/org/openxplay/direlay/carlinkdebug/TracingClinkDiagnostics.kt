@@ -11,13 +11,13 @@ class TracingClinkDiagnostics(private val delegate: ClinkDiagnostics, private va
     private val session: () -> Long = { 0 }) : ClinkDiagnostics {
     override fun traceLink(stage: String, fields: Map<String, String>) {
         if (trace === ClinkTrace.NONE) return
-        try { trace.record(ClinkTraceEvent.Link(System.nanoTime(), session(), stage, fields)) } catch (_: Exception) { }
+        try { trace.record(ClinkTraceEvent.Link(System.nanoTime(), session(), stage, fields)) } catch (_: Throwable) { }
     }
     override fun handoff(ssid: String, passphraseLength: Int) {
         if (trace !== ClinkTrace.NONE) emit(ClinkDiagnostic.Handoff(ssid, passphraseLength))
     }
     override fun emit(event: ClinkDiagnostic) {
-        delegate.emit(event)
+        try { delegate.emit(event) } catch (_: Throwable) { }
         if (trace === ClinkTrace.NONE) return
         val stage = when (event) {
             is ClinkStage -> event.code
@@ -28,6 +28,6 @@ class TracingClinkDiagnostics(private val delegate: ClinkDiagnostics, private va
             is ClinkDiagnostic.Handoff -> mapOf("ssid" to event.ssid, "passphraseLength" to event.passphraseLength.toString())
             else -> mapOf("detail" to event.line())
         }
-        try { trace.record(ClinkTraceEvent.Link(System.nanoTime(), session(), stage, fields)) } catch (_: Exception) { }
+        try { trace.record(ClinkTraceEvent.Link(System.nanoTime(), session(), stage, fields)) } catch (_: Throwable) { }
     }
 }

@@ -382,8 +382,10 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private fun startCarPlay() {
         if (starting || !resumed) return
         work {
+            runtime.sessionActions.bootStart = bootAutoStart
             val error = runtime.sessionActions.start()
             handler.post {
+                if (error == null) bootAutoStart = false
                 started = error == null
                 updateReadiness()
             }

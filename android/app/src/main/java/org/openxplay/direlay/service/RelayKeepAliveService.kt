@@ -18,6 +18,8 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.RelayActivity
 
 class RelayKeepAliveService : Service() {
+    private var foreground = false
+    private var stopReason = "outputs_inactive_or_shutdown"
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val keepAlive = (application as DiRelayApplication).keepAlive
         try {
@@ -25,12 +27,22 @@ class RelayKeepAliveService : Service() {
                 startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
             else startForeground(NOTIFICATION_ID, notification())
             keepAlive.foregroundStarted()
+            if (!foreground) {
+                foreground = true
+                runCatching { (application as? DiRelayApplication)?.runtime?.connectionLog?.event("relay", "service_start", "reason=outputs_active") }
+            }
         } catch (failure: RuntimeException) {
             Log.w("DiRelayKeepAlive", "Keep-alive foreground start refused", failure)
+            stopReason = "foreground_refused"
             stopSelf()
             keepAlive.foregroundRefused()
         }
         return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        runCatching { (application as? DiRelayApplication)?.runtime?.connectionLog?.event("relay", "service_stop", "reason=$stopReason") }
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
