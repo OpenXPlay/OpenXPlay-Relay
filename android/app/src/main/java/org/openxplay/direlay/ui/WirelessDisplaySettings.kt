@@ -7,16 +7,13 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -28,7 +25,7 @@ import org.openxplay.direlay.settings.*
 import org.openxplay.stream.cast.CastRenderer
 
 @Composable fun WirelessDisplaySettings(draft: RelaySettings, wireless: Boolean, runtime: RelayRuntime?,
-    change: (RelaySettings) -> Unit) {
+    editor: SettingsEditorState, openCarScreen: () -> Unit, change: (RelaySettings) -> Unit) {
     val context = LocalContext.current
     var confirmMiracast by remember { mutableStateOf(false) }
     var picker by rememberSaveable { mutableStateOf(false) }
@@ -59,17 +56,6 @@ import org.openxplay.stream.cast.CastRenderer
             SettingsRow(stringResource(R.string.dlna_receiver), draft.dlnaRenderer?.name ?: stringResource(R.string.dlna_choose_receiver),
                 R.drawable.symbol_car, action = { picker = true })
             Hint(stringResource(R.string.dlna_network_hint))
-            SmallHeading(stringResource(R.string.dlna_picture))
-            Column(Modifier.selectableGroup()) {
-                DlnaPicture.entries.forEach { picture ->
-                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).selectable(draft.dlnaPicture == picture,
-                        role = Role.RadioButton, onClick = { change(draft.copy(dlnaPicture = picture)) }),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(draft.dlnaPicture == picture, onClick = null, modifier = Modifier.padding(horizontal = 12.dp))
-                        Text(stringResource(if (picture == DlnaPicture.P720) R.string.dlna_picture_720 else R.string.dlna_picture_1080))
-                    }
-                }
-            }
         }
         HorizontalDivider()
         SettingsRow(stringResource(R.string.wireless_miracast), stringResource(R.string.miracast_hint), R.drawable.symbol_car,
@@ -79,6 +65,9 @@ import org.openxplay.stream.cast.CastRenderer
                 else change(candidate)
             }) })
         if (draft.miracastOutput) {
+            SettingsRow(stringResource(R.string.miracast_fill_screen), stringResource(R.string.miracast_fill_screen_hint), R.drawable.symbol_car,
+                trailing = { LabeledSwitch(stringResource(R.string.miracast_fill_screen), draft.miracastStretch,
+                    { change(draft.copy(miracastStretch = it)) }) })
             NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI)
             TextButton(onClick = {
                 if (!MiracastSystem.openCastSettings(context))
@@ -92,6 +81,7 @@ import org.openxplay.stream.cast.CastRenderer
             if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.miracast_carlink_hint))
             Hint(stringResource(R.string.miracast_wifi_direct_constraint))
         }
+        if (draft.dlnaOutput || draft.miracastOutput) WirelessPictureSettings(editor, runtime, openCarScreen)
     }
 }
 

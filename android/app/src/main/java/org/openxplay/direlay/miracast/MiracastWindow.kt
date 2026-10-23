@@ -56,7 +56,7 @@ internal interface MiracastWindow : AutoCloseable {
 }
 
 internal class AndroidMiracastWindow(context: Context, private val display: MiracastDisplay,
-    private val surface: (Surface?) -> Unit) : MiracastWindow {
+    private val surface: (Surface?) -> Unit, private val stretch: Boolean = false) : MiracastWindow {
     private val windowContext: Context
     private val manager: WindowManager
     private val root: FrameLayout
@@ -112,7 +112,7 @@ internal class AndroidMiracastWindow(context: Context, private val display: Mira
     private fun fit() {
         if (closed) return
         val size = MiracastPolicy.fit(root.width.takeIf { it > 0 } ?: display.width,
-            root.height.takeIf { it > 0 } ?: display.height, width, height)
+            root.height.takeIf { it > 0 } ?: display.height, width, height, stretch)
         val params = video.layoutParams as FrameLayout.LayoutParams
         if (params.width != size.width || params.height != size.height) {
             params.width = size.width; params.height = size.height; params.gravity = Gravity.CENTER
@@ -139,6 +139,7 @@ internal class MiracastDisplayController(
     private val listener: MiracastListener,
     private val capabilities: (OutputCapabilities) -> Unit,
     private val surface: (Surface?) -> Unit,
+    private val picture: MiracastPicture = MiracastPicture(),
 ) : AutoCloseable {
     private var running = false
     private var display: MiracastDisplay? = null
@@ -169,7 +170,7 @@ internal class MiracastDisplayController(
     private fun report(value: MiracastState, target: MiracastDisplay?) {
         val next = value to target
         if (state != next) { state = next; listener.state(value, target) }
-        val caps = MiracastPolicy.capabilities(decoders, target.takeIf { value == MiracastState.SHOWING })
+        val caps = MiracastPolicy.capabilities(decoders, target.takeIf { value == MiracastState.SHOWING }, picture)
         if (reported != caps) { reported = caps; capabilities(caps) }
     }
     private fun reconcile() {

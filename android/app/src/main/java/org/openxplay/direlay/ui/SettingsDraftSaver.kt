@@ -72,6 +72,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("dlnaRendererName", value.dlnaRenderer?.name)
         putString("dlnaPicture", value.dlnaPicture.name)
         putBoolean("miracastOutput", value.miracastOutput)
+        putString("wirelessPicture", value.wirelessPicture.name)
+        putInt("wirelessPictureWidth", value.wirelessPictureSize.width)
+        putInt("wirelessPictureHeight", value.wirelessPictureSize.height)
+        putBoolean("miracastStretch", value.miracastStretch)
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkReconnectOnResize", value.carlinkReconnectOnResize)
         putBoolean("carlinkTrace", value.carlinkTrace)
@@ -113,6 +117,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
             DlnaRendererChoice(it, bundle.getString("dlnaRendererName").orEmpty()) } else base.dlnaRenderer,
         dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == bundle.getString("dlnaPicture") } ?: base.dlnaPicture,
         miracastOutput = bundle.getBoolean("miracastOutput", base.miracastOutput),
+        wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == bundle.getString("wirelessPicture") } ?: base.wirelessPicture,
+        wirelessPictureSize = WirelessPictureSize(bundle.getInt("wirelessPictureWidth", base.wirelessPictureSize.width),
+            bundle.getInt("wirelessPictureHeight", base.wirelessPictureSize.height)),
+        miracastStretch = bundle.getBoolean("miracastStretch", base.miracastStretch),
         carlinkReconnectOnResize = bundle.getBoolean("carlinkReconnectOnResize", base.carlinkReconnectOnResize),
         videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == bundle.getString("videoCodec") } ?: base.videoCodec,
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,

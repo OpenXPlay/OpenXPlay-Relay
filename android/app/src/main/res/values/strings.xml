@@ -734,4 +734,15 @@
     <string name="miracast_error_window">CarPlay could not be shown on the display. Check the overlay permission and reconnect screen casting.</string>
     <string name="miracast_error_decoder">The display’s video decoder failed. Waiting for a new video keyframe to retry.</string>
     <string name="miracast_error_display">The display disconnected. Start screen casting again.</string>
+    <string name="wireless_picture">Picture</string>
+    <string name="wireless_picture_auto">Follow the car screen</string>
+    <string name="wireless_picture_auto_hint">Miracast uses the size negotiated with the car. DLNA uses the car screen saved from the browser or the chosen car model, otherwise 16:9. The 720p/1080p size class applies to DLNA.</string>
+    <string name="wireless_picture_custom_hint">Ignore the car’s reported size and choose the picture proportions yourself. Use even numbers: landscape 640–1920 × 360–1080 pixels, with the bounds reversed for portrait.</string>
+    <string name="wireless_picture_browser">Now %1$d×%2$d from the browser</string>
+    <string name="wireless_picture_model">Now %1$d×%2$d from the car model</string>
+    <string name="wireless_picture_default">Now %1$d×%2$d (default)</string>
+    <string name="wireless_picture_priority">A connected interactive output, such as the car browser, takes priority when choosing the CarPlay canvas. A fixed size in Car screen settings overrides every output’s size.</string>
+    <string name="wireless_picture_fixed">CarPlay uses the fixed size from Car screen settings.</string>
+    <string name="miracast_fill_screen">Fill the screen</string>
+    <string name="miracast_fill_screen_hint">Turn on if the car stretches the picture to its screen; the relay then stretches CarPlay to the whole cast picture so the car shows it in the right proportions.</string>
 </resources>

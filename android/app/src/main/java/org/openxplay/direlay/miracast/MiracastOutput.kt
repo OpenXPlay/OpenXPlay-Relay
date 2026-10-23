@@ -15,9 +15,11 @@ class MiracastOutput internal constructor(
     override val id: String,
     private val discover: () -> List<DecoderSupport>,
     private val codecs: MiracastCodec.Factory,
+    private val picture: MiracastPicture = MiracastPicture(),
 ) : ProjectionOutput {
-    constructor(context: Context, listener: MiracastListener = object : MiracastListener {}, id: String = "miracast") :
-        this(context, listener, id, MiracastCodecs::discover, MiracastCodecs.factory)
+    constructor(context: Context, listener: MiracastListener = object : MiracastListener {}, id: String = "miracast",
+        picture: MiracastPicture = MiracastPicture()) :
+        this(context, listener, id, MiracastCodecs::discover, MiracastCodecs.factory, picture)
 
     private val context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -41,9 +43,9 @@ class MiracastOutput internal constructor(
                 main.post {
                     if (running.get()) {
                         display = MiracastDisplayController(main, AndroidMiracastDisplays(context, main),
-                            MiracastWindow.Factory { target, surface -> AndroidMiracastWindow(context, target, surface) },
+                            MiracastWindow.Factory { target, surface -> AndroidMiracastWindow(context, target, surface, picture.stretch) },
                             { MiracastSystem.canDrawOverlays(context) }, decoders, listener,
-                            { if (running.get()) host.capabilities(it) }, video::surface).also {
+                            { if (running.get()) host.capabilities(it) }, video::surface, picture).also {
                             video.videoSize().let { size -> it.videoSize(size.width, size.height) }
                             it.start()
                         }

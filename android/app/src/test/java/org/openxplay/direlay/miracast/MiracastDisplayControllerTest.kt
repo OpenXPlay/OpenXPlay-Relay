@@ -37,7 +37,7 @@ class MiracastDisplayControllerTest {
         override fun videoSize(width: Int, height: Int) { size = Viewport(width, height) }
         override fun close() { closed = true }
     }
-    private class Fixture {
+    private class Fixture(picture: MiracastPicture = MiracastPicture()) {
         val source = Displays()
         val events = MiracastEvents()
         val windows = mutableListOf<Window>()
@@ -51,9 +51,27 @@ class MiracastDisplayControllerTest {
                 if (broken) throw IllegalStateException("window unavailable")
                 Window(surface).also { windows += it }
             }, { allowed }, listOf(DecoderSupport("avc1.64002a", true)), events,
-            { capabilities += it }, { surfaces += it })
+            { capabilities += it }, { surfaces += it }, picture)
         fun poll() = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
     }
+    @Test fun customPictureUsesDisplayDensityAndRefreshOnlyWhileItsWindowIsShowing() {
+        val f = Fixture(MiracastPicture(Viewport(1920, 720), stretch = true))
+        f.controller.start()
+        assertTrue(f.capabilities.last().displays.isEmpty())
+        f.source.update(car)
+        assertEquals(car, f.events.states.last().second)
+        assertEquals(DisplayInfo(1920, 720, 240, 60.0), f.capabilities.last().displays[ScreenId.MAIN])
+        f.source.update(car.copy(width = 1280, height = 720, densityDpi = 160, refreshHz = 50.0))
+        assertEquals(DisplayInfo(1920, 720, 160, 50.0), f.capabilities.last().displays[ScreenId.MAIN])
+        f.allowed = false; f.poll()
+        assertTrue(f.capabilities.last().displays.isEmpty())
+        f.allowed = true; f.poll()
+        assertEquals(1920, f.capabilities.last().displays[ScreenId.MAIN]?.widthPx)
+        f.source.update()
+        assertTrue(f.capabilities.last().displays.isEmpty())
+        f.controller.close()
+    }
+
     @Test fun presentationAddRemoveAndReplacementUpdateCapabilitiesAndReleaseWindows() {
         val f = Fixture()
         f.controller.start()

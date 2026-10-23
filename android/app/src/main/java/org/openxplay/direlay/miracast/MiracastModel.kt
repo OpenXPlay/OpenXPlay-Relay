@@ -8,6 +8,8 @@ import org.openxplay.stream.core.*
 import java.util.ArrayDeque
 import kotlin.math.roundToInt
 
+data class MiracastPicture(val size: Viewport? = null, val stretch: Boolean = false)
+
 enum class MiracastState { WAITING_FOR_DISPLAY, NEEDS_PERMISSION, SHOWING, ENDED }
 data class MiracastDisplay(val id: Int, val name: String, val width: Int, val height: Int, val densityDpi: Int, val refreshHz: Double)
 data class MiracastStatistics(val decodedFrames: Long, val droppedFrames: Long, val codec: VideoCodec?, val width: Int, val height: Int)
@@ -27,18 +29,18 @@ internal object MiracastPolicy {
         it.id != Display.DEFAULT_DISPLAY && it.width > 0 && it.height > 0
     }?.let(::normalize)
 
-    fun capabilities(decoders: List<DecoderSupport>, display: MiracastDisplay?) = OutputCapabilities(
+    fun capabilities(decoders: List<DecoderSupport>, display: MiracastDisplay?, picture: MiracastPicture = MiracastPicture()) = OutputCapabilities(
         latency = LatencyClass.INTERACTIVE, decoders = decoders,
-        displays = display?.let(::normalize)?.let { mapOf(ScreenId.MAIN to DisplayInfo(it.width, it.height, it.densityDpi, it.refreshHz)) }.orEmpty(),
+        displays = display?.let(::normalize)?.let { mapOf(ScreenId.MAIN to DisplayInfo(picture.size?.width ?: it.width, picture.size?.height ?: it.height, it.densityDpi, it.refreshHz)) }.orEmpty(),
         touch = 0, keys = emptySet(), audio = emptySet(), microphone = false,
     )
 
     fun sameFormat(a: VideoFormat?, b: VideoFormat?): Boolean = a === b || a != null && b != null &&
         a.codec == b.codec && a.width == b.width && a.height == b.height && a.config.contentEquals(b.config)
 
-    fun fit(width: Int, height: Int, videoWidth: Int, videoHeight: Int): Viewport {
+    fun fit(width: Int, height: Int, videoWidth: Int, videoHeight: Int, stretch: Boolean = false): Viewport {
         require(width > 0 && height > 0)
-        if (videoWidth <= 0 || videoHeight <= 0) return Viewport(width, height)
+        if (stretch || videoWidth <= 0 || videoHeight <= 0) return Viewport(width, height)
         val scale = minOf(width.toDouble() / videoWidth, height.toDouble() / videoHeight)
         return Viewport((videoWidth * scale).roundToInt().coerceIn(1, width),
             (videoHeight * scale).roundToInt().coerceIn(1, height))

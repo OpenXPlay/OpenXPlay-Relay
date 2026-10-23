@@ -15,6 +15,25 @@ import org.robolectric.annotation.Config
 @Config(sdk = [33], application = Application::class)
 class MiracastPolicyTest {
     private val display = MiracastDisplay(7, "Car", 1920, 1080, 240, 59.94)
+    @Test fun pictureOverrideChangesOnlyAttachedCapabilitySizeAndKeepsTheNegotiatedDisplayMetadata() {
+        val picture = MiracastPicture(Viewport(1920, 720), stretch = true)
+        assertEquals(DisplayInfo(1920, 720, 240, 59.94),
+            MiracastPolicy.capabilities(emptyList(), display, picture).displays[ScreenId.MAIN])
+        assertTrue(MiracastPolicy.capabilities(emptyList(), null, picture).displays.isEmpty())
+        assertEquals(DisplayInfo(1920, 1080, 240, 59.94),
+            MiracastPolicy.capabilities(emptyList(), display, MiracastPicture(stretch = true)).displays[ScreenId.MAIN])
+        assertEquals(DisplayInfo(720, 1280, 240, 59.94),
+            MiracastPolicy.capabilities(emptyList(), display, MiracastPicture(Viewport(720, 1280))).displays[ScreenId.MAIN])
+    }
+    @Test fun stretchUsesTheWholePhysicalDisplayForEveryPictureAspectRatioWhileFitLetterboxes() {
+        for ((width, height) in listOf(640 to 480, 720 to 1280, 1920 to 720, 100 to 100, 0 to 0)) {
+            assertEquals(Viewport(1920, 1080), MiracastPolicy.fit(1920, 1080, width, height, stretch = true))
+            assertEquals(Viewport(1080, 1920), MiracastPolicy.fit(1080, 1920, width, height, stretch = true))
+        }
+        assertEquals(Viewport(1920, 720), MiracastPolicy.fit(1920, 1080, 1920, 720, stretch = false))
+        assertEquals(Viewport(1440, 1080), MiracastPolicy.fit(1920, 1080, 640, 480, stretch = false))
+    }
+
     @Test fun choiceIgnoresTheDefaultAndInvalidDisplaysAndPreservesPresentationOrder() {
         assertNull(MiracastPolicy.display(emptyList()))
         assertNull(MiracastPolicy.display(listOf(display.copy(id = 0))))

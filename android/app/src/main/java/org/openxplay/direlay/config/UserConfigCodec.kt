@@ -19,6 +19,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  * - output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
  * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string};
  *   dlnaPicture: 720p/1080p.
+ * - wirelessPicture: auto/custom; wirelessPictureSize: {width, height}, even pixels in
+ *   landscape 640–1920 × 360–1080 (portrait bounds reversed); miracastStretch: boolean.
  * - sharedWifiNetworks: up to ten {ssid: 1–32 UTF-8 bytes, password: empty or 8–63 chars}.
  * - iphone: Bluetooth address or null; receiverPort: 1024–65535 or null.
  * - iphoneConnection, mfiTarget, hotspotBand, hotspotSecurity, displayMode, microphoneSource,
@@ -54,6 +56,7 @@ object UserConfigCodec {
         ClinkHevcMode.STREAM_ONLY to "stream-only", ClinkHevcMode.OFF to "off", ClinkHevcMode.SIGNAL to "signal",
         ClinkPictureSize.WINDOW to "window", ClinkPictureSize.MODE to "mode",
         DlnaPicture.P720 to "720p", DlnaPicture.P1080 to "1080p",
+        WirelessPictureMode.AUTO to "auto", WirelessPictureMode.CUSTOM to "custom",
         DisplayMode.AUTOMATIC to "automatic", DisplayMode.RELAY_SCREEN to "relay-screen", DisplayMode.FIXED to "fixed",
         MicrophoneSource.HEAD_UNIT to "head-unit", MicrophoneSource.THIS_DEVICE to "this-device",
         CarPlayResolution.AUTO to "auto", CarPlayResolution.NATIVE to "native", CarPlayResolution.P1080 to "1080p", CarPlayResolution.P720 to "720p", CarPlayResolution.SCREEN to "screen",
@@ -78,6 +81,9 @@ object UserConfigCodec {
         .put("dlnaRenderer", s.dlnaRenderer?.let { JSONObject().put("udn", it.udn).put("name", it.name) } ?: JSONObject.NULL)
         .put("dlnaPicture", wire(s.dlnaPicture))
         .put("miracastOutput", s.miracastOutput)
+        .put("wirelessPicture", wire(s.wirelessPicture))
+        .put("wirelessPictureSize", JSONObject().put("width", s.wirelessPictureSize.width).put("height", s.wirelessPictureSize.height))
+        .put("miracastStretch", s.miracastStretch)
         .put("networkMode", networkWire(s.wirelessNetwork.choice))
         .put("sharedWifiNetworks", org.json.JSONArray().also { a -> s.wirelessNetwork.sharedWifiNetworks.forEach { a.put(JSONObject().put("ssid", it.ssid).put("password", it.passphrase)) } })
         .put("iphoneConnection", wire(s.connectionMode))
@@ -157,6 +163,7 @@ object UserConfigCodec {
         fun unknown(objectValue: JSONObject, known: Set<String>, prefix: String) {
             objectValue.keys().asSequence().filter { it !in known }.forEach { ignored.add("$prefix.$it") }
         }
+        j.optJSONObject("wirelessPictureSize")?.let { unknown(it, setOf("width", "height"), "wirelessPictureSize") }
         j.optJSONObject("dlnaRenderer")?.let { unknown(it, setOf("udn", "name"), "dlnaRenderer") }
         j.optJSONObject("display")?.let { unknown(it, setOf("width", "height", "density"), "display") }
         j.optJSONObject("car")?.let { unknown(it, setOf("brand", "brandText", "model", "modelText"), "car") }
@@ -170,6 +177,9 @@ object UserConfigCodec {
                 "dlnaOutput" -> { val value = j.bool(key); s = s.copy(dlnaOutput = value) }
                 "dlnaRenderer" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DlnaRendererChoice(it.string("udn"), it.string("name")) }; s = s.copy(dlnaRenderer = value) }
                 "dlnaPicture" -> { val value = enumValue<DlnaPicture>(j.string(key)); s = s.copy(dlnaPicture = value) }
+                "wirelessPicture" -> { val value = enumValue<WirelessPictureMode>(j.string(key)); s = s.copy(wirelessPicture = value) }
+                "wirelessPictureSize" -> { val value = j.getJSONObject(key).let { WirelessPictureSize(it.integer("width"), it.integer("height")).also(WirelessPictureSize::validate) }; s = s.copy(wirelessPictureSize = value) }
+                "miracastStretch" -> { val value = j.bool(key); s = s.copy(miracastStretch = value) }
                 "miracastOutput" -> { val value = j.bool(key); s = s.copy(miracastOutput = value) }
                 "networkMode" -> { val value = when (j.string(key)) { "device-hotspot" -> WirelessNetworkChoice.PHONE_HOTSPOT; "shared-wifi" -> WirelessNetworkChoice.EXISTING_WIFI; "wifi-direct" -> WirelessNetworkChoice.WIFI_DIRECT; else -> error("invalid") }; s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(choice = value)) }
                 "sharedWifiNetworks" -> { val value = j.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it).let { o -> SharedWifiNetwork(o.string("ssid"), o.string("password")) } } }.also(SharedWifiNetworks::validate); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(sharedWifiNetworks = value)) }

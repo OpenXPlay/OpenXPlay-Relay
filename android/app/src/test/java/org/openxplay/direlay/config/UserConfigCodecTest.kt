@@ -24,6 +24,42 @@ class UserConfigCodecTest {
     private fun wrapped(settings: JSONObject) = ConfigEnvelope.create(UserConfigCodec.FORMAT, meta).put("settings", settings).toString()
     private fun decode(settings: JSONObject) = UserConfigCodec.decode(wrapped(settings), base)
 
+    @Test fun wirelessPictureVersionOneRoundTripsAndMissingKeysKeepParkedChoices() {
+        for (mode in WirelessPictureMode.entries) for (stretch in listOf(false, true))
+            for (size in listOf(WirelessPictureSize(1920, 720), WirelessPictureSize(720, 1280))) {
+                val chosen = base.copy(wirelessPicture = mode, wirelessPictureSize = size, miracastStretch = stretch)
+                val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
+                val root = JSONObject(text)
+                assertEquals(1, root.getInt("version"))
+                val json = root.getJSONObject("settings")
+                assertEquals(if (mode == WirelessPictureMode.AUTO) "auto" else "custom", json.getString("wirelessPicture"))
+                assertEquals(size.width, json.getJSONObject("wirelessPictureSize").getInt("width"))
+                assertEquals(size.height, json.getJSONObject("wirelessPictureSize").getInt("height"))
+                val result = UserConfigCodec.decode(text, base)
+                assertTrue(result.errors.toString(), result.errors.isEmpty())
+                assertEquals(chosen, result.settings)
+                assertTrue(result.ignoredKeys.isEmpty())
+                assertEquals(0, UserConfigCodec.decode(text, chosen).changedCount)
+                assertEquals(chosen, UserConfigCodec.decode(wrapped(JSONObject()), chosen).settings)
+            }
+    }
+    @Test fun wirelessPictureInvalidTypesAndOutOfBoundsSizesRejectAtomicallyEvenInAuto() {
+        val badSizes = listOf<Any>(JSONObject.NULL, "1280x720", 720, JSONObject(),
+            JSONObject().put("width", 1280), JSONObject().put("width", "1280").put("height", 720),
+            JSONObject().put("width", 1280.5).put("height", 720)) +
+            listOf(1281 to 720, 1280 to 721, 1922 to 1080, 1920 to 1082, 638 to 360, 360 to 638, 0 to 0, -640 to 360)
+                .map { (w, h) -> JSONObject().put("width", w).put("height", h) }
+        val cases = mapOf("wirelessPictureSize" to badSizes, "wirelessPicture" to listOf<Any>("AUTO", "future", 1, JSONObject.NULL),
+            "miracastStretch" to listOf<Any>("true", 1, JSONObject.NULL))
+        cases.forEach { (key, values) -> values.forEach { value ->
+            val result = decode(JSONObject().put(key, value).put("autoStartOnBoot", true))
+            assertEquals(mapOf(key to "invalid"), result.errors)
+            assertEquals(base, result.settings); assertEquals(0, result.changedCount)
+        } }
+        val result = decode(JSONObject().put("wirelessPictureSize", JSONObject().put("width", 1280).put("height", 480).put("future", 1)))
+        assertTrue(result.errors.isEmpty()); assertEquals(listOf("wirelessPictureSize.future"), result.ignoredKeys)
+    }
+
     @Test fun wirelessDisplaysRoundTripAtVersionOneAndMissingKeysKeepChoices() {
         for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
             for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {

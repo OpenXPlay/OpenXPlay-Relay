@@ -91,6 +91,9 @@ data class RelaySettings(
     val dlnaRenderer: DlnaRendererChoice? = null,
     val dlnaPicture: DlnaPicture = DlnaPicture.P720,
     val miracastOutput: Boolean = false,
+    val wirelessPicture: WirelessPictureMode = WirelessPictureMode.AUTO,
+    val wirelessPictureSize: WirelessPictureSize = WirelessPictureSize(),
+    val miracastStretch: Boolean = false,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false,
         phoneAddresses: Set<String> = emptySet()) {
@@ -101,6 +104,7 @@ data class RelaySettings(
                 value.none { Character.isISOControl(it) }) { "Carlink name and model must contain 1–128 UTF-8 bytes without control characters." }
         }
         require(org.openxplay.direlay.plugins.RelayPlugins.validIds(pluginsEnabled)) { "error.plugins" }
+        wirelessPictureSize.validate()
         display?.validate()
         require(displayMode != DisplayMode.FIXED || display != null) { "Choose a fixed display profile." }
         require(fps in 30..60 && fps % 5 == 0) { "FPS must be 30–60 in steps of 5." }
@@ -256,6 +260,10 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             dlnaRenderer = relay.getString("dlnaRendererUdn", null)?.let { DlnaRendererChoice(it, relay.getString("dlnaRendererName", "").orEmpty()) },
             dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == relay.getString("dlnaPicture", null) } ?: DlnaPicture.P720,
             miracastOutput = relay.getBoolean("miracastOutput", false),
+            wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == relay.getString("wirelessPicture", null) } ?: WirelessPictureMode.AUTO,
+            wirelessPictureSize = WirelessPictureSize(relay.getInt("wirelessPictureWidth", 1280), relay.getInt("wirelessPictureHeight", 720))
+                .takeIf { runCatching { it.validate() }.isSuccess } ?: WirelessPictureSize(),
+            miracastStretch = relay.getBoolean("miracastStretch", false),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
@@ -343,6 +351,10 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("dlnaRendererName", settings.dlnaRenderer?.name)
             .putString("dlnaPicture", settings.dlnaPicture.name)
             .putBoolean("miracastOutput", settings.miracastOutput)
+            .putString("wirelessPicture", settings.wirelessPicture.name)
+            .putInt("wirelessPictureWidth", settings.wirelessPictureSize.width)
+            .putInt("wirelessPictureHeight", settings.wirelessPictureSize.height)
+            .putBoolean("miracastStretch", settings.miracastStretch)
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
             .putBoolean("carlinkReconnectOnResize", settings.carlinkReconnectOnResize)

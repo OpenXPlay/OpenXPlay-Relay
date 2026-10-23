@@ -121,9 +121,11 @@ class RelayRuntime(private val context: Context,
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }
+    private val carDisplayMemory = CarDisplayMemory()
     internal val displayPolicy = CarDisplayPolicy(observe = { display ->
         setup.execute { observeWindow(display) }
-    }, wholeScreen = { settingsStore.snapshot.value?.let { it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC } == true }) {
+    }, wholeScreen = { settingsStore.snapshot.value?.let { it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC } == true },
+        secondary = carDisplayMemory::isWireless) {
         settingsStore.snapshot.value?.carplayResolution ?: CarPlayResolution.AUTO
     }
     private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
@@ -145,28 +147,40 @@ class RelayRuntime(private val context: Context,
     }
 
     @Synchronized private fun rememberCarDisplay() {
-        val report = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from) ?: run { clearedReport = null; return }
+        // Pair the measured report with its canvas before another output can renegotiate.
+        val (measured, canvas, limit) = synchronized(displayPolicy) {
+            Triple(carDisplayMemory.measuredDisplay(displayPolicy.primaryOutput), displayPolicy.carDisplay, displayPolicy.decoderLimit)
+        }
+        val report = measured?.let(HeadUnitDisplay::from) ?: run {
+            if (displayPolicy.primaryDisplay == null) clearedReport = null
+            return
+        }
         // Clearing while connected must survive periodic refreshes of the same report.
         if (report == clearedReport) return
         clearedReport = null
-        val canvas = displayPolicy.carDisplay ?: return
         val settings = settingsStore.snapshot.value ?: return
-        val saved = SavedHeadUnit(canvas, report, settings.carplayResolution,
-            settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC, displayPolicy.decoderLimit)
+        val saved = SavedHeadUnit(canvas ?: return, report, settings.carplayResolution,
+            settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC, limit)
         if (saved == savedHeadUnit) return
         savedHeadUnitStore.save(saved); savedHeadUnit = saved
+        wirelessUpdate { configureDlna() }
     }
 
     fun clearSavedHeadUnit() { setup.execute { synchronized(this) {
         clearedReport = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)
         savedHeadUnitStore.clear(); savedHeadUnit = null
-    } } }
+    }; configureDlna() } }
 
     val savedCanvas: CarPlayScreen get() = synchronized(this) {
         loadRememberedDisplay()
         val settings = settingsStore.snapshot.value ?: return@synchronized CarPlayScreen(CarDisplayFit.default, "default")
         checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null,
             savedHeadUnit, carModels.model(settings.car)))
+    }
+
+    fun wirelessPicture(settings: RelaySettings): WirelessPictureResolution = synchronized(this) {
+        loadRememberedDisplay()
+        WirelessPicturePolicy.resolve(settings, savedHeadUnit, carModels.model(settings.car))
     }
 
     private fun planningDisplay(settings: RelaySettings) = planningDisplay(
@@ -533,7 +547,7 @@ class RelayRuntime(private val context: Context,
         ipv4Addresses(includeIphoneLink = false).map { java.net.InetAddress.getByName(it) as Inet4Address }
     }
     private val dlnaLifecycle = RetiringOutputPolicy<DlnaOutputPlan>()
-    private val miracastLifecycle = RetiringOutputPolicy<Unit>()
+    private val miracastLifecycle = RetiringOutputPolicy<MiracastPicture>()
     @Volatile private var dlnaToken: Any? = null
     @Volatile private var miracastToken: Any? = null
     @Volatile var dlnaState: CastState? = null
@@ -755,7 +769,7 @@ class RelayRuntime(private val context: Context,
     private fun configureDlna() {
         if (closed) return
         val settings = settingsStore.awaitSnapshot()
-        val requested = WirelessOutputPolicy.dlna(settings)
+        val requested = WirelessOutputPolicy.dlna(settings, wirelessPicture(settings))
         if (requested == null) {
             dlnaState = null; dlnaRendererName = null; dlnaFailure = null; dlnaStatistics = null
         }
@@ -793,9 +807,9 @@ class RelayRuntime(private val context: Context,
             }
         }
         try {
-            val output = CastOutput(CastOutputConfig(plan.udn, plan.picture.width, plan.picture.height, fps = 30, audio = true),
+            val output = CastOutput(CastOutputConfig(plan.udn, plan.size.width, plan.size.height, fps = 30, audio = true),
                 castNetwork, listener)
-            hub.addOutput(TranscodingOutput(output, MediaCodecPipeline.factory, deliveryCodecs = setOf(VideoCodec.H264)))
+            hub.addOutput(carDisplayMemory.exclude(TranscodingOutput(output, MediaCodecPipeline.factory, deliveryCodecs = setOf(VideoCodec.H264))))
         } catch (failure: Exception) {
             dlnaToken = null; dlnaLifecycle.ended()
             dlnaFailure = WirelessDisplayFailure("output_failed", failureText(failure, ::redactFailureMessage), System.currentTimeMillis())
@@ -831,7 +845,7 @@ class RelayRuntime(private val context: Context,
                     miracastFailure = WirelessDisplayFailure(code, redactFailureMessage(detail), System.currentTimeMillis())
             }
         }
-        try { hub.addOutput(MiracastOutput(context.applicationContext, listener)) }
+        try { hub.addOutput(carDisplayMemory.exclude(MiracastOutput(context.applicationContext, listener, picture = checkNotNull(requested)))) }
         catch (failure: Exception) {
             miracastToken = null; miracastLifecycle.ended()
             miracastFailure = WirelessDisplayFailure("output_failed", failureText(failure, ::redactFailureMessage), System.currentTimeMillis())

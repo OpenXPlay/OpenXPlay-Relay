@@ -133,7 +133,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         }
                     }
                 }
-                WirelessDisplaySettings(draft, wireless(draft), runtime) { draft = it }
+                WirelessDisplaySettings(draft, wireless(draft), runtime, state, openCarScreen = { open("settings/car") }) { draft = it }
             }
             "settings/car" -> {
                 if (runtime != null) CarScreenSettings(draft, runtime,

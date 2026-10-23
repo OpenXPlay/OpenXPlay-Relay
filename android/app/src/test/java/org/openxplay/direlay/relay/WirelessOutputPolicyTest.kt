@@ -7,6 +7,8 @@ import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
 import org.openxplay.direlay.settings.*
+import org.openxplay.direlay.miracast.MiracastPicture
+import org.openxplay.stream.core.Viewport
 
 class WirelessOutputPolicyTest {
     private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, 30, false, false, false, null)
@@ -18,10 +20,30 @@ class WirelessOutputPolicyTest {
                 for (carlink in listOf(false, true)) for (both in listOf(false, true)) {
                     val settings = base.copy(dlnaOutput = dlna, dlnaRenderer = choice, dlnaPicture = picture,
                         miracastOutput = miracast, carlinkOutput = carlink, bothOutputs = both)
-                    assertEquals(if (dlna && choice != null) DlnaOutputPlan(choice.udn, picture) else null,
+                    assertEquals(if (dlna && choice != null) DlnaOutputPlan(choice.udn, if (picture == DlnaPicture.P720) WirelessPictureSize(1280, 720) else WirelessPictureSize(1920, 1080)) else null,
                         WirelessOutputPolicy.dlna(settings))
-                    assertEquals(if (miracast) Unit else null, WirelessOutputPolicy.miracast(settings))
+                    assertEquals(if (miracast) MiracastPicture() else null, WirelessOutputPolicy.miracast(settings))
                 }
+    }
+
+    @Test fun resolvedSizeAndCustomPictureChangesRebuildOnlyTheAffectedOutput() {
+        val settings = base.copy(dlnaOutput = true, dlnaRenderer = receiver, miracastOutput = true)
+        val first = WirelessOutputPolicy.dlna(settings)
+        val dlna = RetiringOutputPolicy<DlnaOutputPlan>()
+        assertEquals(OutputChange.ADD, dlna.update(first))
+        val measured = WirelessPictureResolution(WirelessPictureSize(1920, 720), WirelessPictureSource.BROWSER)
+        assertEquals(OutputChange.REMOVE, dlna.update(WirelessOutputPolicy.dlna(settings, measured)))
+        val custom = settings.copy(wirelessPicture = WirelessPictureMode.CUSTOM, wirelessPictureSize = WirelessPictureSize(1280, 480))
+        assertEquals(WirelessPictureSize(1280, 480), WirelessOutputPolicy.dlna(custom)?.size)
+        assertEquals(MiracastPicture(Viewport(1280, 480)), WirelessOutputPolicy.miracast(custom))
+        assertEquals(WirelessOutputPolicy.dlna(custom), WirelessOutputPolicy.dlna(custom.copy(dlnaPicture = DlnaPicture.P1080, miracastStretch = true)))
+        assertEquals(MiracastPicture(size = null, stretch = true), WirelessOutputPolicy.miracast(settings.copy(miracastStretch = true)))
+        val miracast = RetiringOutputPolicy<MiracastPicture>()
+        assertEquals(OutputChange.ADD, miracast.update(WirelessOutputPolicy.miracast(settings)))
+        assertEquals(OutputChange.REMOVE, miracast.update(WirelessOutputPolicy.miracast(custom)))
+        miracast.ended()
+        assertEquals(OutputChange.ADD, miracast.update(WirelessOutputPolicy.miracast(custom)))
+        assertEquals(OutputChange.REMOVE, miracast.update(WirelessOutputPolicy.miracast(custom.copy(miracastStretch = true))))
     }
 
     @Test fun onlyUdnAndPictureChangesRebuildDlna() {
@@ -43,8 +65,8 @@ class WirelessOutputPolicyTest {
 
     @Test fun retiringWaitsForEndedAndThenUsesTheLatestChoice() {
         val policy = RetiringOutputPolicy<DlnaOutputPlan>()
-        val original = DlnaOutputPlan("uuid:first", DlnaPicture.P720)
-        val replacement = DlnaOutputPlan("uuid:latest", DlnaPicture.P1080)
+        val original = DlnaOutputPlan("uuid:first", WirelessPictureSize(1280, 720))
+        val replacement = DlnaOutputPlan("uuid:latest", WirelessPictureSize(1920, 1080))
         assertEquals(OutputChange.KEEP, policy.update(null))
         assertEquals(OutputChange.ADD, policy.update(original))
         assertEquals(OutputChange.REMOVE, policy.update(replacement))
@@ -63,11 +85,11 @@ class WirelessOutputPolicyTest {
 
     @Test fun miracastRapidOffOnDoesNotOverlapOutputsAndDisabledOutputsStayRemoved() {
         for (reenable in listOf(false, true)) {
-            val policy = RetiringOutputPolicy<Unit>()
-            assertEquals(OutputChange.ADD, policy.update(Unit))
-            assertEquals(OutputChange.KEEP, policy.update(Unit))
+            val policy = RetiringOutputPolicy<MiracastPicture>()
+            assertEquals(OutputChange.ADD, policy.update(MiracastPicture()))
+            assertEquals(OutputChange.KEEP, policy.update(MiracastPicture()))
             assertEquals(OutputChange.REMOVE, policy.update(null))
-            val latest = Unit.takeIf { reenable }
+            val latest = MiracastPicture(Viewport(1920, 720), stretch = true).takeIf { reenable }
             repeat(3) { assertEquals(OutputChange.KEEP, policy.update(latest)) }
             policy.ended()
             assertEquals(if (reenable) OutputChange.ADD else OutputChange.KEEP, policy.update(latest))

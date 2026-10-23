@@ -725,4 +725,15 @@
     <string name="miracast_error_window">无法在外接屏幕上显示 CarPlay，请检查上层显示权限并重新投屏。</string>
     <string name="miracast_error_decoder">外接屏幕的视频解码失败，正在等待新的视频关键帧重试。</string>
     <string name="miracast_error_display">外接屏幕已断开，请重新启动系统投屏。</string>
+    <string name="wireless_picture">画面</string>
+    <string name="wireless_picture_auto">跟随车机屏幕</string>
+    <string name="wireless_picture_auto_hint">Miracast 使用与车机协商的屏幕尺寸。DLNA 使用浏览器测量并保存的车机屏幕，或所选车型的屏幕；都没有时使用 16:9。720p/1080p 档位仅用于 DLNA。</string>
+    <string name="wireless_picture_custom_hint">忽略车机提供的尺寸，自行设置画面比例。请使用偶数：横屏宽 640–1920、高 360–1080 像素，竖屏的宽高范围对调。</string>
+    <string name="wireless_picture_browser">当前 %1$d×%2$d，来自浏览器测量</string>
+    <string name="wireless_picture_model">当前 %1$d×%2$d，来自车型数据</string>
+    <string name="wireless_picture_default">当前 %1$d×%2$d，使用默认比例</string>
+    <string name="wireless_picture_priority">车载浏览器等可交互输出连接后，会优先决定 CarPlay 的画面尺寸。车机屏幕设置中的固定尺寸优先于所有输出提供的尺寸。</string>
+    <string name="wireless_picture_fixed">CarPlay 正在使用车机屏幕设置中的固定尺寸。</string>
+    <string name="miracast_fill_screen">铺满屏幕</string>
+    <string name="miracast_fill_screen_hint">如果车机会把投屏画面拉伸到全屏，请打开此项。中继会将 CarPlay 拉伸铺满投屏画面，让车机显示出正确的比例。</string>
 </resources>

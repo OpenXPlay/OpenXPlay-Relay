@@ -3,16 +3,21 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.relay
 
-import org.openxplay.direlay.settings.DlnaPicture
+import org.openxplay.direlay.miracast.MiracastPicture
+import org.openxplay.direlay.settings.WirelessPictureMode
+import org.openxplay.direlay.settings.WirelessPictureSize
+import org.openxplay.stream.core.Viewport
 import org.openxplay.direlay.settings.RelaySettings
 
-data class DlnaOutputPlan(val udn: String, val picture: DlnaPicture)
+data class DlnaOutputPlan(val udn: String, val size: WirelessPictureSize)
 data class WirelessDisplayFailure(val code: String, val detail: String, val atMillis: Long)
 
 object WirelessOutputPolicy {
-    fun dlna(settings: RelaySettings): DlnaOutputPlan? =
-        settings.dlnaRenderer?.takeIf { settings.dlnaOutput }?.let { DlnaOutputPlan(it.udn, settings.dlnaPicture) }
-    fun miracast(settings: RelaySettings): Unit? = Unit.takeIf { settings.miracastOutput }
+    fun dlna(settings: RelaySettings, picture: WirelessPictureResolution = WirelessPicturePolicy.resolve(settings)): DlnaOutputPlan? =
+        settings.dlnaRenderer?.takeIf { settings.dlnaOutput }?.let { DlnaOutputPlan(it.udn, picture.size) }
+    fun miracast(settings: RelaySettings): MiracastPicture? = if (!settings.miracastOutput) null else MiracastPicture(
+        size = settings.wirelessPictureSize.fitted().takeIf { settings.wirelessPicture == WirelessPictureMode.CUSTOM }?.let { Viewport(it.width, it.height) },
+        stretch = settings.miracastStretch)
 }
 
 enum class OutputChange { KEEP, REMOVE, ADD }
