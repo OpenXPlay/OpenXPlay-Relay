@@ -17,6 +17,34 @@ class SettingsEditorStateTest {
     private fun editor() = SettingsEditorState(mutableStateOf(initial), mutableStateOf(initial),
         mutableStateOf(false), mutableStateMapOf(), mutableStateMapOf())
 
+    @Test fun wirelessCustomStartsFromAutoAndKeepsInvalidTextOffTheTypedDraftAndOnTheOutputPage() {
+        val state = editor()
+        state.chooseWirelessPicture(WirelessPictureMode.CUSTOM, WirelessPictureSize(1920, 720))
+        assertEquals(WirelessPictureSize(1920, 720), state.draft.value.wirelessPictureSize)
+        state.updateWirelessPicture("wirelessPictureWidth", "")
+        assertEquals("", state.numberText["wirelessPictureWidth"])
+        assertEquals(setOf("settings/output"), state.errorPages { false })
+        assertEquals(WirelessPictureSize(1920, 720), state.draft.value.wirelessPictureSize)
+        state.updateWirelessPicture("wirelessPictureWidth", "720")
+        state.updateWirelessPicture("wirelessPictureHeight", "1281")
+        assertEquals(setOf("settings/output"), state.errorPages { false })
+        state.updateWirelessPicture("wirelessPictureHeight", "1280")
+        assertEquals(WirelessPictureSize(720, 1280), state.draft.value.wirelessPictureSize)
+        assertTrue(state.invalidNumbers.isEmpty())
+        state.updateWirelessPicture("wirelessPictureWidth", "999999999999")
+        state.presetWirelessPicture(WirelessPictureSize(1280, 480))
+        assertTrue(state.invalidNumbers.isEmpty()); assertTrue(state.numberText.isEmpty())
+        assertEquals(WirelessPictureSize(1280, 480), state.draft.value.wirelessPictureSize)
+        state.updateWirelessPicture("wirelessPictureHeight", "bad")
+        state.chooseWirelessPicture(WirelessPictureMode.AUTO, WirelessPictureSize())
+        assertTrue(state.invalidNumbers.isEmpty()); assertTrue(state.numberText.isEmpty())
+        assertEquals(WirelessPictureMode.AUTO, state.draft.value.wirelessPicture)
+        state.draft.value = state.draft.value.copy(wirelessPictureSize = WirelessPictureSize(320, 240))
+        assertEquals(setOf("settings/output"), state.errorPages { false })
+        assertEquals(mapOf("wirelessPictureSize" to org.openxplay.direlay.R.string.settings_advanced_error),
+            settingsSaveErrors(state.draft.value, false))
+    }
+
     @Test fun parkedWindowFitChoicesSurviveMenuChangesAndApplyWhenEnabled() {
         val state = editor()
         state.synchronize(initial, true)

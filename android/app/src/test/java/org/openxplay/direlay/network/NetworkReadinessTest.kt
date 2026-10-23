@@ -15,11 +15,11 @@ class NetworkReadinessTest {
             state == false -> Readiness.PROBLEM
             else -> Readiness.UNKNOWN
         }
-        for (carlink in listOf(false, true)) for (wireless in listOf(false, true))
+        for (carlink in listOf(false, true)) for (miracast in listOf(false, true)) for (wireless in listOf(false, true))
             for (choice in WirelessNetworkChoice.entries) for (wifi in states) for (hotspot in states) {
                 val actual = NetworkReadiness.read(carlink, wireless, choice == WirelessNetworkChoice.PHONE_HOTSPOT,
-                    NetworkReadings(wifi, hotspot))
-                assertEquals(expected(carlink, wifi), actual.wifi)
+                    NetworkReadings(wifi, hotspot), miracast = miracast)
+                assertEquals(expected(carlink || miracast, wifi), actual.wifi)
                 assertEquals(expected(wireless && choice == WirelessNetworkChoice.PHONE_HOTSPOT, hotspot), actual.hotspot)
             }
     }

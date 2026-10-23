@@ -42,7 +42,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val busy: Boolean = false, val onWifi: Boolean = false, val vehicle: VehicleView = VehicleView(),
     val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null,
     val networkReadings: NetworkReadings = NetworkReadings(), val networkStart: NetworkReadiness? = null,
-    val teslaUrl: String? = null, val requestVpnOnStart: Boolean = false)
+    val teslaUrl: String? = null, val requestVpnOnStart: Boolean = false,
+    val wirelessDisplays: List<WirelessDisplayLine> = emptyList())
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -64,6 +65,11 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val status: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusHero(value)
+            if (value.wirelessDisplays.isNotEmpty()) RelayCard {
+                value.wirelessDisplays.forEach { line ->
+                    DetailValue(line.title, stringResource(line.text, *line.arguments.toTypedArray()))
+                }
+            }
             MotionCard(value.displayMismatch && value.presentation.running) {
                 Text(stringResource(R.string.display_changed))
                 TextButton(onClick = onRestart, modifier = Modifier.heightIn(min = 48.dp)) {

@@ -17,6 +17,10 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 /**
  * Version-1 key catalogue (enum strings are pinned in enumWires below):
  * - output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
+ * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string};
+ *   dlnaPicture: 720p/1080p.
+ * - wirelessPicture: auto/custom; wirelessPictureSize: {width, height}, even pixels in
+ *   landscape 640–1920 × 360–1080 (portrait bounds reversed); miracastStretch: boolean.
  * - sharedWifiNetworks: up to ten {ssid: 1–32 UTF-8 bytes, password: empty or 8–63 chars}.
  * - iphone: Bluetooth address or null; receiverPort: 1024–65535 or null.
  * - iphoneConnection, mfiTarget, hotspotBand, hotspotSecurity, displayMode, microphoneSource,
@@ -51,6 +55,8 @@ object UserConfigCodec {
         ManualHotspotSecurity.OPEN to "open", ManualHotspotSecurity.WPA2 to "wpa2", ManualHotspotSecurity.WPA3_TRANSITION to "wpa3-transition", ManualHotspotSecurity.WPA3 to "wpa3",
         ClinkHevcMode.STREAM_ONLY to "stream-only", ClinkHevcMode.OFF to "off", ClinkHevcMode.SIGNAL to "signal",
         ClinkPictureSize.WINDOW to "window", ClinkPictureSize.MODE to "mode",
+        DlnaPicture.P720 to "720p", DlnaPicture.P1080 to "1080p",
+        WirelessPictureMode.AUTO to "auto", WirelessPictureMode.CUSTOM to "custom",
         DisplayMode.AUTOMATIC to "automatic", DisplayMode.RELAY_SCREEN to "relay-screen", DisplayMode.FIXED to "fixed",
         MicrophoneSource.HEAD_UNIT to "head-unit", MicrophoneSource.THIS_DEVICE to "this-device",
         CarPlayResolution.AUTO to "auto", CarPlayResolution.NATIVE to "native", CarPlayResolution.P1080 to "1080p", CarPlayResolution.P720 to "720p", CarPlayResolution.SCREEN to "screen",
@@ -71,6 +77,13 @@ object UserConfigCodec {
 
     private fun values(s: RelaySettings, d: DeveloperOverrides): JSONObject = JSONObject()
         .put("output", if (s.bothOutputs) "both" else if (s.carlinkOutput) "carlink" else "web")
+        .put("dlnaOutput", s.dlnaOutput)
+        .put("dlnaRenderer", s.dlnaRenderer?.let { JSONObject().put("udn", it.udn).put("name", it.name) } ?: JSONObject.NULL)
+        .put("dlnaPicture", wire(s.dlnaPicture))
+        .put("miracastOutput", s.miracastOutput)
+        .put("wirelessPicture", wire(s.wirelessPicture))
+        .put("wirelessPictureSize", JSONObject().put("width", s.wirelessPictureSize.width).put("height", s.wirelessPictureSize.height))
+        .put("miracastStretch", s.miracastStretch)
         .put("networkMode", networkWire(s.wirelessNetwork.choice))
         .put("sharedWifiNetworks", org.json.JSONArray().also { a -> s.wirelessNetwork.sharedWifiNetworks.forEach { a.put(JSONObject().put("ssid", it.ssid).put("password", it.passphrase)) } })
         .put("iphoneConnection", wire(s.connectionMode))
@@ -150,6 +163,8 @@ object UserConfigCodec {
         fun unknown(objectValue: JSONObject, known: Set<String>, prefix: String) {
             objectValue.keys().asSequence().filter { it !in known }.forEach { ignored.add("$prefix.$it") }
         }
+        j.optJSONObject("wirelessPictureSize")?.let { unknown(it, setOf("width", "height"), "wirelessPictureSize") }
+        j.optJSONObject("dlnaRenderer")?.let { unknown(it, setOf("udn", "name"), "dlnaRenderer") }
         j.optJSONObject("display")?.let { unknown(it, setOf("width", "height", "density"), "display") }
         j.optJSONObject("car")?.let { unknown(it, setOf("brand", "brandText", "model", "modelText"), "car") }
         j.optJSONArray("sharedWifiNetworks")?.let { array -> for (index in 0 until array.length())
@@ -159,6 +174,13 @@ object UserConfigCodec {
         for (key in j.keys().asSequence().toList()) try {
             when (key) {
                 "output" -> { val value = j.string(key).also { require(it in listOf("web", "carlink", "both")) }; s = s.copy(carlinkOutput = value != "web", bothOutputs = value == "both") }
+                "dlnaOutput" -> { val value = j.bool(key); s = s.copy(dlnaOutput = value) }
+                "dlnaRenderer" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DlnaRendererChoice(it.string("udn"), it.string("name")) }; s = s.copy(dlnaRenderer = value) }
+                "dlnaPicture" -> { val value = enumValue<DlnaPicture>(j.string(key)); s = s.copy(dlnaPicture = value) }
+                "wirelessPicture" -> { val value = enumValue<WirelessPictureMode>(j.string(key)); s = s.copy(wirelessPicture = value) }
+                "wirelessPictureSize" -> { val value = j.getJSONObject(key).let { WirelessPictureSize(it.integer("width"), it.integer("height")).also(WirelessPictureSize::validate) }; s = s.copy(wirelessPictureSize = value) }
+                "miracastStretch" -> { val value = j.bool(key); s = s.copy(miracastStretch = value) }
+                "miracastOutput" -> { val value = j.bool(key); s = s.copy(miracastOutput = value) }
                 "networkMode" -> { val value = when (j.string(key)) { "device-hotspot" -> WirelessNetworkChoice.PHONE_HOTSPOT; "shared-wifi" -> WirelessNetworkChoice.EXISTING_WIFI; "wifi-direct" -> WirelessNetworkChoice.WIFI_DIRECT; else -> error("invalid") }; s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(choice = value)) }
                 "sharedWifiNetworks" -> { val value = j.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it).let { o -> SharedWifiNetwork(o.string("ssid"), o.string("password")) } } }.also(SharedWifiNetworks::validate); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(sharedWifiNetworks = value)) }
                 "iphoneConnection" -> { val value = enumValue<ConnectionMode>(j.string(key)); s = s.copy(connectionMode = value) }
@@ -243,14 +265,14 @@ object UserConfigCodec {
         if (useWireless && s.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT) {
             val network = s.wirelessNetwork
             check("hotspotSsid") {
-                require(network.manualSsid.isEmpty() && CarlinkConnectionPolicy.enabled(s) ||
+                require(network.manualSsid.isEmpty() && CarlinkConnectionPolicy.usesWifiDirect(s) ||
                     network.manualSsid.isNotBlank() && network.manualSsid.toByteArray(Charsets.UTF_8).size in 1..32 && '\u0000' !in network.manualSsid)
             }
             check("hotspotPassphrase") { require((network.manualPassphrase.isEmpty() || network.manualPassphrase.length in 8..63) && '\u0000' !in network.manualPassphrase) }
             check("hotspotChannel") { require(network.channel == 0 || isManualHotspotChannelCompatible(network.band, network.channel)) }
             check("hotspotSecurity") { require(network.security == ManualHotspotSecurity.OPEN || network.manualPassphrase.length in 8..63) }
         }
-        if (useWireless && errors.isEmpty()) check("networkMode") { s.wirelessNetwork.validate(true, CarlinkConnectionPolicy.enabled(s)) }
+        if (useWireless && errors.isEmpty()) check("networkMode") { s.wirelessNetwork.validate(true, CarlinkConnectionPolicy.usesWifiDirect(s)) }
         check("mfiI2cPath") { require('\u0000' !in s.i2cPath && (s.mfiTarget != MfiTarget.I2C || s.i2cPath.isNotBlank())) }
         check("mfiRemoteServer") {
             require('\u0000' !in s.remoteServer)

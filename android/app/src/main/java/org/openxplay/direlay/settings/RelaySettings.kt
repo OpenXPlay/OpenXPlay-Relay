@@ -87,16 +87,24 @@ data class RelaySettings(
     val teslaPublicAddress: String = TeslaAddressPolicy.DEFAULT_PUBLIC,
     val teslaMirrorAddress: String = TeslaAddressPolicy.DEFAULT_MIRROR,
     val teslaAndroidAddress: String = TeslaAddressPolicy.DEFAULT_ANDROID,
+    val dlnaOutput: Boolean = false,
+    val dlnaRenderer: DlnaRendererChoice? = null,
+    val dlnaPicture: DlnaPicture = DlnaPicture.P720,
+    val miracastOutput: Boolean = false,
+    val wirelessPicture: WirelessPictureMode = WirelessPictureMode.AUTO,
+    val wirelessPictureSize: WirelessPictureSize = WirelessPictureSize(),
+    val miracastStretch: Boolean = false,
 ) {
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false,
         phoneAddresses: Set<String> = emptySet()) {
         teslaAddress()?.let { require(TeslaAddressPolicy.valid(it, phoneAddresses)) { "Invalid or already assigned Tesla address: $it" } }
-        if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(this))
+        if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.usesWifiDirect(this))
         for (value in listOf(carlinkDeviceName, carlinkDeviceModel)) {
             require(value.isNotBlank() && value.toByteArray(Charsets.UTF_8).size <= 128 &&
                 value.none { Character.isISOControl(it) }) { "Carlink name and model must contain 1–128 UTF-8 bytes without control characters." }
         }
         require(org.openxplay.direlay.plugins.RelayPlugins.validIds(pluginsEnabled)) { "error.plugins" }
+        wirelessPictureSize.validate()
         display?.validate()
         require(displayMode != DisplayMode.FIXED || display != null) { "Choose a fixed display profile." }
         require(fps in 30..60 && fps % 5 == 0) { "FPS must be 30–60 in steps of 5." }
@@ -248,6 +256,14 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             carlinkReconnectOnResize = relay.getBoolean("carlinkReconnectOnResize", false),
             mode,
             relay.getString("iphoneAddress", null),
+            dlnaOutput = relay.getBoolean("dlnaOutput", false),
+            dlnaRenderer = relay.getString("dlnaRendererUdn", null)?.let { DlnaRendererChoice(it, relay.getString("dlnaRendererName", "").orEmpty()) },
+            dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == relay.getString("dlnaPicture", null) } ?: DlnaPicture.P720,
+            miracastOutput = relay.getBoolean("miracastOutput", false),
+            wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == relay.getString("wirelessPicture", null) } ?: WirelessPictureMode.AUTO,
+            wirelessPictureSize = WirelessPictureSize(relay.getInt("wirelessPictureWidth", 1280), relay.getInt("wirelessPictureHeight", 720))
+                .takeIf { runCatching { it.validate() }.isSuccess } ?: WirelessPictureSize(),
+            miracastStretch = relay.getBoolean("miracastStretch", false),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
@@ -330,6 +346,15 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("microphoneSource", settings.microphoneSource.name)
             .putBoolean("carlinkOutput", settings.carlinkOutput)
             .putBoolean("bothOutputs", settings.bothOutputs)
+            .putBoolean("dlnaOutput", settings.dlnaOutput)
+            .putString("dlnaRendererUdn", settings.dlnaRenderer?.udn)
+            .putString("dlnaRendererName", settings.dlnaRenderer?.name)
+            .putString("dlnaPicture", settings.dlnaPicture.name)
+            .putBoolean("miracastOutput", settings.miracastOutput)
+            .putString("wirelessPicture", settings.wirelessPicture.name)
+            .putInt("wirelessPictureWidth", settings.wirelessPictureSize.width)
+            .putInt("wirelessPictureHeight", settings.wirelessPictureSize.height)
+            .putBoolean("miracastStretch", settings.miracastStretch)
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)
             .putBoolean("carlinkReconnectOnResize", settings.carlinkReconnectOnResize)
@@ -437,11 +462,14 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     fun wireless(settings: RelaySettings = cached.value ?: load()): Boolean =
         settings.connectionMode.wireless(AirPlayPersistence.loadWirelessEnabled(context))
 
-    /** Whether CarPlay's next start would put it on Wi-Fi Direct beside Carlink. Start validation and the
-     *  Carlink block both use it, so DiPlay's stale wireless flag cannot block a USB user. */
+    /** The Carlink runtime block only owns Carlink's platform join. */
     fun carlinkWifiDirectConflict(settings: RelaySettings = cached.value ?: load()): Boolean =
+        wifiDirectConflict(settings, miracast = false)
+
+    /** Resolve the transport so DiPlay's stale wireless flag cannot block a USB user. */
+    fun wifiDirectConflict(settings: RelaySettings = cached.value ?: load(), miracast: Boolean = settings.miracastOutput): Boolean =
         CarlinkConnectionPolicy.conflicts(CarlinkConnectionPolicy.enabled(settings), wireless(settings),
-            AirPlayPersistence.loadWirelessHotspotMode(context) == WirelessHotspotMode.WIFI_P2P)
+            AirPlayPersistence.loadWirelessHotspotMode(context) == WirelessHotspotMode.WIFI_P2P, miracast)
 
     fun prepareStart() {
         AirPlayPersistence.saveWirelessEnabled(context, wireless())

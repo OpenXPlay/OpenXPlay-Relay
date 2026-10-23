@@ -16,12 +16,13 @@ fun settingsErrors(value: RelaySettings, wireless: Boolean, allowEmptySharedWifi
     }
     if (wireless) when (value.wirelessNetwork.choice) {
         WirelessNetworkChoice.PHONE_HOTSPOT -> credentials(value.wirelessNetwork.manualSsid, value.wirelessNetwork.manualPassphrase,
-            hotspot = true, allowEmptySsid = allowEmptySharedWifi && CarlinkConnectionPolicy.enabled(value))
+            hotspot = true, allowEmptySsid = allowEmptySharedWifi && CarlinkConnectionPolicy.usesWifiDirect(value))
         WirelessNetworkChoice.EXISTING_WIFI -> if (!allowEmptySharedWifi && value.wirelessNetwork.sharedWifiNetworks.isEmpty()) put("ssid", R.string.shared_wifi_empty)
         else -> Unit
     }
     if (value.carlinkDeviceName.isBlank() || value.carlinkDeviceName.toByteArray(Charsets.UTF_8).size > 128 ||
         value.carlinkDeviceName.any { Character.isISOControl(it) }) put("name", R.string.settings_name_error)
+    if (runCatching { value.wirelessPictureSize.validate() }.isFailure) put("wirelessPictureSize", R.string.settings_advanced_error)
     value.teslaAddress()?.let { if (!TeslaAddressPolicy.valid(it)) put("teslaAddress", R.string.tesla_address_invalid) }
     if (isEmpty() && runCatching { value.validate(wireless, allowEmptySharedWifi) }.isFailure) put("advanced", R.string.settings_advanced_error)
 }
@@ -46,7 +47,8 @@ fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (
     fun check(page: String, candidate: RelaySettings) {
         if (settingsSaveErrors(candidate, wireless(candidate)).isNotEmpty()) add(page)
     }
-    check("settings/output", saved.copy(carlinkDeviceName = value.carlinkDeviceName))
+    check("settings/output", saved.copy(carlinkDeviceName = value.carlinkDeviceName,
+        wirelessPicture = value.wirelessPicture, wirelessPictureSize = value.wirelessPictureSize))
     check("settings/car", saved.copy(teslaBrowser = value.teslaBrowser,
         teslaVirtualAddress = value.teslaVirtualAddress, teslaPublicAddress = value.teslaPublicAddress,
         teslaMirrorAddress = value.teslaMirrorAddress, teslaAndroidAddress = value.teslaAndroidAddress))

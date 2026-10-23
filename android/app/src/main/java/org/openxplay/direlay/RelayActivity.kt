@@ -244,20 +244,22 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val readyIdentity = settings.mfiTarget != MfiTarget.LOCAL || identityReady
         val phase = runtime.status.session?.phase
         val selection = runtime.iphoneSelection()
-        val failures = runtime.status.failures
+        val failures = org.openxplay.direlay.ui.visibleHomeFailures(settings, runtime.status.failures)
         val carPlayError = runtime.carPlayDiagnostics.error
         val carlinkFailed = (settings.carlinkOutput || settings.bothOutputs) && runtime.carlinkFailed
         val webReason = runtime.serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs }
         val network = runtime.networkReadings
         val networkReadiness = runtime.networkReadiness(settings, network)
+        val dlnaFailure = runtime.dlnaFailure.takeIf { settings.dlnaOutput }
+        val miracastFailure = runtime.miracastFailure.takeIf { settings.miracastOutput }
         val presentation = org.openxplay.direlay.ui.presentHome(org.openxplay.direlay.ui.HomeSnapshot(
             settings, wireless, missing.isEmpty() && !needsVpn, readyIdentity, !materialChecked, valid,
-            phase, started || starting, failures.isNotEmpty() || carlinkFailed || webReason != null || carPlayError != null, selection, autoStartPaused = runtime.autoStartGate.paused,
+            phase, started || starting, failures.isNotEmpty() || carlinkFailed || webReason != null || carPlayError != null || dlnaFailure != null || miracastFailure != null, selection, autoStartPaused = runtime.autoStartGate.paused,
             webReason = webReason, webListening = runtime.serverState.startsWith("TLS enabled"),
             carNetworkAvailable = runtime.carIpv4.isNotEmpty(), currentWifi = cachedWifi, sharedWifiReady = !wireless || settings.wirelessNetwork.choice != org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI || runtime.currentSharedWifi(settings, cachedWifi) != null,
             problems = org.openxplay.direlay.ui.homeProblems(failures, carlinkFailed, runtime.carlinkDetail,
                 runtime.carlinkError, webReason, runtime.serverState, networkReadiness, runtime.teslaFailure,
-                runtime.carlinkErrorTrail, runtime.carlinkErrorAt, carPlayError),
+                runtime.carlinkErrorTrail, runtime.carlinkErrorAt, carPlayError, dlnaFailure, miracastFailure),
             networkReadiness = networkReadiness, manualNetworkReminders = runtime.networkStart.reminders,
             // DiPlay does not export its discovery stage; observe a live wired wait with an empty Android USB list.
             usbRoleProblem = org.openxplay.direlay.network.wiredUsbRoleProblem(wireless,
@@ -278,6 +280,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi,
             iphoneName = runtime.iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name,
             networkReadings = network, networkStart = runtime.networkStart.pending, teslaUrl = runtime.teslaUrl(),
+            wirelessDisplays = org.openxplay.direlay.ui.wirelessDisplayLines(settings, runtime.dlnaState, runtime.dlnaRendererName,
+                runtime.miracastState, runtime.miracastDisplay),
             requestVpnOnStart = needsVpn && missing.isEmpty() && readyIdentity && materialChecked && valid &&
                 (!wireless || selection.address != null) &&
                 (!wireless || settings.wirelessNetwork.choice != org.openxplay.direlay.settings.WirelessNetworkChoice.EXISTING_WIFI ||

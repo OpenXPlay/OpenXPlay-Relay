@@ -27,6 +27,61 @@ class RelaySettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
+    @Test fun wirelessPictureDefaultsAndParkedCustomSizeRoundTripAndInvalidSizesAreRejected() {
+        store.use { store ->
+            val initial = store.load()
+            assertEquals(WirelessPictureMode.AUTO, initial.wirelessPicture)
+            assertEquals(WirelessPictureSize(1280, 720), initial.wirelessPictureSize)
+            assertFalse(initial.miracastStretch)
+            for (mode in WirelessPictureMode.entries) for (stretch in listOf(false, true))
+                for (size in listOf(WirelessPictureSize(1920, 720), WirelessPictureSize(720, 1280))) {
+                    val chosen = initial.copy(wirelessPicture = mode, wirelessPictureSize = size, miracastStretch = stretch)
+                    store.save(chosen)
+                    RelaySettingsStore(context).use { assertEquals(chosen, it.load()) }
+                    val prefs = context.getSharedPreferences("direlay", 0)
+                    assertEquals(mode.name, prefs.getString("wirelessPicture", null))
+                    assertEquals(size.width, prefs.getInt("wirelessPictureWidth", 0))
+                    assertEquals(size.height, prefs.getInt("wirelessPictureHeight", 0))
+                    assertEquals(stretch, prefs.getBoolean("miracastStretch", !stretch))
+                }
+            for (mode in WirelessPictureMode.entries) {
+                val before = store.load()
+                assertThrows(IllegalArgumentException::class.java) {
+                    store.save(before.copy(wirelessPicture = mode, wirelessPictureSize = WirelessPictureSize(1281, 720)))
+                }
+                assertEquals(before, store.load())
+            }
+            context.getSharedPreferences("direlay", 0).edit().putString("wirelessPicture", "future")
+                .putInt("wirelessPictureWidth", 0).commit()
+            assertEquals(WirelessPictureMode.AUTO, store.load().wirelessPicture)
+            assertEquals(WirelessPictureSize(), store.load().wirelessPictureSize)
+        }
+    }
+
+    @Test fun wirelessDisplaysDefaultOffAndPersistIndependentlyWithParkedReceiverAndPicture() {
+        store.use { store ->
+            val initial = store.load()
+            assertFalse(initial.dlnaOutput); assertFalse(initial.miracastOutput)
+            assertNull(initial.dlnaRenderer); assertEquals(DlnaPicture.P720, initial.dlnaPicture)
+            for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
+                for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                    val value = initial.copy(dlnaOutput = dlna, miracastOutput = miracast, dlnaPicture = picture, dlnaRenderer = receiver)
+                    value.validate(wireless = false)
+                    store.save(value)
+                    assertEquals(value, store.load())
+                    RelaySettingsStore(context).use { assertEquals(value, it.load()) }
+                    val prefs = context.getSharedPreferences("direlay", 0)
+                    assertEquals(dlna, prefs.getBoolean("dlnaOutput", !dlna))
+                    assertEquals(miracast, prefs.getBoolean("miracastOutput", !miracast))
+                    assertEquals(receiver?.udn, prefs.getString("dlnaRendererUdn", null))
+                    assertEquals(receiver?.name, prefs.getString("dlnaRendererName", null))
+                    assertEquals(picture.name, prefs.getString("dlnaPicture", null))
+                }
+            context.getSharedPreferences("direlay", 0).edit().putString("dlnaPicture", "future").commit()
+            assertEquals(DlnaPicture.P720, store.load().dlnaPicture)
+        }
+    }
+
     @Test fun teslaDefaultsAndEveryModeAndAddressRoundTripInRelayPreferences() {
         RelaySettingsStore(context).use { store ->
             val initial = store.load()

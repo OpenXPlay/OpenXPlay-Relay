@@ -9,7 +9,8 @@ import org.openxplay.direlay.settings.DisplayProfile
 import org.openxplay.stream.core.*
 
 /** Observes Stream's negotiation without doing preference I/O on hub callbacks. */
-class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private val wholeScreen: () -> Boolean = { false }, private val resolution: () -> CarPlayResolution = { CarPlayResolution.AUTO }) : SessionPolicy {
+class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private val wholeScreen: () -> Boolean = { false },
+    private val secondary: (OutputCapabilities) -> Boolean = { false }, private val resolution: () -> CarPlayResolution = { CarPlayResolution.AUTO }) : SessionPolicy {
     @Volatile var carDisplay: DisplayProfile? = null
         private set
 
@@ -20,14 +21,17 @@ class CarDisplayPolicy(private val observe: (DisplayInfo?) -> Unit = {}, private
         private set
 
     @Synchronized override fun derive(input: InputCapabilities, outputs: List<OutputCapabilities>): SessionConfig {
-        activeOutputs = outputs.filter { ScreenId.MAIN in it.displays }
-        val config = DefaultSessionPolicy.derive(input, outputs)
+        // Browser/Carlink retain their order even when a wireless display attached before them.
+        val ordered = outputs.sortedBy { secondary(it) }
+        activeOutputs = ordered.filter { ScreenId.MAIN in it.displays }
+        val config = DefaultSessionPolicy.derive(input, ordered)
         refreshDisplay()
         observe(primaryDisplay)
         return config
     }
-    val primaryDisplay: DisplayInfo? get() = activeOutputs.firstOrNull { it.latency == LatencyClass.INTERACTIVE }?.displays?.get(ScreenId.MAIN)
-        ?: activeOutputs.firstOrNull()?.displays?.get(ScreenId.MAIN)
+    val primaryOutput: OutputCapabilities? get() = activeOutputs.firstOrNull { it.latency == LatencyClass.INTERACTIVE }
+        ?: activeOutputs.firstOrNull()
+    val primaryDisplay: DisplayInfo? get() = primaryOutput?.displays?.get(ScreenId.MAIN)
 
     @Volatile var decoderLimit: Int? = null
         private set

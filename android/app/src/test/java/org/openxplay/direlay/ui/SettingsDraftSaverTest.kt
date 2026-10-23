@@ -23,6 +23,49 @@ class SettingsDraftSaverTest {
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
 
+    @Test fun wirelessPictureChoicesUseOwnKeysAndSurviveParcelRoundTrip() {
+        for (mode in WirelessPictureMode.entries) for (stretch in listOf(false, true)) {
+            val chosen = base.copy(wirelessPicture = mode, wirelessPictureSize = WirelessPictureSize(1920, 720), miracastStretch = stretch)
+            val saved = bundle(chosen)
+            assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
+            val parcel = Parcel.obtain()
+            try {
+                parcel.writeBundle(saved); parcel.setDataPosition(0)
+                assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+            } finally { parcel.recycle() }
+        }
+        val old = bundle(base).apply {
+            listOf("wirelessPicture", "wirelessPictureWidth", "wirelessPictureHeight", "miracastStretch").forEach { remove(it) }
+        }
+        val remembered = base.copy(wirelessPicture = WirelessPictureMode.CUSTOM, wirelessPictureSize = WirelessPictureSize(720, 1280), miracastStretch = true)
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        old.putString("wirelessPicture", "future")
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
+
+    @Test fun wirelessDisplaysSurviveParcelRoundTripWithoutExtendingLegacyFlags() {
+        for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
+            for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                val value = base.copy(dlnaOutput = dlna, miracastOutput = miracast, dlnaPicture = picture, dlnaRenderer = receiver)
+                val saved = bundle(value)
+                assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
+                val parcel = Parcel.obtain()
+                try {
+                    parcel.writeBundle(saved); parcel.setDataPosition(0)
+                    assertEquals(value, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+                } finally { parcel.recycle() }
+            }
+        val old = bundle(base).apply {
+            listOf("dlnaOutput", "dlnaRendererUdn", "dlnaRendererName", "dlnaPicture", "miracastOutput").forEach { remove(it) }
+        }
+        val remembered = base.copy(dlnaOutput = true, miracastOutput = true,
+            dlnaPicture = DlnaPicture.P1080, dlnaRenderer = DlnaRendererChoice("uuid:remembered", "Remembered"))
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        old.putString("dlnaPicture", "future")
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+        assertEquals(base, relaySettingsSaver(remembered).restore(bundle(base)))
+    }
+
     @Test fun teslaModeAndAllAddressesSurviveRotationAndOlderDraftsKeepDefaults() {
         for (mode in TeslaBrowserMode.entries) {
             val chosen = base.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",

@@ -84,12 +84,18 @@ fun carlinkStateLabel(state: String, failed: Boolean, awaitingPin: Boolean): Int
     else -> R.string.ui_searching
 }
 
+fun visibleHomeFailures(settings: RelaySettings, failures: List<RelayFailure>): List<RelayFailure> = failures.filterNot {
+    it.outputId == "cast" && !settings.dlnaOutput || it.outputId == "miracast" && !settings.miracastOutput
+}
+
 /** Runtime values are copied by the Activity; this mapper has no services or mutable runtime references. */
 fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDetail: String,
     carlinkError: String?, webReason: WebStartReason?, serverState: String,
     readiness: NetworkReadiness = NetworkReadiness(), teslaFailure: String? = null,
     carlinkTrail: List<String> = emptyList(), carlinkErrorAt: Long? = null,
-    carPlayError: CarPlayError? = null): List<HomeProblem> = buildList {
+    carPlayError: CarPlayError? = null,
+    dlnaFailure: org.openxplay.direlay.relay.WirelessDisplayFailure? = null,
+    miracastFailure: org.openxplay.direlay.relay.WirelessDisplayFailure? = null): List<HomeProblem> = buildList {
     if (teslaFailure != null) add(HomeProblem(R.string.tesla_title,
         textResource = R.string.tesla_address_failed, arguments = listOf(teslaFailure)))
     carPlayError?.let { add(HomeProblem(R.string.home_problem_carplay, it.text,
@@ -97,13 +103,18 @@ fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDe
     val joinCodes = ClinkFailureReason.entries.filter { it.name.startsWith("P2P_") || it.name.startsWith("WIFI_") }.map { it.code }
     val carlinkFailure = carlinkFailed || failures.any { it.outputId in setOf("clink", "carlink") }
     val wifiProblem = carlinkFailure && (readiness.wifi == Readiness.PROBLEM || carlinkFailed && carlinkDetail in joinCodes)
+    dlnaFailure?.let { add(wirelessDisplayProblem("cast", it)) }
+    miracastFailure?.let { add(wirelessDisplayProblem("miracast", it)) }
     failures.forEach { failure ->
+        if (failure.outputId == "cast" && dlnaFailure != null || failure.outputId == "miracast" && miracastFailure != null) return@forEach
         if (failure.outputId in setOf("clink", "carlink")) return@forEach
         if (failure.outputId == null && failure.text == carPlayError?.text) return@forEach
         add(HomeProblem(when (failure.outputId) {
             null -> R.string.home_problem_carplay
             "clink", "carlink" -> R.string.home_problem_carlink
             "web" -> R.string.home_problem_browser
+            "cast" -> R.string.home_problem_dlna
+            "miracast" -> R.string.home_problem_miracast
             else -> R.string.home_problem_output
         }, failure.text, atMillis = failure.atMillis.takeIf { it != 0L }))
     }

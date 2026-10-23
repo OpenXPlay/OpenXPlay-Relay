@@ -15,6 +15,8 @@ import org.openxplay.direlay.network.NetworkReadings
 import org.openxplay.direlay.network.NetworkReadiness
 import org.openxplay.direlay.clink.*
 import org.openxplay.stream.clink.*
+import org.openxplay.stream.cast.*
+import org.openxplay.direlay.miracast.*
 import org.openxplay.direlay.settings.StartupPermissions
 import org.openxplay.direlay.settings.RelaySettingsStore
 import org.openxplay.direlay.identity.IdentityStore
@@ -70,7 +72,7 @@ class RelayRuntime(private val context: Context,
     fun refreshNetworkReadings(): NetworkReadings = networkReader.read().also { networkReadings = it }
     fun networkReadiness(settings: RelaySettings, readings: NetworkReadings = networkReadings) =
         NetworkReadiness.read(CarlinkConnectionPolicy.enabled(settings), settingsStore.wireless(settings),
-            settings.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT, readings)
+            settings.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT, readings, miracast = settings.miracastOutput)
     private val autoStartBoot = AndroidBootIdentity(context)
     private val autoStartStorage = AndroidAutoStartStorage(context)
     val startRequest: StartRequestGate = ProcessStartRequestGate()
@@ -119,9 +121,11 @@ class RelayRuntime(private val context: Context,
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }
+    private val carDisplayMemory = CarDisplayMemory()
     internal val displayPolicy = CarDisplayPolicy(observe = { display ->
         setup.execute { observeWindow(display) }
-    }, wholeScreen = { settingsStore.snapshot.value?.let { it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC } == true }) {
+    }, wholeScreen = { settingsStore.snapshot.value?.let { it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC } == true },
+        secondary = carDisplayMemory::isWireless) {
         settingsStore.snapshot.value?.carplayResolution ?: CarPlayResolution.AUTO
     }
     private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
@@ -143,28 +147,40 @@ class RelayRuntime(private val context: Context,
     }
 
     @Synchronized private fun rememberCarDisplay() {
-        val report = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from) ?: run { clearedReport = null; return }
+        // Pair the measured report with its canvas before another output can renegotiate.
+        val (measured, canvas, limit) = synchronized(displayPolicy) {
+            Triple(carDisplayMemory.measuredDisplay(displayPolicy.primaryOutput), displayPolicy.carDisplay, displayPolicy.decoderLimit)
+        }
+        val report = measured?.let(HeadUnitDisplay::from) ?: run {
+            if (displayPolicy.primaryDisplay == null) clearedReport = null
+            return
+        }
         // Clearing while connected must survive periodic refreshes of the same report.
         if (report == clearedReport) return
         clearedReport = null
-        val canvas = displayPolicy.carDisplay ?: return
         val settings = settingsStore.snapshot.value ?: return
-        val saved = SavedHeadUnit(canvas, report, settings.carplayResolution,
-            settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC, displayPolicy.decoderLimit)
+        val saved = SavedHeadUnit(canvas ?: return, report, settings.carplayResolution,
+            settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC, limit)
         if (saved == savedHeadUnit) return
         savedHeadUnitStore.save(saved); savedHeadUnit = saved
+        wirelessUpdate { configureDlna() }
     }
 
     fun clearSavedHeadUnit() { setup.execute { synchronized(this) {
         clearedReport = displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)
         savedHeadUnitStore.clear(); savedHeadUnit = null
-    } } }
+    }; configureDlna() } }
 
     val savedCanvas: CarPlayScreen get() = synchronized(this) {
         loadRememberedDisplay()
         val settings = settingsStore.snapshot.value ?: return@synchronized CarPlayScreen(CarDisplayFit.default, "default")
         checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null,
             savedHeadUnit, carModels.model(settings.car)))
+    }
+
+    fun wirelessPicture(settings: RelaySettings): WirelessPictureResolution = synchronized(this) {
+        loadRememberedDisplay()
+        WirelessPicturePolicy.resolve(settings, savedHeadUnit, carModels.model(settings.car))
     }
 
     private fun planningDisplay(settings: RelaySettings) = planningDisplay(
@@ -527,6 +543,28 @@ class RelayRuntime(private val context: Context,
         context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
         addressOverride = { teslaAddress?.let { teslaPublishedAddress(it.mode, it.address) } }) { publicNameCandidates() }
 
+    private val castNetwork = AndroidCastNetwork(context) {
+        ipv4Addresses(includeIphoneLink = false).map { java.net.InetAddress.getByName(it) as Inet4Address }
+    }
+    private val dlnaLifecycle = RetiringOutputPolicy<DlnaOutputPlan>()
+    private val miracastLifecycle = RetiringOutputPolicy<MiracastPicture>()
+    @Volatile private var dlnaToken: Any? = null
+    @Volatile private var miracastToken: Any? = null
+    @Volatile var dlnaState: CastState? = null
+        private set
+    @Volatile var dlnaRendererName: String? = null
+        private set
+    @Volatile var dlnaFailure: WirelessDisplayFailure? = null
+        private set
+    @Volatile var dlnaStatistics: CastStatistics? = null
+        private set
+    @Volatile var miracastState: MiracastState? = null
+        private set
+    @Volatile var miracastDisplay: MiracastDisplay? = null
+        private set
+    @Volatile var miracastFailure: WirelessDisplayFailure? = null
+        private set
+
     init {
         prepareCarPlay()
         hub.addOutput(status)
@@ -550,6 +588,7 @@ class RelayRuntime(private val context: Context,
             publicName.start()
             configureVehicle()
             configureCarlink()
+            configureDlna(); configureMiracast()
         }
         setup.scheduleWithFixedDelay({
             try {
@@ -686,7 +725,7 @@ class RelayRuntime(private val context: Context,
         val vehicleEnabled = requested.vehicleInformation
         collectVehicle = vehicleEnabled || sampleVehicleData
         try { setup.execute {
-            configureVehicle(vehicleEnabled); configureCarlink()
+            configureVehicle(vehicleEnabled); configureCarlink(); configureDlna(); configureMiracast()
             refreshTeslaAddress()
             publicName.refreshAddress()
         } }
@@ -715,7 +754,102 @@ class RelayRuntime(private val context: Context,
     }
 
     private fun updateKeepAlive(settings: RelaySettings) = synchronized(lifecycle) {
-        keepAlive.update(RelayKeepAlivePolicy.needed(!closed, webEnabled, settings.carlinkOutput || settings.bothOutputs))
+        keepAlive.update(RelayKeepAlivePolicy.needed(!closed, webEnabled, settings.carlinkOutput || settings.bothOutputs,
+            settings.dlnaOutput, settings.miracastOutput))
+    }
+
+    /** Blocking discovery; callers must use an I/O worker. */
+    fun searchDlnaRenderers(): List<CastRenderer> = CastDiscovery(castNetwork).search()
+
+    private fun wirelessUpdate(block: () -> Unit) {
+        try { setup.execute { if (!closed) block() } }
+        catch (_: java.util.concurrent.RejectedExecutionException) { }
+    }
+
+    private fun configureDlna() {
+        if (closed) return
+        val settings = settingsStore.awaitSnapshot()
+        val requested = WirelessOutputPolicy.dlna(settings, wirelessPicture(settings))
+        if (requested == null) {
+            dlnaState = null; dlnaRendererName = null; dlnaFailure = null; dlnaStatistics = null
+        }
+        when (dlnaLifecycle.update(requested)) {
+            OutputChange.KEEP -> return
+            OutputChange.REMOVE -> { hub.removeOutput("cast"); return }
+            OutputChange.ADD -> Unit
+        }
+        val plan = checkNotNull(requested)
+        val token = Any(); dlnaToken = token
+        dlnaState = CastState.SEARCHING; dlnaRendererName = settings.dlnaRenderer?.name
+        dlnaFailure = null; dlnaStatistics = null
+        val listener = object : CastListener {
+            override fun state(state: CastState, renderer: CastRenderer?) = wirelessUpdate {
+                if (dlnaToken !== token) return@wirelessUpdate
+                if (state == CastState.ENDED) {
+                    hub.removeOutput("cast")
+                    dlnaLifecycle.ended(); dlnaToken = null
+                    dlnaState = null; dlnaRendererName = null; dlnaStatistics = null; dlnaFailure = null
+                    configureDlna()
+                } else if (!dlnaLifecycle.retiring) {
+                    dlnaState = state; dlnaRendererName = renderer?.friendlyName ?: settingsStore.snapshot.value?.dlnaRenderer?.name
+                    if (state == CastState.PLAYING) dlnaFailure = null
+                }
+            }
+            override fun failure(failure: CastFailure) = wirelessUpdate {
+                if (dlnaToken === token && !dlnaLifecycle.retiring)
+                    dlnaFailure = WirelessDisplayFailure(failure.code, redactFailureMessage(failure.detail), System.currentTimeMillis())
+            }
+            override fun diagnostic(message: String) = wirelessUpdate {
+                if (dlnaToken === token) Log.i("OpenXPlay DLNA", redactFailureMessage(message))
+            }
+            override fun statistics(statistics: CastStatistics) = wirelessUpdate {
+                if (dlnaToken === token && !dlnaLifecycle.retiring) dlnaStatistics = statistics
+            }
+        }
+        try {
+            val output = CastOutput(CastOutputConfig(plan.udn, plan.size.width, plan.size.height, fps = 30, audio = true),
+                castNetwork, listener)
+            hub.addOutput(carDisplayMemory.exclude(TranscodingOutput(output, MediaCodecPipeline.factory, deliveryCodecs = setOf(VideoCodec.H264))))
+        } catch (failure: Exception) {
+            dlnaToken = null; dlnaLifecycle.ended()
+            dlnaFailure = WirelessDisplayFailure("output_failed", failureText(failure, ::redactFailureMessage), System.currentTimeMillis())
+        }
+    }
+
+    private fun configureMiracast() {
+        if (closed) return
+        val requested = WirelessOutputPolicy.miracast(settingsStore.awaitSnapshot())
+        if (requested == null) { miracastState = null; miracastDisplay = null; miracastFailure = null }
+        when (miracastLifecycle.update(requested)) {
+            OutputChange.KEEP -> return
+            OutputChange.REMOVE -> { hub.removeOutput("miracast"); return }
+            OutputChange.ADD -> Unit
+        }
+        val token = Any(); miracastToken = token
+        miracastState = MiracastState.WAITING_FOR_DISPLAY; miracastDisplay = null; miracastFailure = null
+        val listener = object : MiracastListener {
+            override fun state(state: MiracastState, display: MiracastDisplay?) = wirelessUpdate {
+                if (miracastToken !== token) return@wirelessUpdate
+                if (state == MiracastState.ENDED) {
+                    hub.removeOutput("miracast")
+                    miracastLifecycle.ended(); miracastToken = null
+                    miracastState = null; miracastDisplay = null; miracastFailure = null
+                    configureMiracast()
+                } else if (!miracastLifecycle.retiring) {
+                    miracastState = state; miracastDisplay = display
+                    if (state == MiracastState.SHOWING) miracastFailure = null
+                }
+            }
+            override fun failure(code: String, detail: String) = wirelessUpdate {
+                if (miracastToken === token && !miracastLifecycle.retiring)
+                    miracastFailure = WirelessDisplayFailure(code, redactFailureMessage(detail), System.currentTimeMillis())
+            }
+        }
+        try { hub.addOutput(carDisplayMemory.exclude(MiracastOutput(context.applicationContext, listener, picture = checkNotNull(requested)))) }
+        catch (failure: Exception) {
+            miracastToken = null; miracastLifecycle.ended()
+            miracastFailure = WirelessDisplayFailure("output_failed", failureText(failure, ::redactFailureMessage), System.currentTimeMillis())
+        }
     }
 
     fun reconnectCarlink() { status.clearFailure(); carPlayDiagnostics.clear(); enqueueCarlink(true) }
