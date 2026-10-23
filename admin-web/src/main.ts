@@ -7,6 +7,8 @@ import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
+import { connectionsView, editConnections } from './connections';
+import type { NetworkRolesSetting } from './schema';
 import { mountTrace, traceFilters, traceVisible } from './carlink-trace';
 import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDetails, nearbyNetworksView } from './views';
 import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
@@ -137,13 +139,28 @@ async function loadReady() {
   phones.forEach(phone => phoneNames.set(phone.id, phone.name));
   status = nextStatus; settings = nextSettings; pageError = ''; render();
 }
+function bindConnections() {
+  document.getElementById('connections-edit')?.addEventListener('click', event => {
+    editConnections(status!, settings!.values.networkRoles as NetworkRolesSetting | undefined, t, loadReady, event.currentTarget as HTMLElement);
+  });
+}
+function renderConnections() {
+  const current = document.querySelector<HTMLElement>('[data-section="connections"]');
+  if (!current || !status) return;
+  const open = current.querySelector('details')?.open;
+  current.outerHTML = connectionsView(status, t);
+  const details = document.querySelector<HTMLDetailsElement>('.interface-inventory');
+  if (details) details.open = !!open;
+  bindConnections();
+}
 function renderReady() {
   renderRestart();
   document.getElementById('main')!.innerHTML = currentView === 'home' ? '<div id="dashboard"></div>' : `<section aria-label="${t('ui.settings')}"><div id="settings"></div></section>`;
   if (currentView === 'home') { updateDashboard(); return; }
   const container = document.getElementById('settings')!;
-  container.innerHTML = settingsViews(settings!, developer, status!.platform).map(section => `<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : section.id === 'publicName' ? '<div id="public-name-panel"></div>' : '')}</section>`).join('');
+  container.innerHTML = settingsViews(settings!, developer, status!.platform).map(section => `${section.id === 'output' ? connectionsView(status!, t) : ''}<section class="card settings-section" data-section="${esc(section.id)}"><h2>${esc(t(section.titleKey))}</h2>${section.fields.filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key)).map(fieldMarkup).join('') + (section.id === 'connection' ? '<div id="pairing-panel"></div><div id="network-panel"></div>' : section.id === 'publicName' ? '<div id="public-name-panel"></div>' : '')}</section>`).join('');
   for (const field of fields().filter(f => !['networkMode', 'sharedWifiNetworks'].includes(f.key))) bindField(field);
+  bindConnections();
   renderNetworkPanel(); renderPairingPanel();
   updateVisibility(); renderPublicName();
   container.insertAdjacentHTML('beforeend', `<section class="card" id="password-card"><h2>${t('settings.security')}</h2><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form></section>`);
@@ -330,7 +347,7 @@ function confirmRemovePublicName() {
 }
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
-  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, language]);
+  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, status.platform === 'linux' ? status.network : null, language]);
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   const open = new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-details]')].filter(d => d.open).map(d => d.dataset.details));
@@ -594,7 +611,11 @@ function renderNetworkPanel() {
   el.dataset.signature = signature;
   el.innerHTML = `<div class="field"><h3>${t('net.title')}</h3>${connectionConstraint(status?.platform, t)}${status.network.followingCarlink ? `<p>${t('network.followingCarlink')}</p>` : ''}<div class="network-current"><h3>${t(v.label)}</h3><p role="status" aria-live="polite">${esc(t(v.statusKey, v.parameters))}</p>${topology(v.mode as Illustration)}${!v.shared || status.wifiClient?.setupHotspot ? hotspotDetails(status, t) : ''}${!v.shared && status.platform === 'linux' ? `<button id="hotspot-edit" aria-haspopup="dialog">${t('hotspot.change')}</button>` : ''}${v.receiver && !v.shared ? `<p>${esc(t('net.carHint', { url: v.receiver }))}</p>` : ''}</div><p>${t(v.shared ? 'net.useHotspot' : 'net.useShared')}</p><button id="network-switch" ${networkOptionState(status?.platform, settings!.values, v.target)} aria-haspopup="dialog">${t(v.shared ? 'net.switchHotspot' : v.needsNetwork ? 'net.addSwitch' : 'net.switchShared')}</button><p id="network-mode-result" class="error" role="alert">${esc(t(networkError))}</p><p id="network-announcement" role="status" aria-live="polite"></p><h3>${t('net.saved')}</h3><p class="muted">${t('net.note')}</p><div id="saved-networks">${v.list.map((entry, index) => `<button class="phone-row" id="saved-network-${index}" data-network="${index}" aria-haspopup="dialog"><span>${esc(entry.ssid)}</span><span class="badges">${savedNetworkTags(entry, status!, networks).map(key => `<span class="tag">${t(key)}</span>`).join('')}</span></button>`).join('')}</div><button id="network-add" ${v.full ? 'disabled' : ''} aria-haspopup="dialog">${t('net.add')}</button>${v.full ? `<p>${t('net.limit')}</p>` : ''}</div>`;
   document.getElementById('hotspot-edit')?.addEventListener('click', editHotspot);
-  document.getElementById('network-switch')!.addEventListener('click', () => requestNetworkSwitch(v.target));
+  const switchButton = document.getElementById('network-switch')!;
+  if (status.platform === 'linux' && status.network.plan) {
+    switchButton.previousElementSibling?.remove();
+    switchButton.remove();
+  } else switchButton.addEventListener('click', () => requestNetworkSwitch(v.target));
   document.getElementById('network-add')!.addEventListener('click', () => editSharedNetwork(null));
   bindSharedNetworks(); bindCopies(el);
   requestAnimationFrame(() => { const announcement = document.getElementById('network-announcement'); if (announcement) announcement.textContent = networkAnnouncement; });
@@ -705,7 +726,7 @@ function updateVisibility() {
     const el = document.getElementById(fieldId(field.key))?.closest<HTMLElement>('.field');
     if (el) el.hidden = !isVisible(field, settings!.values);
   }
-  document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = !section.querySelector('#network-panel') && ![...section.querySelectorAll<HTMLElement>('.field')].some(field => !field.hidden); });
+  document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = section.dataset.section !== 'connections' && !section.querySelector('#network-panel') && ![...section.querySelectorAll<HTMLElement>('.field')].some(field => !field.hidden); });
   renderPublicName();
 }
 function queueSave(field: Field, raw: string | boolean) {
@@ -878,7 +899,7 @@ async function tick() {
           for (const [key, item] of pending) settings.values[key] = item.value;
           if (pending.has('publicNameProvider')) publicNameDrafts.select(String(settings.values.publicNameProvider), settings.values);
           switching = null; render(); document.getElementById('network-switch')?.focus();
-        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); } }
+        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderConnections(); } }
     }
   } catch (error) { if (!(error instanceof NetworkError)) { pageError = errorKey(error); if (!status) render(); } }
   finally { polling = false; }

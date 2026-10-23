@@ -477,6 +477,10 @@ pub trait RelayAdmin: Send + Sync + 'static {
     /// Discard deferred actions if delivery of the response fails.
     fn response_failed(&self) {}
 
+    fn network_roles_preview(&self, _values: Values) -> Option<crate::network_roles::SaveResult> {
+        None
+    }
+
     fn network_roles_update(&self, _values: Values) -> Option<crate::network_roles::SaveResult> {
         None
     }

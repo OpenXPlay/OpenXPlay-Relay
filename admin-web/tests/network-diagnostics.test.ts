@@ -19,13 +19,14 @@ const network: PlannedNetwork = {
 const fixture = (platform: 'linux' | 'android') => ({ platform, network: { mode: 'device-hotspot', wifi: null, ...network }, receivers: [], video: null } as unknown as Status);
 const en = (key: string, params?: Record<string, string | number>) => translate('en', key, params);
 const zh = (key: string, params?: Record<string, string | number>) => translate('zh-CN', key, params);
-it('shows the Linux inventory, effective country and plan without editing controls', () => {
+it('shows the Linux inventory, effective country without editing controls', () => {
   const view = networkView(fixture('linux'), en);
-  for (const text of ['Interfaces', 'Planned connections (not applied yet)', 'wlan0', 'usb', '192.0.2.1', '5 GHz', 'P2P-client', 'permanent', 'Foreign &lt;AP&gt;', 'CN', 'phy0: 99', 'legacy setting', 'Pauses while Carlink runs', 'Password set: Yes']) expect(view).toContain(text);
+  for (const text of ['Interfaces', 'wlan0', 'usb', '192.0.2.1', '5 GHz', 'P2P-client', 'permanent', 'Foreign &lt;AP&gt;', 'CN', 'phy0: 99']) expect(view).toContain(text);
   expect(view).not.toMatch(/<(input|button|select|form)\b/);
   expect(view).not.toContain('<script>'); expect(view).not.toContain('<svg');
-  expect(networkView(fixture('linux'), zh)).toContain('计划连接（尚未应用）');
-  expect(diagnosticsView(fixture('linux'), en)).toContain('network-diagnostics');
+  expect(networkView(fixture('linux'), zh)).toContain('网络接口');
+  expect(diagnosticsView(fixture('linux'), en)).not.toContain('network-table');
+  expect(diagnosticsView(fixture('linux'), en)).toContain('&quot;interfaces&quot;');
 });
 it('keeps Android diagnostics markup identical even if Linux network data is attached', () => {
   const status = fixture('android');
@@ -37,7 +38,7 @@ it('keeps Android diagnostics markup identical even if Linux network data is att
 });
 it('translates every check and its parameters in English and Chinese', () => {
   for (const code of NETWORK_CHECK_CODES) for (const t of [en, zh]) {
-    const message = networkCheckMessage({ level: 'warning', code, roles: ['iphone', 'adminHotspot'], interfaces: ['wlan0'], params: { ref: 'wlan9', band: '5', channels: [36, 40], phy: 'phy0', mhz: 40 } }, t);
+    const message = networkCheckMessage({ level: 'warning', code, roles: ['iphone', 'adminHotspot'], interfaces: ['wlan0'], params: { ref: 'wlan9', band: '5', channels: [36, 40], phy: 'phy0', mhz: 40, connection: 'Foreign AP' } }, t);
     expect(message).not.toContain('roles.check.'); expect(message).not.toMatch(/\{\w+\}/);
   }
   expect(networkCheckMessage({ level: 'warning', code: 'carlink-band-gap', roles: ['carlink'], interfaces: ['wlan1'], params: { channels: [36, 40, 44, 48] } }, en)).toContain('36, 40, 44, 48');
@@ -46,5 +47,5 @@ it('renders unknown capabilities, pending probes and missing references', () => 
   const status = fixture('linux');
   status.network = { ...status.network, probedAt: null, interfaces: [{ ...network.interfaces[0], wifi: null }], plan: { ...network.plan, carlink: { interface: { ref: '02:00:00:00:00:02', name: null, mac: null }, missing: true, source: 'custom', followOver: false } }, checks: [] };
   const view = networkView(status, en);
-  expect(view).toContain('Pending'); expect(view).toContain('Unknown'); expect(view).toContain('Missing interface'); expect(view).toContain('02:00:00:00:00:02');
+  expect(view).toContain('Pending'); expect(view).toContain('Unknown'); expect(view).not.toContain('Planned connections');
 });

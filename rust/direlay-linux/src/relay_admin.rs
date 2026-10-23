@@ -41,6 +41,7 @@ enum Operation {
     /// The head-unit page's certificate changed (trusted HTTPS): restart its child.
     ReceiverTls,
     Hotspot,
+    Roles(Vec<String>),
     Network {
         mode_changed: bool,
         reconnect: bool,
@@ -124,6 +125,9 @@ pub struct LinuxRelayAdmin {
     backends: crate::host_backends::HostBackends,
     capabilities: Arc<crate::host_capabilities::CapabilityCache>,
     inventory: Arc<crate::net_inventory::InventoryCache>,
+    automatic_choices: Mutex<crate::network_roles::AutomaticChoices>,
+    running_links: Mutex<Option<crate::network_roles::RunningLinks>>,
+    browser_target: Arc<Mutex<Option<String>>>,
     settings: Mutex<Settings>,
     state: Arc<PersistentState>,
     events: Arc<JsonEvents>,
@@ -324,6 +328,9 @@ impl LinuxRelayAdmin {
         inventory.refresh();
         Ok(Self {
             inventory,
+            automatic_choices: Mutex::default(),
+            running_links: Mutex::new(None),
+            browser_target: Arc::default(),
             public_name,
             admin_certificate: Default::default(),
             receiver_tls: Mutex::new(None),
@@ -383,8 +390,8 @@ impl LinuxRelayAdmin {
         let mut provision = self.provision.lock().unwrap();
         let mut interface = self.provision_interface.lock().unwrap();
         if *interface != options.wifi_interface {
-            if let Some(p) = provision.as_mut() {
-                p.stop_setup()?;
+            if let Some(p) = provision.as_mut().filter(|_| self.wifi_present(&interface)) {
+                p.stop()?;
             }
             *provision = None;
             *interface = options.wifi_interface.clone();
@@ -406,6 +413,13 @@ impl LinuxRelayAdmin {
         Ok(true)
     }
     fn network_status(&self, settings: &Settings) -> crate::network_roles::NetworkStatus {
+        self.network_status_with_choices(settings, &mut self.automatic_choices.lock().unwrap())
+    }
+    fn network_status_with_choices(
+        &self,
+        settings: &Settings,
+        choices: &mut crate::network_roles::AutomaticChoices,
+    ) -> crate::network_roles::NetworkStatus {
         let mut inventory = self.inventory.get();
         inventory.country.configured = Some(settings.wifi_country.clone());
         let mut options = self.options.clone();
@@ -420,28 +434,115 @@ impl LinuxRelayAdmin {
             cli: &options.overrides,
         };
         let preset = options.device_preset(self.capabilities.root());
-        let plan = crate::network_roles::resolve_plan(
+        let plan = choices.resolve(
             &inventory,
             settings,
             &legacy,
             &preset.id,
             &options.settings.output,
         );
-        let checks = crate::network_roles::checks(&plan, &inventory);
+        let probing = inventory.probed_at.is_none();
+        let checks = if probing {
+            Vec::new()
+        } else {
+            crate::network_roles::checks(&plan, &inventory)
+        };
         crate::network_roles::NetworkStatus {
             inventory,
             plan,
             checks,
-            applied: false,
+            applied: !probing,
+            probing,
         }
     }
+    fn propose_roles(&self, values: Values, save: bool) -> crate::network_roles::SaveResult {
+        use crate::network_roles::{Proposal, SaveResult, Update};
+        if self.inventory.get().probed_at.is_none() {
+            return SaveResult::Probing;
+        }
+        if ["adminHotspotPassword", "wifiCountry"]
+            .iter()
+            .any(|key| values.get(*key).is_some_and(|v| !v.is_string()))
+        {
+            return SaveResult::Invalid("error.invalid".into());
+        }
+        let update: Update = match serde_json::from_value(serde_json::Value::Object(values)) {
+            Ok(update) => update,
+            Err(_) => return SaveResult::Invalid("error.invalid".into()),
+        };
+        let mut current = self.settings.lock().unwrap();
+        let mut next = current.clone();
+        next.network_roles = update.network_roles;
+        if let Some(password) = update.admin_hotspot_password {
+            next.admin_hotspot_password = Some(password);
+        }
+        if let Some(country) = update.wifi_country {
+            next.wifi_country = country;
+        }
+        if next.validate().is_err() {
+            return SaveResult::Invalid("error.invalid".into());
+        }
+        let before = self.network_status(&current);
+        // Preview and save both make a fresh choice; only a successful save installs it.
+        let mut choices = crate::network_roles::AutomaticChoices::default();
+        let status = self.network_status_with_choices(&next, &mut choices);
+        let changes = crate::network_roles::changes(&before.plan, &status.plan);
+        if save {
+            if status.checks.iter().any(|c| c.level == "error") {
+                return SaveResult::Checks(status.checks);
+            }
+            if !changes.is_empty() && self.defer(Operation::Roles(changes.clone())).is_err() {
+                return SaveResult::Invalid("error.busy".into());
+            }
+            if next.save(&self.options.state_dir).is_err() {
+                self.response_failed();
+                return SaveResult::Storage;
+            }
+            *current = next;
+            *self.automatic_choices.lock().unwrap() = choices;
+        }
+        SaveResult::Saved(Box::new(Proposal {
+            plan: status.plan,
+            checks: status.checks,
+            changes,
+            applied: save.then_some(true),
+        }))
+    }
     fn effective_options(&self) -> Result<Options> {
+        Ok(self.effective_options_with_status()?.0)
+    }
+    fn effective_options_with_status(
+        &self,
+    ) -> Result<(Options, crate::network_roles::NetworkStatus)> {
         let mut o = self.options.clone();
         o.settings = self.settings.lock().unwrap().clone();
         o.apply_overrides()?;
-        Ok(o)
+        let status = self.network_status(&o.settings);
+        if status.probing {
+            *self.browser_target.lock().unwrap() = Some(o.wifi_interface.clone());
+        } else {
+            crate::network_roles::apply_plan(&status.plan, &mut o);
+            *self.browser_target.lock().unwrap() =
+                status.plan.car_browser.role.name().map(str::to_string);
+        }
+        Ok((o, status))
+    }
+    fn links(
+        &self,
+        options: &Options,
+        status: &crate::network_roles::NetworkStatus,
+    ) -> crate::network_roles::RunningLinks {
+        if status.probing {
+            crate::network_roles::RunningLinks::legacy(options, |n| self.wifi_present(n))
+        } else {
+            crate::network_roles::RunningLinks::from_plan(&status.plan, |n| self.wifi_present(n))
+        }
     }
     pub fn start_services(self: &Arc<Self>) -> Result<()> {
+        self.start_services_with_probe_timeout(Duration::from_secs(10))
+    }
+    fn start_services_with_probe_timeout(self: &Arc<Self>, timeout: Duration) -> Result<()> {
+        self.inventory.wait_for_probe(timeout);
         // Secure Connections on from the start, and again whenever bluetoothd resets the adapter.
         self.secure_connections.start(Some(&self.bluetooth_wake))?;
         self.stream.start()?;
@@ -484,7 +585,8 @@ impl LinuxRelayAdmin {
                                 | Operation::Initialize
                                 | Operation::Startup
                         );
-                        if let Err(e) = shell.operation(op) {
+                        let result = shell.operation(op);
+                        if let Err(e) = result {
                             shell.events.emit("error", &serde_json::json!({"message": if network { "error.networks".to_string() } else { e.to_string() }}));
                         }
                     }
@@ -504,7 +606,8 @@ impl LinuxRelayAdmin {
         Ok(())
     }
     fn start_supervisor(&self) -> Result<()> {
-        let o = self.effective_options()?;
+        let (o, status) = self.effective_options_with_status()?;
+        let running_links = self.links(&o, &status);
         if !o.shared_carlink_radio() {
             self.reconcile_carlink_network()?;
         }
@@ -545,6 +648,8 @@ impl LinuxRelayAdmin {
                 &ProcessCommandRunner::new(),
                 o.carlink_interface(),
             );
+        let shared_phy =
+            !status.probing && crate::network_roles::shared_radio(&status.inventory, &status.plan);
         let mut settings = crate::supervisor_settings::supervisor_settings(
             &o,
             addresses,
@@ -553,6 +658,9 @@ impl LinuxRelayAdmin {
             ble_adapter,
             station_5ghz,
         );
+        if !self.wifi_present(o.carlink_interface()) {
+            settings.carlink = None;
+        }
         let served = self.public_name.served();
         settings.pem_tls = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
@@ -581,6 +689,9 @@ impl LinuxRelayAdmin {
         let shared_radio = o.shared_carlink_radio();
         let follow = self.follow.clone();
         let interface = o.wifi_interface.clone();
+        let browser_target = self.browser_target.clone();
+        let inventory = self.inventory.clone();
+        let carlink_interface = o.carlink_interface().to_string();
         let stream = self.stream.clone();
         let timeline_events = self.events.clone();
         let receivers = self.receivers.clone();
@@ -589,7 +700,9 @@ impl LinuxRelayAdmin {
         let event_sink: EventSink = Arc::new(move |mut event| {
             if event["type"] == "pairing-url" {
                 let rows = crate::linux_hotspot::interface_addresses().unwrap_or_default();
-                prefer_pairing_address(&mut event, &interface, &rows);
+                if let Some(target) = browser_target.lock().unwrap().as_deref() {
+                    prefer_pairing_address(&mut event, target, &rows);
+                }
             }
             if trace_status.observe(&event) {
                 return;
@@ -610,6 +723,22 @@ impl LinuxRelayAdmin {
                     input.display.lock().unwrap().resize.view_size(size);
                 }
             }
+            if (event["type"] == "link"
+                && matches!(event["state"].as_str(), Some("joined" | "lost")))
+                || carlink_follow::carlink_link_left(&event)
+            {
+                inventory.refresh_now();
+            }
+            if shared_phy && !shared_radio {
+                if event["type"] == "link"
+                    && event["state"] == "joined"
+                    && event["network"]["interface"] == carlink_interface
+                {
+                    hotspot.hold_for_carlink(true);
+                } else if carlink_follow::carlink_link_left(&event) {
+                    hotspot.hold_for_carlink(false);
+                }
+            }
             follow.lock().unwrap().apply(
                 &event,
                 &interface,
@@ -624,6 +753,7 @@ impl LinuxRelayAdmin {
             .with_hevc_disabled(self.carlink_hevc_disabled.clone());
         supervisor.start()?;
         *self.supervisor.lock().unwrap() = Some(supervisor);
+        *self.running_links.lock().unwrap() = Some(running_links);
         Ok(())
     }
     fn carplay_options(&self) -> Result<Options> {
@@ -661,7 +791,32 @@ impl LinuxRelayAdmin {
         let _ = self.input.stop();
     }
     fn operation(&self, op: Operation) -> Result<()> {
+        let result = self.perform_operation(op);
+        self.inventory.refresh_now();
+        result
+    }
+    fn perform_operation(&self, op: Operation) -> Result<()> {
         match op {
+            Operation::Roles(changes) => {
+                let network =
+                    changes
+                        .iter()
+                        .any(|c| c == "controller")
+                        .then_some(Operation::Network {
+                            mode_changed: true,
+                            reconnect: true,
+                        });
+                if changes.iter().any(|c| c == "carlink") {
+                    self.operation(Operation::Outputs(network.map(Box::new)))?;
+                } else if let Some(network) = network {
+                    self.operation(network)?;
+                }
+                let (options, status) = self.effective_options_with_status()?;
+                if !status.probing {
+                    *self.running_links.lock().unwrap() = Some(self.links(&options, &status));
+                }
+                self.public_name.head_unit_address(self.head_unit_address());
+            }
             Operation::Startup => {
                 if !self.prepare_wifi()? {
                     return Ok(());
@@ -715,7 +870,7 @@ impl LinuxRelayAdmin {
                 self.stop_controller();
             }
             Operation::Hotspot => {
-                if self.settings.lock().unwrap().network_mode == "device-hotspot"
+                if self.effective_options()?.settings.network_mode == "device-hotspot"
                     && self.network_override.lock().unwrap().is_none()
                 {
                     self.stop_controller();
@@ -728,6 +883,7 @@ impl LinuxRelayAdmin {
                     supervisor.stop();
                 }
                 self.carlink_hevc_disabled.store(false, Ordering::Release);
+                self.reconcile_carlink_network()?;
                 if let Some(network) = network {
                     self.operation(*network)?;
                 }
@@ -916,22 +1072,32 @@ impl LinuxRelayAdmin {
     /// relay's address on that network as the controller uses it), else the Wi-Fi interface's
     /// address in shared-Wi-Fi mode.
     fn head_unit_address(&self) -> Option<std::net::Ipv4Addr> {
-        let controller = self.controller.lock().unwrap().clone();
-        if let Some(address) = controller
+        let (options, status) = self.effective_options_with_status().ok()?;
+        let addresses = crate::linux_hotspot::interface_addresses().unwrap_or_default();
+        let iphone = self
+            .controller
+            .lock()
+            .unwrap()
+            .clone()
             .and_then(|c| c.hotspot_info())
             .and_then(|info| info.host_address)
-        {
-            return Some(address);
+            .or_else(|| {
+                (options.settings.network_mode == "shared-wifi")
+                    .then(|| {
+                        addresses
+                            .iter()
+                            .find(|(name, ip, _)| {
+                                name == &options.wifi_interface && !ip.is_loopback()
+                            })
+                            .map(|(_, ip, _)| *ip)
+                    })
+                    .flatten()
+            });
+        if status.probing {
+            iphone
+        } else {
+            crate::network_roles::browser_address(&status.plan, iphone, &addresses)
         }
-        let options = self.effective_options().ok()?;
-        if options.settings.network_mode != "shared-wifi" {
-            return None;
-        }
-        crate::linux_hotspot::interface_addresses()
-            .ok()?
-            .into_iter()
-            .find(|(interface, a, _)| interface == &options.wifi_interface && !a.is_loopback())
-            .map(|(_, a, _)| a)
     }
     /// The admin page's handle on the trusted-HTTPS certificate (SNI).
     pub fn admin_certificate(&self) -> crate::admin::server::NamedCertificate {
@@ -993,10 +1159,32 @@ impl LinuxRelayAdmin {
         let Ok(_lifecycle) = self.lifecycle.try_lock() else {
             return Ok(());
         };
+        if !self.busy.load(Ordering::Acquire) && self.pending.lock().unwrap().is_empty() {
+            let (options, status) = self.effective_options_with_status()?;
+            if !status.probing {
+                let links = self.links(&options, &status);
+                let changes = self
+                    .running_links
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|old| old.changes(&links))
+                    .unwrap_or_default();
+                if !changes.is_empty() {
+                    self.operation(Operation::Roles(changes))?;
+                }
+                *self.running_links.lock().unwrap() = Some(links);
+            }
+        }
+        self.public_name.head_unit_address(self.head_unit_address());
         if self.busy.load(Ordering::Acquire)
             || !self.desired.load(Ordering::Acquire)
             || !self.pending.lock().unwrap().is_empty()
         {
+            return Ok(());
+        }
+        if !self.wifi_present(&self.effective_options()?.wifi_interface) {
+            self.stop_controller();
             return Ok(());
         }
         if *self.provision_interface.lock().unwrap() != self.effective_options()?.wifi_interface {
@@ -1017,7 +1205,9 @@ impl LinuxRelayAdmin {
     /// Runs the CarPlay controller: starts one unless it runs, Carlink or the setup hotspot owns
     /// the radio, and applies a requested session restart. The caller holds `lifecycle`.
     fn ensure_controller(&self) -> Result<()> {
-        if self.provision.lock().unwrap().is_none() {
+        if self.provision.lock().unwrap().is_none()
+            || !self.wifi_present(&self.effective_options()?.wifi_interface)
+        {
             return Ok(());
         }
         if self.effective_options()?.shared_carlink_radio() {
@@ -1070,6 +1260,7 @@ impl LinuxRelayAdmin {
                 self.events.clone(),
                 self.input.clone(),
             )
+            .with_inventory(self.inventory.clone())
             .with_capabilities(self.capabilities.clone())
             .with_hotspot_lifetime(self.hotspot_lifetime.clone())
             .with_bluetooth_wake(self.bluetooth_wake.clone())
@@ -1078,7 +1269,21 @@ impl LinuxRelayAdmin {
             .with_before_activation({
                 // Trusted HTTPS: the local DNS answer for the hotspot about to start.
                 let public_name = self.public_name.clone();
-                Arc::new(move |address| public_name.before_hotspot(address))
+                let target = self.browser_target.clone();
+                let iphone = self.effective_options()?.wifi_interface;
+                Arc::new(move |address| {
+                    let target = target.lock().unwrap();
+                    let selected = if target.as_deref() == Some(&iphone) {
+                        Some(address)
+                    } else {
+                        crate::linux_hotspot::interface_addresses()
+                            .unwrap_or_default()
+                            .iter()
+                            .find(|(name, _, _)| Some(name) == target.as_ref())
+                            .map(|(_, ip, _)| *ip)
+                    };
+                    public_name.head_unit_address(selected);
+                })
             }),
         );
         // Test mode: a simulated iPhone behind the same hotspot.
@@ -1420,7 +1625,11 @@ pub fn settings_schema() -> Vec<Section> {
             _ => None,
         },
         visible_when: match key {
-            "networkRoles" | "adminHotspotPassword" | "wifiCountry" => Some(VisibleWhen {
+            "networkRoles"
+            | "adminHotspotPassword"
+            | "wifiCountry"
+            | "wifiInterface"
+            | "carlinkInterface" => Some(VisibleWhen {
                 key: "networkRoles".into(),
                 equals: vec![],
             }),
@@ -1437,8 +1646,7 @@ pub fn settings_schema() -> Vec<Section> {
             | "carlinkAutoReconnect"
             | "carlinkReconnectOnResize"
             | "carlinkHevc"
-            | "carlinkLink"
-            | "carlinkInterface" => Some(VisibleWhen {
+            | "carlinkLink" => Some(VisibleWhen {
                 key: "output".into(),
                 equals: vec!["carlink".into(), "both".into()],
             }),
@@ -1862,41 +2070,10 @@ impl RelayAdmin for LinuxRelayAdmin {
         }
     }
     fn network_roles_update(&self, values: Values) -> Option<crate::network_roles::SaveResult> {
-        use crate::network_roles::{SaveResult, Update};
-        let result = (|| {
-            if ["adminHotspotPassword", "wifiCountry"]
-                .iter()
-                .any(|key| values.get(*key).is_some_and(|v| !v.is_string()))
-            {
-                return SaveResult::Invalid("error.invalid".into());
-            }
-            let update: Update = match serde_json::from_value(serde_json::Value::Object(values)) {
-                Ok(update) => update,
-                Err(_) => return SaveResult::Invalid("error.invalid".into()),
-            };
-            let mut current = self.settings.lock().unwrap();
-            let mut next = current.clone();
-            next.network_roles = update.network_roles;
-            if let Some(password) = update.admin_hotspot_password {
-                next.admin_hotspot_password = Some(password);
-            }
-            if let Some(country) = update.wifi_country {
-                next.wifi_country = country;
-            }
-            if next.validate().is_err() {
-                return SaveResult::Invalid("error.invalid".into());
-            }
-            let status = self.network_status(&next);
-            if status.checks.iter().any(|c| c.level == "error") {
-                return SaveResult::Checks(status.checks);
-            }
-            if next.save(&self.options.state_dir).is_err() {
-                return SaveResult::Storage;
-            }
-            *current = next;
-            SaveResult::Saved(Box::new(status))
-        })();
-        Some(result)
+        Some(self.propose_roles(values, true))
+    }
+    fn network_roles_preview(&self, values: Values) -> Option<crate::network_roles::SaveResult> {
+        Some(self.propose_roles(values, false))
     }
     fn settings(&self) -> AdminSettings {
         let mut values = serde_json::to_value(self.settings.lock().unwrap().clone())
@@ -2292,7 +2469,7 @@ impl RelayAdmin for LinuxRelayAdmin {
 mod tests {
     use super::*;
     #[test]
-    fn network_roles_api_auth_checks_persistence_and_no_application() {
+    fn network_roles_api_auth_preview_probing_persistence_and_application() {
         use std::os::unix::fs::PermissionsExt;
         let (a, dir) = fake();
         let original = a.effective_options().unwrap();
@@ -2313,18 +2490,57 @@ mod tests {
             peer: "127.0.0.1".parse().unwrap(),
         };
         assert_eq!(server.route(&request, 100).status, 401);
+        request.method = "POST".into();
+        request.path = "/api/v0/network-roles/preview".into();
+        assert_eq!(server.route(&request, 100).status, 401);
         request
             .headers
             .insert("cookie".into(), format!("oxp_admin={token}"));
         request.headers.remove("x-openxplay-admin");
         assert_eq!(server.route(&request, 100).status, 403);
+        request.method = "PUT".into();
+        request.path = "/api/v0/network-roles".into();
+        assert_eq!(server.route(&request, 100).status, 403);
         request
             .headers
             .insert("x-openxplay-admin".into(), "1".into());
+        let probing = serde_json::to_value(a.status()).unwrap();
+        assert_eq!(probing["network"]["probing"], true);
+        assert_eq!(probing["network"]["checks"], serde_json::json!([]));
+        for (method, path) in [
+            ("PUT", "/api/v0/network-roles"),
+            ("POST", "/api/v0/network-roles/preview"),
+        ] {
+            request.method = method.into();
+            request.path = path.into();
+            let response = server.route(&request, 100);
+            assert_eq!(response.status, 503);
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&response.body).unwrap(),
+                serde_json::json!({"error":"probing"})
+            );
+        }
+        a.inventory.set(crate::net_inventory::Inventory {
+            probed_at: Some(1),
+            ..Default::default()
+        });
+        let before_preview = std::fs::read(dir.join("settings.json")).ok();
+        let preview = server.route(&request, 100);
+        assert_eq!(preview.status, 200);
+        let preview: serde_json::Value = serde_json::from_slice(&preview.body).unwrap();
+        assert!(preview.get("applied").is_none());
+        assert!(preview["changes"].is_array());
+        assert_eq!(
+            std::fs::read(dir.join("settings.json")).ok(),
+            before_preview
+        );
+        assert!(a.pending.lock().unwrap().is_empty());
+        request.method = "PUT".into();
+        request.path = "/api/v0/network-roles".into();
         let response = server.route(&request, 100);
         assert_eq!(response.status, 200);
         let response: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(response["applied"], false);
+        assert_eq!(response["applied"], true);
         assert!(!response.to_string().contains("private-admin-pass"));
         let saved = Settings::load(&dir).unwrap();
         assert_eq!(saved.wifi_country, "CN");
@@ -2347,7 +2563,7 @@ mod tests {
             status["network"]["plan"]["adminHotspot"]["passwordSet"],
             true
         );
-        assert_eq!(status["network"]["applied"], false);
+        assert_eq!(status["network"]["applied"], true);
         assert_eq!(status["network"]["mode"], original.settings.network_mode);
         for value in [status, serde_json::to_value(a.settings()).unwrap()] {
             assert!(!value.to_string().contains("private-admin-pass"));
@@ -2379,6 +2595,21 @@ mod tests {
             serde_json::json!({"networkRoles":{"mode":"auto"},"extra":true}),
         ] {
             request.body = serde_json::to_vec(&body).unwrap();
+            if body["networkRoles"]["adminHotspot"].is_object() {
+                request.method = "POST".into();
+                request.path = "/api/v0/network-roles/preview".into();
+                let preview = server.route(&request, 100);
+                assert_eq!(preview.status, 200);
+                let preview: serde_json::Value = serde_json::from_slice(&preview.body).unwrap();
+                assert!(preview["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["level"] == "error"));
+                assert_eq!(std::fs::read(dir.join("settings.json")).unwrap(), before);
+                request.method = "PUT".into();
+                request.path = "/api/v0/network-roles".into();
+            }
             let response = server.route(&request, 100);
             assert_eq!(response.status, 400);
             if body["networkRoles"]["adminHotspot"].is_object() {
@@ -2392,13 +2623,17 @@ mod tests {
             assert_eq!(std::fs::read(dir.join("settings.json")).unwrap(), before);
         }
         let after = a.effective_options().unwrap();
-        assert_eq!(after.wifi_interface, original.wifi_interface);
-        assert_eq!(after.settings.network_mode, original.settings.network_mode);
-        assert_eq!(
-            after.settings.carlink_interface,
-            original.settings.carlink_interface
+        assert_eq!(after.wifi_interface, "02:00:00:00:00:09");
+        assert_eq!(after.settings.network_mode, "shared-wifi");
+        let pending = a
+            .pending
+            .lock()
+            .unwrap()
+            .remove(&std::thread::current().id())
+            .unwrap();
+        assert!(
+            matches!(pending, Operation::Roles(ref changes) if changes.contains(&"controller".into()))
         );
-        assert!(a.pending.lock().unwrap().is_empty());
         assert!(!a.restart_required.load(Ordering::Acquire));
         assert!(!a.apply_pending.load(Ordering::Acquire));
         std::fs::remove_dir_all(dir).unwrap();
@@ -2421,10 +2656,12 @@ mod tests {
             &dir,
         )
         .unwrap();
-        (
-            Arc::new(LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap()),
-            dir,
-        )
+        let mut admin =
+            LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap();
+        admin.net_root = dir.join("present-net");
+        std::fs::create_dir_all(admin.net_root.join("wlan0")).unwrap();
+        std::fs::write(admin.net_root.join("wlan0/address"), "02:00:00:00:00:01").unwrap();
+        (Arc::new(admin), dir)
     }
     #[test]
     fn trace_control_clear_off_running_and_busy_supervisor() {
@@ -3105,10 +3342,12 @@ mod tests {
             &dir,
         )
         .unwrap();
-        (
-            Arc::new(LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap()),
-            dir,
-        )
+        let mut admin =
+            LinuxRelayAdmin::with_provisioner(options, state, events, provision).unwrap();
+        admin.net_root = dir.join("present-net");
+        std::fs::create_dir_all(admin.net_root.join("wlan0")).unwrap();
+        std::fs::write(admin.net_root.join("wlan0/address"), "02:00:00:00:00:01").unwrap();
+        (Arc::new(admin), dir)
     }
     #[test]
     fn startup_starts_bluetooth_before_the_wifi_provisioning_and_holds_only_the_ap() {
@@ -4580,6 +4819,241 @@ esac
         Arc::get_mut(a).unwrap().child_factory = Arc::new(LinkFake(Mutex::new(tx)));
         rx
     }
+    fn role_inventory() -> crate::net_inventory::Inventory {
+        crate::net_inventory::Inventory {
+            probed_at: Some(1),
+            interfaces: [
+                (
+                    "wlan0",
+                    "phy0",
+                    include_str!("../tests/fixtures/iw-phy-n1-cn.txt"),
+                ),
+                (
+                    "wlan1",
+                    "phy1",
+                    include_str!("../tests/fixtures/iw-phy-rtl8822bu-cn.txt"),
+                ),
+            ]
+            .into_iter()
+            .map(|(name, phy, capture)| crate::net_inventory::Interface {
+                name: name.into(),
+                phy: Some(phy.into()),
+                kind: "wifi".into(),
+                wifi: Some(crate::net_inventory::Radio::from_phy(
+                    crate::wifi_capabilities::parse_phy(capture),
+                )),
+                ..Default::default()
+            })
+            .collect(),
+            ..Default::default()
+        }
+    }
+    fn add_second_radio(a: &LinuxRelayAdmin) {
+        std::fs::create_dir_all(a.net_root.join("wlan1")).unwrap();
+        std::fs::write(a.net_root.join("wlan1/address"), "02:00:00:00:00:02").unwrap();
+    }
+    fn await_startup(a: &LinuxRelayAdmin) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while a.busy.load(Ordering::Acquire) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    #[test]
+    fn unprobed_options_keep_legacy_inputs_and_tick_does_not_record_roles() {
+        let (a, dir) = fake();
+        a.desired.store(false, Ordering::Release);
+        let before = a.effective_options().unwrap();
+        a.settings.lock().unwrap().network_roles = serde_json::from_value(serde_json::json!({
+            "mode":"custom", "iphone":{"link":"saved-network","interface":"wlan9"},
+            "carBrowser":{"network":"interface","interface":"eth9"}, "carlink":{"interface":"wlan8"},
+            "adminHotspot":{"enabled":false,"interface":null,"ssid":"Test Admin","band":"2.4","channel":0}
+        })).unwrap();
+        let options = a.effective_options().unwrap();
+        assert_eq!(options.wifi_interface, before.wifi_interface);
+        assert_eq!(options.settings.network_mode, before.settings.network_mode);
+        assert_eq!(
+            options.settings.carlink_interface,
+            before.settings.carlink_interface
+        );
+        assert_eq!(a.browser_target.lock().unwrap().as_deref(), Some("wlan0"));
+        for _ in 0..3 {
+            a.tick().unwrap();
+        }
+        assert!(a.running_links.lock().unwrap().is_none());
+        assert!(a
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .try_recv()
+            .is_err());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn startup_probe_before_timeout_starts_chosen_outputs_without_a_role_restart() {
+        let (mut a, dir) = fake();
+        let children = link_children(&mut a);
+        a.settings.lock().unwrap().output = "both".into();
+        add_second_radio(&a);
+        trust_carlink(&dir);
+        let starting = a.clone();
+        let startup = std::thread::spawn(move || {
+            starting
+                .start_services_with_probe_timeout(Duration::from_secs(2))
+                .unwrap();
+        });
+        assert!(children.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(a.controller.lock().unwrap().is_none());
+        assert!(a.running_links.lock().unwrap().is_none());
+        a.inventory.set(role_inventory());
+        startup.join().unwrap();
+        await_startup(&a);
+        let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(args
+            .windows(2)
+            .any(|a| a[0] == "--clink-interface" && a[1] == "wlan1"));
+        let controller = a
+            .controller
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("controller did not start");
+        for _ in 0..3 {
+            a.tick().unwrap();
+        }
+        assert!(Arc::ptr_eq(
+            a.controller.lock().unwrap().as_ref().unwrap(),
+            &controller
+        ));
+        assert!(children.recv_timeout(Duration::from_millis(50)).is_err());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn startup_probe_after_timeout_applies_only_the_needed_change_once() {
+        for second_radio in [false, true] {
+            let (mut a, dir) = fake();
+            let children = link_children(&mut a);
+            a.settings.lock().unwrap().output = "both".into();
+            if second_radio {
+                add_second_radio(&a);
+            }
+            trust_carlink(&dir);
+            let started = std::time::Instant::now();
+            a.start_services_with_probe_timeout(Duration::from_millis(20))
+                .unwrap();
+            assert!(started.elapsed() >= Duration::from_millis(20));
+            await_startup(&a);
+            let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(args
+                .windows(2)
+                .any(|a| a[0] == "--clink-interface" && a[1] == "wlan0"));
+            let controller = a
+                .controller
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("legacy controller did not start");
+            for _ in 0..3 {
+                a.tick().unwrap();
+            }
+            assert!(children.try_recv().is_err());
+            let mut inv = role_inventory();
+            if !second_radio {
+                inv.interfaces.pop();
+            }
+            a.inventory.set(inv);
+            let (options, status) = a.effective_options_with_status().unwrap();
+            let changes = a
+                .running_links
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .changes(&a.links(&options, &status));
+            assert_eq!(
+                changes,
+                if second_radio {
+                    vec!["carlink"]
+                } else {
+                    vec![]
+                }
+            );
+            for _ in 0..3 {
+                a.tick().unwrap();
+            }
+            if second_radio {
+                let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+                assert!(args
+                    .windows(2)
+                    .any(|a| a[0] == "--clink-interface" && a[1] == "wlan1"));
+            }
+            assert!(children.recv_timeout(Duration::from_millis(50)).is_err());
+            assert!(Arc::ptr_eq(
+                a.controller.lock().unwrap().as_ref().unwrap(),
+                &controller
+            ));
+            a.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
+    fn saving_identical_roles_recomputes_automatic_choices_but_preview_does_not_apply() {
+        let (a, dir) = fake();
+        let mut inv = role_inventory();
+        inv.interfaces[1].activity.kind = "other-ap".into();
+        a.inventory.set(inv.clone());
+        let current = a.network_status(&a.settings.lock().unwrap());
+        assert_eq!(current.plan.carlink.role.name(), Some("wlan0"));
+        inv.interfaces[1].activity.kind = "idle".into();
+        a.inventory.set(inv.clone());
+        let values = serde_json::json!({"networkRoles":{"mode":"auto"}})
+            .as_object()
+            .unwrap()
+            .clone();
+        let crate::network_roles::SaveResult::Saved(preview) =
+            a.propose_roles(values.clone(), false)
+        else {
+            panic!("preview failed");
+        };
+        assert_eq!(preview.changes, ["carlink"]);
+        assert_eq!(preview.plan.carlink.role.name(), Some("wlan1"));
+        assert_eq!(
+            a.network_status(&a.settings.lock().unwrap())
+                .plan
+                .carlink
+                .role
+                .name(),
+            Some("wlan0")
+        );
+        let crate::network_roles::SaveResult::Saved(saved) = a.propose_roles(values, true) else {
+            panic!("save failed");
+        };
+        assert_eq!(saved.changes, ["carlink"]);
+        assert_eq!(
+            a.network_status(&a.settings.lock().unwrap())
+                .plan
+                .carlink
+                .role
+                .name(),
+            Some("wlan1")
+        );
+        inv.interfaces[1].activity.kind = "other-network".into();
+        a.inventory.set(inv);
+        assert_eq!(
+            a.network_status(&a.settings.lock().unwrap())
+                .plan
+                .carlink
+                .role
+                .name(),
+            Some("wlan1")
+        );
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn video_codec_change_rebuilds_output_and_re_evaluates_hevc() {
         let (mut a, dir) = fake();
@@ -4662,6 +5136,130 @@ esac
         second(serde_json::json!({"type":"state","state":"Playing"}));
         a.tick().unwrap();
         assert!(children.recv_timeout(Duration::from_millis(150)).is_err());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn role_changes_restart_only_affected_links_and_keep_a_separate_radio_ap() {
+        let (mut a, dir) = fake();
+        let children = link_children(&mut a);
+        a.desired.store(false, Ordering::Release);
+        a.settings.lock().unwrap().output = "both".into();
+        std::fs::create_dir_all(a.net_root.join("wlan1")).unwrap();
+        std::fs::write(a.net_root.join("wlan1/address"), "02:00:00:00:00:02").unwrap();
+        a.inventory.set(crate::net_inventory::Inventory {
+            probed_at: Some(1),
+            interfaces: [
+                ("wlan0", "wifi", "phy0"),
+                ("wlan1", "wifi", "phy1"),
+                ("eth0", "ethernet", ""),
+            ]
+            .into_iter()
+            .map(|(name, kind, phy)| crate::net_inventory::Interface {
+                name: name.into(),
+                mac: Some(
+                    if name == "wlan1" {
+                        "02:00:00:00:00:02"
+                    } else {
+                        "02:00:00:00:00:01"
+                    }
+                    .into(),
+                ),
+                kind: kind.into(),
+                phy: Some(phy.into()),
+                ..Default::default()
+            })
+            .collect(),
+            ..Default::default()
+        });
+        trust_carlink(&dir);
+        a.start_supervisor().unwrap();
+        let _ = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        let controller = fake_controller(&a);
+        let hotspot = Arc::new(crate::hotspot_lifetime::tests::Fake::default());
+        let lease = a.hotspot_lifetime.create(|| hotspot.clone()).unwrap();
+        lease.start(Duration::from_secs(1)).unwrap();
+        let roles: crate::network_roles::NetworkRoles = serde_json::from_value(serde_json::json!({
+            "mode":"custom", "iphone":{"link":"hotspot","interface":"wlan0"},
+            "carBrowser":{"network":"interface","interface":"eth0"}, "carlink":{"interface":"wlan0"},
+            "adminHotspot":{"enabled":false,"interface":null,"ssid":"Test Admin","band":"2.4","channel":0}
+        })).unwrap();
+        a.settings.lock().unwrap().network_roles = roles;
+        a.operation(Operation::Roles(vec!["carBrowserAddress".into()]))
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            a.controller.lock().unwrap().as_ref().unwrap(),
+            &controller
+        ));
+        assert!(children.try_recv().is_err());
+        a.settings
+            .lock()
+            .unwrap()
+            .network_roles
+            .carlink
+            .as_mut()
+            .unwrap()
+            .interface = Some("02:00:00:00:00:02".into());
+        a.operation(Operation::Roles(vec!["carlink".into()]))
+            .unwrap();
+        let (args, sink) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(args.iter().any(|a| a == "--web-port"));
+        assert!(args
+            .windows(2)
+            .any(|a| a[0] == "--clink-interface" && a[1] == "wlan1"));
+        sink(
+            serde_json::json!({"type":"link","state":"joined","network":{"ssid":"Synthetic Car","interface":"wlan1"}}),
+        );
+        assert_eq!(hotspot.closes.load(Ordering::SeqCst), 0);
+        assert!(lease.validate_ready().is_ok());
+        assert!(Arc::ptr_eq(
+            a.controller.lock().unwrap().as_ref().unwrap(),
+            &controller
+        ));
+        let mut snapshot = a.inventory.get();
+        let mut radio = snapshot.interfaces.remove(1);
+        a.inventory.set(snapshot.clone());
+        std::fs::remove_dir_all(a.net_root.join("wlan1")).unwrap();
+        a.tick().unwrap();
+        let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!args.iter().any(|a| a == "--clink-interface"));
+        assert!(
+            a.status()
+                .network
+                .planned
+                .unwrap()
+                .plan
+                .carlink
+                .role
+                .missing
+        );
+        radio.name = "wlan2".into();
+        snapshot.interfaces.push(radio);
+        a.inventory.set(snapshot);
+        std::fs::create_dir_all(a.net_root.join("wlan2")).unwrap();
+        std::fs::write(a.net_root.join("wlan2/address"), "02:00:00:00:00:02").unwrap();
+        a.tick().unwrap();
+        let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(args
+            .windows(2)
+            .any(|a| a[0] == "--clink-interface" && a[1] == "wlan2"));
+        assert_eq!(hotspot.closes.load(Ordering::SeqCst), 0);
+        assert!(Arc::ptr_eq(
+            a.controller.lock().unwrap().as_ref().unwrap(),
+            &controller
+        ));
+        a.settings
+            .lock()
+            .unwrap()
+            .network_roles
+            .iphone
+            .as_mut()
+            .unwrap()
+            .link = "saved-network".into();
+        // Changing the phone link closes its controller even when provisioning cannot join.
+        let _ = a.operation(Operation::Roles(vec!["controller".into()]));
+        assert!(a.controller.lock().unwrap().is_none());
+        assert_eq!(hotspot.closes.load(Ordering::SeqCst), 1);
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }

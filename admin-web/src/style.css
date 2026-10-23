@@ -267,3 +267,13 @@ a.copy-text { color: var(--text); text-decoration-color: var(--border); text-und
 .network-table th, .network-table td { padding: .5rem; text-align: left; border-bottom: 1px solid var(--border); }
 .network-check-error { color: #b3261e; }
 @media (prefers-color-scheme: dark) { .network-check-error { color: #ffb4ab; } }
+
+/* Connection roles and their interface inventory share the same status checks. */
+.connections .mode-badge { display: inline-block; padding: .2rem .6rem; border: 1px solid var(--border); border-radius: 1rem; }
+.connections .interface-inventory { margin-top: 1rem; }
+.network-check-warning { color: #8a5900; }
+@media (prefers-color-scheme: dark) { .network-check-warning { color: #f2cd80; } }
+.network-check-info { color: var(--muted); }
+#custom-roles { border: 0; padding: 0; margin: 1rem 0; min-width: 0; }
+#connections-form select { width: 100%; }
+#roles-preview { margin-top: 1rem; }

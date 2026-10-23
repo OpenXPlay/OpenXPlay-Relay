@@ -616,7 +616,8 @@ impl RelaySupervisor {
         self.stop.1.notify_all();
     }
     pub fn start(&mut self) -> io::Result<()> {
-        if self.worker.is_some() {
+        if self.worker.is_some() || (self.settings.web_port == 0 && self.settings.carlink.is_none())
+        {
             return Ok(());
         }
         *self.stop.0.lock().unwrap() = false;
@@ -853,6 +854,18 @@ mod band_tests {
     use super::*;
     use std::sync::mpsc::{channel, Receiver, Sender};
 
+    #[test]
+    fn missing_carlink_without_web_output_starts_no_child() {
+        let mut f = Fixture::new("missing-interface", 0);
+        f.settings.carlink = None;
+        let mut relay = f.supervisor(&CarlinkBackoff::default());
+        relay.start().unwrap();
+        relay.connect_carlink();
+        relay.start().unwrap();
+        assert!(f.spawns.try_recv().is_err());
+        assert!(!relay.running());
+        relay.stop();
+    }
     #[test]
     fn band_backoff_sequence_duplicate_failure_and_success_reset() {
         let mut backoff = BandBackoff::new(Duration::from_secs(60), Duration::from_secs(300));

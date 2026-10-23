@@ -251,3 +251,29 @@ fn cache_is_independent_of_controller_refreshes_names_and_never_blocks_reads() {
     wait();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn activity_refresh_keeps_identity_and_phy_without_capability_probes() {
+    let root = root();
+    device(&root, "wlan0", true, "sdio");
+    let runner = Fake::default();
+    let mut inv = probe(&runner, &root, &[]);
+    runner.calls.lock().unwrap().clear();
+    let stamp = inv.probed_at;
+    refresh_activity(
+        &runner,
+        &root,
+        &mut inv,
+        &[("wlan0".into(), "192.0.2.5".parse().unwrap(), 24)],
+    );
+    assert_eq!(inv.interfaces[0].ipv4, ["192.0.2.5"]);
+    assert_eq!(inv.interfaces[0].activity.kind, "relay-hotspot");
+    assert!(inv.interfaces[0].wifi.is_some());
+    assert_eq!(inv.probed_at, stamp);
+    let calls = runner.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert!(!calls.iter().any(|c| c
+        .iter()
+        .any(|arg| arg == "phy" || arg == "reg" || arg == "ethtool" || arg == "udevadm")));
+    fs::remove_dir_all(root).unwrap();
+}

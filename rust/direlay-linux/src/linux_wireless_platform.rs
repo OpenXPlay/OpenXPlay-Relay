@@ -32,6 +32,7 @@ pub struct LinuxWirelessPlatform {
     planned_ssid: Mutex<Option<String>>,
     provisioning: Option<Arc<crate::provision::ProvisioningGate>>,
     before_activation: Option<crate::host_backends::BeforeActivation>,
+    inventory: Option<Arc<crate::net_inventory::InventoryCache>>,
 }
 impl LinuxWirelessPlatform {
     #[allow(clippy::too_many_arguments)]
@@ -67,6 +68,7 @@ impl LinuxWirelessPlatform {
             planned_ssid: Mutex::new(None),
             provisioning: None,
             before_activation: None,
+            inventory: None,
         }
     }
     pub fn with_capabilities(
@@ -85,6 +87,10 @@ impl LinuxWirelessPlatform {
     /// Runs with the device hotspot's address just before it is activated.
     pub fn with_before_activation(mut self, hook: crate::host_backends::BeforeActivation) -> Self {
         self.before_activation = Some(hook);
+        self
+    }
+    pub fn with_inventory(mut self, inventory: Arc<crate::net_inventory::InventoryCache>) -> Self {
+        self.inventory = Some(inventory);
         self
     }
     pub fn with_hotspot_lifetime(
@@ -131,6 +137,7 @@ impl LinuxWirelessPlatform {
             Some(cache) => Arc::new(ProbedHotspot {
                 inner,
                 cache: cache.clone(),
+                inventory: self.inventory.clone(),
                 wifi: self.options.wifi_interface.clone(),
                 carlink: self.options.carlink_interface().into(),
             }),
@@ -148,6 +155,7 @@ impl LinuxWirelessPlatform {
 struct ProbedHotspot {
     inner: Arc<dyn WirelessHotspotManager>,
     cache: Arc<crate::host_capabilities::CapabilityCache>,
+    inventory: Option<Arc<crate::net_inventory::InventoryCache>>,
     wifi: String,
     carlink: String,
 }
@@ -155,6 +163,9 @@ impl WirelessHotspotManager for ProbedHotspot {
     fn start(&self, timeout: Duration) -> Result<WirelessHotspotInfo> {
         let result = self.inner.start(timeout);
         self.cache.initiated(&self.wifi, &self.carlink);
+        if let Some(inventory) = &self.inventory {
+            inventory.refresh_now();
+        }
         result
     }
     fn validate_ready(&self) -> Result<()> {
@@ -164,7 +175,11 @@ impl WirelessHotspotManager for ProbedHotspot {
         self.inner.on_car_play_confirmed()
     }
     fn close(&self) -> Result<()> {
-        self.inner.close()
+        let result = self.inner.close();
+        if let Some(inventory) = &self.inventory {
+            inventory.refresh_now();
+        }
+        result
     }
 }
 struct BluetoothClient {
@@ -871,6 +886,7 @@ mod network_tests {
             Default::default(),
         ));
         let manager = ProbedHotspot {
+            inventory: None,
             inner: Arc::new(Hotspot(started)),
             cache: cache.clone(),
             wifi: "wlan0".into(),

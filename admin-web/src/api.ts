@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
-import type { Settings, Values } from './schema';
+import type { Settings, Values, NetworkRolesSetting } from './schema';
 export type SessionState = 'login' | 'ready';
 export interface Session { state: SessionState; defaultPassword: boolean }
 export interface WifiNetwork { ssid: string; signal: number; secure: boolean; known: boolean }
@@ -57,8 +57,9 @@ export interface NetworkCheck { level: 'error' | 'warning' | 'info'; code: strin
 export interface PlannedNetwork {
   probedAt: number | null;
   country: { global: string | null; configured: string | null; phys: { phy: string; country: string | null; selfManaged: boolean }[] };
-  interfaces: NetworkInterface[]; plan: NetworkPlan; checks: NetworkCheck[]; applied: false;
+  interfaces: NetworkInterface[]; plan: NetworkPlan; checks: NetworkCheck[]; applied: boolean; probing?: boolean;
 }
+export interface NetworkProposal { plan: NetworkPlan; checks: NetworkCheck[]; changes: ('controller' | 'carlink' | 'carBrowserAddress')[]; applied?: true }
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
@@ -111,6 +112,8 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
   return data as T;
 }
 export const api = {
+  previewRoles: (networkRoles: NetworkRolesSetting) => request<NetworkProposal>('/network-roles/preview', 'POST', { networkRoles }, false),
+  saveRoles: (networkRoles: NetworkRolesSetting) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles }, false),
   session: () => request<Session>('/session'),
   login: (password: string) => request('/login', 'POST', { password }),
   password: (current: string, next: string) => request('/password', 'POST', { current, new: next }, false),

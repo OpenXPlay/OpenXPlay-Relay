@@ -309,13 +309,16 @@ impl AdminServer {
                 }
                 AdminUpdate::Errors(errors) => Response::json(422, json!({"errors":errors})),
             },
-            ("PUT", "/network-roles") => {
+            ("PUT", "/network-roles") | ("POST", "/network-roles/preview") => {
                 use crate::network_roles::SaveResult;
-                match self.admin.network_roles_update(body) {
-                    Some(SaveResult::Saved(status)) => Response::json(
-                        200,
-                        json!({"plan": status.plan, "checks": status.checks, "applied": false}),
-                    ),
+                let result = if path == "/network-roles/preview" {
+                    self.admin.network_roles_preview(body)
+                } else {
+                    self.admin.network_roles_update(body)
+                };
+                match result {
+                    Some(SaveResult::Saved(proposal)) => Response::json(200, json!(proposal)),
+                    Some(SaveResult::Probing) => Response::error(503, "probing"),
                     Some(SaveResult::Invalid(error)) => {
                         Response::json(400, json!({"error": error}))
                     }

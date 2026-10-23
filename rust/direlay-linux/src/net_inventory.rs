@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
 
@@ -408,16 +408,67 @@ pub fn probe(
         interfaces,
     }
 }
+/// State-only refresh: identity, regulatory channels and phy capabilities stay cached.
+pub fn refresh_activity(
+    runner: &dyn CommandRunner,
+    root: &Path,
+    snapshot: &mut Inventory,
+    addresses: &[(String, std::net::Ipv4Addr, u8)],
+) {
+    let active = parse_active(
+        &run(
+            runner,
+            &[
+                "nmcli",
+                "-t",
+                "-f",
+                "DEVICE,NAME,UUID",
+                "connection",
+                "show",
+                "--active",
+            ],
+        )
+        .unwrap_or_default(),
+    );
+    for interface in &mut snapshot.interfaces {
+        let wifi = interface.kind == "wifi";
+        let info = if wifi {
+            run(runner, &["iw", "dev", &interface.name, "info"]).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        interface.activity = parse_activity(
+            &info,
+            active.get(&interface.name).map(String::as_str),
+            !wifi,
+        );
+        interface.operstate = std::fs::read_to_string(
+            root.join("sys/class/net")
+                .join(&interface.name)
+                .join("operstate"),
+        )
+        .ok()
+        .map(|s| s.trim().into());
+        interface.ipv4 = addresses
+            .iter()
+            .filter(|(name, _, _)| name == &interface.name)
+            .map(|(_, ip, _)| ip.to_string())
+            .collect();
+    }
+}
 #[derive(Default)]
 struct CacheState {
     names: Option<Vec<String>>,
     refreshed: Option<Instant>,
+    full_refreshed: Option<Instant>,
+    full_requested: bool,
     running: bool,
     requested: bool,
     snapshot: Inventory,
 }
 pub struct InventoryCache {
     state: Mutex<CacheState>,
+    probed: Condvar,
     runner: Arc<dyn CommandRunner>,
     root: PathBuf,
 }
@@ -425,6 +476,7 @@ impl InventoryCache {
     pub fn new(runner: Arc<dyn CommandRunner>, root: PathBuf) -> Self {
         Self {
             state: Mutex::default(),
+            probed: Condvar::new(),
             runner,
             root,
         }
@@ -432,18 +484,56 @@ impl InventoryCache {
     pub fn get(&self) -> Inventory {
         self.state.lock().unwrap().snapshot.clone()
     }
+    pub fn wait_for_probe(&self, timeout: Duration) -> bool {
+        let (state, _) = self
+            .probed
+            .wait_timeout_while(self.state.lock().unwrap(), timeout, |state| {
+                state.snapshot.probed_at.is_none()
+            })
+            .unwrap();
+        state.snapshot.probed_at.is_some()
+    }
+    #[cfg(test)]
+    pub(crate) fn set(&self, snapshot: Inventory) {
+        let mut state = self.state.lock().unwrap();
+        while state.running {
+            drop(state);
+            std::thread::sleep(Duration::from_millis(1));
+            state = self.state.lock().unwrap();
+        }
+        state.snapshot = snapshot;
+        state.names = Some(interface_names(&self.root));
+        state.refreshed = Some(Instant::now());
+        state.full_refreshed = Some(Instant::now());
+        self.probed.notify_all();
+    }
     pub fn refresh(self: &Arc<Self>) {
+        self.request(false);
+    }
+    pub fn refresh_now(self: &Arc<Self>) {
+        self.request(true);
+    }
+    fn request(self: &Arc<Self>, force: bool) {
         let names = interface_names(&self.root);
         let mut state = self.state.lock().unwrap();
-        if state.names.as_ref() == Some(&names)
+        let full = state.names.as_ref() != Some(&names)
+            || state
+                .full_refreshed
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(60));
+        if !full
+            && !force
             && state
                 .refreshed
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(60))
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(10))
         {
             return;
         }
         state.names = Some(names);
         state.refreshed = Some(Instant::now());
+        if full {
+            state.full_refreshed = Some(Instant::now());
+        }
+        state.full_requested |= full;
         state.requested = true;
         if state.running {
             return;
@@ -454,20 +544,34 @@ impl InventoryCache {
         if spawn_worker(
             "network-inventory",
             Box::new(move || loop {
-                {
+                let (full, mut snapshot) = {
                     let mut state = cache.state.lock().unwrap();
                     if !state.requested {
                         state.running = false;
                         break;
                     }
                     state.requested = false;
-                }
+                    (
+                        std::mem::take(&mut state.full_requested),
+                        state.snapshot.clone(),
+                    )
+                };
                 #[cfg(target_os = "linux")]
                 let addresses = crate::linux_hotspot::interface_addresses().unwrap_or_default();
                 #[cfg(not(target_os = "linux"))]
                 let addresses = Vec::new();
-                let snapshot = probe(cache.runner.as_ref(), &cache.root, &addresses);
+                if full {
+                    snapshot = probe(cache.runner.as_ref(), &cache.root, &addresses);
+                } else {
+                    refresh_activity(
+                        cache.runner.as_ref(),
+                        &cache.root,
+                        &mut snapshot,
+                        &addresses,
+                    );
+                }
                 cache.state.lock().unwrap().snapshot = snapshot;
+                cache.probed.notify_all();
             }),
         )
         .is_err()
@@ -475,6 +579,7 @@ impl InventoryCache {
             let mut state = self.state.lock().unwrap();
             state.running = false;
             state.refreshed = None;
+            state.full_refreshed = None;
         }
     }
 }

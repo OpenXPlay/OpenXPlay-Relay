@@ -210,6 +210,66 @@ pub struct Legacy<'a> {
     pub hotspot_channel: u8,
     pub cli: &'a BTreeMap<String, String>,
 }
+#[derive(Clone, PartialEq, Eq)]
+struct InterfaceCapabilities {
+    kind: String,
+    phy: Option<String>,
+    wifi: Option<crate::wifi_capabilities::PhyCapabilities>,
+}
+/// Automatic selections survive activity, address and probe timestamp changes, only in memory.
+#[derive(Clone, Default)]
+pub struct AutomaticChoices {
+    topology: BTreeMap<String, InterfaceCapabilities>,
+    inputs: Value,
+    plan: Option<Plan>,
+}
+impl AutomaticChoices {
+    pub fn resolve(
+        &mut self,
+        inventory: &Inventory,
+        settings: &Settings,
+        legacy: &Legacy<'_>,
+        preset: &str,
+        output: &str,
+    ) -> Plan {
+        let topology = inventory
+            .interfaces
+            .iter()
+            .map(|i| {
+                (
+                    i.name.clone(),
+                    InterfaceCapabilities {
+                        kind: i.kind.clone(),
+                        phy: i.phy.clone(),
+                        wifi: i.wifi.as_ref().map(|w| w.capabilities.clone()),
+                    },
+                )
+            })
+            .collect();
+        let inputs = json!({
+            "roles": settings.network_roles,
+            "iphone": legacy.wifi_interface,
+            "carlink": legacy.carlink_interface,
+            "cli": legacy.cli,
+        });
+        let kept = (self.topology == topology && self.inputs == inputs)
+            .then_some(self.plan.as_ref())
+            .flatten();
+        let plan = match kept {
+            Some(kept) => {
+                resolve_with_choices(inventory, settings, legacy, preset, output, Some(kept))
+            }
+            None => resolve_plan(inventory, settings, legacy, preset, output),
+        };
+        // An empty, not-yet-probed inventory must never choose the startup roles.
+        if inventory.probed_at.is_some() {
+            self.topology = topology;
+            self.inputs = inputs;
+            self.plan = Some(plan.clone());
+        }
+        plan
+    }
+}
 fn resolve_interface(inventory: &Inventory, reference: Option<&str>, source: &str) -> Role {
     let interface = reference.map(|reference| {
         let found = inventory.interfaces.iter().find(|i| {
@@ -260,13 +320,23 @@ fn same_phy(inventory: &Inventory, a: &Role, b: &Role) -> bool {
         _ => false,
     }
 }
-/// Planning is observational in NR-2; no resolved value is fed back into the running relay.
+/// Resolve compatibility inputs and stable interface references into the running links.
 pub fn resolve_plan(
     inventory: &Inventory,
     settings: &Settings,
     legacy: &Legacy<'_>,
     preset: &str,
     output: &str,
+) -> Plan {
+    resolve_with_choices(inventory, settings, legacy, preset, output, None)
+}
+fn resolve_with_choices(
+    inventory: &Inventory,
+    settings: &Settings,
+    legacy: &Legacy<'_>,
+    preset: &str,
+    output: &str,
+    kept: Option<&Plan>,
 ) -> Plan {
     let roles = &settings.network_roles;
     let custom = roles.mode == "custom";
@@ -334,6 +404,7 @@ pub fn resolve_plan(
         .interfaces
         .iter()
         .filter(different_phy)
+        .filter(|i| !foreign_busy(i))
         .filter(|i| i.wifi.as_ref().is_some_and(|w| !w.station5().is_empty()))
         .collect();
     candidates.sort_by_key(|i| {
@@ -352,14 +423,19 @@ pub fn resolve_plan(
             )
         } else if custom {
             (
-                roles.carlink.as_ref().and_then(|r| r.interface.as_deref()),
+                roles
+                    .carlink
+                    .as_ref()
+                    .and_then(|r| r.interface.as_deref())
+                    .or(Some(iphone_ref)),
                 "custom",
             )
         } else if !legacy.carlink_interface.is_empty() {
             (Some(legacy.carlink_interface), "legacy")
         } else {
             (
-                Some(candidates.first().map_or(iphone_ref, |i| i.name.as_str())),
+                kept.and_then(|p| p.carlink.role.name())
+                    .or_else(|| Some(candidates.first().map_or(iphone_ref, |i| i.name.as_str()))),
                 "auto",
             )
         };
@@ -400,7 +476,8 @@ pub fn resolve_plan(
     } else if custom || admin.interface.is_some() {
         admin.interface.as_deref()
     } else {
-        admin_candidates.first().map(|i| i.name.as_str())
+        kept.map(|p| p.admin_hotspot.role.name())
+            .unwrap_or_else(|| admin_candidates.first().map(|i| i.name.as_str()))
     };
     let admin_role = resolve_interface(
         inventory,
@@ -486,6 +563,32 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
             );
         }
     }
+    for interface in inventory
+        .interfaces
+        .iter()
+        .filter(|i| i.kind == "wifi" && foreign_busy(i))
+    {
+        let role = resolve_interface(inventory, Some(&interface.name), "auto");
+        let mut roles = Vec::new();
+        if plan.carlink.role.source == "auto" {
+            roles.push(("carlink", &role));
+        }
+        if plan.admin_hotspot.role.source == "auto"
+            && plan.admin_hotspot.role.name() == Some(interface.name.as_str())
+        {
+            roles.push(("adminHotspot", &role));
+        }
+        if !roles.is_empty() {
+            add(
+                "info",
+                "interface-busy",
+                &roles,
+                json!({
+                    "connection": interface.activity.profile.as_ref().or(interface.activity.ssid.as_ref()).cloned().unwrap_or_else(|| interface.activity.kind.clone())
+                }),
+            );
+        }
+    }
     let aps = [
         (
             "iphone",
@@ -526,6 +629,22 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
                     json!({"band": band}),
                 );
             }
+        }
+    }
+    for (name, role, enabled) in [
+        (
+            "iphone",
+            &plan.iphone.role,
+            plan.iphone.link == "saved-network",
+        ),
+        ("carlink", &plan.carlink.role, plan.output != "web"),
+    ] {
+        if enabled
+            && entry(inventory, role).is_some_and(|i| {
+                i.kind != "wifi" || i.wifi.as_ref().is_some_and(|w| !w.capabilities.station)
+            })
+        {
+            add("error", "no-station-mode", &[(name, role)], json!({}));
         }
     }
     if plan.carlink.follow_over {
@@ -673,12 +792,139 @@ pub struct NetworkStatus {
     pub plan: Plan,
     pub checks: Vec<Check>,
     pub applied: bool,
+    pub probing: bool,
 }
 pub enum SaveResult {
-    Saved(Box<NetworkStatus>),
+    Saved(Box<Proposal>),
+    Probing,
     Invalid(String),
     Checks(Vec<Check>),
     Storage,
+}
+/// The same proposal is returned by preview and save; only save applies it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Proposal {
+    pub plan: Plan,
+    pub checks: Vec<Check>,
+    pub changes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applied: Option<bool>,
+}
+fn foreign_busy(interface: &Interface) -> bool {
+    matches!(
+        interface.activity.kind.as_str(),
+        "other-ap" | "other-network"
+    )
+}
+impl Role {
+    pub fn name(&self) -> Option<&str> {
+        self.interface
+            .as_ref()
+            .map(|i| i.name.as_deref().unwrap_or(&i.reference))
+    }
+}
+/// One mapping for the controller, provisioning and output supervisor.
+pub fn apply_plan(plan: &Plan, options: &mut crate::Options) {
+    if let Some(name) = plan.iphone.role.name() {
+        options.wifi_interface = name.into();
+        options.settings.wifi_interface = name.into();
+    }
+    options.settings.network_mode = if plan.iphone.link == "saved-network" {
+        "shared-wifi"
+    } else {
+        "device-hotspot"
+    }
+    .into();
+    options.settings.carlink_interface = if plan.carlink.follow_over {
+        String::new()
+    } else {
+        plan.carlink.role.name().unwrap_or("").into()
+    };
+}
+pub fn changes(before: &Plan, after: &Plan) -> Vec<String> {
+    RunningLinks::from_plan(before, |_| true).changes(&RunningLinks::from_plan(after, |_| true))
+}
+/// Actual component inputs, including interface presence rather than diagnostic missing flags.
+#[derive(Clone)]
+pub struct RunningLinks {
+    iphone: Option<String>,
+    link: String,
+    carlink: Option<String>,
+    follow_over: bool,
+    browser: Option<String>,
+    browser_network: String,
+}
+impl RunningLinks {
+    pub fn from_plan(plan: &Plan, present: impl Fn(&str) -> bool) -> Self {
+        let name = |role: &Role| role.name().filter(|n| present(n)).map(str::to_string);
+        Self {
+            iphone: name(&plan.iphone.role),
+            link: plan.iphone.link.clone(),
+            carlink: name(&plan.carlink.role),
+            follow_over: plan.carlink.follow_over,
+            browser: name(&plan.car_browser.role),
+            browser_network: plan.car_browser.network.clone(),
+        }
+    }
+    pub fn legacy(options: &crate::Options, present: impl Fn(&str) -> bool) -> Self {
+        let name = |n: &str| present(n).then(|| n.to_string());
+        Self {
+            iphone: name(&options.wifi_interface),
+            link: if options.settings.network_mode == "shared-wifi" {
+                "saved-network"
+            } else {
+                "hotspot"
+            }
+            .into(),
+            carlink: name(options.carlink_interface()),
+            follow_over: options.shared_carlink_radio(),
+            browser: name(&options.wifi_interface),
+            browser_network: "iphone".into(),
+        }
+    }
+    pub fn changes(&self, after: &Self) -> Vec<String> {
+        let mut changes = Vec::new();
+        let iphone = self.iphone != after.iphone || self.link != after.link;
+        if iphone {
+            changes.push("controller".into());
+        }
+        if self.carlink != after.carlink || self.follow_over != after.follow_over {
+            changes.push("carlink".into());
+        }
+        if self.browser != after.browser
+            || self.browser_network != after.browser_network
+            || (iphone && after.browser_network == "iphone")
+        {
+            changes.push("carBrowserAddress".into());
+        }
+        changes
+    }
+}
+/// A radio hold is wider than follow-over: two virtual interfaces can share one phy.
+pub fn shared_radio(inventory: &Inventory, plan: &Plan) -> bool {
+    same_interface(&plan.iphone.role, &plan.carlink.role)
+        || same_phy(inventory, &plan.iphone.role, &plan.carlink.role)
+}
+pub fn browser_address(
+    plan: &Plan,
+    iphone: Option<std::net::Ipv4Addr>,
+    addresses: &[(String, std::net::Ipv4Addr, u8)],
+) -> Option<std::net::Ipv4Addr> {
+    if plan.car_browser.network == "iphone" {
+        return iphone;
+    }
+    if plan.car_browser.role.missing {
+        return None;
+    }
+    addresses
+        .iter()
+        .find(|(name, ip, _)| {
+            Some(name.as_str()) == plan.car_browser.role.name()
+                && !ip.is_loopback()
+                && !ip.is_unspecified()
+        })
+        .map(|(_, ip, _)| *ip)
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

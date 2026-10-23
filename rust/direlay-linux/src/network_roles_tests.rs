@@ -55,6 +55,22 @@ fn plan(inv: &Inventory, settings: &Settings, cli: &BTreeMap<String, String>) ->
         &settings.output,
     )
 }
+fn cached_plan(choices: &mut AutomaticChoices, inv: &Inventory, settings: &Settings) -> Plan {
+    choices.resolve(
+        inv,
+        settings,
+        &Legacy {
+            wifi_interface: &settings.wifi_interface,
+            carlink_interface: &settings.carlink_interface,
+            network_mode: &settings.network_mode,
+            hotspot_band: &settings.hotspot_band,
+            hotspot_channel: settings.hotspot_channel,
+            cli: &BTreeMap::new(),
+        },
+        "phicomm-n1",
+        &settings.output,
+    )
+}
 fn admin(interface: Option<&str>, channel: u8) -> AdminHotspot {
     AdminHotspot {
         enabled: true,
@@ -478,4 +494,270 @@ fn two_ap_combinations_respect_channel_limits() {
             conflict
         );
     }
+}
+
+#[test]
+fn plan_applies_effective_options_table() {
+    struct Case {
+        radios: Vec<Interface>,
+        roles: NetworkRoles,
+        legacy: &'static str,
+        cli: BTreeMap<String, String>,
+        expected: (&'static str, &'static str, &'static str),
+    }
+    let mut busy = usb();
+    busy.activity.kind = "other-ap".into();
+    busy.activity.profile = Some("Synthetic foreign AP".into());
+    let cases = [
+        Case {
+            radios: vec![n1()],
+            roles: Default::default(),
+            legacy: "",
+            cli: BTreeMap::new(),
+            expected: ("wlan0", "device-hotspot", ""),
+        },
+        Case {
+            radios: vec![n1(), usb()],
+            roles: Default::default(),
+            legacy: "",
+            cli: BTreeMap::new(),
+            expected: ("wlan0", "device-hotspot", "wlan1"),
+        },
+        Case {
+            radios: vec![n1(), usb()],
+            roles: Default::default(),
+            legacy: "wlan0",
+            cli: BTreeMap::new(),
+            expected: ("wlan0", "device-hotspot", ""),
+        },
+        Case {
+            radios: vec![n1(), usb()],
+            roles: custom("02:00:00:00:00:02", Some("wlan0"), Default::default()),
+            legacy: "",
+            cli: BTreeMap::new(),
+            expected: ("wlan1", "device-hotspot", "wlan0"),
+        },
+        Case {
+            radios: vec![n1(), usb()],
+            roles: custom("missing", Some("missing"), Default::default()),
+            legacy: "",
+            cli: BTreeMap::from([
+                ("--wifi-interface".into(), "wlan1".into()),
+                ("--carlink-interface".into(), "wlan0".into()),
+                ("--network-mode".into(), "shared-wifi".into()),
+            ]),
+            expected: ("wlan1", "shared-wifi", "wlan0"),
+        },
+        Case {
+            radios: vec![n1()],
+            roles: custom("wlan0", Some("wlan9"), Default::default()),
+            legacy: "",
+            cli: BTreeMap::new(),
+            expected: ("wlan0", "device-hotspot", "wlan9"),
+        },
+        Case {
+            radios: vec![n1(), busy],
+            roles: Default::default(),
+            legacy: "",
+            cli: BTreeMap::new(),
+            expected: ("wlan0", "device-hotspot", ""),
+        },
+    ];
+    let dir = std::env::temp_dir().join(format!(
+        "roles-apply-{}",
+        crate::admin::auth::random_hex(8).unwrap()
+    ));
+    let options =
+        crate::Options::parse(&["--state-dir".into(), dir.to_string_lossy().into_owned()]).unwrap();
+    for case in cases {
+        let settings = Settings {
+            network_roles: case.roles,
+            carlink_interface: case.legacy.into(),
+            ..Default::default()
+        };
+        let inv = inventory(case.radios);
+        let p = plan(&inv, &settings, &case.cli);
+        let mut options = options.clone();
+        apply_plan(&p, &mut options);
+        assert_eq!(
+            (
+                options.wifi_interface.as_str(),
+                options.settings.network_mode.as_str(),
+                options.settings.carlink_interface.as_str()
+            ),
+            case.expected
+        );
+        if inv.interfaces.iter().any(foreign_busy) {
+            let check = checks(&p, &inv)
+                .into_iter()
+                .find(|c| c.code == "interface-busy")
+                .unwrap();
+            assert_eq!(check.level, "info");
+            assert_eq!(check.params["connection"], "Synthetic foreign AP");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn restarts_follow_interface_link_and_presence_changes_only() {
+    let inv = inventory(vec![n1(), usb()]);
+    let original = plan(&inv, &Settings::default(), &BTreeMap::new());
+    let mut next = original.clone();
+    next.car_browser.network = "interface".into();
+    next.car_browser.role = resolve_interface(&inv, Some("wlan1"), "custom");
+    assert_eq!(changes(&original, &next), ["carBrowserAddress"]);
+    next = original.clone();
+    next.iphone.link = "saved-network".into();
+    assert_eq!(
+        changes(&original, &next),
+        ["controller", "carBrowserAddress"]
+    );
+    next = original.clone();
+    next.carlink.role.interface.as_mut().unwrap().name = Some("wlan2".into());
+    assert_eq!(changes(&original, &next), ["carlink"]);
+    next = original.clone();
+    next.carlink.role.missing = true;
+    next.iphone.role.missing = true;
+    next.car_browser.role.missing = true;
+    assert!(changes(&original, &next).is_empty());
+    let running = RunningLinks::from_plan(&original, |_| true);
+    let absent = RunningLinks::from_plan(&next, |name| name != "wlan1");
+    assert_eq!(running.changes(&absent), ["carlink"]);
+    assert_eq!(absent.changes(&running), ["carlink"]);
+    next = original.clone();
+    next.source = "custom".into();
+    assert!(changes(&original, &next).is_empty());
+    next.iphone.role.interface.as_mut().unwrap().name = Some("wlan3".into());
+    assert_eq!(
+        changes(&original, &next),
+        ["controller", "carBrowserAddress"]
+    );
+}
+
+#[test]
+fn automatic_choices_survive_activity_but_reselect_on_adapter_and_capability_changes() {
+    let settings = Settings {
+        network_roles: NetworkRoles {
+            admin_hotspot: Some(admin(None, 0)),
+            ..Default::default()
+        },
+        output: "both".into(),
+        ..Default::default()
+    };
+    let mut inv = inventory(vec![n1(), usb()]);
+    let mut choices = AutomaticChoices::default();
+    // Reads before the probe do not pin the empty-inventory follow-over.
+    cached_plan(&mut choices, &Inventory::default(), &settings);
+    inv.probed_at = Some(1);
+    let mut previous = cached_plan(&mut choices, &inv, &settings);
+    for round in 0..32 {
+        for activity in ["idle", "other-ap", "idle", "other-network", "carlink"] {
+            let usb = inv
+                .interfaces
+                .iter_mut()
+                .find(|i| i.name == "wlan1")
+                .unwrap();
+            usb.activity.kind = activity.into();
+            usb.activity.profile = Some(format!("Synthetic profile {round}"));
+            usb.current_mac = Some(format!("02:00:00:00:01:{round:02x}"));
+            usb.operstate = Some(if activity == "idle" { "down" } else { "up" }.into());
+            usb.ipv4 = vec![format!("192.0.2.{round}/24")];
+            inv.probed_at = Some(round + 2);
+            inv.interfaces.reverse();
+            let next = cached_plan(&mut choices, &inv, &settings);
+            assert_eq!(next.carlink.role.name(), Some("wlan1"), "{activity}");
+            assert_eq!(next.admin_hotspot.role.name(), Some("wlan1"), "{activity}");
+            assert!(changes(&previous, &next).is_empty(), "{activity}");
+            let busy: Vec<_> = checks(&next, &inv)
+                .into_iter()
+                .filter(|c| c.code == "interface-busy")
+                .collect();
+            assert_eq!(
+                busy.len(),
+                usize::from(matches!(activity, "other-ap" | "other-network"))
+            );
+            for check in busy {
+                assert_eq!(check.level, "info");
+                assert_eq!(check.roles, ["carlink", "adminHotspot"]);
+            }
+            previous = next;
+        }
+    }
+    inv.interfaces.retain(|i| i.name != "wlan1");
+    let next = cached_plan(&mut choices, &inv, &settings);
+    assert_eq!(next.carlink.role.name(), Some("wlan0"));
+    assert!(next.carlink.follow_over);
+    assert_eq!(next.admin_hotspot.role.name(), None);
+    assert_eq!(changes(&previous, &next), ["carlink"]);
+    previous = next;
+    inv.interfaces.push(usb());
+    let next = cached_plan(&mut choices, &inv, &settings);
+    assert_eq!(next.carlink.role.name(), Some("wlan1"));
+    assert_eq!(next.admin_hotspot.role.name(), Some("wlan1"));
+    assert_eq!(changes(&previous, &next), ["carlink"]);
+    previous = next;
+    inv.interfaces[1].wifi = n1().wifi;
+    inv.interfaces[1]
+        .wifi
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .station = false;
+    inv.interfaces[1].wifi.as_mut().unwrap().capabilities.ap = false;
+    let next = cached_plan(&mut choices, &inv, &settings);
+    assert_eq!(next.carlink.role.name(), Some("wlan0"));
+    assert_eq!(next.admin_hotspot.role.name(), None);
+    assert_eq!(changes(&previous, &next), ["carlink"]);
+    inv.interfaces[1] = usb();
+    let restored = cached_plan(&mut choices, &inv, &settings);
+    assert_eq!(restored.carlink.role.name(), Some("wlan1"));
+    assert_eq!(restored.admin_hotspot.role.name(), Some("wlan1"));
+    assert_eq!(changes(&next, &restored), ["carlink"]);
+}
+
+#[test]
+fn automatic_follow_over_stays_until_a_fresh_selection() {
+    let settings = Settings::default();
+    let mut inv = inventory(vec![n1(), usb()]);
+    inv.probed_at = Some(1);
+    inv.interfaces[1].activity.kind = "other-ap".into();
+    let mut choices = AutomaticChoices::default();
+    let before = cached_plan(&mut choices, &inv, &settings);
+    assert!(before.carlink.follow_over);
+    inv.interfaces[1].activity.kind = "idle".into();
+    let kept = cached_plan(&mut choices, &inv, &settings);
+    assert!(changes(&before, &kept).is_empty());
+    assert_eq!(kept.carlink.role.name(), Some("wlan0"));
+    let fresh = cached_plan(&mut AutomaticChoices::default(), &inv, &settings);
+    assert_eq!(fresh.carlink.role.name(), Some("wlan1"));
+    assert_eq!(changes(&kept, &fresh), ["carlink"]);
+}
+#[test]
+fn browser_address_and_phy_hold_follow_selected_network() {
+    let mut ethernet = Interface {
+        name: "eth0".into(),
+        kind: "ethernet".into(),
+        ..Default::default()
+    };
+    ethernet.ipv4 = vec!["192.0.2.2".into()];
+    let inv = inventory(vec![n1(), usb(), ethernet]);
+    let mut p = plan(&inv, &Settings::default(), &BTreeMap::new());
+    let iphone = Some("192.0.2.1".parse().unwrap());
+    let rows = vec![("eth0".into(), "192.0.2.2".parse().unwrap(), 24)];
+    assert_eq!(browser_address(&p, iphone, &rows), iphone);
+    p.car_browser.network = "interface".into();
+    p.car_browser.role = resolve_interface(&inv, Some("eth0"), "custom");
+    assert_eq!(
+        browser_address(&p, iphone, &rows),
+        Some("192.0.2.2".parse().unwrap())
+    );
+    assert_eq!(browser_address(&p, iphone, &[]), None);
+    assert!(!shared_radio(&inv, &p));
+    p.carlink.role = p.iphone.role.clone();
+    assert!(shared_radio(&inv, &p));
+    let mut virtual_radio = usb();
+    virtual_radio.phy = n1().phy;
+    let inv = inventory(vec![n1(), virtual_radio]);
+    p.carlink.role = resolve_interface(&inv, Some("wlan1"), "custom");
+    assert!(shared_radio(&inv, &p));
 }

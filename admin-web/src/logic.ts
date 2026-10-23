@@ -86,7 +86,7 @@ export function publicNameUrl(status: Pick<Status, 'publicName' | 'receiverUrls'
 }
 const technicalFields = new Set(['carlinkModel', 'carlinkHevc', 'carlinkTrace', 'receiverPort', 'wifiInterface', 'rfcommChannel', 'wifiChannel', 'hotspotChannel', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'hotspotSsid', 'hotspotPassword', 'carlinkLink', 'carlinkInterface', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'transport', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity']);
 export function settingsViews(settings: Settings, developer: boolean, platform?: Status['platform']) {
-  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).filter(f => platform !== 'linux' || f.key !== 'hotspotBand').map(field => {
+  const all = settings.schema.filter(s => s.id !== 'wifi' && s.id !== 'plugins' && s.id !== 'publicName').flatMap(s => s.fields).filter(f => platform !== 'linux' || !['hotspotBand', 'wifiInterface', 'carlinkInterface'].includes(f.key)).map(field => {
     if (field.key !== 'networkMode') return field;
     const options = field.options?.filter(o => developer || o.value === 'shared-wifi' || o.value === 'device-hotspot' || o.value === 'wifi-direct').map(option => {
       const mode = option.value === 'wifi-direct' ? 'device-hotspot' : String(option.value);

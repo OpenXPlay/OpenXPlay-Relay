@@ -342,9 +342,19 @@ impl PublicNameService {
     /// Runs just before the CarPlay hotspot is activated with `address` (device-hotspot mode):
     /// the head unit then resolves the name to it locally, also without internet.
     pub fn before_hotspot(&self, address: Ipv4Addr) {
+        self.head_unit_address(Some(address));
+    }
+    /// Follow the selected car-browser network, including loss of its address.
+    pub fn head_unit_address(&self, address: Option<Ipv4Addr>) {
         let _files = self.inner.files.lock().unwrap();
-        self.inner.shared.lock().unwrap().hotspot = Some(address).filter(Ipv4Addr::is_private);
+        let mut shared = self.inner.shared.lock().unwrap();
+        if shared.hotspot == address {
+            return;
+        }
+        shared.hotspot = address;
+        drop(shared);
         self.inner.sync_local_dns();
+        self.inner.wake.notify_all();
     }
     /// "Request certificate now": the backoff starts over and the address update and the
     /// certificate check run at once, still within the order guard and the CA's `Retry-After`.
@@ -580,7 +590,7 @@ impl Inner {
         };
         let _ = match (name, hotspot) {
             (Some(name), Some(address)) => local_dns::write(dir, &name, address),
-            (Some(_), None) => Ok(()),
+            (Some(_), None) => local_dns::remove(dir),
             (None, _) => local_dns::remove(dir),
         };
     }
@@ -1646,6 +1656,14 @@ mod tests {
         assert!(std::fs::read_to_string(&conf)
             .unwrap()
             .contains("/10.77.3.1\n"));
+        // A separately selected browser interface updates DNS, and losing its IP removes it.
+        service.head_unit_address(Some(Ipv4Addr::new(192, 0, 2, 2)));
+        assert!(std::fs::read_to_string(&conf)
+            .unwrap()
+            .contains("/192.0.2.2\n"));
+        service.head_unit_address(None);
+        assert!(!conf.exists());
+        service.head_unit_address(Some(Ipv4Addr::new(192, 0, 2, 2)));
         // Disabled or removed: the answer goes.
         world.write(
             serde_json::json!({"version":1,"enabled":false,"provider":"duckdns",
