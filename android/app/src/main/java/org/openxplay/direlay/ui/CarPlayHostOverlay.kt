@@ -55,7 +55,8 @@ private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySna
         carNetworkAvailable = addresses.isNotEmpty(),
         problems = homeProblems(failures, failedCarlink, carlinkDetail, carlinkError, webReason, serverState,
             teslaFailure = teslaFailure, carlinkTrail = carlinkErrorTrail, carlinkErrorAt = carlinkErrorAt,
-            carPlayError = carPlayError)),
+            carPlayError = carPlayError), stage = carPlayStage.stage,
+        deviceName = bondedDevices.localName() ?: settings.carlinkDeviceName),
         name, urls, stopped = autoStartGate.paused,
         publicNameUrl = publicNameUrl(), carIpv4 = addresses, teslaUrl = teslaUrl(),
         carlinkState = carlinkStateLabel(carlinkState, carlinkFailed, carlinkPins.pending != null),
@@ -71,7 +72,16 @@ private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySna
         try {
             while (true) {
                 if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                    value = withContext(Dispatchers.IO) { runtime.overlaySnapshot(videoStats) }
+                    val next = withContext(Dispatchers.IO) { runtime.overlaySnapshot(videoStats) }
+                    if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                        value = next
+                        next?.takeIf { !it.home.settings.localPreview }?.let { snapshot ->
+                            val presentation = presentHostOverlay(snapshot)
+                            runtime.connectionLog.transition("ui", "running_page", "running_page_status",
+                                statusLogDetail(presentation.headline, presentation.hint, presentation.tone,
+                                    snapshot.home, activity.resources::getResourceEntryName))
+                        }
+                    }
                 } else {
                     videoStats.clear()
                     runtime.status.countVideoBytes = false

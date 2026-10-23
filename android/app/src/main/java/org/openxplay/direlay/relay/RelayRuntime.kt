@@ -93,6 +93,7 @@ class RelayRuntime(private val context: Context,
     fun installedPlugins() = runCatching {
         org.openxplay.direlay.plugins.RelayPlugins.installed(bundledPlugins.root())
     }.getOrDefault(emptyList())
+    val carPlayStage = CarPlayStageTracker()
     val carPlayDiagnostics = CarPlayDiagnostics(secrets = {
         buildList {
             settingsStore.snapshot.value?.let {
@@ -128,7 +129,8 @@ class RelayRuntime(private val context: Context,
         return carlinkPins.redactFailureMessage(carlinkFailureRedactor(redacted))
     }
     private val browserTimeline = org.openxplay.direlay.logs.BrowserTimeline(connectionLog)
-    val status = RelayStatus(redactFailure = ::redactFailureMessage, connectionLog = connectionLog, browser = browserTimeline)
+    val status = RelayStatus(redactFailure = ::redactFailureMessage, connectionLog = connectionLog,
+        browser = browserTimeline, carPlayStage = carPlayStage)
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }

@@ -30,6 +30,7 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
         get() = if (::runtime.isInitialized) org.openxplay.direlay.relay.CompositeCarPlayObserver(
             runtime.carPlayDiagnostics,
             runtime.pluginContext.takeIf { runtime.settingsStore.snapshot.value?.plugins == true },
+            stage = runtime.carPlayStage,
         ) else null
 
     private var networkTimeline: org.openxplay.direlay.logs.NetworkTimeline? = null

@@ -104,6 +104,7 @@
     <string name="ui_ready">Ready</string>
     <string name="ui_waiting">Waiting for iPhone</string>
     <string name="ui_connecting">Connecting</string>
+    <string name="ui_reconnecting">Reconnecting</string>
     <string name="ui_running">CarPlay is running</string>
     <string name="ui_error">Something went wrong</string>
     <string name="ui_retry_hint">Check the car connection, then stop and start again.</string>
@@ -111,8 +112,13 @@
     <string name="ui_showing_browser">Showing on the car’s browser</string>
     <string name="ui_showing_carlink">Showing in the Carlink app</string>
     <string name="ui_showing_both">Showing in the browser and Carlink app</string>
-    <string name="ui_connecting_hint">Keep the iPhone nearby while it connects.</string>
     <string name="ui_usb_hint">Connect the iPhone with a USB cable.</string>
+    <string name="ui_waiting_wireless_hint">Keep the iPhone nearby with Bluetooth and Wi-Fi on, and it connects on its own. If it doesn’t, open Settings → Bluetooth on the iPhone and choose %1$s.</string>
+    <string name="ui_bluetooth_connecting_hint">Connecting to the iPhone over Bluetooth…</string>
+    <string name="ui_bluetooth_connected_hint">The iPhone is connected over Bluetooth. Starting CarPlay…</string>
+    <string name="ui_usb_connected_hint">The iPhone is connected over USB. Starting CarPlay…</string>
+    <string name="ui_picture_waiting_hint">CarPlay has started. Waiting for the picture…</string>
+    <string name="ui_reconnecting_hint">CarPlay was interrupted. Waiting for the iPhone to connect again…</string>
     <string name="ui_start_hint">Start when you are ready to connect your iPhone.</string>
     <string name="ui_browser">Car browser</string>
     <string name="ui_carlink">Carlink app</string>

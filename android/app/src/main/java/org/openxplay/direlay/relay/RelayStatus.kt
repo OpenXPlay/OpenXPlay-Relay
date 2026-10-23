@@ -14,6 +14,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     private val wallClock: () -> Long = System::currentTimeMillis,
     private val connectionLog: org.openxplay.direlay.logs.ConnectionLog? = null,
     private val browser: org.openxplay.direlay.logs.BrowserTimeline? = null,
+    private val carPlayStage: CarPlayStageTracker? = null,
     private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
     override val id = "relay-status"
     private val frames = ConcurrentHashMap<ScreenId, AtomicLong>()
@@ -75,6 +76,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     }
     override fun open(host: OutputHost) = Unit
     override fun onSession(state: SessionState, config: SessionConfig) {
+        if (session?.id != state.id || session?.phase != state.phase) carPlayStage?.onStreamPhase(state.phase)
         if (session?.id != state.id) { frames.clear(); bytes.set(0); clearFailure(); awaitingFirstVideo = true }
         if (session?.id != state.id || state.phase == SessionPhase.ENDED) { videoCodec = null; videoFormat = null }
         session = state

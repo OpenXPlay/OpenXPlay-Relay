@@ -12,6 +12,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.WebStartReason
 import org.openxplay.direlay.relay.WebStartFailure
 import org.openxplay.direlay.relay.RelayFailure
+import org.openxplay.direlay.relay.CarPlayStage
 import org.openxplay.direlay.settings.*
 import org.openxplay.stream.core.SessionPhase
 import org.openxplay.direlay.vehicle.VehicleReport
@@ -178,7 +179,7 @@ class HomePresentationTest {
             ready to (R.string.ui_ready to StatusTone.IDLE),
             ready.copy(started = true) to (R.string.ui_waiting to StatusTone.PROGRESS),
             ready.copy(phase = SessionPhase.CONNECTING) to (R.string.ui_connecting to StatusTone.PROGRESS),
-            ready.copy(phase = SessionPhase.RECONNECTING) to (R.string.ui_connecting to StatusTone.PROGRESS),
+            ready.copy(phase = SessionPhase.RECONNECTING) to (R.string.ui_reconnecting to StatusTone.PROGRESS),
             ready.copy(phase = SessionPhase.ACTIVE) to (R.string.ui_running to StatusTone.RUNNING),
             ready.copy(failure = true) to (R.string.ui_error to StatusTone.ERROR),
         )
@@ -192,6 +193,70 @@ class HomePresentationTest {
             settings = settings.copy(carlinkOutput = true))).subline)
         assertEquals(R.string.ui_showing_both, presentHome(ready.copy(phase = SessionPhase.ACTIVE,
             settings = settings.copy(bothOutputs = true))).subline)
+    }
+
+    @Test fun everyConnectionStatusRowSuppliesHeadlineHintToneAndArguments() {
+        val deviceName = "Relay Bluetooth Name"
+        connectionStatusCases(deviceName).forEach { expected ->
+            val snapshot = ready.copy(started = true, phase = expected.phase, stage = expected.stage,
+                wireless = expected.wireless, deviceName = deviceName)
+            val result = presentHome(snapshot)
+            assertEquals(expected.toString(), expected.headline, result.headline)
+            assertEquals(expected.toString(), expected.subline, result.subline)
+            assertEquals(expected.toString(), StatusTone.PROGRESS, result.tone)
+            assertEquals(expected.toString(), expected.arguments, result.sublineArguments)
+            assertTrue(result.running)
+            if (expected.phase in listOf(SessionPhase.CONNECTING, SessionPhase.RECONNECTING)) {
+                assertEquals(result, presentHome(snapshot.copy(started = false)))
+            }
+        }
+        val fallback = presentHome(ready.copy(started = true))
+        assertEquals(listOf(settings.carlinkDeviceName), fallback.sublineArguments)
+    }
+
+    @Test fun earlierStatusBranchesWinOverEveryConnectionStage() {
+        for (stage in CarPlayStage.entries) {
+            val connecting = ready.copy(started = true, stage = stage, deviceName = "Private name")
+            val error = presentHome(connecting.copy(failure = true))
+            assertEquals(R.string.ui_error, error.headline)
+            assertEquals(R.string.ui_retry_hint, error.subline)
+            assertEquals(StatusTone.ERROR, error.tone)
+            assertTrue(error.sublineArguments.isEmpty())
+            val setup = presentHome(connecting.copy(identityReady = false))
+            assertEquals(R.string.ui_setup_needed, setup.headline)
+            assertEquals(R.string.ui_setup_hint, setup.subline)
+            assertEquals(StatusTone.ATTENTION, setup.tone)
+            assertTrue(setup.sublineArguments.isEmpty())
+            val checking = presentHome(connecting.copy(checking = true))
+            assertEquals(R.string.direlay_checking_identity, checking.subline)
+            assertTrue(checking.sublineArguments.isEmpty())
+            val active = presentHome(connecting.copy(phase = SessionPhase.ACTIVE))
+            assertEquals(R.string.ui_running, active.headline)
+            assertEquals(R.string.ui_showing_browser, active.subline)
+            assertEquals(StatusTone.RUNNING, active.tone)
+            assertTrue(active.sublineArguments.isEmpty())
+            val network = presentHome(connecting.copy(webListening = true, carNetworkAvailable = false))
+            assertEquals(R.string.ui_head_unit_network, network.subline)
+            assertTrue(network.sublineArguments.isEmpty())
+            val busy = presentHome(connecting.copy(webReason = WebStartReason(WebStartFailure.PORT_BUSY, 9443)))
+            assertEquals(R.string.ui_error, busy.headline)
+            assertEquals(R.string.ui_web_port_busy, busy.subline)
+            assertEquals(listOf("9443"), busy.sublineArguments)
+        }
+    }
+
+    @Test fun stageDoesNotTurnAnIdleOrStoppedHomeIntoAConnectionAttempt() {
+        for (stage in CarPlayStage.entries) for (phase in listOf(null, SessionPhase.ENDED)) {
+            val stopped = ready.copy(phase = phase, stage = stage)
+            val idle = presentHome(stopped)
+            assertEquals(R.string.ui_ready, idle.headline)
+            assertEquals(R.string.ui_start_hint, idle.subline)
+            assertEquals(StatusTone.IDLE, idle.tone)
+            assertFalse(idle.running)
+            assertTrue(idle.sublineArguments.isEmpty())
+            assertEquals(R.string.ui_automatic_paused,
+                presentHome(stopped.copy(autoStartPaused = true)).subline)
+        }
     }
 
     @Test fun modeReflectsAllChosenModesRatherThanSessionDiagnostics() {

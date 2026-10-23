@@ -62,6 +62,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         else -> "error.invalid"
     }
     private fun stop(source: String) {
+        runtime.carPlayStage.reset()
         runtime.connectionLog.event("relay", "carplay_stop", "source=$source")
         runtime.stopTeslaAddress()
         runtime.input.expectStop()
@@ -150,6 +151,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         bootStart = false
         val launchGeneration = ++generation
         try {
+            runtime.carPlayStage.reset()
             runtime.status.clearFailure()
             runtime.carPlayDiagnostics.clear()
             sharedWifi?.let { AirPlayPersistence.saveExistingWifiCredentials(context, it.ssid, it.passphrase) }
