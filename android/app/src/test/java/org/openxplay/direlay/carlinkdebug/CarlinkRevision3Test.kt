@@ -62,7 +62,7 @@ class CarlinkRevision3Test {
     @Test fun rtspPrivacyKeepsWfdCapabilitiesAndIsIdempotent() {
         val redactor = LogRedactor(LogSecrets(key = ByteArray(32)))
         val json = CarlinkTraceRecorder.encode(ClinkTraceEvent.Rtsp(1, 1, "RX", "RTSP/1.0 200 OK", emptyMap(),
-            "wfd_video_formats: 00 00 02\r\nwfd_audio_codecs: AAC 00000001\r\niccoa_support_hevc: 1\r\npsk: private-car-password\r\npin: 1234"))
+            "wfd_video_formats: 00 00 02\r\nwfd_audio_codecs: AAC 00000001\r\niccoa_support_hevc: 1\r\npsk: private-car-password\r\npin: 1234"), selectedAtMillis = 1_700_000_000_000L)
         val clean = TracePrivacy.redact(json, redactor)
         assertTrue(clean.contains("wfd_video_formats: 00 00 02")); assertTrue(clean.contains("iccoa_support_hevc: 1"))
         assertFalse(clean.contains("private-car-password")); assertFalse(clean.contains("1234"))
