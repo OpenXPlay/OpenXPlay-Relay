@@ -27,14 +27,13 @@ class NetworkSettingsLauncher(private val context: Context) : NetworkSettingsOpe
         launch(actions)
     }
     private fun launch(actions: List<String>) {
-        for (action in actions.distinct()) {
-            try {
+        for (action in (actions + Settings.ACTION_SETTINGS).distinct()) {
+            val opened = runCatching {
                 val intent = Intent(action)
                 if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
-                return
-            } catch (_: android.content.ActivityNotFoundException) { /* Try the next public settings page. */ }
-            catch (_: SecurityException) { /* OEM settings may disallow a specific page. */ }
+            }.isSuccess
+            if (opened) return
         }
     }
 }

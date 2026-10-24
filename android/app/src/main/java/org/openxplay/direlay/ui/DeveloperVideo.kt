@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.*
 import androidx.compose.ui.res.stringResource
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.DisplayMode
 import org.openxplay.direlay.settings.DisplayProfile
@@ -18,7 +19,7 @@ fun DeveloperVideo(state: SettingsEditorState) {
     val overrides by state.developerDraft
     val custom by state.customDisplayState
     val ms = if (LocalRelayMotion.current) 220 else 0
-    CollapsibleCard("display", stringResource(R.string.direlay_display_profile), developerDisplaySummary(draft), initiallyExpanded = true) {
+    SettingsGroup("display", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.direlay_display_profile), developerDisplaySummary(draft), initiallyExpanded = true, footer = stringResource(R.string.display_automatic_hint)) {
         val profiles = DisplayProfile.presets
         Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.display_relay_screen)) +
             profiles.map { "${it.width} × ${it.height} · ${it.density} dpi" } + stringResource(R.string.direlay_custom),
@@ -35,7 +36,7 @@ fun DeveloperVideo(state: SettingsEditorState) {
                 display = if (index < 2) null else profiles[index - 2])
             }
         }
-        Hint(stringResource(R.string.display_automatic_hint))
+
         AnimatedVisibility(custom, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
             Column {
                 EditorNumberField(state, "width", R.string.direlay_width, (draft.display?.width ?: 1280).toString(),
@@ -47,8 +48,8 @@ fun DeveloperVideo(state: SettingsEditorState) {
             }
         }
     }
-    CollapsibleCard("fps", stringResource(R.string.direlay_fps), stringResource(R.string.menu_fps_summary, draft.fps), initiallyExpanded = false) {
-        Toggle(stringResource(R.string.direlay_fps), overrides.fpsEnabled, enabled = overrides.active) { enabled ->
+    SettingsGroup("fps", R.drawable.symbol_activity, IconHue.PICTURE, stringResource(R.string.direlay_fps), stringResource(R.string.menu_fps_summary, draft.fps), initiallyExpanded = false) {
+        SettingsToggleRow(icon = R.drawable.symbol_activity, tile = IconHue.PICTURE, title = stringResource(R.string.direlay_fps), checked = overrides.fpsEnabled, enabled = overrides.active) { enabled ->
             state.changeDeveloper { it.copy(fpsEnabled = enabled) }
         }
         DeveloperOverrideContent(overrides.fpsEnabled) {

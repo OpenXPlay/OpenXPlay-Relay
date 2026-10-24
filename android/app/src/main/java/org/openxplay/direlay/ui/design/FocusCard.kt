@@ -4,6 +4,7 @@
 package org.openxplay.direlay.ui.design
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,7 +23,8 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.ui.Symbol
 
-@Composable fun FocusCard(step: PathStep, onAction: (StepAction) -> Unit, onRecheck: () -> Unit, onDetails: () -> Unit) {
+@Composable fun FocusCard(step: PathStep, onAction: (StepAction) -> Unit, onRecheck: () -> Unit, onDetails: () -> Unit, compact: Boolean = false) {
+    if (compact) { CompactFocusCard(step, onAction, onRecheck, onDetails); return }
     val color = LocalStatusColors.current.color(step.state)
     Card(Modifier.fillMaxWidth(), shape = RelayTokens.card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -54,7 +56,8 @@ import org.openxplay.direlay.ui.Symbol
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = context.getSystemService(ClipboardManager::class.java)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(value, Modifier.weight(1f), style = RelayTokens.mono, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(value, Modifier.weight(1f), style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
         IconButton({ clipboard.setPrimaryClip(ClipData.newPlainText(copied, value)); android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show() }) {
             Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy))
         }
@@ -62,7 +65,8 @@ import org.openxplay.direlay.ui.Symbol
 }
 
 @OptIn(ExperimentalLayoutApi::class)
-@Composable fun LiveCard(live: LiveSummary, path: ConnectionPath, onStop: () -> Unit) {
+@Composable fun LiveCard(live: LiveSummary, path: ConnectionPath, onStop: () -> Unit, compact: Boolean = false) {
+    if (compact) { CompactLiveCard(live, path, onStop); return }
     val seconds = rememberElapsedSeconds(live.sinceMillis)
     val haptic = LocalHapticFeedback.current
     Card(Modifier.fillMaxWidth(), shape = RelayTokens.card,
@@ -77,12 +81,88 @@ import org.openxplay.direlay.ui.Symbol
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 live.chips.forEach { chip -> Surface(shape = RelayTokens.chip, color = LocalStatusColors.current.container(StepState.OK)) {
-                    Text(chip, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = RelayTokens.mono)
+                    Text(chip, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = if (evidenceUsesMonospace(chip)) RelayTokens.mono else RelayTokens.caption)
                 } }
             }
             path.nodes.car?.let { Text(it, style = RelayTokens.footnote, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant) }
             TextButton({ haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStop() }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_stop)) }
+        }
+    }
+}
+
+/** The short window keeps evidence and actions visible beside the section list. */
+@Composable private fun CompactFocusCard(step: PathStep, onAction: (StepAction) -> Unit,
+    onRecheck: () -> Unit, onDetails: () -> Unit) {
+    val color = LocalStatusColors.current.color(step.state)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val copied = stringResource(R.string.design_copied)
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 40.dp) {
+        Card(Modifier.fillMaxWidth(), shape = RelayTokens.card,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, color.copy(alpha = .35f))) {
+            Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusGlyph(step.state, 32.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(step.title), style = RelayTokens.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        step.detail?.let { Text(stepText(it), style = RelayTokens.caption, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                    IconButton(onDetails, Modifier.size(40.dp)) { Symbol(R.drawable.symbol_info, stringResource(R.string.design_details)) }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    step.evidence?.let {
+                        val value = stepText(it)
+                        Text(value, Modifier.weight(1f).clickable {
+                            context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(copied, value))
+                            android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show()
+                        }, style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (step.evidence == null) step.code?.let { Text(it, Modifier.weight(1f), style = RelayTokens.mono,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    if (step.state == StepState.WORKING || step.state == StepState.WAITING) ElapsedTime(step.sinceMillis)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    step.action?.let { action -> Button({ onAction(action) }, Modifier.weight(1f).height(40.dp), shape = RelayTokens.pill,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                        Text(stringResource(step.actionLabel ?: R.string.design_open), maxLines = 1, style = RelayTokens.footnote)
+                    } }
+                    TextButton(onRecheck, Modifier.height(40.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+                        Text(stringResource(R.string.design_check_again), maxLines = 1, style = RelayTokens.footnote)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun CompactLiveCard(live: LiveSummary, path: ConnectionPath, onStop: () -> Unit) {
+    val seconds = rememberElapsedSeconds(live.sinceMillis)
+    val haptic = LocalHapticFeedback.current
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 40.dp) {
+        Card(Modifier.fillMaxWidth(), shape = RelayTokens.card,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, LocalStatusColors.current.ok.copy(alpha = .35f))) {
+            Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusGlyph(StepState.OK, 32.dp)
+                    Text(stringResource(R.string.design_live), Modifier.weight(1f), style = RelayTokens.headline,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(sessionTime(seconds), style = RelayTokens.mono)
+                }
+                val evidence = live.chips.joinToString(" · ")
+                Text(evidence, style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(path.nodes.car.orEmpty(), Modifier.weight(1f), style = RelayTokens.caption, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton({ haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStop() }) { Text(stringResource(R.string.design_stop)) }
+                }
+            }
         }
     }
 }

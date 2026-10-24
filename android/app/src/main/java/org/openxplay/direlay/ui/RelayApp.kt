@@ -21,6 +21,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.RelayRuntime
+import org.openxplay.direlay.path.StepAction
+import org.openxplay.direlay.path.PathStep
 import org.openxplay.direlay.settings.*
 
 private data class AppliedSettings(val before: RelaySettings, val after: RelaySettings, val feedback: SettingsFeedback?)
@@ -28,7 +30,9 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable fun RelayApp(value: HomeContent, store: RelaySettingsStore, runtime: RelayRuntime,
     onStartStop: () -> Unit, onRestart: () -> Unit, onAutomatic: (Boolean) -> Unit, onSetup: (SetupAction) -> Unit,
-    onCopy: (String) -> Unit, onReconnect: () -> Unit, onNetwork: () -> Unit,
+    onCopy: (String) -> Unit, onReconnect: () -> Unit,
+    onStepAction: (StepAction, PathStep) -> Unit, onRecheck: () -> Unit,
+    stepNavigation: StepAction? = null, onStepNavigationHandled: () -> Unit = {},
     importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit, importPublicName: () -> Unit = {},
     openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {},
     onGuideVisible: (Boolean) -> Unit = {}) {
@@ -52,6 +56,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
     var adminUrls by remember { mutableStateOf(runtime.adminService.urls) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val snackbar = remember { SnackbarHostState() }
+    var rendererPicker by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val navigationState = remember { SeekableTransitionState(entries) }
     val navigationTransition = rememberTransition(navigationState, label = "relay navigation")
@@ -150,6 +155,20 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
     }
     val settingsEditor = rememberSettingsEditorState(initial, settingsSessionActive(entries), store::wireless, save,
         initialDeveloper = overrides, saveDeveloper = saveEditor)
+    LaunchedEffect(stepNavigation) {
+        val destination = when (stepNavigation) {
+            StepAction.FIX_SETTINGS -> firstSettingsErrorPage(settingsEditor.errorPages(store::wireless))
+            StepAction.CHOOSE_IPHONE -> "settings:iphone"
+            StepAction.CHOOSE_SHARED_WIFI -> "settings:sharedWifi"
+            StepAction.CHOOSE_RENDERER -> { rendererPicker = true; "settings:output" }
+            else -> null
+        }
+        if (destination != null) { open(destination); onStepNavigationHandled() }
+    }
+    fun stepAction(action: StepAction, step: PathStep) {
+        onStepAction(action, step)
+        if (action == StepAction.COPY_PAGE_ADDRESS) scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_copied)) }
+    }
     CompositionLocalProvider(LocalRelayMotion provides motion) {
         Box(Modifier.fillMaxSize()) {
             SharedTransitionLayout {
@@ -164,9 +183,9 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                         enter = fadeIn(tween(80, delayMillis = RelayPageDurationMillis - 80)), exit = fadeOut(tween(80))) else Modifier
                     savedStates.SaveableStateProvider("${stack.lastIndex}:$route") {
                         when {
-                            route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic, { action -> if (action == SetupAction.SHARED_WIFI) open("settings:sharedWifi") else if (action == SetupAction.SETTINGS) open(firstSettingsErrorPage(settingsEditor.errorPages(store::wireless))) else if (action == SetupAction.CHOOSE_IPHONE) open("settings:iphone") else onSetup(action) },
-                                ::copy, onReconnect, onNetwork, { open("vehicle") }, shared, sharedContent, onRestart,
-                                setupCompleted) { step -> open(if (step == null) "setup" else "setup:$step") }
+                            route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic,
+                                ::copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
+                                setupCompleted) { open("setup") }
                             route == "launch" -> LaunchScreen(value, onContinue = {
                                 // Missing preparation opens the guide where it is finished, then Start.
                                 if (value.presentation.canStart) {
@@ -176,7 +195,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                             }, onNewSetup = { open("setup") }) { onLater(); entries = listOf("home") }
                             route.startsWith("setup") -> SetupScreen(initial, store::wireless, value,
                                 setupStep(route.substringAfter(':', "")), runtime.bondedDevices, { runtime.sharedWifiSelection.use(it) },
-                                { _, after -> persist(after) != null }, onSetup, ::back) { changed ->
+                                { _, after -> persist(after) != null }, onSetup, ::back, onStepAction = ::stepAction) { changed ->
                                 completeSetup()
                                 entries = listOf("home")
                                 if (!value.presentation.running) onStartStop() else if (changed) onRestart()
@@ -213,6 +232,11 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                         }
                     }
                 }
+            }
+            if (rendererPicker) DlnaReceiverPicker(settingsEditor.draft.value.dlnaRenderer, runtime,
+                dismiss = { rendererPicker = false }) {
+                settingsEditor.draft.value = settingsEditor.draft.value.copy(dlnaRenderer = DlnaRendererChoice(it.udn, it.friendlyName))
+                rendererPicker = false
             }
             CarlinkCodeSheet(value)
             SnackbarHost(snackbar, Modifier.align(androidx.compose.ui.Alignment.BottomCenter).navigationBarsPadding().padding(16.dp)) { data ->

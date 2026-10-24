@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
@@ -45,7 +46,8 @@ import org.openxplay.direlay.ui.Symbol
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (icon != null) IconTile(icon, tile)
         Text(title, Modifier.weight(1f), style = RelayTokens.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (value != null) Text(value, Modifier.weight(.8f, fill = false), style = RelayTokens.callout,
+        // The value fills its share and hugs the end, so chevrons line up on every row.
+        if (value != null) Text(value, Modifier.weight(.8f), style = RelayTokens.callout, textAlign = TextAlign.End,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (trailing != null) trailing() else if (onClick != null) Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
     }

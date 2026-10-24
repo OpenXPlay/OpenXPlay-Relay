@@ -27,11 +27,15 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
+import org.openxplay.direlay.path.PathSection
 import org.openxplay.direlay.path.PathTone
+import org.openxplay.direlay.path.StepState
 import org.openxplay.direlay.ui.LocalRelayMotion
 import org.openxplay.direlay.ui.Symbol
 
-@Composable fun PrimaryPill(running: Boolean, enabled: Boolean, label: String, onClick: () -> Unit) {
+/** [icon]: null shows the label alone (e.g. "Next"); the default is the start/stop symbol. */
+@Composable fun PrimaryPill(running: Boolean, enabled: Boolean, label: String,
+    icon: Int? = if (running) R.drawable.symbol_square else R.drawable.symbol_power, onClick: () -> Unit) {
     val motion = LocalRelayMotion.current
     val colors = LocalStatusColors.current
     val color by animateColorAsState(if (running) colors.action else colors.ok, relayEffects(motion), label = "primary color")
@@ -46,8 +50,10 @@ import org.openxplay.direlay.ui.Symbol
             modifier = Modifier.fillMaxWidth(width).height(56.dp).graphicsLayer { scaleX = scale; scaleY = scale },
             colors = ButtonDefaults.buttonColors(containerColor = color,
                 contentColor = if (running && LocalRelayDark.current) RelayTokens.darkScheme.onPrimary else MaterialTheme.colorScheme.onPrimary)) {
-            Symbol(if (running) R.drawable.symbol_square else R.drawable.symbol_power, null, Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
+            if (icon != null) {
+                Symbol(icon, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+            }
             Text(label, style = RelayTokens.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -86,15 +92,35 @@ import org.openxplay.direlay.ui.Symbol
     }
 }
 
+/** Keep each code with its glyph (word joiner, no visible gap) and each section letter with its first token. */
+internal fun diagnosticSections(text: String): List<String> = text.split(" | ").map { section ->
+    val tokens = section.split(' ')
+    val pathSection = PathSection.entries.any { it.code == tokens.first() }
+    val display = tokens.mapIndexed { index, token ->
+        if (pathSection && index > 0 && StepState.entries.any { it.glyph == token.lastOrNull() })
+            token.dropLast(1) + "\u2060" + token.last()
+        else token
+    }.joinToString(" ")
+    if (pathSection || tokens.first() == "E") display.replaceFirst(" ", "\u00A0") else display
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable fun DiagnosticLine(text: String, onCopy: (String) -> Unit) {
     val haptic = LocalHapticFeedback.current
     val label = stringResource(R.string.design_copy_diagnostic)
+    val sections = remember(text) { diagnosticSections(text) }
     SelectionContainer {
-        Text(text, Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { onClick(label) {
+        // Prefer a new line between sections; long sections wrap between their tokens.
+        FlowRow(Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { onClick(label) {
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onCopy(text); true
         } }.clickable(onClickLabel = label) {
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onCopy(text)
-        }.padding(vertical = 8.dp), style = RelayTokens.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            sections.forEachIndexed { index, section ->
+                Text(section + if (index < sections.lastIndex) "\u00A0|" else "", style = RelayTokens.mono,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, softWrap = true)
+            }
+        }
     }
 }
 

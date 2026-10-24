@@ -28,6 +28,7 @@
     <string name="design_section_car">车机</string>
     <string name="design_section_iphone">iPhone</string>
     <string name="design_section_picture">画面</string>
+    <string name="design_done_count">已完成 %1$d 项</string>
     <string name="design_armed_detail">上面完成后自动开始</string>
     <string name="design_tap_connect">点“连接”开始</string>
     <string name="design_after_carplay">CarPlay 启动后</string>

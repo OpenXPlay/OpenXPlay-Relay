@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.res.stringResource
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.orchestration.isManualHotspotChannelCompatible
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.*
 
@@ -31,9 +32,9 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
             confirmCarlink = false
         }) { Text(stringResource(android.R.string.ok)) } },
         dismissButton = { TextButton(onClick = { confirmCarlink = false }) { Text(stringResource(android.R.string.cancel)) } })
-    CollapsibleCard("outputs", stringResource(R.string.dev_outputs), stringResource(R.string.menu_outputs_summary, outputSummary(draft),
+    SettingsGroup("outputs", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.dev_outputs), stringResource(R.string.menu_outputs_summary, outputSummary(draft),
         draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), initiallyExpanded = true) {
-        Toggle(stringResource(R.string.dev_web_port), overrides.webPortEnabled, enabled = overrides.active) { enabled ->
+        SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.dev_web_port), checked = overrides.webPortEnabled, enabled = overrides.active) { enabled ->
             state.changeDeveloper { it.copy(webPortEnabled = enabled) }
         }
         DeveloperOverrideContent(overrides.webPortEnabled) {
@@ -42,7 +43,7 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
                 state.changeDeveloper { it.copy(webPort = value.toIntOrNull()) }
             }
         }
-        Toggle(stringResource(R.string.direlay_carlink_model), overrides.carlinkDeviceModelEnabled, enabled = overrides.active) { enabled ->
+        SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.direlay_carlink_model), checked = overrides.carlinkDeviceModelEnabled, enabled = overrides.active) { enabled ->
             state.changeDeveloper { it.copy(carlinkDeviceModelEnabled = enabled) }
         }
         DeveloperOverrideContent(overrides.carlinkDeviceModelEnabled) {
@@ -57,20 +58,20 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
                 }
             }
         }
-        Toggle(stringResource(R.string.dev_both), draft.bothOutputs) {
+        SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.dev_both), checked = draft.bothOutputs) {
             val next = draft.copy(bothOutputs = it)
             if (CarlinkConnectionPolicy.enabling(draft, next, wireless(next)) != next) confirmCarlink = true
             else draft = next
         }
         if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
-        Toggle(stringResource(R.string.direlay_local_preview), overrides.localPreview, enabled = overrides.active) { enabled ->
+        SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.direlay_local_preview), checked = overrides.localPreview, enabled = overrides.active) { enabled ->
             state.changeDeveloper { it.copy(localPreview = enabled) }
         }
-        Toggle(stringResource(R.string.direlay_play_audio), overrides.playCarPlayAudio, enabled = overrides.active) { enabled ->
+        SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.direlay_play_audio), checked = overrides.playCarPlayAudio, enabled = overrides.active) { enabled ->
             state.changeDeveloper { it.copy(playCarPlayAudio = enabled) }
         }
     }
-    CollapsibleCard("connection", stringResource(R.string.direlay_connection_mode), "${connectionModeSummary(draft)} · ${hotspotSecuritySummary(draft)}", initiallyExpanded = false) {
+    SettingsGroup("connection", R.drawable.symbol_phone, IconHue.IPHONE, stringResource(R.string.direlay_connection_mode), "${connectionModeSummary(draft)} · ${hotspotSecuritySummary(draft)}", initiallyExpanded = false) {
         Options(ConnectionMode.entries.map { stringResource(when (it) { ConnectionMode.USB -> R.string.direlay_usb; ConnectionMode.WIRELESS -> R.string.direlay_wireless; ConnectionMode.LAST_USED -> R.string.direlay_last_used }) }, ConnectionMode.entries.indexOf(draft.connectionMode)) {
             val next = draft.copy(connectionMode = ConnectionMode.entries[it])
             if (needsUsbConfirmation(draft.connectionMode, next.connectionMode, wireless(draft))) confirmUsb = true
@@ -90,8 +91,8 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
             draft = draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(security = ManualHotspotSecurity.entries[it]))
         }
     }
-    CollapsibleCard("mic", stringResource(R.string.direlay_microphone_source), microphoneSummary(draft), initiallyExpanded = false) {
-        Toggle(stringResource(R.string.direlay_microphone_source), overrides.microphoneSourceEnabled, enabled = overrides.active) { enabled ->
+    SettingsGroup("mic", R.drawable.symbol_bluetooth, IconHue.BLUETOOTH, stringResource(R.string.direlay_microphone_source), microphoneSummary(draft), initiallyExpanded = false) {
+        SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.direlay_microphone_source), checked = overrides.microphoneSourceEnabled, enabled = overrides.active) { enabled ->
             state.changeDeveloper { it.copy(microphoneSourceEnabled = enabled) }
         }
         DeveloperOverrideContent(overrides.microphoneSourceEnabled) {

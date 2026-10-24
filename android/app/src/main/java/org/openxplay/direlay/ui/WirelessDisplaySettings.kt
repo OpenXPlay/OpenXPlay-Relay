@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.miracast.MiracastSystem
 import org.openxplay.direlay.relay.RelayRuntime
@@ -47,37 +48,34 @@ import org.openxplay.stream.cast.CastRenderer
     if (picker) DlnaReceiverPicker(draft.dlnaRenderer, runtime, dismiss = { picker = false }) {
         change(draft.copy(dlnaRenderer = DlnaRendererChoice(it.udn, it.friendlyName))); picker = false
     }
-    CollapsibleCard("wireless-display", stringResource(R.string.wireless_display),
+    SettingsGroup("wireless-display", R.drawable.symbol_cast, IconHue.CAR, stringResource(R.string.wireless_display),
         wirelessDisplaySummary(draft), initiallyExpanded = draft.dlnaOutput || draft.miracastOutput) {
-        SettingsRow(stringResource(R.string.wireless_dlna), stringResource(R.string.dlna_hint), R.drawable.symbol_car,
-            trailing = { LabeledSwitch(stringResource(R.string.wireless_dlna), draft.dlnaOutput,
-                { change(draft.copy(dlnaOutput = it)) }) })
+        SettingsToggleGroup(stringResource(R.string.wireless_dlna), draft.dlnaOutput, R.drawable.symbol_cast, IconHue.CAR,
+            footer = stringResource(R.string.dlna_hint)) { change(draft.copy(dlnaOutput = it)) }
         if (draft.dlnaOutput) {
-            SettingsRow(stringResource(R.string.dlna_receiver), draft.dlnaRenderer?.name ?: stringResource(R.string.dlna_choose_receiver),
-                R.drawable.symbol_car, action = { picker = true })
-            Hint(stringResource(R.string.dlna_network_hint))
+            InsetGroup(footer = stringResource(R.string.dlna_network_hint)) {
+                InsetRow(R.drawable.symbol_cast, IconHue.CAR, stringResource(R.string.dlna_receiver),
+                    draft.dlnaRenderer?.name ?: stringResource(R.string.dlna_choose_receiver), onClick = { picker = true })
+            }
         }
-        HorizontalDivider()
-        SettingsRow(stringResource(R.string.wireless_miracast), stringResource(R.string.miracast_hint), R.drawable.symbol_car,
-            trailing = { LabeledSwitch(stringResource(R.string.wireless_miracast), draft.miracastOutput, {
-                val candidate = draft.copy(miracastOutput = it)
-                if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless, miracast = it) != candidate) confirmMiracast = true
-                else change(candidate)
-            }) })
+        SettingsToggleGroup(stringResource(R.string.wireless_miracast), draft.miracastOutput, R.drawable.symbol_cast, IconHue.CAR,
+            footer = stringResource(R.string.miracast_hint)) {
+            val candidate = draft.copy(miracastOutput = it)
+            if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless, miracast = it) != candidate) confirmMiracast = true
+            else change(candidate)
+        }
         if (draft.miracastOutput) {
-            SettingsRow(stringResource(R.string.miracast_fill_screen), stringResource(R.string.miracast_fill_screen_hint), R.drawable.symbol_car,
-                trailing = { LabeledSwitch(stringResource(R.string.miracast_fill_screen), draft.miracastStretch,
-                    { change(draft.copy(miracastStretch = it)) }) })
+            SettingsToggleGroup(stringResource(R.string.miracast_fill_screen), draft.miracastStretch, R.drawable.symbol_monitor, IconHue.PICTURE,
+                footer = stringResource(R.string.miracast_fill_screen_hint)) { change(draft.copy(miracastStretch = it)) }
             NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI)
             TextButton(onClick = {
                 if (!MiracastSystem.openCastSettings(context))
                     Toast.makeText(context, R.string.miracast_settings_unavailable, Toast.LENGTH_LONG).show()
             }) { Text(stringResource(R.string.miracast_open_settings)) }
-            if (!overlayAllowed) SettingsRow(stringResource(R.string.miracast_allow_overlay),
-                stringResource(R.string.miracast_overlay_hint), R.drawable.symbol_settings,
-                trailing = { TextButton(onClick = { context.startActivity(MiracastSystem.overlayPermissionIntent(context)) }) {
-                    Text(stringResource(R.string.ui_allow))
-                } })
+            if (!overlayAllowed) InsetGroup(footer = stringResource(R.string.miracast_overlay_hint)) {
+                InsetRow(R.drawable.symbol_shield_check, IconHue.PERMISSIONS, stringResource(R.string.miracast_allow_overlay),
+                    value = stringResource(R.string.ui_allow), onClick = { context.startActivity(MiracastSystem.overlayPermissionIntent(context)) })
+            }
             if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.miracast_carlink_hint))
             Hint(stringResource(R.string.miracast_wifi_direct_constraint))
         }
@@ -89,7 +87,7 @@ import org.openxplay.stream.cast.CastRenderer
     outputSummaryLabels(draft).drop(1).map { stringResource(it) }.joinToString(" · ")
         .ifEmpty { stringResource(R.string.menu_off) }
 
-@Composable private fun DlnaReceiverPicker(choice: DlnaRendererChoice?, runtime: RelayRuntime?, dismiss: () -> Unit,
+@Composable internal fun DlnaReceiverPicker(choice: DlnaRendererChoice?, runtime: RelayRuntime?, dismiss: () -> Unit,
     choose: (CastRenderer) -> Unit) {
     var revision by remember { mutableIntStateOf(0) }
     var searching by remember { mutableStateOf(true) }

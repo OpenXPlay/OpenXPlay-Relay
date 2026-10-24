@@ -7,6 +7,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -15,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
@@ -38,16 +42,29 @@ internal fun sectionNumber(section: PathSection) = when (section) {
     PathSection.PICTURE -> "④"
 }
 
+internal fun visibleSectionSteps(section: PathSectionView, showAllSteps: Boolean): List<PathStep> =
+    if (showAllSteps || section.state == StepState.OK) section.steps else section.steps.filter { it.state != StepState.OK }
+
 @Composable fun PathSectionCard(section: PathSectionView, expanded: Boolean, onExpand: (Boolean) -> Unit,
-    onStep: (PathStep) -> Unit, onAction: (StepAction) -> Unit, focusedStep: StepId? = null) {
+    onStep: (PathStep) -> Unit, onAction: (StepAction) -> Unit, focusedStep: StepId? = null, autoExpand: Boolean = true, pulse: Int = 0,
+    onStepAction: ((StepAction, PathStep) -> Unit)? = null, fullyExpanded: Boolean? = null) {
     val motion = LocalRelayMotion.current
     val allOk = section.state == StepState.OK
     // Preserve manual disclosure across rotation; a changed step state reveals new work.
     val stateKey = section.steps.joinToString { "${it.id}:${it.state}" }
     var previousState by rememberSaveable(section.section.name) { mutableStateOf<String?>(null) }
+    var manuallyExpanded by rememberSaveable(section.section.name) { mutableStateOf(false) }
     LaunchedEffect(stateKey) {
-        if (previousState != stateKey) { onExpand(!allOk); previousState = stateKey }
+        if (previousState != stateKey) {
+            manuallyExpanded = false
+            if (autoExpand) onExpand(!allOk)
+            previousState = stateKey
+        }
     }
+    // Home keeps the override above its portrait/landscape lists so rotation preserves it.
+    val showAllSteps = fullyExpanded ?: manuallyExpanded
+    val foldedSteps = if (showAllSteps || allOk) emptyList() else section.steps.filter { it.state == StepState.OK }
+    val visibleSteps = visibleSectionSteps(section, showAllSteps)
     val disclosure by animateFloatAsState(if (expanded) 180f else 0f, relaySpatial(motion), label = "section disclosure")
     val state = stringResource(stateLabel(section.state))
     val expansion = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
@@ -64,23 +81,51 @@ internal fun sectionNumber(section: PathSection) = when (section) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) {
             heading(); stateDescription = "$state, $expansion"
-        }.clickable(role = Role.Button) { onExpand(!expanded) }.padding(horizontal = 12.dp, vertical = 8.dp),
+        }.clickable(role = Role.Button) {
+            val open = !expanded || foldedSteps.isNotEmpty()
+            manuallyExpanded = open
+            onExpand(open)
+        }.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(sectionNumber(section.section), style = RelayTokens.headline, color = LocalStatusColors.current.color(section.state))
-            Text(stringResource(sectionTitle(section.section)), Modifier.weight(1f), style = RelayTokens.headline,
+            Text(stringResource(sectionTitle(section.section)), Modifier.weight(1f).alpha(if (section.state == StepState.BLOCKED) .5f else 1f), style = RelayTokens.headline,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (allOk && !expanded && evidence.isNotEmpty()) Text(evidence, Modifier.weight(1f),
-                style = RelayTokens.mono, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("${section.done}/${section.total}", style = RelayTokens.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
             StatusGlyph(section.state, 24.dp, announce = false)
             Symbol(R.drawable.symbol_chevron_down, null, Modifier.size(16.dp).rotate(disclosure))
         }
         AnimatedVisibility(expanded, enter = expandVertically(relaySpatial(motion)), exit = shrinkVertically(relaySpatial(motion))) {
             Column {
-                section.steps.forEachIndexed { index, step ->
+                if (foldedSteps.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
+                        manuallyExpanded = true
+                        onExpand(true)
+                    }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatusGlyph(StepState.OK, 24.dp, announce = false)
+                        Text(stringResource(R.string.design_done_count, foldedSteps.size), style = RelayTokens.footnote)
+                        Text(foldedSteps.map { stringResource(it.title) }.joinToString(" · "), Modifier.weight(1f),
+                            style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                visibleSteps.forEachIndexed { index, step ->
                     key(step.id) {
-                        if (index > 0) InsetDivider()
-                        StepRow(step, { onStep(step) }, onAction, focused = step.id == focusedStep)
+                        if (index > 0 || foldedSteps.isNotEmpty()) InsetDivider()
+                        val emphasis = remember { Animatable(1f) }
+                        LaunchedEffect(pulse, focusedStep) {
+                            if (pulse > 0 && step.id == focusedStep && motion) {
+                                repeat(2) { emphasis.animateTo(.45f, tween(140)); emphasis.animateTo(1f, tween(180)) }
+                            } else emphasis.snapTo(1f)
+                        }
+                        Box(Modifier.graphicsLayer { alpha = emphasis.value }) {
+                            StepRow(step, { onStep(step) }, { action ->
+                                if (onStepAction != null) onStepAction(action, step) else onAction(action)
+                            }, focused = step.id == focusedStep)
+                        }
                     }
                 }
             }

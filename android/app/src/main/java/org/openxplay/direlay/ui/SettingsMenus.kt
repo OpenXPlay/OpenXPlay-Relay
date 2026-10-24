@@ -97,27 +97,20 @@ fun SettingsMenuRow(title: Int, summary: String, icon: Int, error: Boolean = fal
         R.string.ui_output, R.string.car_and_screen, R.string.ui_carlink -> IconHue.CAR
         R.string.ui_iphone_connection -> IconHue.IPHONE
         R.string.menu_identity -> IconHue.IDENTITY
+        R.string.menu_access -> IconHue.PERMISSIONS
+        R.string.public_name_title, R.string.menu_connection_outputs -> IconHue.NETWORK
         R.string.settings_startup -> IconHue.PERMISSIONS
         R.string.picture_title, R.string.menu_video -> IconHue.PICTURE
         R.string.logs_title, R.string.config_title -> IconHue.LOGS
         else -> IconHue.DEVELOPER
     }
     val errorLabel = stringResource(R.string.settings_advanced_error)
-    InsetGroup {
-        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(role = Role.Button, onClick = action).padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            IconTile(icon, hue)
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(title), style = RelayTokens.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(summary, maxLines = 1, overflow = TextOverflow.Ellipsis, style = RelayTokens.footnote,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (error) CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.error) {
-                Symbol(R.drawable.symbol_error, errorLabel)
-            }
-            Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
+    InsetRow(icon, hue, stringResource(title), summary, onClick = action, trailing = {
+        if (error) CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.error) {
+            Symbol(R.drawable.symbol_error, errorLabel)
         }
-    }
+        Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
+    })
 }
 
 @Composable
@@ -126,30 +119,47 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
     val experimental = draft.experimental
     val context = LocalContext.current
     val version = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() }
-    SettingsMenuRow(R.string.ui_output, outputSummary(draft),
-        R.drawable.symbol_car, "settings/output" in invalidPages) { open("settings/output") }
-    SettingsMenuRow(R.string.car_and_screen, carSummary,
-        R.drawable.symbol_car) { open("settings/car") }
-    SettingsMenuRow(R.string.picture_title, "${resolutionSummary(draft)} · ${draft.carplayScreenWidth.mm} mm · ${codecSummary(draft)}",
-        R.drawable.symbol_settings) { open("settings/picture") }
-    SettingsMenuRow(R.string.audio_title, "${stringResource(R.string.audio_car_bluetooth)} · ${menuToggleSummary(draft.carBluetoothAudio)}",
-        R.drawable.symbol_bluetooth) { open("settings/audio") }
-    SettingsMenuRow(R.string.ui_iphone_connection, stringResource(if (wireless) R.string.direlay_wireless else R.string.ui_usb),
-        R.drawable.symbol_phone, "settings/connection/network" in invalidPages) { open("settings/connection") }
-    SettingsMenuRow(R.string.settings_startup, stringResource(R.string.menu_startup_summary, menuToggleSummary(draft.autoStartWhenReady), menuToggleSummary(draft.autoStartOnBoot)),
-        R.drawable.symbol_play) { open("settings/startup") }
-    SettingsMenuRow(R.string.menu_access, accessSummary, R.drawable.symbol_link) { open("settings/access") }
-    SettingsMenuRow(R.string.menu_identity, stringResource(identityStatus), R.drawable.symbol_code,
-        "settings/identity" in invalidPages) { open("settings/identity") }
-    settingsFilePages.forEach { page ->
-        SettingsMenuRow(page.title, stringResource(page.summary), R.drawable.symbol_code) { open(page.route) }
+    InsetGroup {
+        SettingsMenuRow(R.string.ui_output, outputSummary(draft),
+            R.drawable.symbol_car, "settings/output" in invalidPages) { open("settings/output") }
+        InsetDivider()
+        SettingsMenuRow(R.string.car_and_screen, carSummary,
+            R.drawable.symbol_car) { open("settings/car") }
+        InsetDivider()
+        SettingsMenuRow(R.string.picture_title, "${resolutionSummary(draft)} · ${draft.carplayScreenWidth.mm} mm · ${codecSummary(draft)}",
+            R.drawable.symbol_monitor) { open("settings/picture") }
+        InsetDivider()
+        SettingsMenuRow(R.string.audio_title, "${stringResource(R.string.audio_car_bluetooth)} · ${menuToggleSummary(draft.carBluetoothAudio)}",
+            R.drawable.symbol_bluetooth) { open("settings/audio") }
     }
-    SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
-    SettingsMenuRow(R.string.ui_developer, stringResource(R.string.menu_developer_summary, draft.fps, draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), R.drawable.symbol_code,
-        invalidPages.any { it.startsWith("developer/") }) { open("developer") }
-    SettingsMenuRow(R.string.experimental_title,
-        if (experimental.active) stringResource(R.string.experimental_summary, experimental.optionCount) else stringResource(R.string.menu_off),
-        R.drawable.symbol_settings, "experimental" in invalidPages) { open("experimental") }
+    InsetGroup {
+        SettingsMenuRow(R.string.ui_iphone_connection, stringResource(if (wireless) R.string.direlay_wireless else R.string.ui_usb),
+            R.drawable.symbol_phone, "settings/connection/network" in invalidPages) { open("settings/connection") }
+        InsetDivider()
+        SettingsMenuRow(R.string.settings_startup, stringResource(R.string.menu_startup_summary, menuToggleSummary(draft.autoStartWhenReady), menuToggleSummary(draft.autoStartOnBoot)),
+            R.drawable.symbol_play) { open("settings/startup") }
+    }
+    InsetGroup {
+        SettingsMenuRow(R.string.menu_access, accessSummary, R.drawable.symbol_lock) { open("settings/access") }
+        InsetDivider()
+        SettingsMenuRow(R.string.menu_identity, stringResource(identityStatus), R.drawable.symbol_file_key_2,
+            "settings/identity" in invalidPages) { open("settings/identity") }
+        InsetDivider()
+        settingsFilePages.forEach { page ->
+            SettingsMenuRow(page.title, stringResource(page.summary), R.drawable.symbol_code) { open(page.route) }
+            if (page != settingsFilePages.last()) InsetDivider()
+        }
+    }
+    InsetGroup {
+        SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
+        InsetDivider()
+        SettingsMenuRow(R.string.ui_developer, stringResource(R.string.menu_developer_summary, draft.fps, draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), R.drawable.symbol_code,
+            invalidPages.any { it.startsWith("developer/") }) { open("developer") }
+        InsetDivider()
+        SettingsMenuRow(R.string.experimental_title,
+            if (experimental.active) stringResource(R.string.experimental_summary, experimental.optionCount) else stringResource(R.string.menu_off),
+            R.drawable.symbol_settings, "experimental" in invalidPages) { open("experimental") }
+    }
 }
 
 @Composable

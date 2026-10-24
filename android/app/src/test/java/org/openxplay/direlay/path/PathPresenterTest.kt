@@ -537,6 +537,24 @@ class PathPresenterTest {
         assertEquals(PathTone.LIVE, path(liveWithError).tone)
     }
 
+    @Test fun carAddressLabelsAreOnlyUsedByTheBrowserOutput() {
+        val noScreen = ready.copy(car = ready.car.copy(screen = null))
+        CarOutput.entries.forEach { output ->
+            val input = noScreen.copy(setup = noScreen.setup.copy(outputs = setOf(output)))
+            assertEquals(output.name, if (output == CarOutput.BROWSER) "192.168.43.1" else null, path(input).nodes.car)
+        }
+        val carlinkOnly = carlink(CarlinkInput(CarlinkPhase.SCANNING), noScreen)
+        assertNull(path(carlinkOnly).nodes.car)
+        assertEquals("Car", path(carlinkOnly.copy(car = carlinkOnly.car.copy(carlink = CarlinkInput(carName = "Car")))).nodes.car)
+        assertEquals("1920×720", path(carlinkOnly.copy(car = carlinkOnly.car.copy(screen = "1920×720"))).nodes.car)
+        val both = carlinkOnly.copy(setup = carlinkOnly.setup.copy(outputs = setOf(CarOutput.CARLINK, CarOutput.BROWSER)))
+        assertEquals("192.168.43.1", path(both).nodes.car)
+        val dlna = output(CarOutput.DLNA, OutputInput(name = "Car receiver"), noScreen)
+        assertEquals("Car receiver", path(dlna).nodes.car)
+        assertEquals("192.168.43.1", path(dlna.copy(setup = dlna.setup.copy(outputs = setOf(CarOutput.DLNA, CarOutput.BROWSER)))).nodes.car)
+        assertNull(path(noScreen.copy(setup = noScreen.setup.copy(outputs = emptySet()))).nodes.car)
+    }
+
     @Test fun threeFullDiagnosticLinesAreExact() {
         assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP· RF· IAP· JOIN· SES· | P LIVE· | 0.1.6 14:32:05", path().diagnostic)
         assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN✗ SES· | P LIVE· | E first_tcp_timeout 14:31:58 | 0.1.6 14:32:05",

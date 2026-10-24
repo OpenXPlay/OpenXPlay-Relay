@@ -39,6 +39,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.logs.*
 import java.io.File
@@ -91,18 +92,16 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
             }
         }
     }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.logs_description))
-            TextButton(enabled = step == null, onClick = { range = LogRange.LAST_10_MINUTES; step = LogsStep.PERIOD }) {
-                Text(stringResource(R.string.logs_export))
-            }
-            receipt?.let { latest ->
-                TextButton(enabled = step == null, onClick = {
+    InsetGroup(footer = stringResource(R.string.logs_description)) {
+        InsetRow(R.drawable.symbol_code, IconHue.LOGS, stringResource(R.string.logs_export),
+            onClick = if (step == null) ({ range = LogRange.LAST_10_MINUTES; step = LogsStep.PERIOD }) else null)
+        receipt?.let { latest ->
+            InsetDivider()
+            InsetRow(R.drawable.symbol_code, IconHue.LOGS, stringResource(R.string.logs_latest_receipt),
+                onClick = if (step == null) ({
                     step = LogsStep.PREPARE_QR
                     job = scope.launch { showReceipt(latest) }
-                }) { Text(stringResource(R.string.logs_latest_receipt)) }
-            }
+                }) else null)
         }
     }
     when (step) {

@@ -9,13 +9,14 @@ import org.junit.Test
 import org.openxplay.direlay.R
 import org.openxplay.direlay.bluetooth.BondedDevice
 import org.openxplay.direlay.bluetooth.IphoneSelection
+import org.openxplay.direlay.path.*
 import org.openxplay.direlay.settings.*
 
 class SetupPresentationTest {
     private val settings = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
         30, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
-    private val iphone = IphoneSelection.OnlyCandidate(BondedDevice("00:11:22:33:A9:30", "Phone", true, true, false))
-    private val ready = HomeSnapshot(settings, wireless = true, permissionsReady = true, identityReady = true, iphoneSelection = iphone)
+    private val ready = PathInput(relay = RelayInput(identity = IdentityState.READY), iphone = IphoneInput(pick = IphonePick.PICKED))
+    private fun preparation(input: PathInput) = setupHomePresentation(input, presentPath(input), modeRows(settings, input.setup.wireless))
 
     @Test fun theNetworkStepExistsOnlyForWirelessCarPlay() {
         assertEquals(SetupStep.entries, setupSteps(wireless = true))
@@ -91,7 +92,7 @@ class SetupPresentationTest {
     }
 
     @Test fun everyApplicableCheckIsListedWithItsState() {
-        val home = presentHome(ready.copy(permissionsReady = false, identityReady = false, iphoneSelection = IphoneSelection.NoIphone))
+        val home = preparation(ready.copy(relay = ready.relay.copy(identity = IdentityState.MISSING, permissionsTotal = 1), iphone = IphoneInput()))
         val checks = setupChecks(home, wireless = true, network = WirelessNetworkChoice.WIFI_DIRECT)
         assertEquals(listOf(R.string.setup_check_permissions, R.string.setup_check_identity, R.string.setup_check_iphone), checks.map { it.title })
         assertTrue(checks.all { it.state == SetupCheckState.TO_DO })
@@ -99,15 +100,14 @@ class SetupPresentationTest {
         assertNull("the pairing row shows where to pair instead of repeating its title", checks.last().detail)
         assertEquals(R.string.setup_check_identity_hint, checks[1].detail)
 
-        val done = setupChecks(presentHome(ready), wireless = true, network = WirelessNetworkChoice.WIFI_DIRECT)
+        val done = setupChecks(preparation(ready), wireless = true, network = WirelessNetworkChoice.WIFI_DIRECT)
         assertTrue(done.all { it.state == SetupCheckState.DONE && it.action == null })
     }
 
     @Test fun usbSkipsPairingAndSharedWifiAddsItsCheck() {
-        val usb = setupChecks(presentHome(ready.copy(wireless = false)), wireless = false, network = WirelessNetworkChoice.WIFI_DIRECT)
+        val usb = setupChecks(preparation(ready.copy(setup = ready.setup.copy(network = NetworkPlan.USB))), wireless = false, network = WirelessNetworkChoice.WIFI_DIRECT)
         assertEquals(listOf(R.string.setup_check_permissions, R.string.setup_check_identity), usb.map { it.title })
-        val shared = presentHome(ready.copy(sharedWifiReady = false, currentWifi = "Car",
-            settings = settings.copy(wirelessNetwork = settings.wirelessNetwork.copy(choice = WirelessNetworkChoice.EXISTING_WIFI))))
+        val shared = preparation(ready.copy(setup = ready.setup.copy(network = NetworkPlan.SHARED_WIFI), relay = ready.relay.copy(wifiSsid = "Car")))
         val check = setupChecks(shared, wireless = true, network = WirelessNetworkChoice.EXISTING_WIFI)
             .single { it.title == R.string.setup_check_shared_wifi }
         assertEquals(SetupAction.SHARED_WIFI, check.action)
@@ -124,7 +124,7 @@ class SetupPresentationTest {
     }
 
     @Test fun identityIsCheckingUntilTheStoreAnswers() {
-        val checks = setupChecks(presentHome(ready.copy(identityReady = false, checking = true)), wireless = true,
+        val checks = setupChecks(preparation(ready.copy(relay = ready.relay.copy(identity = IdentityState.CHECKING))), wireless = true,
             network = WirelessNetworkChoice.WIFI_DIRECT)
         assertEquals(SetupCheckState.CHECKING, checks.single { it.title == R.string.setup_check_identity }.state)
     }
@@ -142,6 +142,34 @@ class SetupPresentationTest {
     @Test fun compactButtonsApplyOnlyBelow480Dp() {
         assertTrue(compactSetup(320)); assertTrue(compactSetup(479))
         assertFalse(compactSetup(480)); assertFalse(compactSetup(800))
+    }
+
+    @Test fun preparationKeepsEveryRelayStepAndOnlyThePairingPrerequisite() {
+        val path = presentPath(PathInput(relay = RelayInput(keepAlive = KeepAliveState.REFUSED)))
+        val sections = setupPrepareSections(path)
+        assertEquals(listOf(PathSection.RELAY, PathSection.IPHONE), sections.map { it.section })
+        assertSame(path.section(PathSection.RELAY), sections.first())
+        val paired = path.steps.single { it.id == StepId.IPHONE_PAIRED }
+        assertEquals(listOf(paired), sections.last().steps)
+        assertEquals(StepAction.PAIR_IPHONE, sections.last().steps.single().action)
+    }
+
+    @Test fun usbPreparationKeepsItsLiveRoleAndFailure() {
+        for (role in UsbRole.entries) {
+            val path = presentPath(PathInput(setup = SetupInput(network = NetworkPlan.USB), iphone = IphoneInput(usb = role)))
+            val sections = setupPrepareSections(path)
+            assertEquals(listOf(PathSection.RELAY, PathSection.IPHONE), sections.map { it.section })
+            assertEquals(listOf(path.steps.single { it.id == StepId.USB_HOST }), sections.last().steps)
+        }
+    }
+
+    @Test fun preparationOmitsEmptyOrMissingSections() {
+        assertTrue(setupPrepareSections(ConnectionPath()).isEmpty())
+        val path = ConnectionPath(sections = listOf(PathSectionView(PathSection.RELAY, emptyList()),
+            PathSectionView(PathSection.IPHONE, listOf(PathStep(StepId.SESSION, StepState.WORKING, R.string.path_session)))))
+        assertTrue(setupPrepareSections(path).isEmpty())
+        val relay = PathSectionView(PathSection.RELAY, listOf(PathStep(StepId.MODE, StepState.OK, R.string.path_mode)))
+        assertEquals(listOf(relay), setupPrepareSections(ConnectionPath(sections = listOf(relay))))
     }
 
 }

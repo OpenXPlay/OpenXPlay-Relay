@@ -18,6 +18,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.publicname.ConfigError
 import org.openxplay.direlay.publicname.ConfigProblem
@@ -69,9 +70,9 @@ internal val publicNameProviderResources = mapOf(
         if (!view.configured) { drafts = PublicNameDrafts(); errors = emptyMap() }
     }
     DetailPage(stringResource(R.string.public_name_title), back) {
-        Hint(stringResource(R.string.public_name_summary))
-        Toggle(stringResource(R.string.public_name_enabled), enabled) { enabled = it; saved = false }
-        CollapsibleCard("configuration", stringResource(R.string.public_name_provider), fields.name.ifEmpty { stringResource(R.string.public_name_name) }, initiallyExpanded = true) {
+        SettingsToggleGroup(stringResource(R.string.public_name_enabled), enabled, R.drawable.symbol_globe, IconHue.NETWORK,
+            footer = stringResource(R.string.public_name_summary)) { enabled = it; saved = false }
+        SettingsGroup("configuration", R.drawable.symbol_globe, IconHue.NETWORK, stringResource(R.string.public_name_provider), fields.name.ifEmpty { stringResource(R.string.public_name_name) }, initiallyExpanded = true) {
             Options(providers.map { it.label }, providers.indexOfFirst { it.key == provider }.coerceAtLeast(0)) {
                 provider = providers[it].key; saved = false
             }
@@ -99,33 +100,38 @@ internal val publicNameProviderResources = mapOf(
             }) { Text(stringResource(R.string.public_name_terms_url)) }
             OutlinedButton(onClick = importFile, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_import)) }
         }
-        Text(publicNameStatusText(context, status, url), Modifier.padding(vertical = 8.dp),
-            color = if (status.state == PublicNameState.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-        if (status.state == PublicNameState.ERROR) {
-            OutlinedButton(onClick = renew, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = view.configured && view.enabled && !busy) {
-                Text(stringResource(R.string.public_name_renew))
-            }
-        }
-        if (saved) Text(stringResource(R.string.settings_saved), color = MaterialTheme.colorScheme.primary)
-        if (failed) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
-        Button(enabled = !busy, onClick = {
-            val edit = PublicNameEdit(enabled, selectedProvider, fields.name, fields.token, terms)
-            busy = true
-            scope.launch {
-                val problems = save(edit)
-                busy = false
-                failed = problems == null
-                if (problems != null) {
-                    errors = errors + (selectedProvider to problems.associate {
-                        it.key to if (it.key == PublicNameFile.NAME) R.string.public_name_name_invalid else R.string.public_name_token_invalid
-                    })
-                    if (problems.isEmpty()) { drafts = drafts.saved(selectedProvider, fields); saved = true }
+        InsetGroup {
+            InsetRow(R.drawable.symbol_shield_check, IconHue.IDENTITY, stringResource(R.string.public_name_title))
+            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(publicNameStatusText(context, status, url), Modifier.padding(vertical = 8.dp),
+                    color = if (status.state == PublicNameState.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                if (status.state == PublicNameState.ERROR) {
+                    OutlinedButton(onClick = renew, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = view.configured && view.enabled && !busy) {
+                        Text(stringResource(R.string.public_name_renew))
+                    }
+                }
+                if (saved) Text(stringResource(R.string.settings_saved), color = MaterialTheme.colorScheme.primary)
+                if (failed) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
+                Button(enabled = !busy, onClick = {
+                    val edit = PublicNameEdit(enabled, selectedProvider, fields.name, fields.token, terms)
+                    busy = true
+                    scope.launch {
+                        val problems = save(edit)
+                        busy = false
+                        failed = problems == null
+                        if (problems != null) {
+                            errors = errors + (selectedProvider to problems.associate {
+                                it.key to if (it.key == PublicNameFile.NAME) R.string.public_name_name_invalid else R.string.public_name_token_invalid
+                            })
+                            if (problems.isEmpty()) { drafts = drafts.saved(selectedProvider, fields); saved = true }
+                        }
+                    }
+                }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_save)) }
+                TextButton(onClick = { confirmRemove = true }, Modifier.heightIn(min = 48.dp), enabled = view.configured && !busy,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                    Text(stringResource(R.string.public_name_remove))
                 }
             }
-        }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.public_name_save)) }
-        TextButton(onClick = { confirmRemove = true }, Modifier.heightIn(min = 48.dp), enabled = view.configured && !busy,
-            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-            Text(stringResource(R.string.public_name_remove))
         }
     }
     if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false },
@@ -141,9 +147,9 @@ internal val publicNameProviderResources = mapOf(
 
 @Composable private fun PublicNameLink(label: Int, url: Int) {
     val context = LocalContext.current
-    TextButton(onClick = {
+    InsetRow(R.drawable.symbol_globe, IconHue.NETWORK, stringResource(label), onClick = {
         runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(url)))) }
-    }) { Text(stringResource(label)) }
+    })
 }
 
 /** The shared status line wording; [url] is the full head-unit address while the name is ready. */

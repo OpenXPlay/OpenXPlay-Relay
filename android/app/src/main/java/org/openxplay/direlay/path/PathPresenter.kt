@@ -51,7 +51,8 @@ fun presentPath(input: PathInput, zone: ZoneId = ZoneId.systemDefault()): Connec
     return ConnectionPath(sections, focus, tone, canStart, running,
         if (live) LiveSummary(input.live.sessionSinceMillis, input.live.chips.toList()) else null,
         PathNodes(input.iphone.name, input.relay.bluetoothName,
-            input.car.carlink.carName ?: input.car.screen ?: input.car.address ?: input.car.dlna.name),
+            input.car.carlink.carName ?: input.car.screen
+                ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name),
         diagnostic(sections, input, zone))
 }
 

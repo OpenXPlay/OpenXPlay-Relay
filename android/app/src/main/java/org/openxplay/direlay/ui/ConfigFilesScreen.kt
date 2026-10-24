@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.config.ConfigFiles
 import org.openxplay.direlay.config.ConfigFileResult
@@ -44,10 +45,10 @@ import java.util.Locale
         val kind = if (privateData) "privacy" else "user"
         create.launch("openxplay-relay-$kind-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT).format(Date())}.json")
     }
-    for (privacy in listOf(false, true)) Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(if (privacy) R.string.config_privacy else R.string.config_user), style = MaterialTheme.typography.titleMedium)
-            Text(stringResource(if (privacy) R.string.config_privacy_hint else R.string.config_user_hint))
+    for (privacy in listOf(false, true)) InsetGroup(footer = stringResource(if (privacy) R.string.config_privacy_hint else R.string.config_user_hint)) {
+        InsetRow(R.drawable.symbol_code, IconHue.LOGS, stringResource(if (privacy) R.string.config_privacy else R.string.config_user))
+        InsetDivider()
+        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (privacy && !available) Text(stringResource(R.string.config_empty))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(enabled = !busy && (!privacy || available), onClick = {
