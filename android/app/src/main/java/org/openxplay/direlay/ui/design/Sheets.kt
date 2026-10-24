@@ -77,12 +77,15 @@ import java.util.Date
             val time = remember(it) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(it)) }
             Text(time, style = RelayTokens.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (step.trail.isNotEmpty()) {
+        val addresses = if (step.id == StepId.CAR_PAGE) step.trail.filter { it.startsWith("https://") }.distinct() else emptyList()
+        addresses.filter { it != step.evidence?.raw }.forEach { EvidenceRow(it) }
+        val trail = step.trail - addresses.toSet()
+        if (trail.isNotEmpty()) {
             Text(stringResource(R.string.design_trail), Modifier.semantics { heading() }, style = RelayTokens.headline)
             SelectionContainer { Column(Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
-                step.trail.forEach { Text(it, style = RelayTokens.mono) }
+                trail.forEach { Text(it, style = RelayTokens.mono) }
             } }
-            EvidenceRow(step.trail.joinToString("\n"))
+            EvidenceRow(trail.joinToString("\n"))
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             step.action?.let { action -> Button({ onAction(action) }, Modifier.weight(1f).heightIn(min = 48.dp), shape = RelayTokens.pill) {

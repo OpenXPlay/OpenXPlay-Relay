@@ -89,7 +89,7 @@ import org.openxplay.stream.cast.CastRenderer
     outputSummaryLabels(draft).drop(1).map { stringResource(it) }.joinToString(" · ")
         .ifEmpty { stringResource(R.string.menu_off) }
 
-@Composable private fun DlnaReceiverPicker(choice: DlnaRendererChoice?, runtime: RelayRuntime?, dismiss: () -> Unit,
+@Composable internal fun DlnaReceiverPicker(choice: DlnaRendererChoice?, runtime: RelayRuntime?, dismiss: () -> Unit,
     choose: (CastRenderer) -> Unit) {
     var revision by remember { mutableIntStateOf(0) }
     var searching by remember { mutableStateOf(true) }

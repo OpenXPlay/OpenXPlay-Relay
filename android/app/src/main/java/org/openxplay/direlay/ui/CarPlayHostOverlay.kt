@@ -1,28 +1,44 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-15
+// Created by riko chen on 2026-10-24
 package org.openxplay.direlay.ui
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.VpnService
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import com.shilapi.xcertplay.AirPlayPersistence
+import com.shilapi.xcertplay.orchestration.MfiTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
+import org.openxplay.direlay.RelayActivity
+import org.openxplay.direlay.path.*
+import org.openxplay.direlay.relay.PathLocal
 import org.openxplay.direlay.relay.RelayRuntime
-import org.openxplay.direlay.relay.VideoStats
+import org.openxplay.direlay.relay.pathInput
+import org.openxplay.direlay.settings.StartupPermissions
+import org.openxplay.direlay.settings.currentWifiSsid
+import org.openxplay.direlay.storage.MaterialStatus
 
 fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime): ComposeView? =
     hostOverlayUnlessPreview(runtime.settingsStore.snapshot.value?.localPreview ?: runtime.localPreview) {
@@ -32,146 +48,138 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
         }
     }
 
-private fun RelayRuntime.overlaySnapshot(videoStats: VideoStats): HostOverlaySnapshot? {
+/** Called on IO: Android's bond/name/material reads must never block the CarPlay surface. */
+private fun RelayRuntime.overlaySnapshot(activity: ComponentActivity, wifi: String?, name: String?, version: String): HostOverlaySnapshot? {
     val settings = settingsStore.snapshot.value ?: return null
-    val selection = iphoneSelection(settings.iphoneAddress)
-    val name = iphoneBonds.firstOrNull { it.address.equals(selection.address, ignoreCase = true) }?.name
-    val addresses = carIpv4.toList()
-    val urls = headUnitUrls()
-    val failures = status.failures
-    val carPlayError = carPlayDiagnostics.error
-    val carlinkOn = settings.carlinkOutput || settings.bothOutputs
-    val failedCarlink = carlinkOn && carlinkFailed
-    val webReason = serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs }
-    val screen = carPlayScreenSummary
-    val window = displayPolicy.primaryDisplay?.viewport
-    val carlinkDisplay = carlinkScreen
-    val stats = videoStats.sample(status, settings.videoStats, carlinkOn,
-        carlinkStatistics, carlinkVideoDecision, carlinkDisplay)
-    return HostOverlaySnapshot(HomeSnapshot(settings, settingsStore.wireless(settings),
-        permissionsReady = true, identityReady = true, phase = status.session?.phase, started = true,
-        failure = failures.isNotEmpty() || failedCarlink || webReason != null || carPlayError != null,
-        iphoneSelection = selection, webReason = webReason, webListening = serverState.startsWith("TLS enabled"),
-        carNetworkAvailable = addresses.isNotEmpty(),
-        problems = homeProblems(failures, failedCarlink, carlinkDetail, carlinkError, webReason, serverState,
-            teslaFailure = teslaFailure, carlinkTrail = carlinkErrorTrail, carlinkErrorAt = carlinkErrorAt,
-            carPlayError = carPlayError), stage = carPlayStage.stage,
-        deviceName = bondedDevices.localName() ?: settings.carlinkDeviceName),
-        name, urls, stopped = autoStartGate.paused,
-        publicNameUrl = publicNameUrl(), carIpv4 = addresses, teslaUrl = teslaUrl(),
-        carlinkState = carlinkStateLabel(carlinkState, carlinkFailed, carlinkPins.pending != null),
-        carlinkWindow = carlinkDisplay?.let { HostOverlaySize(it.widthPx, it.heightPx) },
-        canvas = screen.first.substringBefore(" · "), screenWidthMm = carPlayScreenWidthMm,
-        videoCodec = status.videoCodec ?: appliedVideoDecision.codec,
-        carPlayScreen = screen, viewport = window?.let { HostOverlaySize(it.width, it.height) }, videoStats = stats)
+    val wireless = settingsStore.wireless(settings)
+    val carlink = settings.carlinkOutput || settings.bothOutputs
+    val required = StartupPermissions.required(Build.VERSION.SDK_INT, wireless, settings.wirelessNetwork.choice.mode,
+        AirPlayPersistence.loadLocationReportingEnabled(activity), carlink)
+    val identity = settings.mfiTarget != MfiTarget.LOCAL || identityStore.status() == MaterialStatus.Installed
+    val valid = runCatching { settings.validate(wireless) }.isSuccess && (!carlink || Build.VERSION.SDK_INT >= 29)
+    val input = pathInput(PathLocal(
+        permissionsGranted = required.count { activity.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED },
+        permissionsTotal = required.size,
+        vpnConsentNeeded = needsVpnConsent(settings) && VpnService.prepare(activity) != null,
+        identity = if (identity) IdentityState.READY else IdentityState.MISSING,
+        identityLabel = if (!identity) null else activity.getString(when (settings.mfiTarget) {
+            MfiTarget.LOCAL -> R.string.direlay_installed
+            MfiTarget.REMOTE -> R.string.dev_remote
+            MfiTarget.I2C -> R.string.dev_linux_i2c
+            MfiTarget.USB_CH341 -> R.string.dev_usb_i2c
+        }), wifiSsid = wifi, bluetoothName = name,
+        setupSummary = modeRows(settings, wireless).joinToString(" · ") { activity.getString(it.value) },
+        nowMillis = System.currentTimeMillis(), version = version, setupValid = valid))
+    return HostOverlaySnapshot(input, headUnitUrls(), settings.localPreview,
+        homeProblems(visibleHomeFailures(settings, status.failures), carlink && carlinkFailed,
+            carlinkDetail, carlinkError, serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs },
+            serverState, networkReadiness(settings, networkReadings), teslaFailure, carlinkErrorTrail,
+            carlinkErrorAt, carPlayDiagnostics.error, dlnaFailure.takeIf { settings.dlnaOutput },
+            miracastFailure.takeIf { settings.miracastOutput }))
 }
 
 @Composable private fun RuntimeHostOverlay(activity: ComponentActivity, runtime: RelayRuntime) {
+    var recheck by remember { mutableIntStateOf(0) }
     val snapshot by produceState<HostOverlaySnapshot?>(null, activity, runtime) {
-        val videoStats = VideoStats()
-        try {
-            while (true) {
-                if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                    val next = withContext(Dispatchers.IO) { runtime.overlaySnapshot(videoStats) }
-                    if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                        value = next
-                        next?.takeIf { !it.home.settings.localPreview }?.let { snapshot ->
-                            val presentation = presentHostOverlay(snapshot)
-                            runtime.connectionLog.transition("ui", "running_page", "running_page_status",
-                                statusLogDetail(presentation.headline, presentation.hint, presentation.tone,
-                                    snapshot.home, activity.resources::getResourceEntryName))
-                        }
+        var wifi: String? = null
+        var name: String? = null
+        var lastRefresh = Long.MIN_VALUE / 2
+        var checked = -1
+        val version = withContext(Dispatchers.IO) { activity.packageManager.getPackageInfo(activity.packageName, 0).versionName.orEmpty() }
+        while (true) {
+            if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val requested = recheck
+                val refresh = requested != checked || now - lastRefresh >= 5_000L
+                val next = withContext(Dispatchers.IO) {
+                    if (refresh) {
+                        wifi = currentWifiSsid(activity)
+                        runtime.refreshIphoneBonds()
+                        name = runtime.bondedDevices.localName()
+                        runtime.autoStartSessions.refresh()
+                        runtime.recheckNetworkStart()
                     }
-                } else {
-                    videoStats.clear()
-                    runtime.status.countVideoBytes = false
+                    runtime.overlaySnapshot(activity, wifi, name, version)
                 }
-                delay(500)
+                if (refresh) { lastRefresh = now; checked = requested }
+                if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) value = next
+                if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && next?.localPreview == false)
+                    runtime.connectionLog.transition("ui", "path", "path_line", presentHostOverlay(next).path.diagnostic)
             }
-        } finally {
-            videoStats.clear()
-            runtime.status.countVideoBytes = false
+            delay(500)
         }
     }
     val scope = rememberCoroutineScope()
-    var stopping by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    val clipboard = LocalClipboardManager.current
+    fun copy(text: String) {
+        clipboard.setText(AnnotatedString(text))
+        scope.launch { snackbar.showSnackbar(activity.getString(R.string.settings_copied)) }
+    }
     fun back() {
-        // Use the host's home path, including touch release and its launcher routing to OpenXPlay Relay.
+        // Use the host's Home path, including touch release and launcher routing to RelayActivity.
         activity.onBackPressedDispatcher.onBackPressed()
     }
-    if (snapshot == null) {
-        RelayPage { Heading(stringResource(R.string.host_connecting)) }
-    }
-    snapshot?.let { value ->
-        // A saved preview change may arrive while the host is still alive.
-        if (!value.home.settings.localPreview) HostOverlayScreen(presentHostOverlay(value), stopping) { action ->
-            when (action) {
-                HostOverlayAction.BACK -> back()
-                HostOverlayAction.STOP -> if (!stopping) {
-                    stopping = true
-                    scope.launch {
-                        try {
-                            withContext(Dispatchers.IO) { runtime.sessionActions.action("stop") }
-                            back()
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (failure: Exception) {
-                            runtime.status.inputFailed(failure)
-                        } finally { stopping = false }
-                    }
-                }
-            }
+    fun sessionAction(action: String, leave: Boolean = false) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { runtime.sessionActions.action(action) }
+                if (leave) back()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                runtime.status.inputFailed(failure)
+            } finally { busy = false; recheck++ }
         }
+    }
+    fun stepAction(action: StepAction, step: PathStep) {
+        when (action) {
+            StepAction.START_NOW -> sessionAction("startNow")
+            StepAction.RETRY -> sessionAction("retry")
+            StepAction.COPY_PAGE_ADDRESS -> step.evidence?.let { text ->
+                (text.raw ?: text.res?.let { activity.getString(it, *text.args.toTypedArray()) })?.let(::copy)
+            }
+            else -> runCatching {
+                activity.startActivity(Intent(activity, RelayActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra(RelayActivity.EXTRA_STEP_ACTION, action.name))
+            }.onFailure { runCatching { activity.startActivity(Intent(Settings.ACTION_SETTINGS)) } }
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+        val value = snapshot
+        if (value == null) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Box(Modifier.safeDrawingPadding(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.host_connecting)) }
+        } else if (!value.localPreview) HostOverlayScreen(presentHostOverlay(value), busy, ::stepAction,
+            { recheck++ }, ::copy) { action -> when (action) {
+                HostOverlayAction.BACK -> back()
+                HostOverlayAction.STOP -> sessionAction("stop", leave = true)
+                HostOverlayAction.RETRY -> sessionAction("retry")
+            } }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp))
     }
 }
 
-@Composable internal fun HostOverlayScreen(value: HostOverlayPresentation, stopping: Boolean,
+@Composable internal fun HostOverlayScreen(value: HostOverlayPresentation, busy: Boolean,
+    onStepAction: (StepAction, PathStep) -> Unit, onRecheck: () -> Unit, onCopy: (String) -> Unit,
     onAction: (HostOverlayAction) -> Unit) {
     val motion = rememberRelayMotion()
-    val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     CompositionLocalProvider(LocalRelayMotion provides motion) {
-    RelayPage {
-        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            val description = stringResource(value.headline)
-            when (value.tone) {
-                StatusTone.PROGRESS -> if (motion) CircularProgressIndicator(Modifier.size(48.dp))
-                    else Symbol(R.drawable.symbol_sync, description, Modifier.size(48.dp))
-                StatusTone.RUNNING -> CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.primary) {
-                    Symbol(R.drawable.symbol_check, description, Modifier.size(48.dp))
-                }
-                StatusTone.ERROR -> Symbol(R.drawable.symbol_error, description, Modifier.size(48.dp))
-                else -> Symbol(R.drawable.symbol_stop, description, Modifier.size(48.dp))
-            }
-            Heading(description)
-            value.iphoneName?.let { Text(stringResource(R.string.ui_iphone_name, it), style = MaterialTheme.typography.titleMedium) }
-            value.problems.forEach { problem -> key(problem) { HomeProblemRow(problem) } }
-            value.hint?.let { Hint(stringResource(it, *value.hintArguments.toTypedArray())) }
-            value.buttons.forEach { button ->
-                OutlinedButton(onClick = { onAction(button.action) }, enabled = !stopping,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-                    Symbol(if (button.action == HostOverlayAction.BACK) R.drawable.symbol_back else R.drawable.symbol_stop,
-                        stringResource(button.label), Modifier.size(24.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text(stringResource(button.label), Modifier.weight(1f))
-                }
-            }
-            value.sections.forEach { section ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(section.title), style = MaterialTheme.typography.titleMedium)
-                        section.rows.forEach { row ->
-                            DetailValue(row.label, row.valueResource?.let { stringResource(it, *row.arguments.toTypedArray()) }
-                                ?: row.value, row.monospace)
-                        }
-                        if (section.title == R.string.host_head_unit_address) {
-                            ReceiverAddresses(value.receiverUrls, { clipboard.setText(AnnotatedString(it)) }, value.teslaUrl)
-                            value.browserHint?.let { Hint(stringResource(it)) }
-                        }
+        ConnectionPathPage(value.path, value.receiverUrls, value.problems, onStepAction, onRecheck, onCopy,
+            onStop = { onAction(HostOverlayAction.STOP) }, actions = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    value.buttons.forEach { button ->
+                        OutlinedButton({
+                            if (button.action != HostOverlayAction.BACK) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onAction(button.action)
+                        }, Modifier.weight(1f).height(56.dp), enabled = !busy,
+                            contentPadding = PaddingValues(horizontal = 8.dp)) { Text(stringResource(button.label), maxLines = 1) }
                     }
                 }
-            }
-            value.videoStats?.let { VideoStatisticsCard(it) }
-        }
-    }
+            })
     }
 }

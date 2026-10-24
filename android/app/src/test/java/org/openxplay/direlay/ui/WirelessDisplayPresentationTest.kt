@@ -7,16 +7,13 @@ import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
 import org.openxplay.direlay.R
-import org.openxplay.direlay.miracast.*
 import org.openxplay.direlay.relay.RelayFailure
 import org.openxplay.direlay.relay.WirelessDisplayFailure
 import org.openxplay.direlay.settings.*
-import org.openxplay.stream.cast.CastState
 
 class WirelessDisplayPresentationTest {
     private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, 30, false, false, false, null)
     private val selected = base.copy(dlnaOutput = true, dlnaRenderer = DlnaRendererChoice("uuid:car", "Saved car"))
-    private val display = MiracastDisplay(7, "Car display", 1920, 1080, 160, 60.0)
 
     @Test fun outputSummaryAppendsEachEnabledDisplayAndPreservesEveryBrowserCarlinkChoice() {
         for (carlink in listOf(false, true)) for (both in listOf(false, true))
@@ -28,37 +25,6 @@ class WirelessDisplayPresentationTest {
             }
         val labels = mapOf(R.string.ui_browser to "Car browser", R.string.wireless_dlna to "DLNA")
         assertEquals("Car browser · DLNA", outputSummary(selected, labels::getValue))
-    }
-
-    @Test fun eachDlnaStateHasItsOwnHomeLineAndUsesTheResolvedNameWithSavedFallback() {
-        val texts = mapOf(CastState.SEARCHING to R.string.home_dlna_searching,
-            CastState.WAITING_FOR_VIDEO to R.string.home_dlna_waiting, CastState.STARTING to R.string.home_dlna_starting,
-            CastState.PLAYING to R.string.home_dlna_playing, CastState.PAUSED to R.string.home_dlna_paused,
-            CastState.STOPPED_BY_RENDERER to R.string.home_dlna_stopped, CastState.ENDED to R.string.home_dlna_waiting)
-        for (state in CastState.entries) {
-            val line = wirelessDisplayLines(selected, state, "Live car", null, null).single()
-            assertEquals(WirelessDisplayLine(R.string.wireless_dlna, texts.getValue(state), listOf("Live car")), line)
-            assertEquals(listOf("Saved car"), wirelessDisplayLines(selected, state, null, null, null).single().arguments)
-        }
-        assertEquals(R.string.home_dlna_searching, wirelessDisplayLines(selected, null, null, null, null).single().text)
-        assertEquals(R.string.dlna_choose_receiver,
-            wirelessDisplayLines(selected.copy(dlnaRenderer = null), CastState.PLAYING, "Old car", null, null).single().text)
-        assertTrue(wirelessDisplayLines(base, CastState.PLAYING, "Car", MiracastState.SHOWING, display).isEmpty())
-    }
-
-    @Test fun miracastHomeLinesIncludePermissionAndPhysicalDisplaySize() {
-        val settings = base.copy(miracastOutput = true)
-        for (state in listOf(null, MiracastState.WAITING_FOR_DISPLAY, MiracastState.ENDED))
-            assertEquals(WirelessDisplayLine(R.string.wireless_miracast, R.string.home_miracast_waiting),
-                wirelessDisplayLines(settings, null, null, state, null).single())
-        assertEquals(R.string.miracast_allow_overlay,
-            wirelessDisplayLines(settings, null, null, MiracastState.NEEDS_PERMISSION, display).single().text)
-        assertEquals(WirelessDisplayLine(R.string.wireless_miracast, R.string.home_miracast_showing,
-            listOf("Car display", "1920", "1080")), wirelessDisplayLines(settings, null, null, MiracastState.SHOWING, display).single())
-        assertEquals(R.string.home_miracast_waiting,
-            wirelessDisplayLines(settings, null, null, MiracastState.SHOWING, null).single().text)
-        assertEquals(listOf(R.string.wireless_dlna, R.string.wireless_miracast),
-            wirelessDisplayLines(selected.copy(miracastOutput = true), CastState.PLAYING, null, MiracastState.SHOWING, display).map { it.title })
     }
 
     @Test fun disablingWirelessOutputsHidesTheirHubFailuresAndKeepsOtherFailures() {

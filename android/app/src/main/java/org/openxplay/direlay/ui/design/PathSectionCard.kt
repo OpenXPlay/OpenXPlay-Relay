@@ -7,6 +7,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -39,14 +42,15 @@ internal fun sectionNumber(section: PathSection) = when (section) {
 }
 
 @Composable fun PathSectionCard(section: PathSectionView, expanded: Boolean, onExpand: (Boolean) -> Unit,
-    onStep: (PathStep) -> Unit, onAction: (StepAction) -> Unit, focusedStep: StepId? = null) {
+    onStep: (PathStep) -> Unit, onAction: (StepAction) -> Unit, focusedStep: StepId? = null, autoExpand: Boolean = true, pulse: Int = 0,
+    onStepAction: ((StepAction, PathStep) -> Unit)? = null) {
     val motion = LocalRelayMotion.current
     val allOk = section.state == StepState.OK
     // Preserve manual disclosure across rotation; a changed step state reveals new work.
     val stateKey = section.steps.joinToString { "${it.id}:${it.state}" }
     var previousState by rememberSaveable(section.section.name) { mutableStateOf<String?>(null) }
     LaunchedEffect(stateKey) {
-        if (previousState != stateKey) { onExpand(!allOk); previousState = stateKey }
+        if (previousState != stateKey) { if (autoExpand) onExpand(!allOk); previousState = stateKey }
     }
     val disclosure by animateFloatAsState(if (expanded) 180f else 0f, relaySpatial(motion), label = "section disclosure")
     val state = stringResource(stateLabel(section.state))
@@ -80,7 +84,17 @@ internal fun sectionNumber(section: PathSection) = when (section) {
                 section.steps.forEachIndexed { index, step ->
                     key(step.id) {
                         if (index > 0) InsetDivider()
-                        StepRow(step, { onStep(step) }, onAction, focused = step.id == focusedStep)
+                        val emphasis = remember { Animatable(1f) }
+                        LaunchedEffect(pulse, focusedStep) {
+                            if (pulse > 0 && step.id == focusedStep && motion) {
+                                repeat(2) { emphasis.animateTo(.45f, tween(140)); emphasis.animateTo(1f, tween(180)) }
+                            } else emphasis.snapTo(1f)
+                        }
+                        Box(Modifier.graphicsLayer { alpha = emphasis.value }) {
+                            StepRow(step, { onStep(step) }, { action ->
+                                if (onStepAction != null) onStepAction(action, step) else onAction(action)
+                            }, focused = step.id == focusedStep)
+                        }
                     }
                 }
             }
