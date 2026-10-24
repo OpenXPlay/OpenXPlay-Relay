@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 OpenXPlay.org
+SPDX-License-Identifier: AGPL-3.0-only
+Created by riko chen on 2026-10-24
+-->
+<resources>
+    <string name="home2_connect">连接</string>
+    <string name="home2_setup">逐步设置</string>
+    <string name="home2_waiting_car">等待车机</string>
+    <string name="home2_live">运行中 %1$s</string>
+    <string name="home2_back">返回</string>
+</resources>
