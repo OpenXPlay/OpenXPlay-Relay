@@ -4,7 +4,9 @@
 package org.openxplay.direlay.ui
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
+import org.openxplay.direlay.ui.design.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,7 +35,8 @@ fun CollapsibleCard(key: String, title: String, summary: String, initiallyExpand
     val requester = remember { BringIntoViewRequester() }
     val errorLabel = stringResource(R.string.settings_advanced_error)
     val expandedLabel = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
-    val ms = if (LocalRelayMotion.current) 220 else 0
+    val motion = LocalRelayMotion.current
+    val angle by animateFloatAsState(if (expanded) 90f else 0f, relaySpatial(motion), label = "card disclosure")
     LaunchedEffect(targeted) {
         if (targeted && !located) {
             expanded = true
@@ -43,21 +46,23 @@ fun CollapsibleCard(key: String, title: String, summary: String, initiallyExpand
             located = true
         }
     }
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth(), shape = RelayTokens.group,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = if (LocalRelayDark.current) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Row(Modifier.fillMaxWidth().bringIntoViewRequester(requester)
             .semantics { stateDescription = expandedLabel; if (selected != null) this.selected = selected }
             .clickable(role = Role.Button) { expanded = !expanded }.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(title, Modifier.semantics { heading() }, style = RelayTokens.headline, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (!expanded) Text(if (selected == true) stringResource(R.string.menu_selected_summary, summary) else summary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (error) Symbol(R.drawable.symbol_error, errorLabel)
-            Box(Modifier.rotate(if (expanded) 90f else 0f)) { Symbol(R.drawable.symbol_chevron, null) }
+            Box(Modifier.rotate(angle)) { Symbol(R.drawable.symbol_chevron, null) }
         }
-        AnimatedVisibility(expanded, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
-            exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
+        AnimatedVisibility(expanded, enter = expandVertically(relaySpatial(motion)) + fadeIn(relayEffects(motion)),
+            exit = shrinkVertically(relaySpatial(motion)) + fadeOut(relayEffects(motion))) {
             Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
         }
@@ -86,17 +91,32 @@ internal val settingsFilePages = listOf(
 
 @Composable
 fun SettingsMenuRow(title: Int, summary: String, icon: Int, error: Boolean = false, action: () -> Unit) {
+    val hue = when (title) {
+        R.string.audio_title -> IconHue.BLUETOOTH
+        R.string.ui_network -> IconHue.NETWORK
+        R.string.ui_output, R.string.car_and_screen, R.string.ui_carlink -> IconHue.CAR
+        R.string.ui_iphone_connection -> IconHue.IPHONE
+        R.string.menu_identity -> IconHue.IDENTITY
+        R.string.settings_startup -> IconHue.PERMISSIONS
+        R.string.picture_title, R.string.menu_video -> IconHue.PICTURE
+        R.string.logs_title, R.string.config_title -> IconHue.LOGS
+        else -> IconHue.DEVELOPER
+    }
     val errorLabel = stringResource(R.string.settings_advanced_error)
-    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(role = Role.Button, onClick = action).padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) { Symbol(icon, null) }
-        Column(Modifier.weight(1f).padding(end = 8.dp)) {
-            Text(stringResource(title), style = MaterialTheme.typography.bodyLarge)
-            Text(summary, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+    InsetGroup {
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(role = Role.Button, onClick = action).padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IconTile(icon, hue)
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(title), style = RelayTokens.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(summary, maxLines = 1, overflow = TextOverflow.Ellipsis, style = RelayTokens.footnote,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (error) CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.error) {
+                Symbol(R.drawable.symbol_error, errorLabel)
+            }
+            Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
         }
-        if (error) Symbol(R.drawable.symbol_error, errorLabel)
-        Symbol(R.drawable.symbol_chevron, null)
     }
 }
 

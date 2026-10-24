@@ -60,6 +60,7 @@ fun relayRouteParents(route: String): List<String> = when (route.substringBefore
     "settings/connection/network" -> listOf("settings", "settings/connection")
     "settings/access/publicName" -> listOf("settings", "settings/access")
     "developer", "experimental" -> listOf("settings")
+    "developer/design" -> listOf("settings", "developer")
     else -> when {
         route.startsWith("developer/") -> listOf("settings", "developer")
         route.startsWith("settings/") -> listOf("settings")

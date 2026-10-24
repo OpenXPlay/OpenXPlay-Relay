@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: Lucide Icons and Contributors
+ SPDX-License-Identifier: ISC
+ Converted for OpenXPlay Relay by OpenXPlay.org.
+ Lucide icon "smartphone", Lucide Icons and Contributors, ISC; see NOTICE. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M 7,2 H 17 A 2,2 0 0,1 19,4 V 20 A 2,2 0 0,1 17,22 H 7 A 2,2 0 0,1 5,20 V 4 A 2,2 0 0,1 7,2 Z" android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    <path android:pathData="M12 18h.01" android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+</vector>

@@ -1,0 +1,94 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-24
+package org.openxplay.direlay.ui.design
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.platform.LocalView
+import org.openxplay.direlay.ui.LocalRelayMotion
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import org.openxplay.direlay.R
+import org.openxplay.direlay.path.*
+import java.text.DateFormat
+import java.util.Date
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable fun RelaySheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val body: @Composable ColumnScope.() -> Unit = {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+        }
+    }
+    if (!LocalRelayMotion.current) {
+        // ModalBottomSheet's entrance animation has no public animation spec in Material 3 1.4.0.
+        Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+            SideEffect { window?.setWindowAnimations(0) }
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = .32f)),
+                contentAlignment = Alignment.BottomCenter) {
+                Box(Modifier.matchParentSize().clickable(onClick = onDismiss))
+                Surface(Modifier.fillMaxWidth().statusBarsPadding().navigationBarsPadding(),
+                    shape = RelayTokens.sheet, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                    Column { BottomSheetDefaults.DragHandle(Modifier.align(Alignment.CenterHorizontally)); body() }
+                }
+            }
+        }
+        return
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RelayTokens.sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        dragHandle = { BottomSheetDefaults.DragHandle() }) {
+        body()
+    }
+}
+
+@Composable fun StepSheet(step: PathStep, onAction: (StepAction) -> Unit, onRecheck: () -> Unit, onDismiss: () -> Unit = {}) {
+    var visible by remember(step.id) { mutableStateOf(true) }
+    if (!visible) return
+    RelaySheet({ visible = false; onDismiss() }) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StatusGlyph(step.state, 40.dp)
+            IconTile(stepIcon(step.id), stepHue(step.id))
+            Text(stringResource(step.title), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        step.detail?.let { Text(stepText(it), style = RelayTokens.body) }
+        step.explanation?.let { Text(stringResource(it), style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        step.evidence?.let { EvidenceRow(stepText(it)) }
+        step.code?.let { EvidenceRow(it) }
+        step.sinceMillis?.let {
+            val time = remember(it) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(it)) }
+            Text(time, style = RelayTokens.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (step.trail.isNotEmpty()) {
+            Text(stringResource(R.string.design_trail), Modifier.semantics { heading() }, style = RelayTokens.headline)
+            SelectionContainer { Column(Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+                step.trail.forEach { Text(it, style = RelayTokens.mono) }
+            } }
+            EvidenceRow(step.trail.joinToString("\n"))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            step.action?.let { action -> Button({ onAction(action) }, Modifier.weight(1f).heightIn(min = 48.dp), shape = RelayTokens.pill) {
+                Text(stringResource(step.actionLabel ?: R.string.design_open), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } }
+            TextButton(onRecheck, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_check_again)) }
+        }
+    }
+}

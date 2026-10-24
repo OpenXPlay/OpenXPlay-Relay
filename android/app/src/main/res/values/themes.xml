@@ -2,17 +2,19 @@
      SPDX-License-Identifier: AGPL-3.0-only
      Created by riko chen on 2026-10-14 -->
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.DiRelay" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.DiRelay" parent="Theme.Relay.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#54E8A0</item>
+        <item name="android:colorAccent">@color/design_window_accent</item>
         <!-- A resource reference: Android 9 and older ignore a literal colour here. -->
-        <item name="android:windowBackground">@color/direlay_window_background</item>
-        <item name="android:statusBarColor">#080808</item>
-        <item name="android:navigationBarColor">#080808</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
-        <!-- Without these, API 31+ shows a white splash before the dark Home screen. -->
-        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#080808</item>
+        <item name="android:windowBackground">@color/design_window_background</item>
+        <item name="android:statusBarColor">@color/design_window_background</item>
+        <item name="android:navigationBarColor">@color/design_window_background</item>
+        <item name="android:windowLightStatusBar">@bool/design_light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/design_light_system_bars</item>
+        <!-- Match the system appearance before Compose draws its first frame. -->
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/design_window_background</item>
         <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/splash_mark</item>
         <item name="android:windowSplashScreenAnimationDuration" tools:targetApi="31">600</item>
     </style>
