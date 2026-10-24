@@ -59,7 +59,7 @@ import org.openxplay.direlay.R
     // The settings action stays visible when collapsed, as before details existed.
     val settingsAction: @Composable () -> Unit = {
         problem.action?.let { action ->
-            TextButton(onClick = { NetworkSettingsLauncher(context).open(action == NetworkRequirement.HOTSPOT) },
+            TextButton(onClick = { NetworkSettingsLauncher(context).open(action) },
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(action.settingsLabel())) }
         }
     }

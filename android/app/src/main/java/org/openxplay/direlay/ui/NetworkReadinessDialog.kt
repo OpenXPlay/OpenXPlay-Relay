@@ -27,7 +27,7 @@ val LocalNetworkReadings = compositionLocalOf { NetworkReadings() }
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 pending.problems.forEach { problem ->
                     Text(stringResource(problem.problem()))
-                    TextButton(onClick = { opener.open(problem == NetworkRequirement.HOTSPOT) },
+                    TextButton(onClick = { opener.open(problem) },
                         modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(problem.settingsLabel())) }
                 }
             }

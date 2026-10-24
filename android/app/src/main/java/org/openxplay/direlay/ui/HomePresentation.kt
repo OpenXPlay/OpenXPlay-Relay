@@ -23,19 +23,27 @@ import org.openxplay.direlay.vehicle.vehicleTileState
 enum class StatusTone { IDLE, PROGRESS, ATTENTION, RUNNING, ERROR }
 enum class SetupAction { PERMISSIONS, IDENTITY, IPHONE, SETTINGS, SHARED_WIFI, CHOOSE_IPHONE }
 internal fun NetworkRequirement.reminder() = when (this) {
+    NetworkRequirement.SHARED_WIFI -> R.string.shared_wifi_unreadable
+    NetworkRequirement.BLUETOOTH -> R.string.network_bluetooth_reminder
     NetworkRequirement.WIFI -> R.string.network_wifi_reminder
     NetworkRequirement.HOTSPOT -> R.string.network_hotspot_reminder
 }
 internal fun NetworkRequirement.problem() = when (this) {
+    NetworkRequirement.SHARED_WIFI -> R.string.shared_wifi_not_saved
+    NetworkRequirement.BLUETOOTH -> R.string.network_bluetooth_problem
     NetworkRequirement.WIFI -> R.string.network_wifi_problem
     NetworkRequirement.HOTSPOT -> R.string.network_hotspot_problem
 }
 internal fun NetworkRequirement.settingsLabel() = when (this) {
+    NetworkRequirement.SHARED_WIFI -> R.string.network_open_wifi
+    NetworkRequirement.BLUETOOTH -> R.string.network_open_bluetooth
     NetworkRequirement.WIFI -> R.string.network_open_wifi
     NetworkRequirement.HOTSPOT -> R.string.network_open_hotspot
 }
 internal fun networkChoiceReminder(requirement: NetworkRequirement, readings: NetworkReadings): Int? =
     requirement.reminder().takeIf { when (requirement) {
+        NetworkRequirement.SHARED_WIFI -> false
+        NetworkRequirement.BLUETOOTH -> readings.bluetooth == null
         NetworkRequirement.WIFI -> readings.wifi == null
         NetworkRequirement.HOTSPOT -> readings.hotspot == null
     } }
@@ -80,7 +88,11 @@ fun vehicleSummary(value: VehicleView, label: (Int, List<String>) -> String): St
 
 fun carlinkStateLabel(state: String, failed: Boolean, awaitingPin: Boolean): Int = when {
     awaitingPin -> R.string.ui_waiting_code
-    state in setOf("ACTIVE", "CONNECTED", "STREAMING", "PLAYING") -> R.string.ui_connected
+    state == "PLAYING" -> R.string.ui_connected
+    state == "Blocked" -> R.string.carlink_wifi_direct_constraint
+    state in setOf("AUTHENTICATING", "NEGOTIATING") -> R.string.ui_connecting
+    state == "Disabled" -> R.string.vehicle_off_value
+    state == "Waiting for permissions" -> R.string.direlay_permissions_title
     state == "Requires Android 10+" -> R.string.ui_carlink_unsupported
     failed || state == "ENDED" -> R.string.ui_carlink_failed
     else -> R.string.ui_searching

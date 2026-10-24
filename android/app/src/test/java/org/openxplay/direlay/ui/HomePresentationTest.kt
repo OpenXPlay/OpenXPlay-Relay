@@ -69,8 +69,14 @@ class HomePresentationTest {
     }
 
     @Test fun carlinkStateLabelsMatchTheHomeStatesForTheRunningPage() {
-        for (state in listOf("ACTIVE", "CONNECTED", "STREAMING", "PLAYING"))
-            assertEquals(R.string.ui_connected, carlinkStateLabel(state, false, false))
+        assertEquals(R.string.ui_connected, carlinkStateLabel("PLAYING", false, false))
+        for (state in listOf("ACTIVE", "CONNECTED", "STREAMING", "CONNECTING"))
+            assertEquals(R.string.ui_searching, carlinkStateLabel(state, false, false))
+        for (state in listOf("AUTHENTICATING", "NEGOTIATING"))
+            assertEquals(R.string.ui_connecting, carlinkStateLabel(state, false, false))
+        assertEquals(R.string.carlink_wifi_direct_constraint, carlinkStateLabel("Blocked", true, false))
+        assertEquals(R.string.vehicle_off_value, carlinkStateLabel("Disabled", false, false))
+        assertEquals(R.string.direlay_permissions_title, carlinkStateLabel("Waiting for permissions", false, false))
         assertEquals(R.string.ui_waiting_code, carlinkStateLabel("ACTIVE", false, true))
         assertEquals(R.string.ui_carlink_unsupported, carlinkStateLabel("Requires Android 10+", true, false))
         assertEquals(R.string.ui_carlink_failed, carlinkStateLabel("ENDED", false, false))

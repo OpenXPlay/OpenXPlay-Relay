@@ -10,7 +10,7 @@ import org.openxplay.stream.core.SessionPhase
 enum class CarPlayStage { NONE, WAITING, BLUETOOTH, BLUETOOTH_CONNECTED, USB_CONNECTED, SESSION, INTERRUPTED }
 
 /** Each input replaces the stage; callbacks and readers may use different threads. */
-class CarPlayStageTracker : CarPlayEventObserver {
+class CarPlayStageTracker(private val wireless: () -> Boolean = { false }) : CarPlayEventObserver {
     @Volatile var stage = CarPlayStage.NONE
         private set
 
@@ -29,7 +29,8 @@ class CarPlayStageTracker : CarPlayEventObserver {
             CarPlayStatus.RequestingIphonePermission, CarPlayStatus.WaitingForReenumeration,
             CarPlayStatus.SelectingConfiguration, CarPlayStatus.OpeningDataPaths,
             CarPlayStatus.Pairing, CarPlayStatus.ConnectingControl,
-            CarPlayStatus.AttachingNetwork, CarPlayStatus.RunningControl -> CarPlayStage.USB_CONNECTED
+            CarPlayStatus.RunningControl -> CarPlayStage.USB_CONNECTED
+            CarPlayStatus.AttachingNetwork -> if (wireless()) CarPlayStage.WAITING else CarPlayStage.USB_CONNECTED
             CarPlayStatus.ControlEnded -> CarPlayStage.INTERRUPTED
             is CarPlayStatus.Failed -> return
         }
