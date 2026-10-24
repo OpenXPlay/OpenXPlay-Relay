@@ -9,6 +9,7 @@ import org.junit.Test
 import org.openxplay.direlay.R
 import org.openxplay.direlay.bluetooth.BondedDevice
 import org.openxplay.direlay.bluetooth.IphoneSelection
+import org.openxplay.direlay.path.*
 import org.openxplay.direlay.settings.*
 
 class SetupPresentationTest {
@@ -142,6 +143,34 @@ class SetupPresentationTest {
     @Test fun compactButtonsApplyOnlyBelow480Dp() {
         assertTrue(compactSetup(320)); assertTrue(compactSetup(479))
         assertFalse(compactSetup(480)); assertFalse(compactSetup(800))
+    }
+
+    @Test fun preparationKeepsEveryRelayStepAndOnlyThePairingPrerequisite() {
+        val path = presentPath(PathInput(relay = RelayInput(keepAlive = KeepAliveState.REFUSED)))
+        val sections = setupPrepareSections(path)
+        assertEquals(listOf(PathSection.RELAY, PathSection.IPHONE), sections.map { it.section })
+        assertSame(path.section(PathSection.RELAY), sections.first())
+        val paired = path.steps.single { it.id == StepId.IPHONE_PAIRED }
+        assertEquals(listOf(paired), sections.last().steps)
+        assertEquals(StepAction.PAIR_IPHONE, sections.last().steps.single().action)
+    }
+
+    @Test fun usbPreparationKeepsItsLiveRoleAndFailure() {
+        for (role in UsbRole.entries) {
+            val path = presentPath(PathInput(setup = SetupInput(network = NetworkPlan.USB), iphone = IphoneInput(usb = role)))
+            val sections = setupPrepareSections(path)
+            assertEquals(listOf(PathSection.RELAY, PathSection.IPHONE), sections.map { it.section })
+            assertEquals(listOf(path.steps.single { it.id == StepId.USB_HOST }), sections.last().steps)
+        }
+    }
+
+    @Test fun preparationOmitsEmptyOrMissingSections() {
+        assertTrue(setupPrepareSections(ConnectionPath()).isEmpty())
+        val path = ConnectionPath(sections = listOf(PathSectionView(PathSection.RELAY, emptyList()),
+            PathSectionView(PathSection.IPHONE, listOf(PathStep(StepId.SESSION, StepState.WORKING, R.string.path_session)))))
+        assertTrue(setupPrepareSections(path).isEmpty())
+        val relay = PathSectionView(PathSection.RELAY, listOf(PathStep(StepId.MODE, StepState.OK, R.string.path_mode)))
+        assertEquals(listOf(relay), setupPrepareSections(ConnectionPath(sections = listOf(relay))))
     }
 
 }

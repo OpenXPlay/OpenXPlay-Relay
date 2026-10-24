@@ -31,6 +31,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.bluetooth.BondedDevice
 import org.openxplay.direlay.bluetooth.BondedDevices
 import org.openxplay.direlay.bluetooth.IphoneSelection
+import org.openxplay.direlay.ui.design.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun IphonePickerSetting(choice: String?, source: BondedDevices, initiallyOpen: Boolean,
@@ -73,8 +74,8 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
             Text(value, Modifier.widthIn(max = 160.dp), style = MaterialTheme.typography.bodyMedium)
             Symbol(R.drawable.symbol_chevron, null)
         })
-    if (visible) ModalBottomSheet(onDismissRequest = { visible = false }) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).padding(horizontal = 16.dp)) {
+    if (visible) RelaySheet(onDismiss = { visible = false }) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
             Heading(stringResource(R.string.iphone_choose))
             LazyColumn(Modifier.weight(1f, fill = false).selectableGroup()) {
                 item {
@@ -96,7 +97,7 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
                     }
                 }
             }
-            HorizontalDivider()
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.iphone_pair_new)) }
             Text(stringResource(R.string.iphone_pair_hint, localName ?: stringResource(R.string.direlay_this_device)),
@@ -112,10 +113,10 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
     Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}
         .selectable(selected, role = Role.RadioButton, onClick = select).padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Symbol(icon, null)
+        IconTile(icon, IconHue.IPHONE)
         Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-            Text(name, style = MaterialTheme.typography.bodyLarge)
-            if (labels.isNotEmpty()) Text(labels.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+            Text(name, style = RelayTokens.body)
+            if (labels.isNotEmpty()) Text(labels.joinToString(" · "), style = RelayTokens.footnote,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         RadioButton(selected, onClick = null)

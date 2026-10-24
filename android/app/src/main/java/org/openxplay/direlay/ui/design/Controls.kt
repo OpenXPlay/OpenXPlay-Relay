@@ -31,7 +31,9 @@ import org.openxplay.direlay.path.PathTone
 import org.openxplay.direlay.ui.LocalRelayMotion
 import org.openxplay.direlay.ui.Symbol
 
-@Composable fun PrimaryPill(running: Boolean, enabled: Boolean, label: String, onClick: () -> Unit) {
+/** [icon]: null shows the label alone (e.g. "Next"); the default is the start/stop symbol. */
+@Composable fun PrimaryPill(running: Boolean, enabled: Boolean, label: String, onClick: () -> Unit,
+    icon: Int? = if (running) R.drawable.symbol_square else R.drawable.symbol_power) {
     val motion = LocalRelayMotion.current
     val colors = LocalStatusColors.current
     val color by animateColorAsState(if (running) colors.action else colors.ok, relayEffects(motion), label = "primary color")
@@ -46,8 +48,10 @@ import org.openxplay.direlay.ui.Symbol
             modifier = Modifier.fillMaxWidth(width).height(56.dp).graphicsLayer { scaleX = scale; scaleY = scale },
             colors = ButtonDefaults.buttonColors(containerColor = color,
                 contentColor = if (running && LocalRelayDark.current) RelayTokens.darkScheme.onPrimary else MaterialTheme.colorScheme.onPrimary)) {
-            Symbol(if (running) R.drawable.symbol_square else R.drawable.symbol_power, null, Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
+            if (icon != null) {
+                Symbol(icon, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+            }
             Text(label, style = RelayTokens.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
