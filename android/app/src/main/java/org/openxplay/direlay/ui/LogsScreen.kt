@@ -4,6 +4,7 @@
 package org.openxplay.direlay.ui
 
 import android.graphics.Bitmap
+import android.os.SystemClock
 import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,13 +26,17 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
@@ -40,7 +45,7 @@ import java.io.File
 import java.time.Instant
 import java.util.Date
 
-private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT }
+private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR, QR, RESULT }
 
 @Composable fun LogsScreen(files: LogFiles, uploader: LogUploader) {
     val context = LocalContext.current
@@ -56,17 +61,24 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
     var receipt by remember(uploader) { mutableStateOf(uploader.latestReceipt()) }
     var qr by remember { mutableStateOf<ImageBitmap?>(null) }
     var copied by remember { mutableStateOf(false) }
+    var uploadProgress by remember { mutableStateOf<LogUploadProgress>(LogUploadProgress.Connecting) }
     fun result(text: String, back: Boolean = false) { message = text; uploadError = back; step = LogsStep.RESULT }
     suspend fun showReceipt(uploaded: UploadResult) {
+        step = LogsStep.PREPARE_QR
         receipt = uploaded
-        qr = withContext(Dispatchers.Default) {
-            val matrix = LogQrCode.matrix(uploaded.link)
-            val pixels = IntArray(matrix.width * matrix.height) { index ->
-                if (matrix[index % matrix.width, index / matrix.width]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+        qr = null
+        copied = false
+        try {
+            qr = withContext(Dispatchers.Default) {
+                val matrix = LogQrCode.matrix(uploaded.link)
+                val pixels = IntArray(matrix.width * matrix.height) { index ->
+                    if (matrix[index % matrix.width, index / matrix.width]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+                }
+                Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888).asImageBitmap()
             }
-            Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888).asImageBitmap()
-        }
-        copied = false; step = LogsStep.QR
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { /* The confirmed receipt remains usable without its QR image. */ }
+        step = LogsStep.QR
     }
     val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         val archive = file
@@ -87,6 +99,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
             }
             receipt?.let { latest ->
                 TextButton(enabled = step == null, onClick = {
+                    step = LogsStep.PREPARE_QR
                     job = scope.launch { showReceipt(latest) }
                 }) { Text(stringResource(R.string.logs_latest_receipt)) }
             }
@@ -115,19 +128,36 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
                 }
             }) { Text(stringResource(R.string.logs_export_confirm)) } },
             dismissButton = { TextButton(onClick = { step = null }) { Text(stringResource(android.R.string.cancel)) } })
-        LogsStep.COMPRESS, LogsStep.UPLOAD, LogsStep.SAVE -> {
+        LogsStep.COMPRESS, LogsStep.UPLOAD, LogsStep.SAVE, LogsStep.PREPARE_QR -> key(step) {
             val title = when (step) {
                 LogsStep.COMPRESS -> R.string.logs_compressing
-                LogsStep.UPLOAD -> R.string.logs_uploading
+                LogsStep.UPLOAD -> when (uploadProgress) {
+                    LogUploadProgress.Connecting -> R.string.logs_connecting
+                    LogUploadProgress.AwaitingReceipt -> R.string.logs_confirming
+                    is LogUploadProgress.Sending -> R.string.logs_uploading
+                }
+                LogsStep.PREPARE_QR -> R.string.logs_preparing_receipt
                 else -> R.string.logs_saving
             }
-            AlertDialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-                title = { Text(stringResource(title)) },
-                text = { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
-                confirmButton = { TextButton(onClick = {
+            val detail = when (step) {
+                LogsStep.COMPRESS -> R.string.logs_compressing_detail
+                LogsStep.UPLOAD -> when (uploadProgress) {
+                    LogUploadProgress.Connecting -> R.string.logs_connecting_detail
+                    LogUploadProgress.AwaitingReceipt -> R.string.logs_confirming_detail
+                    is LogUploadProgress.Sending -> R.string.logs_sending_detail
+                }
+                LogsStep.PREPARE_QR -> R.string.logs_preparing_receipt_detail
+                else -> R.string.logs_saving_detail
+            }
+            LogsProgressDialog(title, detail, if (step == LogsStep.UPLOAD) uploadProgress as? LogUploadProgress.Sending else null,
+                waitingForUpload = step == LogsStep.UPLOAD, onCancel = {
                     job?.cancel()
-                    step = if (step == LogsStep.UPLOAD || step == LogsStep.SAVE) LogsStep.READY else null
-                }) { Text(stringResource(android.R.string.cancel)) } })
+                    when (step) {
+                        LogsStep.UPLOAD -> result(resources.getString(R.string.logs_upload_cancelled), back = true)
+                        LogsStep.SAVE -> step = LogsStep.READY
+                        else -> step = null
+                    }
+                })
         }
         LogsStep.READY -> file?.let { archive ->
             AlertDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_ready)) },
@@ -139,12 +169,18 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
                 confirmButton = { Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
                     TextButton(onClick = { create.launch(archive.name) }) { Text(stringResource(R.string.logs_save)) }
                     TextButton(onClick = {
+                        uploadProgress = LogUploadProgress.Connecting
                         step = LogsStep.UPLOAD
                         job = scope.launch {
                             try {
-                                val uploaded = uploader.upload(archive, archive.name)
+                                val uploaded = uploader.upload(archive, archive.name) { progress ->
+                                    withContext(Dispatchers.Main.immediate) { uploadProgress = progress }
+                                }
                                 showReceipt(uploaded)
-                            } catch (cancelled: CancellationException) { throw cancelled }
+                            } catch (cancelled: CancellationException) {
+                                receipt = uploader.latestReceipt() ?: receipt
+                                throw cancelled
+                            }
                             catch (failure: Exception) {
                                 val uploadFailure = failure as? LogUploadFailure
                                 val text = when (uploadFailure?.reason) {
@@ -166,6 +202,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 qr?.let { Image(it, stringResource(R.string.logs_qr_description), Modifier.size(240.dp), filterQuality = FilterQuality.None) }
+                    ?: Text(stringResource(R.string.logs_qr_unavailable))
                 Text(stringResource(R.string.logs_scan))
                 receipt?.let { uploaded ->
                     SelectionContainer { Text(stringResource(R.string.logs_receipt_id, uploaded.id)) }
@@ -185,6 +222,36 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
             dismissButton = if (uploadError) ({ TextButton(onClick = { step = LogsStep.READY }) { Text(stringResource(R.string.ui_back)) } }) else null)
         null -> Unit
     }
+}
+
+@Composable private fun LogsProgressDialog(title: Int, detail: Int, transfer: LogUploadProgress.Sending?,
+    waitingForUpload: Boolean, onCancel: () -> Unit) {
+    val context = LocalContext.current
+    val started = remember { SystemClock.elapsedRealtime() }
+    var elapsed by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            elapsed = (SystemClock.elapsedRealtime() - started) / 1000
+        }
+    }
+    AlertDialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        title = { Text(stringResource(title), Modifier.semantics { liveRegion = LiveRegionMode.Polite }) },
+        text = { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (transfer != null) {
+                val fraction = (transfer.bytesSent.toFloat() / transfer.totalBytes).coerceIn(0f, 1f)
+                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+                Text(stringResource(R.string.logs_bytes_sent, (transfer.bytesSent * 100 / transfer.totalBytes).toInt(),
+                    Formatter.formatFileSize(context, transfer.bytesSent), Formatter.formatFileSize(context, transfer.totalBytes)))
+            } else {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            }
+            Text(stringResource(detail))
+            Text(stringResource(R.string.logs_elapsed, elapsed / 60, elapsed % 60),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (waitingForUpload && elapsed >= 15) Text(stringResource(R.string.logs_upload_wait), style = MaterialTheme.typography.bodySmall)
+        } },
+        confirmButton = { TextButton(onClick = onCancel) { Text(stringResource(android.R.string.cancel)) } })
 }
 
 fun logRangeTitle(range: LogRange) = when (range) {
