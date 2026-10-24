@@ -346,7 +346,13 @@ fn a_failed_switch_is_retried_and_a_lasting_failure_logged_once() {
         ..Default::default()
     });
     h.policy.start(None).unwrap();
-    wait("retries", || h.policy.enabled() == Some(true));
+    // The worker updates enabled before emitting the success log; wait for both to finish.
+    wait("retry logged", || {
+        h.logs()
+            .iter()
+            .any(|line| line == "bluetooth-sc on reason=startup")
+    });
+    assert_eq!(h.policy.enabled(), Some(true));
     assert_eq!(h.sequence(), ["sc on", "sc on", "sc on"]);
     assert_eq!(
         h.logs(),
