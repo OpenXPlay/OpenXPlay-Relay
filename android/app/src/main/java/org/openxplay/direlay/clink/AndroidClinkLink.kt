@@ -576,6 +576,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         return await(run, result, 7)
     }
     private fun joinSpecifier(run: Run, reply: HeadUnitReply): Pair<String, String> {
+        primeScanCache(run, reply.ssid)
         val result = CompletableFuture<Pair<String, String>>()
         main {
             check(!run.cancelled)
@@ -626,6 +627,31 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             manager.requestNetwork(request, callback, handler, 12000)
         }
         return await(run, result, 13)
+    }
+
+    /**
+     * Xiaomi on Android 10/11 raises a WifiNetworkSpecifier confirmation dialog whose window has no
+     * input channel, so it can never be answered and the request expires unfulfilled. When the
+     * target SSID already sits in the scan cache the framework matches silently instead. Ask for a
+     * fresh scan and wait a bounded moment so the request can match without the dialog.
+     *
+     * Gated to the combination observed failing: other vendors match silently on their own, and
+     * HyperOS ships Android 14+, where the framework handles the match itself.
+     */
+    @Suppress("DEPRECATION")
+    private fun primeScanCache(run: Run, ssid: String) {
+        if (!Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true) || Build.VERSION.SDK_INT > 30) return
+        val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return
+        if (!wifi.isWifiEnabled) return
+        val deadline = System.currentTimeMillis() + 2_500
+        while (!run.cancelled) {
+            // A null list means the location permission is missing; waiting would only add delay.
+            val results = wifi.scanResults ?: return
+            if (results.any { it.SSID == ssid }) return
+            wifi.startScan()
+            if (System.currentTimeMillis() >= deadline) return
+            try { Thread.sleep(350) } catch (_: InterruptedException) { return }
+        }
     }
     private fun lost(run: Run) {
         if (run.cancelled) return
