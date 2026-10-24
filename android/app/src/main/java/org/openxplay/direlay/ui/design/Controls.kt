@@ -32,8 +32,8 @@ import org.openxplay.direlay.ui.LocalRelayMotion
 import org.openxplay.direlay.ui.Symbol
 
 /** [icon]: null shows the label alone (e.g. "Next"); the default is the start/stop symbol. */
-@Composable fun PrimaryPill(running: Boolean, enabled: Boolean, label: String, onClick: () -> Unit,
-    icon: Int? = if (running) R.drawable.symbol_square else R.drawable.symbol_power) {
+@Composable fun PrimaryPill(running: Boolean, enabled: Boolean, label: String,
+    icon: Int? = if (running) R.drawable.symbol_square else R.drawable.symbol_power, onClick: () -> Unit) {
     val motion = LocalRelayMotion.current
     val colors = LocalStatusColors.current
     val color by animateColorAsState(if (running) colors.action else colors.ok, relayEffects(motion), label = "primary color")

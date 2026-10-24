@@ -78,10 +78,10 @@ import org.openxplay.direlay.ui.LocalRelayMotion
                         actionLabel = R.string.design_open)
                     FocusCard(step, action, recheck, { sheetStep = step })
                 }
-                PrimaryPill(false, true, stringResource(R.string.design_connect), recheck)
-                PrimaryPill(true, true, stringResource(R.string.design_stop), recheck)
-                PrimaryPill(false, false, stringResource(R.string.design_connect), recheck)
-                PrimaryPill(true, false, stringResource(R.string.design_stop), recheck)
+                PrimaryPill(false, true, stringResource(R.string.design_connect), onClick = recheck)
+                PrimaryPill(true, true, stringResource(R.string.design_stop), onClick = recheck)
+                PrimaryPill(false, false, stringResource(R.string.design_connect), onClick = recheck)
+                PrimaryPill(true, false, stringResource(R.string.design_stop), onClick = recheck)
                 InsetGroup(stringResource(R.string.design_lists), stringResource(R.string.design_gallery_hint)) {
                     InsetRow(R.drawable.symbol_bluetooth, IconHue.BLUETOOTH, stringResource(R.string.design_step_bluetooth), "Redmi 14C", recheck)
                     InsetDivider()
@@ -143,5 +143,5 @@ import org.openxplay.direlay.ui.LocalRelayMotion
         PathSectionCard(section, expanded, { expanded = it }, showStep, action, focusedStep = path.focus?.id)
     }
     DiagnosticLine(path.diagnostic, copy)
-    PrimaryPill(path.running, true, stringResource(if (path.running) R.string.design_stop else R.string.design_connect), recheck)
+    PrimaryPill(path.running, true, stringResource(if (path.running) R.string.design_stop else R.string.design_connect), onClick = recheck)
 }

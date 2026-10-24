@@ -195,7 +195,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                             }, onNewSetup = { open("setup") }) { onLater(); entries = listOf("home") }
                             route.startsWith("setup") -> SetupScreen(initial, store::wireless, value,
                                 setupStep(route.substringAfter(':', "")), runtime.bondedDevices, { runtime.sharedWifiSelection.use(it) },
-                                { _, after -> persist(after) != null }, onSetup, ::back) { changed ->
+                                { _, after -> persist(after) != null }, onSetup, ::back, onStepAction = ::stepAction) { changed ->
                                 completeSetup()
                                 entries = listOf("home")
                                 if (!value.presentation.running) onStartStop() else if (changed) onRestart()
