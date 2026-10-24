@@ -26,6 +26,10 @@ internal fun elapsedSeconds(sinceMillis: Long?, nowMillis: Long): Long =
 
 internal fun sessionTime(seconds: Long): String = "%02d:%02d".format(java.util.Locale.ROOT, seconds.coerceAtLeast(0) / 60, seconds.coerceAtLeast(0) % 60)
 
+internal fun evidenceUsesMonospace(text: String): Boolean = text.none {
+    it in '\u2E80'..'\u9FFF' || it in '\u3000'..'\u303F' || it in '\uF900'..'\uFAFF' || it in '\uFF00'..'\uFFEF'
+}
+
 @Composable internal fun rememberElapsedSeconds(sinceMillis: Long?): Long {
     val seconds by produceState(elapsedSeconds(sinceMillis, System.currentTimeMillis()), sinceMillis) {
         if (sinceMillis != null) while (true) {
@@ -64,7 +68,8 @@ internal fun sessionTime(seconds: Long): String = "%02d:%02d".format(java.util.L
                     if (step.state == StepState.WORKING || step.state == StepState.WAITING) ElapsedTime(step.sinceMillis)
                 }
             }
-            if (evidence != null) Text(evidence, Modifier.widthIn(max = evidenceWidth), style = RelayTokens.mono,
+            if (evidence != null) Text(evidence, Modifier.widthIn(max = evidenceWidth),
+                style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (step.action != null) FilledTonalButton(onClick = { onAction(step.action) },
                 modifier = Modifier.widthIn(max = actionWidth).heightIn(min = 48.dp), shape = RelayTokens.pill,

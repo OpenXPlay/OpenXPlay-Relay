@@ -8,7 +8,6 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -20,7 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -109,6 +107,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val view = LocalView.current
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var expanded by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var fullyExpanded by rememberSaveable { mutableStateOf(listOf<String>()) }
     var stateKeys by rememberSaveable { mutableStateOf(listOf<String>()) }
     var pulsed by remember { mutableStateOf<StepId?>(null) }
     var pulse by remember { mutableIntStateOf(0) }
@@ -120,6 +119,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
         path.sections.forEachIndexed { index, section ->
             if (stateKeys.getOrNull(index) != keys[index]) {
                 expanded = expanded - section.section.name
+                fullyExpanded = fullyExpanded - section.section.name
                 if (expandPathSection(section, path.running)) expanded = expanded + section.section.name
             }
         }
@@ -130,6 +130,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
             val compact = homeWindow(maxWidth.value.toInt(), maxHeight.value.toInt()).inlineActions
             fun reveal(section: PathSection, step: PathStep? = null) {
                 expanded = (expanded + section.name).distinct()
+                if (step == null) fullyExpanded = (fullyExpanded + section.name).distinct()
                 if (step != null) {
                     pulsed = step.id; pulse++
                     view.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.REJECT
@@ -147,18 +148,17 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
             }
             val sections: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
                 path.sections.forEach { section -> item(section.section.name) {
-                    val previousDone = path.sections.takeWhile { it.section != section.section }.all { it.state == StepState.OK }
-                    Box(Modifier.alpha(if (!previousDone && section.state == StepState.BLOCKED) .6f else 1f)) {
-                        PathSectionCard(section, section.section.name in expanded, { open ->
-                            expanded = if (open) (expanded + section.section.name).distinct() else expanded - section.section.name
-                        }, { selected = it.id.name }, { action ->
-                            section.steps.firstOrNull { it.action == action }?.let { onStepAction(action, it) }
-                        }, focusedStep = pulsed ?: focusStep?.id, autoExpand = false, pulse = if (pulsed == null) 0 else pulse, onStepAction = onStepAction)
-                    }
+                    PathSectionCard(section, section.section.name in expanded, { open ->
+                        expanded = if (open) (expanded + section.section.name).distinct() else expanded - section.section.name
+                        fullyExpanded = if (open) (fullyExpanded + section.section.name).distinct() else fullyExpanded - section.section.name
+                    }, { selected = it.id.name }, { action ->
+                        section.steps.firstOrNull { it.action == action }?.let { onStepAction(action, it) }
+                    }, focusedStep = pulsed ?: focusStep?.id, autoExpand = false, pulse = if (pulsed == null) 0 else pulse,
+                        onStepAction = onStepAction, fullyExpanded = section.section.name in fullyExpanded)
                 } }
                 afterSections()
                 item("diagnostic") {
-                    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) { DiagnosticLine(path.diagnostic, onCopy) }
+                    DiagnosticLine(path.diagnostic, onCopy)
                 }
             }
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {

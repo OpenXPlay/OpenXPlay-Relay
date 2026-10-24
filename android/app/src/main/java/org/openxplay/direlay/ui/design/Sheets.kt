@@ -83,7 +83,7 @@ import java.util.Date
         if (trail.isNotEmpty()) {
             Text(stringResource(R.string.design_trail), Modifier.semantics { heading() }, style = RelayTokens.headline)
             SelectionContainer { Column(Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
-                trail.forEach { Text(it, style = RelayTokens.mono) }
+                trail.forEach { Text(it, style = if (evidenceUsesMonospace(it)) RelayTokens.mono else RelayTokens.caption) }
             } }
             EvidenceRow(trail.joinToString("\n"))
         }

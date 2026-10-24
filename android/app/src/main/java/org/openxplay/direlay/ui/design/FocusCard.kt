@@ -56,7 +56,8 @@ import org.openxplay.direlay.ui.Symbol
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = context.getSystemService(ClipboardManager::class.java)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(value, Modifier.weight(1f), style = RelayTokens.mono, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(value, Modifier.weight(1f), style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
         IconButton({ clipboard.setPrimaryClip(ClipData.newPlainText(copied, value)); android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show() }) {
             Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy))
         }
@@ -80,7 +81,8 @@ import org.openxplay.direlay.ui.Symbol
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 live.chips.forEach { chip -> Surface(shape = RelayTokens.chip, color = LocalStatusColors.current.container(StepState.OK)) {
-                    Text(chip, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = RelayTokens.mono)
+                    Text(chip, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = if (evidenceUsesMonospace(chip)) RelayTokens.mono else RelayTokens.caption)
                 } }
             }
             path.nodes.car?.let { Text(it, style = RelayTokens.footnote, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -116,7 +118,8 @@ import org.openxplay.direlay.ui.Symbol
                         Text(value, Modifier.weight(1f).clickable {
                             context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(copied, value))
                             android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show()
-                        }, style = RelayTokens.mono, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }, style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     if (step.evidence == null) step.code?.let { Text(it, Modifier.weight(1f), style = RelayTokens.mono,
                         maxLines = 1, overflow = TextOverflow.Ellipsis) }
@@ -151,7 +154,9 @@ import org.openxplay.direlay.ui.Symbol
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(sessionTime(seconds), style = RelayTokens.mono)
                 }
-                Text(live.chips.joinToString(" · "), style = RelayTokens.mono, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val evidence = live.chips.joinToString(" · ")
+                Text(evidence, style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(path.nodes.car.orEmpty(), Modifier.weight(1f), style = RelayTokens.caption, maxLines = 1,
                         overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)

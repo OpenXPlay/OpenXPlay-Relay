@@ -50,7 +50,8 @@ const val LAUNCH_COUNTDOWN = 5
     }
     // Leaving the choice by Back means "not now", like the button, so automatic start does not run anyway.
     BackHandler(onBack = onLater)
-    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { TopAppBar(expandedHeight = if (compact) 52.dp else 64.dp, title = {
+    // Landscape has no room for the brand bar: the large title already says where the user is.
+    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { if (!compact) TopAppBar(expandedHeight = 64.dp, title = {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(40.dp))
             RelayBrand(Modifier.weight(1f))
@@ -77,18 +78,25 @@ const val LAUNCH_COUNTDOWN = 5
         }
     }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            val setUpAgain: @Composable (Modifier) -> Unit = { modifier ->
+                TextButton(onClick = onNewSetup, modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.setup2_set_up_again)) }
+            }
+            val later: @Composable (Modifier) -> Unit = { modifier ->
+                TextButton(onClick = onLater, modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.launch_later)) }
+            }
             val choices: @Composable () -> Unit = {
                 if (countdown) Hint(stringResource(R.string.launch_countdown, remaining))
-                TextButton(onClick = onNewSetup, Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.setup2_set_up_again))
-                }
-                TextButton(onClick = onLater, Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.launch_later))
-                }
+                setUpAgain(Modifier.fillMaxWidth())
+                later(Modifier.fillMaxWidth())
             }
-            // In landscape the choices sit under the title, so nothing needs scrolling.
+            // In landscape the choices sit side by side under the title, so nothing needs scrolling.
             SetupPage(compact, stringResource(R.string.setup2_launch_title), stringResource(R.string.setup2_launch_subtitle),
-                illustration = { if (compact) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { choices() } }) {
+                illustration = { if (compact) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (countdown) Hint(stringResource(R.string.launch_countdown, remaining))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        setUpAgain(Modifier.weight(1f)); later(Modifier.weight(1f))
+                    }
+                } }) {
                 InsetGroup(header = stringResource(R.string.launch_last_title),
                     footer = if (state.canStart) null else stringResource(R.string.launch_last_unready)) { ModeSummary(state.mode) }
                 if (!compact) choices()

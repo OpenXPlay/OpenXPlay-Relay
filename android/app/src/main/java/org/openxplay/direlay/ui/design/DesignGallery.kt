@@ -58,7 +58,7 @@ import org.openxplay.direlay.ui.LocalRelayMotion
                     StepState.entries.forEachIndexed { index, state ->
                         if (index > 0) InsetDivider()
                         val step = PathStep(StepId.HOTSPOT, state, R.string.design_step_hotspot,
-                            StepText.of(stateLabel(state)), StepText.raw("OpenXPlay-1A2B"),
+                            StepText.of(stateLabel(state)), if (state == StepState.OK) StepText.of(R.string.design_state_ok) else StepText.raw("OpenXPlay-1A2B"),
                             action = if (state == StepState.ACTION || state == StepState.FAILED) StepAction.OPEN_HOTSPOT else null,
                             actionLabel = R.string.design_open, sinceMillis = System.currentTimeMillis() - 12_000)
                         StepRow(step, { sheetStep = step }, action, focused = state == StepState.ACTION)
@@ -74,7 +74,8 @@ import org.openxplay.direlay.ui.LocalRelayMotion
                 })) }
                 StepState.entries.forEach { state ->
                     val step = PathStep(StepId.HOTSPOT, state, R.string.design_step_hotspot, StepText.of(stateLabel(state)),
-                        StepText.raw("OpenXPlay-1A2B · 5 GHz"), action = if (state == StepState.ACTION || state == StepState.FAILED) StepAction.OPEN_HOTSPOT else null,
+                        if (state == StepState.OK) StepText.of(R.string.design_state_ok) else StepText.raw("OpenXPlay-1A2B · 5 GHz"),
+                        action = if (state == StepState.ACTION || state == StepState.FAILED) StepAction.OPEN_HOTSPOT else null,
                         actionLabel = R.string.design_open)
                     FocusCard(step, action, recheck, { sheetStep = step })
                 }
@@ -139,8 +140,10 @@ import org.openxplay.direlay.ui.LocalRelayMotion
     path.live?.let { LiveCard(it, path, recheck) }
         ?: path.focus?.let { FocusCard(it, action, recheck, { showStep(it) }) }
     path.sections.forEach { section ->
-        var expanded by rememberSaveable(sample.title, section.section.name) { mutableStateOf(section.state != StepState.OK) }
-        PathSectionCard(section, expanded, { expanded = it }, showStep, action, focusedStep = path.focus?.id)
+        key(sample.title, section.section) {
+            var expanded by rememberSaveable { mutableStateOf(section.state != StepState.OK) }
+            PathSectionCard(section, expanded, { expanded = it }, showStep, action, focusedStep = path.focus?.id)
+        }
     }
     DiagnosticLine(path.diagnostic, copy)
     PrimaryPill(path.running, true, stringResource(if (path.running) R.string.design_stop else R.string.design_connect), onClick = recheck)

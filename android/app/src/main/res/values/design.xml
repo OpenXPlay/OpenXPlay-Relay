@@ -28,6 +28,7 @@
     <string name="design_section_car">Car</string>
     <string name="design_section_iphone">iPhone</string>
     <string name="design_section_picture">Picture</string>
+    <string name="design_done_count">%1$d done</string>
     <string name="design_armed_detail">Starts once the steps above are done</string>
     <string name="design_tap_connect">Tap Connect</string>
     <string name="design_after_carplay">After CarPlay starts</string>
