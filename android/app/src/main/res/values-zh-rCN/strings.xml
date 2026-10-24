@@ -657,9 +657,9 @@
 
     <!-- Network readiness and USB role guidance. -->
     <string name="network_readiness_title">启动前请检查</string>
-    <string name="network_wifi_reminder">Carlink 需要打开本机的 Wi-Fi。</string>
+    <string name="network_wifi_reminder">确认 Wi-Fi 已打开</string>
     <string name="network_hotspot_reminder">请先打开本机热点，再启动连接。</string>
-    <string name="network_wifi_problem">请打开本机的 Wi-Fi。Carlink 通过 Wi-Fi 连接车机，无需手动加入网络，热点也可以保持开启。</string>
+    <string name="network_wifi_problem">请打开 Wi-Fi</string>
     <string name="network_hotspot_problem">本机热点尚未开启。请打开热点，再重新启动连接。</string>
     <string name="network_open_wifi">打开 Wi-Fi 设置</string>
     <string name="network_open_hotspot">打开热点设置</string>
@@ -758,4 +758,7 @@
     <string name="experimental_send_address_hint">把你填写的地址发给车，代替自动生成的地址。可在手机的“关于手机”或“状态信息”页面找到。再在蓝牙设置里把本机和车配对，测试车是否会自己重连。</string>
     <string name="experimental_bluetooth_address">蓝牙地址</string>
     <string name="experimental_address_error">请输入有效的蓝牙地址：XX:XX:XX:XX:XX:XX。</string>
+    <string name="network_bluetooth_reminder">确认蓝牙已打开</string>
+    <string name="network_bluetooth_problem">请打开蓝牙</string>
+    <string name="network_open_bluetooth">打开蓝牙设置</string>
 </resources>

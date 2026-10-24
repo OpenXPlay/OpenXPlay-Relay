@@ -31,6 +31,7 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             runtime.carPlayDiagnostics,
             runtime.pluginContext.takeIf { runtime.settingsStore.snapshot.value?.plugins == true },
             stage = runtime.carPlayStage,
+            link = runtime.iphoneLink,
         ) else null
 
     private var networkTimeline: org.openxplay.direlay.logs.NetworkTimeline? = null

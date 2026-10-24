@@ -142,4 +142,15 @@ class SavedHeadUnitTest {
         assertEquals("built-in model", startupCarPlayScreen(settings(), null, store().load(), model())?.source)
         store().save(saved); assertEquals(saved, store().load())
     }
+    @Test fun rememberedScreensBelongToTheirCarConfiguration() {
+        val car = CarSelection("tesla", model = "model-y-2025")
+        val value = saved.copy(car = car)
+        store().save(value)
+        assertEquals(value, store().load())
+        assertEquals(value, savedHeadUnitForCar(store().load(), car))
+        assertNull(savedHeadUnitForCar(store().load(), CarSelection()))
+        assertNull(savedHeadUnitForCar(null, car))
+        assertNull(savedHeadUnitForCar(saved, car))
+        assertEquals(saved, savedHeadUnitForCar(saved, CarSelection()))
+    }
 }

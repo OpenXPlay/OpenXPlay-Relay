@@ -43,7 +43,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false, val currentWifi: String? = null, val iphoneName: String? = null,
     val networkReadings: NetworkReadings = NetworkReadings(), val networkStart: NetworkReadiness? = null,
     val teslaUrl: String? = null, val requestVpnOnStart: Boolean = false,
-    val wirelessDisplays: List<WirelessDisplayLine> = emptyList())
+    val wirelessDisplays: List<WirelessDisplayLine> = emptyList(),
+    val pathInput: org.openxplay.direlay.path.PathInput? = null)
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0

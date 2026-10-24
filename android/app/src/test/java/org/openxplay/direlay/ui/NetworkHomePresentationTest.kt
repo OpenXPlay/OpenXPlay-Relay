@@ -19,8 +19,12 @@ class NetworkHomePresentationTest {
     private val ready = HomeSnapshot(settings, wireless = false, permissionsReady = true, identityReady = true)
 
     @Test fun modeChoicesOnlyShowStaticRemindersForAnUnreadableRadio() {
-        for (wifi in listOf(true, false, null)) for (hotspot in listOf(true, false, null)) {
-            val readings = NetworkReadings(wifi, hotspot)
+        for (wifi in listOf(true, false, null)) for (hotspot in listOf(true, false, null)) for (bluetooth in listOf(true, false, null)) {
+            val readings = NetworkReadings(wifi, hotspot, bluetooth = bluetooth)
+            assertEquals(if (bluetooth == null) R.string.network_bluetooth_reminder else null,
+                networkChoiceReminder(NetworkRequirement.BLUETOOTH, readings))
+            assertEquals(R.string.network_bluetooth_problem, NetworkRequirement.BLUETOOTH.problem())
+            assertEquals(R.string.network_open_bluetooth, NetworkRequirement.BLUETOOTH.settingsLabel())
             assertEquals(if (wifi == null) R.string.network_wifi_reminder else null,
                 networkChoiceReminder(NetworkRequirement.WIFI, readings))
             assertEquals(if (hotspot == null) R.string.network_hotspot_reminder else null,

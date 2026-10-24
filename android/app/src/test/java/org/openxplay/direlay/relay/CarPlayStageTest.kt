@@ -143,4 +143,13 @@ class CarPlayStageTest {
             assertEquals(CarPlayStage.WAITING, tracker.stage)
         } finally { workers.shutdownNow() }
     }
+    @Test fun attachingNetworkUsesTheConfiguredTransport() {
+        var wireless = true
+        val tracker = CarPlayStageTracker { wireless }
+        tracker.onStatus(CarPlayStatus.AttachingNetwork)
+        assertEquals(CarPlayStage.WAITING, tracker.stage)
+        wireless = false
+        tracker.onStatus(CarPlayStatus.AttachingNetwork)
+        assertEquals(CarPlayStage.USB_CONNECTED, tracker.stage)
+    }
 }
