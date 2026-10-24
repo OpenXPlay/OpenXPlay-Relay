@@ -134,9 +134,11 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val state = value.presentation
     val haptic = LocalHapticFeedback.current
     val motion = LocalRelayMotion.current
+    val statusColors = org.openxplay.direlay.ui.design.LocalStatusColors.current
+    val primary = RelayGreen
     val transition = updateTransition(state.running, label = "relay action")
     val actionColor by transition.animateColor(transitionSpec = { if (motion) spring() else snap() }, label = "color") {
-        if (it) Color(0xFFFFB547) else RelayGreen
+        if (it) statusColors.action else primary
     }
     val actionWidth by transition.animateFloat(transitionSpec = { if (motion) spring(dampingRatio = .8f) else snap() }, label = "width") {
         if (it) .9f else 1f
@@ -165,9 +167,9 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val ms = if (motion) 220 else 0
     val color by animateColorAsState(when (state.tone) {
         StatusTone.RUNNING -> RelayGreen
-        StatusTone.PROGRESS -> Color(0xFF5CA8FF)
-        StatusTone.ATTENTION -> Color(0xFFFFB547)
-        StatusTone.ERROR -> Color(0xFFFF5C5C)
+        StatusTone.PROGRESS -> org.openxplay.direlay.ui.design.LocalStatusColors.current.working
+        StatusTone.ATTENTION -> org.openxplay.direlay.ui.design.LocalStatusColors.current.action
+        StatusTone.ERROR -> org.openxplay.direlay.ui.design.LocalStatusColors.current.failed
         StatusTone.IDLE -> RelayGreen
     }, tween(ms), label = "status color")
     var pulse by remember { mutableFloatStateOf(1f) }
