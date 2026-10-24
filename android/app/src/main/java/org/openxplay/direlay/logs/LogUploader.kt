@@ -23,8 +23,14 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 interface LogUploader {
-    suspend fun upload(file: File, name: String): UploadResult
+    // Progress describes transmission; only the returned result confirms a validated server receipt.
+    suspend fun upload(file: File, name: String, onProgress: suspend (LogUploadProgress) -> Unit = {}): UploadResult
     fun latestReceipt(): UploadResult? = null
+}
+sealed interface LogUploadProgress {
+    data object Connecting : LogUploadProgress
+    data class Sending(val bytesSent: Long, val totalBytes: Long) : LogUploadProgress
+    data object AwaitingReceipt : LogUploadProgress
 }
 class LogUploadFailure(val reason: String, val status: Int? = null, val retryAfterSeconds: Long? = null) :
     Exception(if (status == null) reason else "$reason (HTTP $status)")
@@ -45,9 +51,10 @@ class OpenXPlayLogUploader(private val connections: UploadConnectionFactory, pri
     private val receipts: LogUploadStore, private val baseUrl: String = LOG_UPLOAD_BASE_URL) : LogUploader {
     override fun latestReceipt() = receipts.latest()
 
-    override suspend fun upload(file: File, name: String): UploadResult = withTimeoutOrNull(180_000) { coroutineScope {
-        if (!file.isFile || file.length() == 0L) throw LogUploadFailure("empty")
-        if (file.length() > MAX_FILE_BYTES) throw LogUploadFailure("too-large")
+    override suspend fun upload(file: File, name: String, onProgress: suspend (LogUploadProgress) -> Unit): UploadResult = withTimeoutOrNull(180_000) { coroutineScope {
+        val totalBytes = file.length()
+        if (!file.isFile || totalBytes == 0L) throw LogUploadFailure("empty")
+        if (totalBytes > MAX_FILE_BYTES) throw LogUploadFailure("too-large")
         val origin = URL(baseUrl)
         if (origin.protocol != "https") throw LogUploadFailure("https-required")
         if (origin.userInfo != null || origin.query != null || origin.ref != null || origin.path.trim('/').isNotEmpty()) {
@@ -58,7 +65,12 @@ class OpenXPlayLogUploader(private val connections: UploadConnectionFactory, pri
         suspendCancellableCoroutine { continuation ->
             val active = AtomicReference<HttpURLConnection?>()
             val worker = launch(Dispatchers.IO) {
+                suspend fun report(progress: LogUploadProgress) {
+                    if (!continuation.isActive) throw CancellationException()
+                    onProgress(progress)
+                }
                 try {
+                    report(LogUploadProgress.Connecting)
                     val userId = receipts.userId()
                     if (!validLogUserId(userId)) throw LogUploadFailure("invalid-user-id")
                     if (version.toByteArray(Charsets.UTF_8).size > 512) throw LogUploadFailure("invalid-version")
@@ -78,12 +90,14 @@ class OpenXPlayLogUploader(private val connections: UploadConnectionFactory, pri
                         instanceFollowRedirects = false; useCaches = false; doOutput = true
                         setRequestProperty("User-Agent", UrlConnectionHttp.userAgent(version))
                         setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-                        setFixedLengthStreamingMode(prefix.size.toLong() + file.length() + suffix.size)
+                        setFixedLengthStreamingMode(prefix.size.toLong() + totalBytes + suffix.size)
                     }
                     val digest = MessageDigest.getInstance("SHA-256")
                     var sent = 0L
+                    var reported = 0L
                     connection.outputStream.use { output ->
                         output.write(prefix)
+                        report(LogUploadProgress.Sending(0, totalBytes))
                         file.inputStream().use { input ->
                             val buffer = ByteArray(8192)
                             while (true) {
@@ -93,10 +107,16 @@ class OpenXPlayLogUploader(private val connections: UploadConnectionFactory, pri
                                 output.write(buffer, 0, size)
                                 digest.update(buffer, 0, size)
                                 sent += size
+                                // Limit UI updates to roughly one per percent for large files.
+                                if (sent == totalBytes || sent - reported >= maxOf(8192L, totalBytes / 100)) {
+                                    report(LogUploadProgress.Sending(sent, totalBytes))
+                                    reported = sent
+                                }
                             }
                         }
                         output.write(suffix)
                     }
+                    report(LogUploadProgress.AwaitingReceipt)
                     val status = connection.responseCode
                     if (status != 201) throw LogUploadFailure("http", status,
                         connection.getHeaderField("Retry-After")?.toLongOrNull()?.takeIf { it >= 0 }?.coerceAtMost(86_400))

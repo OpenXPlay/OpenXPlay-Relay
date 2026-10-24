@@ -23,6 +23,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
@@ -161,5 +162,60 @@ class LogUploaderTest {
         assertTrue(started.await(5, TimeUnit.SECONDS))
         upload.cancelAndJoin()
         assertTrue(connection.disconnected); assertArrayEquals(payload, file.readBytes())
+    }
+    @Test fun progressCountsOnlyWrittenFileBytesAndWaitsForAValidatedReceipt() = runBlocking {
+        val data = ByteArray(100_003) { it.toByte() }
+        val file = archive().apply { writeBytes(data) }
+        val events = mutableListOf<LogUploadProgress>()
+        val store = Store()
+        var closed = false
+        val connection = object : Connection(body = receipt().put("bytes", data.size)
+            .put("sha256", MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) }).toString()) {
+            private val output = object : ByteArrayOutputStream() {
+                override fun close() { closed = true; super.close() }
+            }
+            override fun getOutputStream() = output
+            override fun getResponseCode(): Int {
+                assertTrue(closed)
+                assertEquals(LogUploadProgress.AwaitingReceipt, events.last())
+                assertNull(store.saved)
+                return super.getResponseCode()
+            }
+        }
+        val result = uploader(connection, store).upload(file, "logs.zip") { events += it }
+        assertEquals(LogUploadProgress.Connecting, events.first())
+        assertEquals(LogUploadProgress.AwaitingReceipt, events.last())
+        val sending = events.filterIsInstance<LogUploadProgress.Sending>()
+        assertEquals(0L, sending.first().bytesSent)
+        assertEquals(data.size.toLong(), sending.last().bytesSent)
+        assertTrue(sending.all { it.totalBytes == data.size.toLong() && it.bytesSent in 0..it.totalBytes })
+        assertTrue(sending.zipWithNext().all { (before, after) -> after.bytesSent > before.bytesSent })
+        assertSame(result, store.saved)
+    }
+    @Test fun cancellingDuringSendingNeverReportsFullTransferOrReceiptWaiting() = runBlocking {
+        val blocked = CountDownLatch(1)
+        val stopped = CountDownLatch(1)
+        val events = CopyOnWriteArrayList<LogUploadProgress>()
+        val connection = object : Connection(body = receipt().toString()) {
+            private val output = object : ByteArrayOutputStream() {
+                private var writes = 0
+                override fun write(data: ByteArray, offset: Int, size: Int) {
+                    if (++writes == 3) {
+                        blocked.countDown(); check(stopped.await(5, TimeUnit.SECONDS)); throw IOException("cancelled")
+                    }
+                    super.write(data, offset, size)
+                }
+            }
+            override fun getOutputStream() = output
+            override fun disconnect() { super.disconnect(); stopped.countDown() }
+        }
+        val file = archive().apply { writeBytes(ByteArray(32_768)) }
+        val upload = async(kotlinx.coroutines.Dispatchers.Default) { uploader(connection).upload(file, "logs.zip") { events += it } }
+        assertTrue(blocked.await(5, TimeUnit.SECONDS))
+        assertEquals(LogUploadProgress.Sending(8192, file.length()), events.last())
+        upload.cancelAndJoin()
+        assertFalse(events.contains(LogUploadProgress.AwaitingReceipt))
+        assertFalse(events.filterIsInstance<LogUploadProgress.Sending>().any { it.bytesSent == it.totalBytes })
+        assertTrue(connection.disconnected); assertEquals(32_768L, file.length())
     }
 }
