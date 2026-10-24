@@ -15,6 +15,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     private val connectionLog: org.openxplay.direlay.logs.ConnectionLog? = null,
     private val browser: org.openxplay.direlay.logs.BrowserTimeline? = null,
     private val carPlayStage: CarPlayStageTracker? = null,
+    private val iphoneLink: IphoneLinkTracker? = null,
     private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
     override val id = "relay-status"
     private val frames = ConcurrentHashMap<ScreenId, AtomicLong>()
@@ -48,6 +49,15 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     val failure: String? get() = failures.firstOrNull()?.text
     val frameCounts: Map<Int, Long> get() = frames.mapKeys { it.key.value }.mapValues { it.value.get() }
     val recentWebReporters: Int get() = webMeasurements().size
+    private val webClients = linkedSetOf<String>()
+    val connectedWebPages: Int get() = synchronized(this) { webClients.size }
+    @Synchronized fun clearWebClients() { webClients.clear(); webReports.clear() }
+    @Synchronized private fun webClient(client: String, type: String) {
+        if (type == "relay-close") {
+            webClients.remove(client)
+            webReports.keys.removeAll { it.clientId == client }
+        } else if (type == "receiver-info" || type == "stats") webClients.add(client)
+    }
 
     private val measurements = ConcurrentHashMap<String, OutputStats>()
     val outputMeasurements: Map<String, OutputStats> get() = measurements.toMap()
@@ -59,7 +69,10 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
         if (outputId == "web") rememberWeb(stats)
     }
     override fun receiverDiagnostics(outputId: String, origin: Origin, type: String, json: String) {
-        if (outputId == "web") runCatching { browser?.report(origin.clientId, type, json) }
+        if (outputId == "web") {
+            webClient(origin.clientId, type)
+            runCatching { browser?.report(origin.clientId, type, json) }
+        }
         receivers.report(origin.clientId, type, json)
         if (type == "fullscreen-exit") android.util.Log.i("OpenXPlay Relay", "Fullscreen exit ${origin.clientId}: $json")
     }
@@ -76,8 +89,11 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     }
     override fun open(host: OutputHost) = Unit
     override fun onSession(state: SessionState, config: SessionConfig) {
-        if (session?.id != state.id || session?.phase != state.phase) carPlayStage?.onStreamPhase(state.phase)
-        if (session?.id != state.id) { frames.clear(); bytes.set(0); clearFailure(); awaitingFirstVideo = true }
+        if (session?.id != state.id || session?.phase != state.phase) {
+            carPlayStage?.onStreamPhase(state.phase)
+            iphoneLink?.onStreamPhase(state.phase)
+        }
+        if (session?.id != state.id) { synchronized(this) { webReports.clear() }; frames.clear(); bytes.set(0); clearFailure(); awaitingFirstVideo = true }
         if (session?.id != state.id || state.phase == SessionPhase.ENDED) { videoCodec = null; videoFormat = null }
         session = state
     }
@@ -98,6 +114,6 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     override fun onAudioFormat(stream: Int, format: AudioFormat?) = Unit
     override fun onAudioPacket(packet: AudioPacket) = Unit
     override fun onMicrophone(stream: Int, request: MicRequest?) = Unit
-    override fun close() { countVideoBytes = false; synchronized(this) { webReports.clear() }; receivers.clear() }
+    override fun close() { countVideoBytes = false; synchronized(this) { webReports.clear(); webClients.clear() }; receivers.clear() }
     @Volatile private var awaitingFirstVideo = false
 }

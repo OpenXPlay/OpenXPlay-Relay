@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-24 -->
+<resources>
+    <color name="design_window_background">#000000</color>
+    <color name="design_window_accent">#54E8A0</color>
+    <bool name="design_light_system_bars">false</bool>
+    <!-- Resource-qualified DayNight parent also works on Android 8 and 9. -->
+    <style name="Theme.Relay.DayNight" parent="android:Theme.Material.NoActionBar" />
+</resources>

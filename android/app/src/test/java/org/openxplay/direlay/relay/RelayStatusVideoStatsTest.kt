@@ -41,4 +41,39 @@ class RelayStatusVideoStatsTest {
         assertEquals((92L..99L).toList(), status.webMeasurements().map { it.rendered })
         status.close(); assertTrue(status.webMeasurements().isEmpty())
     }
+    @Test fun connectedPagesTrackExplicitCloseRatherThanTheRecentStatsWindow() {
+        var now = 0L
+        val status = RelayStatus(clock = { now })
+        val car = Origin("web", "car")
+        val second = Origin("web", "second")
+        status.receiverDiagnostics("web", car, "receiver-info", "{}")
+        status.receiverDiagnostics("web", car, "receiver-info", "{}")
+        status.receiverDiagnostics("web", second, "receiver-info", "{}")
+        status.receiverDiagnostics("clink", Origin("clink", "other"), "receiver-info", "{}")
+        assertEquals(2, status.connectedWebPages)
+        status.stats("web", OutputStats(car, ScreenId.MAIN, null, 0, 0, 1, null))
+        now = 60_000_000_001L
+        assertTrue(status.webMeasurements().isEmpty())
+        assertEquals(2, status.connectedWebPages)
+        status.receiverDiagnostics("web", car, "relay-close", "closed")
+        assertEquals(1, status.connectedWebPages)
+        status.clearWebClients()
+        assertEquals(0, status.connectedWebPages)
+        status.receiverDiagnostics("web", second, "receiver-info", "{}")
+        status.close()
+        assertEquals(0, status.connectedWebPages)
+    }
+    @Test fun disconnectAndNewSessionDiscardPreviousRenderedEvidence() {
+        val status = RelayStatus()
+        val car = Origin("web", "car")
+        fun rendered() = status.stats("web", OutputStats(car, ScreenId.MAIN, null, 0, 0, 10, null))
+        status.onSession(SessionState(SessionId(1), SessionPhase.ACTIVE), SessionConfig(emptyMap()))
+        rendered()
+        assertTrue(status.webMeasurements().any { it.rendered > 0 })
+        status.receiverDiagnostics("web", car, "relay-close", "closed")
+        assertTrue(status.webMeasurements().isEmpty())
+        rendered()
+        status.onSession(SessionState(SessionId(2), SessionPhase.ACTIVE), SessionConfig(emptyMap()))
+        assertTrue(status.webMeasurements().isEmpty())
+    }
 }

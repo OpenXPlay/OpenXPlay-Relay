@@ -19,7 +19,7 @@ data class HeadUnitDisplay(val screen: ScreenDataKey, val visible: ViewAreaSize?
     }
 }
 data class SavedHeadUnit(val canvas: DisplayProfile, val display: HeadUnitDisplay?, val resolution: CarPlayResolution? = null,
-    val wholeScreen: Boolean = false, val maxMacroblocks: Int? = null)
+    val wholeScreen: Boolean = false, val maxMacroblocks: Int? = null, val car: CarSelection? = null)
 
 /** One atomic preference edit keeps the canvas and its originating report together; reads accept legacy canvases. */
 class SavedHeadUnitStore(private val preferences: SharedPreferences) {
@@ -34,7 +34,10 @@ class SavedHeadUnitStore(private val preferences: SharedPreferences) {
             HeadUnitDisplay(screen, visible, flag("fullscreen"), flag("fullscreenPreferred"))
         }.getOrNull()
         SavedHeadUnit(canvas, display, CarPlayResolution.entries.firstOrNull { it.name == preferences.getString("resolution", null) },
-            preferences.getBoolean("wholeScreen", false), preferences.getInt("maxMacroblocks", 0).takeIf { it > 0 })
+            preferences.getBoolean("wholeScreen", false), preferences.getInt("maxMacroblocks", 0).takeIf { it > 0 },
+            if (preferences.contains("carBrand")) CarSelection(preferences.getString("carBrand", "").orEmpty(),
+                preferences.getString("carBrandText", "").orEmpty(), preferences.getString("carModel", "").orEmpty(),
+                preferences.getString("carModelText", "").orEmpty()) else null)
     }.getOrNull()
     fun save(value: SavedHeadUnit) {
         val report = checkNotNull(value.display)
@@ -45,7 +48,11 @@ class SavedHeadUnitStore(private val preferences: SharedPreferences) {
                 putInt("visibleWidth", report.visible.width); putInt("visibleHeight", report.visible.height)
             } }.putInt("fullscreen", flag(report.fullscreen)).putInt("fullscreenPreferred", flag(report.preferred))
             .putString("resolution", value.resolution?.name).putBoolean("wholeScreen", value.wholeScreen)
-            .putInt("maxMacroblocks", value.maxMacroblocks ?: 0).apply()
+            .putInt("maxMacroblocks", value.maxMacroblocks ?: 0).apply {
+                if (value.car == null) { remove("carBrand"); remove("carBrandText"); remove("carModel"); remove("carModelText") }
+                else putString("carBrand", value.car.brand).putString("carBrandText", value.car.brandText)
+                    .putString("carModel", value.car.model).putString("carModelText", value.car.modelText)
+            }.apply()
     }
     fun clear() { preferences.edit().clear().apply() }
 }
@@ -67,3 +74,7 @@ fun planHeadUnitAreas(width: Int, height: Int, display: HeadUnitDisplay?, local:
     val records = display?.let { ViewAreaPlanner.mergeRecords(local, model?.screens.orEmpty(), it.screen) }.orEmpty()
     return ViewAreaPlanner.plan(width, height, records, display?.visible, display?.fullscreen)
 }
+
+/** Legacy records cannot identify a selected car; retain them only for the unnamed configuration. */
+fun savedHeadUnitForCar(saved: SavedHeadUnit?, car: CarSelection): SavedHeadUnit? =
+    saved?.takeIf { it.car == car || it.car == null && car == CarSelection() }

@@ -45,13 +45,14 @@ class CompositeCarPlayObserverTest {
     }
 
     @Test fun everyObserverIsIsolatedAndStageIsForwardedWithPluginsOffOrOn() {
-        for (plugins in listOf(false, true)) for (throwing in listOf("diagnostics", "stage", "plugins")) {
+        for (plugins in listOf(false, true)) for (throwing in listOf("diagnostics", "stage", "link", "plugins")) {
             val calls = mutableListOf<String>()
             emit(CompositeCarPlayObserver(Recording("diagnostics", calls, throwing == "diagnostics"),
                 Recording("plugins", calls, throwing == "plugins").takeIf { plugins },
-                stage = Recording("stage", calls, throwing == "stage")))
+                stage = Recording("stage", calls, throwing == "stage"),
+                link = Recording("link", calls, throwing == "link")))
             assertEquals(listOf("status", "progress", "active", "ended", "frame", "command").flatMap { event ->
-                listOfNotNull("diagnostics:$event", "stage:$event", "plugins:$event".takeIf { plugins })
+                listOfNotNull("diagnostics:$event", "stage:$event", "link:$event", "plugins:$event".takeIf { plugins })
             }, calls)
         }
     }

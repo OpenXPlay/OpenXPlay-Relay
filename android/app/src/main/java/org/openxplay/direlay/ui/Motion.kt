@@ -8,8 +8,9 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import androidx.compose.animation.*
+import org.openxplay.direlay.ui.design.relaySpatial
+import org.openxplay.direlay.ui.design.relayEffects
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Icon
@@ -19,9 +20,11 @@ import androidx.compose.ui.res.painterResource
 const val RelayPageDurationMillis = 300
 val RelayPageEasing = CubicBezierEasing(.2f, 0f, 0f, 1f)
 fun relayPageTransition(forward: Boolean, motion: Boolean): ContentTransform {
-    val duration = if (motion) RelayPageDurationMillis else 0
-    return (slideInHorizontally(tween(duration, easing = RelayPageEasing)) { if (forward) it / 8 else -it / 8 } + fadeIn(tween(duration))) togetherWith
-        (slideOutHorizontally(tween(duration, easing = RelayPageEasing)) { if (forward) -it / 8 else it / 8 } + fadeOut(tween(duration)))
+    if (!motion) return EnterTransition.None togetherWith ExitTransition.None
+    return (slideInHorizontally(relaySpatial(motion)) { if (forward) it else -it * 3 / 10 } +
+        fadeIn(relayEffects(motion), initialAlpha = if (forward) 1f else .9f)) togetherWith
+        (slideOutHorizontally(relaySpatial(motion)) { if (forward) -it * 3 / 10 else it } +
+            fadeOut(relayEffects(motion), targetAlpha = if (forward) .9f else 1f))
 }
 
 val LocalRelayMotion = staticCompositionLocalOf { true }

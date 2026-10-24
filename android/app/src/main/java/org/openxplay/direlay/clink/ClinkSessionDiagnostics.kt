@@ -20,11 +20,20 @@ class ClinkSessionDiagnostics(pins: PinProvider, trust: TrustStore,
         }
     }
     val trustStore: TrustStore = object : TrustStore by trust {
+        override fun savePeerKey(headUnitId: String, publicKey: ByteArray) {
+            trust.savePeerKey(headUnitId, publicKey)
+            diagnostics.emit(ClinkDiagnostic.Trusted(true))
+        }
+        override fun forgetPeer(headUnitId: String) {
+            trust.forgetPeer(headUnitId)
+            diagnostics.emit(ClinkDiagnostic.Trusted(false))
+        }
         override fun loadPeerKey(headUnitId: String): ByteArray? {
             // Stream reaches this port only after the authentication socket has connected.
             diagnostics.emit(ClinkStage.TCP_CONNECTED)
             phase = ClinkStage.AUTH
             return trust.loadPeerKey(headUnitId).also {
+                diagnostics.emit(ClinkDiagnostic.Trusted(it != null))
                 if (it != null) diagnostics.emit(ClinkStage.AUTH_PINNED)
             }
         }

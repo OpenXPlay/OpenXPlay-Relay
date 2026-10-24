@@ -222,7 +222,7 @@ import org.openxplay.direlay.settings.*
                     badges.forEach { ChoiceBadge(it, Modifier.align(Alignment.CenterVertically), warning = warningBadge) }
                 }
                 Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFB547)) }
+                note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = org.openxplay.direlay.ui.design.LocalStatusColors.current.action) }
                 extra?.invoke()
             }
             RadioButton(selected, onClick = null, enabled = enabled)
@@ -231,7 +231,7 @@ import org.openxplay.direlay.settings.*
 }
 
 @Composable private fun ChoiceBadge(text: String, modifier: Modifier = Modifier, warning: Boolean = false) {
-    val color = if (warning) Color(0xFFFFB547) else RelayGreen
+    val color = if (warning) org.openxplay.direlay.ui.design.LocalStatusColors.current.action else RelayGreen
     Surface(modifier, shape = RoundedCornerShape(8.dp), color = color.copy(alpha = .15f), contentColor = color) {
         Text(text, Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelMedium)
     }

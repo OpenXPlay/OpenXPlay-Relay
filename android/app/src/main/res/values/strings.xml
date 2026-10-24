@@ -666,9 +666,9 @@
 
     <!-- Network readiness and USB role guidance. -->
     <string name="network_readiness_title">Before you start</string>
-    <string name="network_wifi_reminder">Carlink needs this phone’s Wi-Fi turned on.</string>
+    <string name="network_wifi_reminder">Make sure Wi-Fi is on.</string>
     <string name="network_hotspot_reminder">Turn on this phone’s hotspot before you start.</string>
-    <string name="network_wifi_problem">Turn on this phone’s Wi-Fi. Carlink connects to the car over Wi-Fi; you do not need to join a network, and the hotspot can stay on.</string>
+    <string name="network_wifi_problem">Turn on Wi-Fi</string>
     <string name="network_hotspot_problem">This phone’s hotspot is off. Turn on the hotspot, then start again.</string>
     <string name="network_open_wifi">Open Wi-Fi settings</string>
     <string name="network_open_hotspot">Open hotspot settings</string>
@@ -767,4 +767,7 @@
     <string name="experimental_send_address_hint">Sends the address you enter to the car instead of the generated one. Find it on the phone\'s About phone or Status page. Pair this phone with the car in Bluetooth settings to test whether the car then reconnects by itself.</string>
     <string name="experimental_bluetooth_address">Bluetooth address</string>
     <string name="experimental_address_error">Enter a valid Bluetooth address: XX:XX:XX:XX:XX:XX.</string>
+    <string name="network_bluetooth_reminder">Make sure Bluetooth is on.</string>
+    <string name="network_bluetooth_problem">Turn on Bluetooth</string>
+    <string name="network_open_bluetooth">Open Bluetooth settings</string>
 </resources>

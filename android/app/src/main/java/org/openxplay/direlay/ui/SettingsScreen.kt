@@ -6,6 +6,10 @@ package org.openxplay.direlay.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.*
+import org.openxplay.direlay.ui.design.*
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -14,8 +18,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,7 +33,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.*
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
 import com.shilapi.xcertplay.orchestration.*
@@ -41,29 +42,33 @@ import org.openxplay.direlay.settings.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun DetailPage(title: String, back: () -> Unit, modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit) {
-    Scaffold(modifier, topBar = { TopAppBar(expandedHeight = 64.dp * LocalDensity.current.fontScale.coerceAtLeast(1f), title = { Heading(title) }, navigationIcon = {
-        IconButton(onClick = back) { Symbol(R.drawable.symbol_back, stringResource(R.string.ui_back)) }
-    }) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState())
-            .padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
-    }
+    Box(modifier) { LargeTitleScaffold(title, back, content = content) }
 }
 @Composable fun SettingsRow(label: String, supporting: String, icon: Int,
     action: (() -> Unit)? = null, trailing: @Composable (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-        .then(if (action != null) Modifier.clickable(onClick = action) else Modifier)
-        .padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) { Symbol(icon, null) }
-        Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-            Text(supporting, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    InsetGroup {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .then(if (action != null) Modifier.clickable(role = Role.Button, onClick = action) else Modifier)
+            .padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IconTile(icon, when (icon) {
+                R.drawable.symbol_bluetooth -> IconHue.BLUETOOTH
+                R.drawable.symbol_wifi -> IconHue.NETWORK
+                R.drawable.symbol_car -> IconHue.CAR
+                R.drawable.symbol_phone -> IconHue.IPHONE
+                else -> IconHue.DEVELOPER
+            })
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, style = RelayTokens.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (supporting.isNotEmpty()) Text(supporting, style = RelayTokens.footnote,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+            if (trailing != null) trailing() else if (action != null) Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
         }
-        if (trailing != null) trailing() else if (action != null) Symbol(R.drawable.symbol_chevron, null)
     }
 }
 @Composable fun SmallHeading(text: String) {
     Text(text, Modifier.padding(top = 16.dp, bottom = 8.dp).then(Modifier.semanticsHeading()),
-        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        style = RelayTokens.footnote, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading() })
 
@@ -285,12 +290,13 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
 @Composable fun RadioOptionRow(option: RadioOption, selected: Boolean, extra: @Composable (() -> Unit)? = null,
     enabled: Boolean = true, supportingText: String? = null, select: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-        .selectable(enabled = enabled, selected = selected, role = Role.RadioButton, onClick = select).padding(vertical = 12.dp),
+        .clip(RelayTokens.group).background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .14f) else MaterialTheme.colorScheme.surface)
+        .selectable(enabled = enabled, selected = selected, role = Role.RadioButton, onClick = select).padding(vertical = 12.dp, horizontal = 4.dp),
         // With a diagram below, the radio button stays level with the title instead of the row centre.
         verticalAlignment = if (extra == null) Alignment.CenterVertically else Alignment.Top) {
         RadioButton(selected = selected, enabled = enabled, onClick = null, modifier = Modifier.padding(horizontal = 12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(option.title), style = MaterialTheme.typography.bodyLarge)
+            Text(stringResource(option.title), style = RelayTokens.headline, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val supporting = supportingText ?: stringResource(option.supporting)
             if (supporting.isNotEmpty()) Text(supporting, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -302,13 +308,13 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
 @Composable fun Options(labels: List<String>, selected: Int, enabled: Boolean = true, select: (Int) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         labels.forEachIndexed { index, label -> FilterChip(index == selected, { select(index) },
-            modifier = Modifier.heightIn(min = 48.dp), enabled = enabled, label = { Text(label) }) }
+            modifier = Modifier.heightIn(min = 48.dp), shape = RelayTokens.chip, enabled = enabled, label = { Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis) }) }
     }
 }
 @Composable fun SettingField(label: String, value: String, error: Int? = null, number: Boolean = false,
     secret: Boolean = false, enabled: Boolean = true, change: (String) -> Unit) {
     OutlinedTextField(value, change, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true,
-        enabled = enabled, isError = error != null, supportingText = error?.let { { Text(stringResource(it)) } },
+        shape = RelayTokens.group, enabled = enabled, isError = error != null, supportingText = error?.let { { Text(stringResource(it)) } },
         keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Number else if (secret) KeyboardType.Password else KeyboardType.Text),
         visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
 }
@@ -316,11 +322,11 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(value, Modifier.weight(1f), fontFamily = FontFamily.Monospace)
+            Text(value, Modifier.weight(1f), style = RelayTokens.mono)
             if (copy != null) IconButton(onClick = { copy(value) }) { Symbol(R.drawable.symbol_copy, stringResource(R.string.settings_copy_value, label)) }
         }
     }
-    HorizontalDivider()
+    InsetDivider()
 }
 @Composable fun AboutScreen(back: () -> Unit) {
     val context = LocalContext.current

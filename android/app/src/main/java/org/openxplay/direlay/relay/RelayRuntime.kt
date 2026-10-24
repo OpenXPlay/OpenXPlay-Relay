@@ -58,7 +58,10 @@ class RelayRuntime(private val context: Context,
     val connectionLog: org.openxplay.direlay.logs.ConnectionLog = org.openxplay.direlay.logs.ConnectionLog()) : AutoCloseable {
     @Volatile var iphoneBonds: List<BondedDevice> = emptyList()
         private set
-    fun refreshIphoneBonds() { iphoneBonds = bondedDevices.read() }
+    fun refreshIphoneBonds() {
+        // Android returns an empty bonded list while Bluetooth is off; that does not unpair a phone.
+        if (networkReader.bluetoothEnabled() != false) iphoneBonds = bondedDevices.read()
+    }
     fun iphoneSelection(choice: String? = settingsStore.snapshot.value?.iphoneAddress) =
         IphoneSelection.select(choice, iphoneBonds)
     private val traceRecorder = lazy { CarlinkTraceRecorder(checkNotNull(context.getExternalFilesDir("carlink-trace")),
@@ -75,7 +78,10 @@ class RelayRuntime(private val context: Context,
     fun refreshNetworkReadings(): NetworkReadings = networkReader.read().also { networkReadings = it }
     fun networkReadiness(settings: RelaySettings, readings: NetworkReadings = networkReadings) =
         NetworkReadiness.read(CarlinkConnectionPolicy.enabled(settings), settingsStore.wireless(settings),
-            settings.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT, readings, miracast = settings.miracastOutput)
+            settings.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT, readings, miracast = settings.miracastOutput,
+            wifiDirect = settings.wirelessNetwork.choice == WirelessNetworkChoice.WIFI_DIRECT,
+            sharedWifi = settings.wirelessNetwork.choice == WirelessNetworkChoice.EXISTING_WIFI,
+            sharedWifiJoined = settings.wirelessNetwork.choice != WirelessNetworkChoice.EXISTING_WIFI || currentSharedWifi(settings) != null)
     private val autoStartBoot = AndroidBootIdentity(context)
     private val autoStartStorage = AndroidAutoStartStorage(context)
     val startRequest: StartRequestGate = ProcessStartRequestGate()
@@ -93,7 +99,7 @@ class RelayRuntime(private val context: Context,
     fun installedPlugins() = runCatching {
         org.openxplay.direlay.plugins.RelayPlugins.installed(bundledPlugins.root())
     }.getOrDefault(emptyList())
-    val carPlayStage = CarPlayStageTracker()
+    val carPlayStage = CarPlayStageTracker { settingsStore.wireless() }
     val carPlayDiagnostics = CarPlayDiagnostics(secrets = {
         buildList {
             settingsStore.snapshot.value?.let {
@@ -105,6 +111,7 @@ class RelayRuntime(private val context: Context,
             add(AirPlayPersistence.loadExistingWifiPassphrase(context))
         }
     }, timeline = connectionLog)
+    val iphoneLink = IphoneLinkTracker(wireless = { settingsStore.wireless() }, diagnostics = { carPlayDiagnostics.error })
     val pluginContext = org.openxplay.direlay.plugins.PluginContextObserver(input::context)
     val logSecrets: org.openxplay.direlay.logs.LogSecrets by lazy {
         org.openxplay.direlay.logs.RelayLogSecrets(context.applicationContext, settingsStore, tlsStore) {
@@ -130,7 +137,7 @@ class RelayRuntime(private val context: Context,
     }
     private val browserTimeline = org.openxplay.direlay.logs.BrowserTimeline(connectionLog)
     val status = RelayStatus(redactFailure = ::redactFailureMessage, connectionLog = connectionLog,
-        browser = browserTimeline, carPlayStage = carPlayStage)
+        browser = browserTimeline, carPlayStage = carPlayStage, iphoneLink = iphoneLink)
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }
@@ -148,6 +155,15 @@ class RelayRuntime(private val context: Context,
     private val savedHeadUnitStore = SavedHeadUnitStore(displayPreferences)
     @Volatile private var savedHeadUnit: SavedHeadUnit? = null
     @Volatile private var preparedPlanningDisplay: HeadUnitDisplay? = null
+    @Volatile private var reportedCarScreen: org.openxplay.stream.core.DisplayInfo? = null
+    val carScreenReported: Boolean get() = primaryCarScreen != null
+    val primaryCarScreen get() = carDisplayMemory.measuredDisplay(displayPolicy.primaryOutput) ?: reportedCarScreen
+    @Synchronized fun savedCarScreen(settings: RelaySettings): org.openxplay.stream.core.DisplayInfo? {
+        loadRememberedDisplay()
+        val saved = savedHeadUnitForCar(savedHeadUnit, settings.car) ?: return null
+        return saved.display?.display() ?: org.openxplay.stream.core.DisplayInfo(
+            saved.canvas.width, saved.canvas.height, saved.canvas.density, 60.0)
+    }
     private var clearedReport: HeadUnitDisplay? = null
     @Volatile private var screenPrepared = false
     @Volatile var carPlayScreen: CarPlayScreen? = null
@@ -173,7 +189,7 @@ class RelayRuntime(private val context: Context,
         clearedReport = null
         val settings = settingsStore.snapshot.value ?: return
         val saved = SavedHeadUnit(canvas ?: return, report, settings.carplayResolution,
-            settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC, limit)
+            settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC, limit, settings.car)
         if (saved == savedHeadUnit) return
         savedHeadUnitStore.save(saved); savedHeadUnit = saved
         wirelessUpdate { configureDlna() }
@@ -188,16 +204,16 @@ class RelayRuntime(private val context: Context,
         loadRememberedDisplay()
         val settings = settingsStore.snapshot.value ?: return@synchronized CarPlayScreen(CarDisplayFit.default, "default")
         checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null,
-            savedHeadUnit, carModels.model(settings.car)))
+            savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car)))
     }
 
     fun wirelessPicture(settings: RelaySettings): WirelessPictureResolution = synchronized(this) {
         loadRememberedDisplay()
-        WirelessPicturePolicy.resolve(settings, savedHeadUnit, carModels.model(settings.car))
+        WirelessPicturePolicy.resolve(settings, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car))
     }
 
     private fun planningDisplay(settings: RelaySettings) = planningDisplay(
-        displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from), savedHeadUnit, carModels.model(settings.car))
+        displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from), savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car))
 
     val sharedWifiSelection = org.openxplay.direlay.settings.SharedWifiSelection()
     private val sharedWifiConnectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
@@ -273,6 +289,7 @@ class RelayRuntime(private val context: Context,
     }
     private var lastWindow: List<Int>? = null
     private fun observeWindow(display: org.openxplay.stream.core.DisplayInfo?) {
+        carDisplayMemory.measuredDisplay(displayPolicy.primaryOutput)?.let { reportedCarScreen = it }
         if (display == null) synchronized(this) { clearedReport = null }
         viewAreaPreference = if (display == null) preparedPlanningDisplay?.preferred else display.fullscreenPreferred
         val viewport = display?.viewport
@@ -328,7 +345,7 @@ class RelayRuntime(private val context: Context,
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
         preparedPlanningDisplay = planningDisplay(settings)
-        return startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car)).also {
+        return startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car)).also {
             settingsStore.prepareDisplay(it?.profile, settings.carplayScreenWidth)
             carPlayScreenWidthMm = AirPlayPersistence.loadWidthPhysicalMm(context)
             appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth, preparedPlanningDisplay?.screen) }
@@ -343,20 +360,22 @@ class RelayRuntime(private val context: Context,
             live != null && appliedDisplay != null && carlinkScreenChanged(live.screen, appliedDisplay?.screen,
                 carlinkPrimary(), carlinkMatchingArea(settings))
         return (settings.carplayResolution in setOf(CarPlayResolution.SCREEN, CarPlayResolution.NATIVE) || live?.visible == null) && carDisplayMismatch(
-            running, settings.displayMode, carPlayScreen?.profile, displayPolicy.carDisplay ?: savedHeadUnit?.canvas)
+            running, settings.displayMode, carPlayScreen?.profile, displayPolicy.carDisplay ?: savedHeadUnitForCar(savedHeadUnit, settings.car)?.canvas)
     }
 
     /** The CarPlay canvas as "W × H · D dpi" plus where it came from ("car screen", …, "relay screen"). */
     val carPlayScreenSummary: Pair<String, String> get() {
         val settings = settingsStore.snapshot.value
         val selected = if (screenPrepared) carPlayScreen else settings?.let {
-            startupCarPlayScreen(it, displayPolicy.carDisplay, savedHeadUnit, carModels.model(it.car))
+            startupCarPlayScreen(it, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, it.car), carModels.model(it.car))
         }
         if (selected != null) return "${selected.profile.width} × ${selected.profile.height} · ${selected.profile.density} dpi" to selected.source
         val metrics = context.resources.displayMetrics
         return "${metrics.widthPixels} × ${metrics.heightPixels} · ${metrics.densityDpi} dpi" to "relay screen"
     }
 
+    @Volatile var webPhase = org.openxplay.direlay.path.WebPhase.STARTING
+        private set
     @Volatile var serverState = "Starting web receiver…"
         private set
     @Volatile var serverReason: WebStartReason? = null
@@ -371,6 +390,8 @@ class RelayRuntime(private val context: Context,
     private val teslaSession = TeslaAddressSession(TeslaAddressVpnService.controller(context.applicationContext))
     val teslaAddress: TeslaAddress? get() = teslaSession.active
     val teslaFailure: String? get() = teslaSession.failure
+    @Volatile var teslaStateSinceMillis: Long? = null
+        private set
 
     fun teslaActivation(settings: RelaySettings, wireless: Boolean = settingsStore.wireless(settings)) =
         teslaBrowserActivation(settings.teslaBrowser, wireless, settings.wirelessNetwork.choice,
@@ -381,6 +402,7 @@ class RelayRuntime(private val context: Context,
 
     fun prepareTeslaAddress(settings: RelaySettings, wireless: Boolean) {
         teslaSession.prepare(settings, wireless)
+        teslaStateSinceMillis = System.currentTimeMillis()
         publicName.refreshAddress()
     }
 
@@ -392,8 +414,10 @@ class RelayRuntime(private val context: Context,
     private fun refreshTeslaAddress() {
         val settings = settingsStore.snapshot.value ?: return
         val before = teslaAddress
+        val beforeFailure = teslaFailure
         teslaSession.tick(autoStartSessions.tracker.running, settings, settingsStore.wireless(settings),
             publicName.view.value.hasTrustedNameConfiguration(), ::phoneIpv4Addresses)
+        if (before != teslaAddress || beforeFailure != teslaFailure) teslaStateSinceMillis = System.currentTimeMillis()
         if (before != teslaAddress) {
             publicName.refreshAddress()
             runCatching { updateWebTls() }.onFailure { Log.w("OpenXPlay Relay", "Tesla TLS update failed", it) }
@@ -427,8 +451,25 @@ class RelayRuntime(private val context: Context,
     @Volatile var carlinkFailed = false
         private set
     private val carlinkTrail = StepTrail()
+    @Volatile var carlinkStage: Pair<ClinkStage, Long>? = null
+        private set
+    @Volatile var carlinkStateSinceMillis: Long? = null
+        private set
+    @Volatile var carlinkRetrying = false
+        private set
+    val carlinkReconnectPending: Boolean get() = carlinkRetrying || carlinkRestartPending
+    @Volatile var carlinkName: String? = null
+        private set
+    @Volatile var carlinkJoinMethod: WifiJoinPolicy.Method? = null
+        private set
+    @Volatile var carlinkTrusted = false
+        private set
+    val carlinkCode: String? get() = carlinkFailureCode
+    fun carlinkTrail(): List<String> = carlinkErrorTrail.takeIf { carlinkError != null && it.isNotEmpty() } ?: carlinkTrail.snapshot()
+
     // The running attempt's failure code; a kept error shows its own code until this attempt fails too.
     @Volatile private var carlinkAttemptDetail = ""
+    @Volatile private var carlinkFailureCode: String? = null
     @Volatile var carlinkErrorTrail: List<String> = emptyList()
         private set
     @Volatile var carlinkErrorAt: Long? = null
@@ -544,6 +585,13 @@ class RelayRuntime(private val context: Context,
     val tlsStore = TlsStore(context.noBackupFilesDir) { refreshWebTls(); adminService.restartTls() }
     private val sessionController = RelaySessionActions(context.applicationContext, this)
     val sessionActions: RelayActions get() = sessionController
+    val carWaitUntilMillis get() = sessionController.carFirst.untilMillis
+    private val pathVideoStats = VideoStats()
+    @Synchronized internal fun pathVideoSnapshot(): VideoStatsSnapshot? {
+        val settings = settingsStore.snapshot.value ?: return null
+        return pathVideoStats.sample(status, settings.videoStats, settings.carlinkOutput || settings.bothOutputs,
+            carlinkStatistics, carlinkVideoDecision, carlinkScreen)
+    }
     val networkStart get() = sessionController.networkStart
     fun recheckNetworkStart() = sessionController.recheckNetworkStart()
     fun startAnyway() = sessionController.startAnyway()
@@ -564,6 +612,8 @@ class RelayRuntime(private val context: Context,
     private val miracastLifecycle = RetiringOutputPolicy<MiracastPicture>()
     @Volatile private var dlnaToken: Any? = null
     @Volatile private var miracastToken: Any? = null
+    @Volatile var dlnaStateSinceMillis: Long? = null
+        private set
     @Volatile var dlnaState: CastState? = null
         private set
     @Volatile var dlnaRendererName: String? = null
@@ -571,6 +621,8 @@ class RelayRuntime(private val context: Context,
     @Volatile var dlnaFailure: WirelessDisplayFailure? = null
         private set
     @Volatile var dlnaStatistics: CastStatistics? = null
+        private set
+    @Volatile var miracastStateSinceMillis: Long? = null
         private set
     @Volatile var miracastState: MiracastState? = null
         private set
@@ -623,6 +675,8 @@ class RelayRuntime(private val context: Context,
         refreshTeslaAddress()
         sessionController.observeNetworkSession(autoStartSessions.tracker.running,
             status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
+        sessionController.recoverRadio(networkReadings)
+        sessionController.recheckNetworkStart()
         // A session start or stop can block or release Carlink without a settings change.
         if (carlinkBlock.sessionChanged(autoStartSessions.tracker.running)) enqueueCarlink()
     }, 0, 500, TimeUnit.MILLISECONDS)
@@ -688,7 +742,7 @@ class RelayRuntime(private val context: Context,
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
         val settings = settingsStore.snapshot.value ?: return
-        val desiredScreen = startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnit, carModels.model(settings.car))
+        val desiredScreen = startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car))
         val desired = desiredScreen?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth,
             displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)?.screen?.let { screen ->
                 if (!carlinkScreenChanged(screen, appliedDisplay?.screen, carlinkPrimary(), carlinkMatchingArea(settings)))
@@ -787,7 +841,7 @@ class RelayRuntime(private val context: Context,
         val settings = settingsStore.awaitSnapshot()
         val requested = WirelessOutputPolicy.dlna(settings, wirelessPicture(settings))
         if (requested == null) {
-            dlnaState = null; dlnaRendererName = null; dlnaFailure = null; dlnaStatistics = null
+            dlnaState = null; dlnaStateSinceMillis = null; dlnaRendererName = null; dlnaFailure = null; dlnaStatistics = null
         }
         when (dlnaLifecycle.update(requested)) {
             OutputChange.KEEP -> return
@@ -796,6 +850,7 @@ class RelayRuntime(private val context: Context,
         }
         val plan = checkNotNull(requested)
         val token = Any(); dlnaToken = token
+        dlnaStateSinceMillis = System.currentTimeMillis()
         dlnaState = CastState.SEARCHING; dlnaRendererName = settings.dlnaRenderer?.name
         dlnaFailure = null; dlnaStatistics = null
         val listener = object : CastListener {
@@ -804,9 +859,10 @@ class RelayRuntime(private val context: Context,
                 if (state == CastState.ENDED) {
                     hub.removeOutput("cast")
                     dlnaLifecycle.ended(); dlnaToken = null
-                    dlnaState = null; dlnaRendererName = null; dlnaStatistics = null; dlnaFailure = null
+                    dlnaState = null; dlnaStateSinceMillis = null; dlnaRendererName = null; dlnaStatistics = null; dlnaFailure = null
                     configureDlna()
                 } else if (!dlnaLifecycle.retiring) {
+                    if (dlnaState != state) dlnaStateSinceMillis = System.currentTimeMillis()
                     dlnaState = state; dlnaRendererName = renderer?.friendlyName ?: settingsStore.snapshot.value?.dlnaRenderer?.name
                     if (state == CastState.PLAYING) dlnaFailure = null
                 }
@@ -835,13 +891,14 @@ class RelayRuntime(private val context: Context,
     private fun configureMiracast() {
         if (closed) return
         val requested = WirelessOutputPolicy.miracast(settingsStore.awaitSnapshot())
-        if (requested == null) { miracastState = null; miracastDisplay = null; miracastFailure = null }
+        if (requested == null) { miracastState = null; miracastStateSinceMillis = null; miracastDisplay = null; miracastFailure = null }
         when (miracastLifecycle.update(requested)) {
             OutputChange.KEEP -> return
             OutputChange.REMOVE -> { hub.removeOutput("miracast"); return }
             OutputChange.ADD -> Unit
         }
         val token = Any(); miracastToken = token
+        miracastStateSinceMillis = System.currentTimeMillis()
         miracastState = MiracastState.WAITING_FOR_DISPLAY; miracastDisplay = null; miracastFailure = null
         val listener = object : MiracastListener {
             override fun state(state: MiracastState, display: MiracastDisplay?) = wirelessUpdate {
@@ -849,9 +906,10 @@ class RelayRuntime(private val context: Context,
                 if (state == MiracastState.ENDED) {
                     hub.removeOutput("miracast")
                     miracastLifecycle.ended(); miracastToken = null
-                    miracastState = null; miracastDisplay = null; miracastFailure = null
+                    miracastState = null; miracastStateSinceMillis = null; miracastDisplay = null; miracastFailure = null
                     configureMiracast()
                 } else if (!miracastLifecycle.retiring) {
+                    if (miracastState != state) miracastStateSinceMillis = System.currentTimeMillis()
                     miracastState = state; miracastDisplay = display
                     if (state == MiracastState.SHOWING) miracastFailure = null
                 }
@@ -874,6 +932,7 @@ class RelayRuntime(private val context: Context,
         carlinkPins.cancel()
         try { setup.execute {
             carlinkRestartPending = false
+            carlinkRetrying = false
             carlink?.let {
                 carlinkRetiring = !carlinkEnded
                 hub.removeOutput(it.id)
@@ -922,24 +981,30 @@ class RelayRuntime(private val context: Context,
             if (carlinkRetiring) return
         }
         carlinkRestartPending = false
+        carlinkRetrying = requested.enabled && carlinkError != null
+        carlinkStage = null
+        carlinkStateSinceMillis = System.currentTimeMillis()
+        carlinkName = null; carlinkJoinMethod = null; carlinkTrusted = false
+        carlinkAttemptDetail = ""
         if (!requested.enabled || carlinkError == null) {
             carlinkDetail = ""
             carlinkFailed = false
-            carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null
+            carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null; carlinkFailureCode = null
         }
         carlinkFailureRedactor = { it }
         carlinkVideoDetail = ""
         carlinkVideoFailed = false
         carlinkVideoError = null
-        if (!requested.enabled) { carlinkState = "Disabled"; return }
+        if (!requested.enabled) { carlinkState = "Disabled"; carlinkRetrying = false; return }
         if (requested.blocked) {
+            carlinkRetrying = false
             carlinkState = "Blocked"
             carlinkFailed = true
             carlinkDetail = CarlinkConnectionPolicy.REASON
             return
         }
-        if (Build.VERSION.SDK_INT < 29) { carlinkState = "Requires Android 10+"; return }
-        if (!permitted) { carlinkState = "Waiting for permissions"; return }
+        if (Build.VERSION.SDK_INT < 29) { carlinkRetrying = false; carlinkState = "Requires Android 10+"; return }
+        if (!permitted) { carlinkRetrying = false; carlinkState = "Waiting for permissions"; return }
         val id = preferences.getString("clinkDeviceId", null) ?: java.util.UUID.randomUUID().toString().also {
             check(preferences.edit().putString("clinkDeviceId", it).commit())
         }
@@ -960,9 +1025,22 @@ class RelayRuntime(private val context: Context,
         }
         val diagnostics = TracingClinkDiagnostics(ClinkDiagnostics { event ->
             connectionLog.carlink(event.line(), logConnection)
-            carlinkTrail.record(event.line(), event == ClinkStage.LINK_START, System.currentTimeMillis(), System.nanoTime())
+            if (logConnection != carlinkLogConnection) return@ClinkDiagnostics
+            val now = System.currentTimeMillis()
+            carlinkTrail.record(event.line(), event == ClinkStage.LINK_START, now, System.nanoTime())
+            when (event) {
+                is ClinkStage -> carlinkStage = event to now
+                is ClinkDiagnostic.Peer -> event.name.filterNot { it.isISOControl() }.trim().take(80).takeIf { it.isNotEmpty() }?.let { carlinkName = it }
+                is ClinkDiagnostic.Trusted -> carlinkTrusted = event.trusted
+                is ClinkDiagnostic.Retry -> carlinkRetrying = true
+                is ClinkDiagnostic.JoinChoice -> carlinkJoinMethod = event.method
+                else -> Unit
+            }
             if (event is ClinkDiagnostic.Failure) {
                 carlinkAttemptDetail = event.code
+                carlinkFailureCode = event.code
+                carlinkErrorAt = now
+                carlinkErrorTrail = carlinkTrail.snapshot()
                 if (carlinkError == null) carlinkDetail = event.code
             }
             clinkDiagnostics.emit(event)
@@ -995,6 +1073,7 @@ class RelayRuntime(private val context: Context,
                     observeResize { resizePlaying = state == ClinkState.PLAYING }
                     sessionDiagnostics.state(state)
                     carlinkState = state.name
+                    carlinkStateSinceMillis = System.currentTimeMillis()
                     if (state == ClinkState.NEGOTIATING) {
                         carlinkPins.paired()
                         link.authenticated()
@@ -1002,11 +1081,14 @@ class RelayRuntime(private val context: Context,
                     // A reconnected session clears the previous failure shown on the status screens.
                     if (state == ClinkState.PLAYING) {
                         carlinkBackoff.succeeded()
-                        carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null
+                        carlinkRetrying = false
+                        carlinkAttemptDetail = ""
+                        carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null; carlinkFailureCode = null
                         carlinkFailed = carlinkVideoFailed
                         carlinkDetail = carlinkVideoDetail
                     }
                     if (state == ClinkState.ENDED) {
+                        carlinkRetrying = false
                         carlinkStatistics = null; carlinkVideoDecision = null; carlinkScreen = null
                         carlinkGeometry = null; carlinkGeometryMode = null
                         carlinkEnded = true
@@ -1079,7 +1161,7 @@ class RelayRuntime(private val context: Context,
             if (carlinkError == null || carlinkState == ClinkState.PLAYING.name) {
                 carlinkFailed = carlinkVideoFailed
                 carlinkDetail = carlinkVideoDetail
-                if (!carlinkVideoFailed) { carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null }
+                if (!carlinkVideoFailed) { carlinkError = null; carlinkErrorTrail = emptyList(); carlinkErrorAt = null; carlinkFailureCode = null }
             }
             Log.i("DiRelayCarlink", "video decision=${decision.mode} input=${format.codecString} size=${format.width}x${format.height} target=${decision.target?.codecString} reason=$reason failed=$failed")
         }, observeCapabilities = { caps ->
@@ -1124,6 +1206,7 @@ class RelayRuntime(private val context: Context,
     private fun scheduleCarlinkReconnect() {
         val settings = settingsStore.snapshot.value ?: return
         if (closed || !settings.carlinkAutoReconnect || !(settings.carlinkOutput || settings.bothOutputs)) return
+        carlinkRetrying = true
         val delay = carlinkBackoff.next()
         carlinkTrail.record(ClinkDiagnostic.Retry(delay).line(), false, System.currentTimeMillis(), System.nanoTime())
         connectionLog.carlink(ClinkDiagnostic.Retry(delay).line(), carlinkLogConnection)
@@ -1154,8 +1237,9 @@ class RelayRuntime(private val context: Context,
     private fun startWeb(bindAttempt: Int = 0) {
         bindRetry = null
         if (closed || webStarting || web != null) return
-        if (!webEnabled) { serverReason = null; serverState = "Web receiver disabled"; return }
+        if (!webEnabled) { webPhase = org.openxplay.direlay.path.WebPhase.OFF; serverReason = null; serverState = "Web receiver disabled"; return }
         webStarting = true
+        webPhase = org.openxplay.direlay.path.WebPhase.STARTING
         val requestedAt = android.os.SystemClock.elapsedRealtime()
         val port = configuredWebPort ?: TlsStore.port(true)
         try {
@@ -1188,6 +1272,7 @@ class RelayRuntime(private val context: Context,
             lastWebFailure = null
             pluginContext.configure(plugins != null, status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
             val assetsState = if (File(root, "receiver/index.html").isFile) "" else "\nReceiver assets missing; build Stream web/dist and rebuild the APK."
+            webPhase = org.openxplay.direlay.path.WebPhase.LISTENING
             serverState = "TLS enabled · HTTPS/WSS :$port" + assetsState
             urlRefresh = setup.scheduleWithFixedDelay({
                 try {
@@ -1198,6 +1283,7 @@ class RelayRuntime(private val context: Context,
             }, 0, 5, TimeUnit.SECONDS)
         } catch (failure: Exception) {
             pluginContext.configure(false)
+            webPhase = org.openxplay.direlay.path.WebPhase.FAILED
             serverReason = webStartReason(failure, port)
             connectionLog.event("relay", "web_failed", "reason=$serverReason exception=${failure.javaClass.simpleName}")
             val root = generateSequence<Throwable>(failure) { it.cause }.last()
@@ -1258,6 +1344,8 @@ class RelayRuntime(private val context: Context,
                     web?.let { hub.removeOutput(it.id) }
                     web = null
                     serverReason = null
+                    webPhase = if (webEnabled) org.openxplay.direlay.path.WebPhase.STARTING else org.openxplay.direlay.path.WebPhase.OFF
+                    status.clearWebClients()
                     serverState = "Starting web receiver…"
                 }
                 startWeb()
@@ -1269,7 +1357,7 @@ class RelayRuntime(private val context: Context,
     fun publicNameUrl(): String? = publicName.status.value.trustedName?.let { "https://$it:${configuredWebPort ?: TlsStore.port(true)}/" }
 
     fun teslaUrl(): String? {
-        if (!webEnabled || !serverState.startsWith("TLS enabled")) return null
+        if (!webEnabled || webPhase != org.openxplay.direlay.path.WebPhase.LISTENING) return null
         val active = teslaAddress ?: return null
         val host = if (active.mode.usesTrustedName)
             publicName.status.value.takeIf { it.address == active.address }?.trustedName

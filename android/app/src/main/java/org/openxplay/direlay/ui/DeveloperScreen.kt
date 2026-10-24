@@ -86,6 +86,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
                     state.changeDeveloper { it.copy(active = enabled) }
                 })
                 Hint(stringResource(R.string.dev_use_options_hint))
+                SettingsMenuRow(R.string.design_gallery, stringResource(R.string.design_gallery_hint), R.drawable.symbol_settings_2) { open("developer/design") }
                 SettingsMenuRow(R.string.menu_diagnostics, stringResource(R.string.menu_diagnostics_summary, view.rows.size, view.urls.size), R.drawable.symbol_info) { open("developer/diagnostics") }
                 SettingsMenuRow(R.string.ui_carlink, "${hevcSummary(draft)} · ${menuToggleSummary(draft.carlinkTrace)}", R.drawable.symbol_car) { open("developer/carlink") }
                 SettingsMenuRow(R.string.menu_video, stringResource(R.string.menu_fps_summary, draft.fps), R.drawable.symbol_settings,
