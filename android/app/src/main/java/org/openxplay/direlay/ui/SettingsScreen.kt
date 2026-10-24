@@ -107,9 +107,11 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 org.openxplay.direlay.config.ConfigFiles(runtimeContext, runtime.settingsStore, runtime.publicName, runtime.tlsStore)
             })
             "settings/logs" -> if (runtime != null) LogsScreen(runtime.logs, remember(runtime) {
-                org.openxplay.direlay.logs.TmpfileLinkUploader(org.openxplay.direlay.logs.InternetUploadConnection(
+                org.openxplay.direlay.logs.OpenXPlayLogUploader(org.openxplay.direlay.logs.InternetUploadConnection(
                     runtimeContext.getSystemService(android.net.ConnectivityManager::class.java)),
-                    runtimeContext.packageManager.getPackageInfo(runtimeContext.packageName, 0).versionName.orEmpty())
+                    runtimeContext.packageManager.getPackageInfo(runtimeContext.packageName, 0).versionName.orEmpty(),
+                    org.openxplay.direlay.logs.PreferencesLogUploadStore(
+                        runtimeContext.getSharedPreferences("log-uploads", android.content.Context.MODE_PRIVATE)))
             })
             "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
             "settings/output" -> {

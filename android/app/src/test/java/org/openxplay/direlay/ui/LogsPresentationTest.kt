@@ -36,7 +36,7 @@ class LogsPresentationTest {
         labels.forEach { (id, text) -> assertEquals(text, chinese.getString(id)); assertNotEquals(text, context.getString(id)) }
         assertEquals("The relay keeps up to 24 hours of its logs on this phone. Technical details are kept; passwords, keys, phone numbers, names, messages and precise location are replaced before anything is stored.", context.getString(R.string.logs_description))
         for (localized in listOf(context, chinese)) {
-            assertTrue(localized.getString(R.string.logs_upload_hint).contains("tmpfile.link"))
+            assertTrue(localized.getString(R.string.logs_upload_hint).contains("logs.openxplay.org"))
             assertTrue(localized.getString(R.string.receiver_based_on_xcertplay_licensed_under_gpl_3_0_diplay).contains("ZXing"))
         }
     }
