@@ -113,7 +113,9 @@ class CarlinkTraceRecorderTest {
             assertSame(ClinkTrace.NONE, CarlinkTraceRecorder.select(false) { error("disabled recorder must not be initialized") })
             CarlinkTraceRecorder.select(false) { error("disabled recorder must not be initialized") }.record(ClinkTraceEvent.Link(0, 0, "disabled"))
             recorder.awaitIdle()
-            val content = recorder.currentFile!!.readText()
+            val content = recorder.currentFile!!.readLines().joinToString("\n") {
+                JSONObject(it).apply { remove("atMillis"); remove("atNanos") }.toString()
+            }
             for (secret in listOf("wifi-secret", "012345", "private-key", "accessory-identity", "cert-body", "disabled")) assertFalse(content.contains(secret))
             assertTrue(content.contains("Car WiFi")); assertTrue(content.contains("passphraseLength"))
             assertTrue(content.contains("bodySize"))
