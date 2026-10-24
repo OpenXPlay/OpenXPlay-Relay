@@ -4,6 +4,9 @@
 package org.openxplay.direlay.ui
 
 import org.openxplay.direlay.R
+import org.openxplay.direlay.path.ConnectionPath
+import org.openxplay.direlay.path.PathSection
+import org.openxplay.direlay.path.StepId
 import org.openxplay.direlay.settings.*
 
 /** The guided setup's pages, in order. The network page exists only for wireless CarPlay. */
@@ -97,6 +100,15 @@ fun setupChecks(home: HomePresentation, wireless: Boolean, network: WirelessNetw
 }
 
 fun compactSetup(heightDp: Int): Boolean = heightDp < 480
+
+/** Preparation shows this phone's live checks and the iPhone prerequisite, before a session is started. */
+fun setupPrepareSections(path: ConnectionPath) = listOfNotNull(
+    path.section(PathSection.RELAY),
+    path.section(PathSection.IPHONE)?.let { section ->
+        section.copy(steps = section.steps.filter { it.id == StepId.IPHONE_PAIRED || it.id == StepId.USB_HOST })
+    },
+).filter { it.steps.isNotEmpty() }
+
 fun revealHotspotFields(network: WirelessNetworkSettings, errors: Map<String, Int>): Boolean =
     network.choice == WirelessNetworkChoice.PHONE_HOTSPOT &&
         (network.manualSsid.isBlank() || network.manualPassphrase.isBlank() || errors.keys.any { it in networkFields })

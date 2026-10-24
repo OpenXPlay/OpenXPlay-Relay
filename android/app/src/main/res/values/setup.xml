@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-24 -->
+<resources>
+    <string name="setup2_output_title">Car display</string>
+    <string name="setup2_output_subtitle">Choose what the car already has.</string>
+    <string name="setup2_connection_title">iPhone connection</string>
+    <string name="setup2_connection_subtitle">Choose how the iPhone reaches this phone.</string>
+    <string name="setup2_network_title">Wireless network</string>
+    <string name="setup2_network_subtitle">Choose the Wi-Fi link for the iPhone.</string>
+    <string name="setup2_prepare_subtitle">Check this phone, then the iPhone.</string>
+    <string name="setup2_start_subtitle">Review your choices before connecting.</string>
+    <string name="setup2_launch_title">Ready to connect</string>
+    <string name="setup2_launch_subtitle">Continue with your saved setup.</string>
+    <string name="setup2_continue">Continue</string>
+    <string name="setup2_set_up_again">Set up again</string>
+</resources>

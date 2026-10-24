@@ -4,10 +4,11 @@
 package org.openxplay.direlay.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,9 +16,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import org.openxplay.direlay.R
+import org.openxplay.direlay.ui.design.*
 
 /** Seconds before automatic start continues with the last setup on its own. */
 const val LAUNCH_COUNTDOWN = 5
@@ -29,52 +35,63 @@ const val LAUNCH_COUNTDOWN = 5
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun LaunchScreen(value: HomeContent, onContinue: () -> Unit, onNewSetup: () -> Unit, onLater: () -> Unit) {
     val compact = compactSetup(LocalConfiguration.current.screenHeightDp)
-    val buttonHeight = if (compact) 48.dp else 56.dp
     val state = value.presentation
     val countdown = value.automatic && state.canStart && !value.busy
     var remaining by remember { mutableIntStateOf(LAUNCH_COUNTDOWN) }
+    val motion = LocalRelayMotion.current
+    val progress = remember { Animatable(1f) }
     if (countdown) LaunchedEffect(Unit) {
         while (remaining > 0) { delay(1_000); remaining-- }
         onContinue()
     }
+    LaunchedEffect(countdown, motion) {
+        progress.snapTo(remaining.toFloat() / LAUNCH_COUNTDOWN)
+        if (countdown && motion) progress.animateTo(0f, tween(remaining * 1_000, easing = LinearEasing))
+    }
     // Leaving the choice by Back means "not now", like the button, so automatic start does not run anyway.
     BackHandler(onBack = onLater)
-    Scaffold(topBar = { TopAppBar(title = {
+    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { TopAppBar(expandedHeight = if (compact) 52.dp else 64.dp, title = {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(40.dp))
             RelayBrand(Modifier.weight(1f))
         }
-    }) }) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
-            Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Heading(stringResource(R.string.launch_title))
-                    Hint(stringResource(R.string.launch_hint))
-                }
-                RelayCard {
-                    Text(stringResource(R.string.launch_last_title), style = MaterialTheme.typography.titleMedium)
-                    Column { ModeSummary(state.mode) }
-                    if (!state.canStart) Hint(stringResource(R.string.launch_last_unready))
-                    Button(onClick = onContinue, enabled = !value.busy, modifier = Modifier.fillMaxWidth().heightIn(min = buttonHeight),
-                        colors = ButtonDefaults.buttonColors(containerColor = RelayGreen)) {
-                        if (state.canStart) {
-                            Symbol(R.drawable.symbol_play, null, Modifier.size(24.dp))
-                            Spacer(Modifier.width(8.dp))
+    }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)) }, bottomBar = {
+        Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = .96f)) {
+            Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = if (compact) 8.dp else 12.dp),
+                contentAlignment = Alignment.Center) {
+                Box(Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
+                    PrimaryPill(running = false, enabled = !value.busy, label = stringResource(R.string.setup2_continue), onClick = onContinue)
+                    if (countdown) {
+                        val description = stringResource(R.string.launch_countdown, remaining)
+                        Box(Modifier.align(Alignment.CenterEnd).padding(end = 16.dp).size(32.dp)
+                            .clearAndSetSemantics { contentDescription = description; liveRegion = LiveRegionMode.Polite },
+                            contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(progress = { if (motion) progress.value else remaining.toFloat() / LAUNCH_COUNTDOWN },
+                                modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.onPrimary,
+                                trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = .2f), strokeWidth = 2.dp)
+                            Text("$remaining", style = RelayTokens.mono, color = MaterialTheme.colorScheme.onPrimary)
                         }
-                        Text(stringResource(if (state.canStart) R.string.launch_continue else R.string.launch_continue_prepare))
-                    }
-                    if (countdown) Hint(stringResource(R.string.launch_countdown, remaining))
-                }
-                RelayCard {
-                    Text(stringResource(R.string.launch_new_title), style = MaterialTheme.typography.titleMedium)
-                    Hint(stringResource(R.string.launch_new_hint))
-                    OutlinedButton(onClick = onNewSetup, Modifier.fillMaxWidth().heightIn(min = buttonHeight)) {
-                        Text(stringResource(R.string.setup_home_action))
                     }
                 }
-                TextButton(onClick = onLater, Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp)) {
+            }
+        }
+    }) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            val choices: @Composable () -> Unit = {
+                if (countdown) Hint(stringResource(R.string.launch_countdown, remaining))
+                TextButton(onClick = onNewSetup, Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.setup2_set_up_again))
+                }
+                TextButton(onClick = onLater, Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.launch_later))
                 }
+            }
+            // In landscape the choices sit under the title, so nothing needs scrolling.
+            SetupPage(compact, stringResource(R.string.setup2_launch_title), stringResource(R.string.setup2_launch_subtitle),
+                illustration = { if (compact) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { choices() } }) {
+                InsetGroup(header = stringResource(R.string.launch_last_title),
+                    footer = if (state.canStart) null else stringResource(R.string.launch_last_unready)) { ModeSummary(state.mode) }
+                if (!compact) choices()
             }
         }
     }
