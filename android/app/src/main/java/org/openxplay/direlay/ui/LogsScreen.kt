@@ -37,6 +37,8 @@ import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
 import org.openxplay.direlay.logs.*
 import java.io.File
+import java.time.Instant
+import java.util.Date
 
 private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT }
 
@@ -51,10 +53,21 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
     var job by remember { mutableStateOf<Job?>(null) }
     var message by remember { mutableStateOf("") }
     var uploadError by remember { mutableStateOf(false) }
-    var link by remember { mutableStateOf("") }
+    var receipt by remember(uploader) { mutableStateOf(uploader.latestReceipt()) }
     var qr by remember { mutableStateOf<ImageBitmap?>(null) }
     var copied by remember { mutableStateOf(false) }
     fun result(text: String, back: Boolean = false) { message = text; uploadError = back; step = LogsStep.RESULT }
+    suspend fun showReceipt(uploaded: UploadResult) {
+        receipt = uploaded
+        qr = withContext(Dispatchers.Default) {
+            val matrix = LogQrCode.matrix(uploaded.link)
+            val pixels = IntArray(matrix.width * matrix.height) { index ->
+                if (matrix[index % matrix.width, index / matrix.width]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+            }
+            Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888).asImageBitmap()
+        }
+        copied = false; step = LogsStep.QR
+    }
     val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         val archive = file
         if (uri != null && archive != null) {
@@ -71,6 +84,11 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
             Text(stringResource(R.string.logs_description))
             TextButton(enabled = step == null, onClick = { range = LogRange.LAST_10_MINUTES; step = LogsStep.PERIOD }) {
                 Text(stringResource(R.string.logs_export))
+            }
+            receipt?.let { latest ->
+                TextButton(enabled = step == null, onClick = {
+                    job = scope.launch { showReceipt(latest) }
+                }) { Text(stringResource(R.string.logs_latest_receipt)) }
             }
         }
     }
@@ -125,23 +143,19 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
                         job = scope.launch {
                             try {
                                 val uploaded = uploader.upload(archive, archive.name)
-                                qr = withContext(Dispatchers.Default) {
-                                    val matrix = LogQrCode.matrix(uploaded.link)
-                                    val pixels = IntArray(matrix.width * matrix.height) { index ->
-                                        if (matrix[index % matrix.width, index / matrix.width]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
-                                    }
-                                    Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888).asImageBitmap()
-                                }
-                                link = uploaded.link; copied = false; step = LogsStep.QR
+                                showReceipt(uploaded)
                             } catch (cancelled: CancellationException) { throw cancelled }
                             catch (failure: Exception) {
-                                val text = when ((failure as? LogUploadFailure)?.reason) {
+                                val uploadFailure = failure as? LogUploadFailure
+                                val text = when (uploadFailure?.reason) {
                                     "no-internet" -> resources.getString(R.string.logs_no_internet)
                                     "too-large" -> resources.getString(R.string.logs_too_large)
-                                    "http", "invalid-response" -> resources.getString(R.string.logs_upload_http, (failure as? LogUploadFailure)?.status ?: 0)
+                                    "empty" -> resources.getString(R.string.logs_empty)
+                                    "http" -> resources.getString(R.string.logs_upload_http, uploadFailure.status ?: 0)
                                     else -> resources.getString(R.string.logs_upload_error)
                                 }
-                                result(text, back = true)
+                                val wait = uploadFailure?.retryAfterSeconds?.let { "\n" + resources.getString(R.string.logs_retry_after, it) }.orEmpty()
+                                result(text + wait, back = true)
                             }
                         }
                     }) { Text(stringResource(R.string.logs_upload)) }
@@ -153,10 +167,17 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, QR, RESULT 
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 qr?.let { Image(it, stringResource(R.string.logs_qr_description), Modifier.size(240.dp), filterQuality = FilterQuality.None) }
                 Text(stringResource(R.string.logs_scan))
-                SelectionContainer { Text(link) }
+                receipt?.let { uploaded ->
+                    SelectionContainer { Text(stringResource(R.string.logs_receipt_id, uploaded.id)) }
+                    val expiry = Date.from(Instant.parse(uploaded.expiresAt))
+                    Text(stringResource(R.string.logs_receipt_expires,
+                        android.text.format.DateFormat.getDateFormat(context).format(expiry) + " " +
+                            android.text.format.DateFormat.getTimeFormat(context).format(expiry)))
+                    SelectionContainer { Text(uploaded.link) }
+                }
                 if (copied) Text(stringResource(R.string.logs_copied))
             } }, confirmButton = { TextButton(onClick = { step = null }) { Text(stringResource(R.string.logs_done)) } },
-            dismissButton = { TextButton(onClick = { clipboard.setText(AnnotatedString(link)); copied = true }) {
+            dismissButton = { TextButton(onClick = { receipt?.let { clipboard.setText(AnnotatedString(it.link)); copied = true } }) {
                 Text(stringResource(R.string.logs_copy))
             } })
         LogsStep.RESULT -> AlertDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_title)) },
