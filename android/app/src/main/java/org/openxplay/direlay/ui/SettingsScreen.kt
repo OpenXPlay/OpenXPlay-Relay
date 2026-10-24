@@ -120,7 +120,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             })
             "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
             "settings/output" -> {
-                CollapsibleCard("output", stringResource(R.string.ui_output), outputSummary(draft),
+                SettingsGroup("output", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.ui_output), outputSummary(draft),
                     initiallyExpanded = true, targeted = target == "output") {
                     Column(Modifier.selectableGroup()) {
                         outputOptions.forEachIndexed { index, option ->
@@ -136,12 +136,12 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SettingField(stringResource(R.string.direlay_carlink_name), draft.carlinkDeviceName, errors["name"]) { draft = draft.copy(carlinkDeviceName = it) }
-                            SettingsRow(stringResource(R.string.vehicle_title), stringResource(R.string.vehicle_privacy), R.drawable.symbol_car,
-                                trailing = { LabeledSwitch(stringResource(R.string.vehicle_title), draft.vehicleInformation, { draft = draft.copy(vehicleInformation = it) }) })
-                            SettingsRow(stringResource(R.string.carlink_auto_reconnect), stringResource(R.string.carlink_auto_reconnect_hint), R.drawable.symbol_sync,
-                                trailing = { LabeledSwitch(stringResource(R.string.carlink_auto_reconnect), draft.carlinkAutoReconnect, { draft = draft.copy(carlinkAutoReconnect = it) }) })
-                            SettingsRow(stringResource(R.string.carlink_resize_reconnect), stringResource(R.string.carlink_resize_reconnect_hint), R.drawable.symbol_sync,
-                                trailing = { LabeledSwitch(stringResource(R.string.carlink_resize_reconnect), draft.carlinkReconnectOnResize, { draft = draft.copy(carlinkReconnectOnResize = it) }) })
+                            SettingsToggleGroup(stringResource(R.string.vehicle_title), draft.vehicleInformation, R.drawable.symbol_car, IconHue.CAR,
+                                footer = stringResource(R.string.vehicle_privacy)) { draft = draft.copy(vehicleInformation = it) }
+                            SettingsToggleGroup(stringResource(R.string.carlink_auto_reconnect), draft.carlinkAutoReconnect, R.drawable.symbol_sync, IconHue.CAR,
+                                footer = stringResource(R.string.carlink_auto_reconnect_hint)) { draft = draft.copy(carlinkAutoReconnect = it) }
+                            SettingsToggleGroup(stringResource(R.string.carlink_resize_reconnect), draft.carlinkReconnectOnResize, R.drawable.symbol_sync, IconHue.CAR,
+                                footer = stringResource(R.string.carlink_resize_reconnect_hint)) { draft = draft.copy(carlinkReconnectOnResize = it) }
                         }
                     }
                 }
@@ -153,37 +153,34 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     openOutput = { open("settings/output") }) { draft = it }
             }
             "settings/picture" -> {
-                CollapsibleCard("resolution", stringResource(R.string.picture_resolution), resolutionSummary(draft),
-                    initiallyExpanded = target.isEmpty() || target == "resolution", targeted = target == "resolution") {
+                SettingsGroup("resolution", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_resolution), resolutionSummary(draft),
+                    initiallyExpanded = target.isEmpty() || target == "resolution", targeted = target == "resolution",
+                    footer = if (draft.carplayResolution == CarPlayResolution.NATIVE) stringResource(R.string.picture_native_hint) else null) {
                     Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
                         CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
-                    if (draft.carplayResolution == CarPlayResolution.NATIVE) Hint(stringResource(R.string.picture_native_hint))
                 }
-                CollapsibleCard("width", stringResource(R.string.picture_screen_width), "${draft.carplayScreenWidth.mm} mm",
-                    initiallyExpanded = false, targeted = target == "width") {
+                SettingsGroup("width", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_screen_width), "${draft.carplayScreenWidth.mm} mm",
+                    initiallyExpanded = false, targeted = target == "width", footer = stringResource(R.string.picture_screen_width_hint)) {
                     Options(CarPlayScreenWidth.entries.map { "${it.mm} mm" },
                         CarPlayScreenWidth.entries.indexOf(draft.carplayScreenWidth)) { draft = draft.copy(carplayScreenWidth = CarPlayScreenWidth.entries[it]) }
-                    Hint(stringResource(R.string.picture_screen_width_hint))
                 }
-                CollapsibleCard("codec", stringResource(R.string.picture_video_codec), codecSummary(draft),
-                    initiallyExpanded = false, targeted = target == "codec") {
+                SettingsGroup("codec", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_video_codec), codecSummary(draft),
+                    initiallyExpanded = false, targeted = target == "codec", footer = stringResource(R.string.picture_video_codec_hint)) {
                     Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_force_h265), stringResource(R.string.picture_force_h264)),
                         VideoCodecSetting.entries.indexOf(draft.videoCodec)) { draft = draft.copy(videoCodec = VideoCodecSetting.entries[it]) }
-                    Hint(stringResource(R.string.picture_video_codec_hint))
                 }
-                CollapsibleCard("stats", stringResource(R.string.video_stats_title), stringResource(listOf(R.string.video_stats_off, R.string.video_stats_5, R.string.video_stats_15)[draft.videoStats.ordinal]),
-                    initiallyExpanded = false, targeted = target == "stats") {
+                SettingsGroup("stats", R.drawable.symbol_activity, IconHue.PICTURE, stringResource(R.string.video_stats_title), stringResource(listOf(R.string.video_stats_off, R.string.video_stats_5, R.string.video_stats_15)[draft.videoStats.ordinal]),
+                    initiallyExpanded = false, targeted = target == "stats", footer = stringResource(R.string.video_stats_hint)) {
                     Options(listOf(stringResource(R.string.video_stats_off), stringResource(R.string.video_stats_5), stringResource(R.string.video_stats_15)),
                         VideoStatsWindow.entries.indexOf(draft.videoStats)) { draft = draft.copy(videoStats = VideoStatsWindow.entries[it]) }
-                    Hint(stringResource(R.string.video_stats_hint))
                 }
             }
             "settings/audio" -> {
-                SettingsRow(stringResource(R.string.audio_car_bluetooth), stringResource(R.string.audio_car_bluetooth_hint), R.drawable.symbol_bluetooth,
-                    trailing = { LabeledSwitch(stringResource(R.string.audio_car_bluetooth), draft.carBluetoothAudio, { draft = draft.copy(carBluetoothAudio = it) }) })
+                SettingsToggleGroup(stringResource(R.string.audio_car_bluetooth), draft.carBluetoothAudio, R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
+                    footer = stringResource(R.string.audio_car_bluetooth_hint)) { draft = draft.copy(carBluetoothAudio = it) }
             }
             "settings/connection" -> {
-                CollapsibleCard("connection", stringResource(R.string.ui_iphone_connection), stringResource(if (wireless(draft)) R.string.direlay_wireless else R.string.ui_usb),
+                SettingsGroup("connection", R.drawable.symbol_phone, IconHue.IPHONE, stringResource(R.string.ui_iphone_connection), stringResource(if (wireless(draft)) R.string.direlay_wireless else R.string.ui_usb),
                     initiallyExpanded = true, targeted = target == "connection" || target == "iphone") {
                     RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
                         val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)
@@ -200,14 +197,16 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         }
                     }
                 }
-                if (wireless(draft)) SettingsMenuRow(R.string.ui_network, stringResource(networkOption(draft.wirelessNetwork.choice).title),
-                    R.drawable.symbol_wifi, "settings/connection/network" in invalidPages) { open("settings/connection/network") }
+                if (wireless(draft)) InsetGroup {
+                    SettingsMenuRow(R.string.ui_network, stringResource(networkOption(draft.wirelessNetwork.choice).title),
+                        R.drawable.symbol_wifi, "settings/connection/network" in invalidPages) { open("settings/connection/network") }
+                }
             }
             "settings/connection/network" -> {
-                Column(Modifier.selectableGroup()) {
+                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     WirelessNetworkChoice.entries.forEach { choice ->
                         val key = choice.name
-                        CollapsibleCard(key, stringResource(networkOption(choice).title), stringResource(networkOption(choice).supporting),
+                        SettingsGroup(key, R.drawable.symbol_wifi, IconHue.NETWORK, stringResource(networkOption(choice).title), stringResource(networkOption(choice).supporting),
                             initiallyExpanded = draft.wirelessNetwork.choice == choice && target.isEmpty(),
                             selected = draft.wirelessNetwork.choice == choice, error = draft.wirelessNetwork.choice == choice && "settings/connection/network" in invalidPages, targeted = target == key || (target == "sharedWifi" && choice == WirelessNetworkChoice.EXISTING_WIFI)) {
                             RadioOptionRow(networkOption(choice), draft.wirelessNetwork.choice == choice,
@@ -231,15 +230,17 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 }
             }
             "settings/startup" -> {
-                SettingsRow(stringResource(R.string.ui_automatic), stringResource(R.string.settings_automatic_hint), R.drawable.symbol_sync,
-                    trailing = { LabeledSwitch(stringResource(R.string.ui_automatic), draft.autoStartWhenReady, { draft = draft.copy(autoStartWhenReady = it) }) })
-                SettingsRow(stringResource(R.string.ui_boot), stringResource(R.string.direlay_boot_hint), R.drawable.symbol_play,
-                    trailing = { LabeledSwitch(stringResource(R.string.ui_boot), draft.autoStartOnBoot, { draft = draft.copy(autoStartOnBoot = it) }) })
+                SettingsToggleGroup(stringResource(R.string.ui_automatic), draft.autoStartWhenReady, R.drawable.symbol_sync, IconHue.PERMISSIONS,
+                    footer = stringResource(R.string.settings_automatic_hint)) { draft = draft.copy(autoStartWhenReady = it) }
+                SettingsToggleGroup(stringResource(R.string.ui_boot), draft.autoStartOnBoot, R.drawable.symbol_power, IconHue.PERMISSIONS,
+                    footer = stringResource(R.string.direlay_boot_hint)) { draft = draft.copy(autoStartOnBoot = it) }
             }
             "settings/access" -> {
-                CollapsibleCard("admin", stringResource(R.string.admin_page), accessSummary, initiallyExpanded = true) { adminPage() }
-                SettingsMenuRow(R.string.public_name_title, stringResource(R.string.public_name_summary), R.drawable.symbol_link) {
-                    open("settings/access/publicName")
+                val name = runtime?.publicName?.view?.collectAsState()?.value
+                adminPage()
+                InsetGroup(footer = stringResource(R.string.public_name_summary)) {
+                    SettingsMenuRow(R.string.public_name_title, name?.name?.takeIf { it.isNotEmpty() }
+                        ?: menuToggleSummary(name?.enabled == true), R.drawable.symbol_globe) { open("settings/access/publicName") }
                 }
             }
         }
@@ -332,27 +333,34 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     val context = LocalContext.current
     fun link(url: String) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     DetailPage(stringResource(R.string.direlay_about), back) {
-        CollapsibleCard("project", stringResource(R.string.direlay_about), stringResource(R.string.about_project), initiallyExpanded = true) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        InsetGroup(footer = stringResource(R.string.about_project)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(64.dp))
-                RelayBrand()
+                Column(Modifier.weight(1f)) {
+                    RelayBrand()
+                    Text(context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
+                        style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            Text(context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SettingsRow(stringResource(R.string.direlay_attribution), stringResource(R.string.about_project), R.drawable.symbol_info,
-                { link(context.getString(R.string.direlay_project_url)) })
-            SettingsRow(stringResource(R.string.about_source), stringResource(R.string.about_source_hint), R.drawable.symbol_code,
-                { link(context.getString(R.string.direlay_source_url)) })
-            SettingsRow(stringResource(R.string.about_licence), stringResource(R.string.about_licence_hint), R.drawable.symbol_info,
-                { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
+            InsetDivider()
+            InsetRow(R.drawable.symbol_globe, IconHue.NETWORK, stringResource(R.string.direlay_attribution),
+                onClick = { link(context.getString(R.string.direlay_project_url)) })
+            InsetDivider()
+            InsetRow(R.drawable.symbol_code, IconHue.DEVELOPER, stringResource(R.string.about_source),
+                stringResource(R.string.about_source_hint), onClick = { link(context.getString(R.string.direlay_source_url)) })
+            InsetDivider()
+            InsetRow(R.drawable.symbol_info, IconHue.DEVELOPER, stringResource(R.string.about_licence),
+                stringResource(R.string.about_licence_hint), onClick = { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
         }
-        SmallHeading(stringResource(R.string.direlay_acknowledgements))
-        Text(stringResource(R.string.direlay_acknowledgement_text))
-        SettingsRow("DiPlay", stringResource(R.string.about_diplay_hint), R.drawable.symbol_car,
-            { link(context.getString(R.string.direlay_diplay_url)) })
-        SettingsRow("xcertplay", stringResource(R.string.about_xcertplay_hint), R.drawable.symbol_phone,
-            { link(context.getString(R.string.direlay_xcertplay_url)) })
-        Text(stringResource(R.string.direlay_trademark), Modifier.padding(top = 16.dp),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        InsetGroup(header = stringResource(R.string.direlay_acknowledgements), footer = stringResource(R.string.direlay_trademark)) {
+            Column(Modifier.padding(16.dp)) { Text(stringResource(R.string.direlay_acknowledgement_text), style = RelayTokens.footnote) }
+            InsetDivider()
+            InsetRow(R.drawable.symbol_car, IconHue.CAR, "DiPlay", stringResource(R.string.about_diplay_hint),
+                onClick = { link(context.getString(R.string.direlay_diplay_url)) })
+            InsetDivider()
+            InsetRow(R.drawable.symbol_phone, IconHue.IPHONE, "xcertplay", stringResource(R.string.about_xcertplay_hint),
+                onClick = { link(context.getString(R.string.direlay_xcertplay_url)) })
+        }
     }
 }

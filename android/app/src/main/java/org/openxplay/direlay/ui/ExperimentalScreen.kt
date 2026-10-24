@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.RelaySettings
 
@@ -14,32 +15,39 @@ import org.openxplay.direlay.settings.RelaySettings
 fun ExperimentalScreen(state: SettingsEditorState, back: () -> Unit, wireless: (RelaySettings) -> Boolean) {
     val options = state.draft.value.experimental
     DetailPage(stringResource(R.string.experimental_title), back) {
-        Toggle(stringResource(R.string.experimental_use_options), options.active) { enabled ->
+        SettingsToggleGroup(stringResource(R.string.experimental_use_options), options.active,
+            R.drawable.symbol_settings_2, IconHue.DEVELOPER, footer = stringResource(R.string.experimental_use_options_hint)) { enabled ->
             state.changeExperimental { it.copy(active = enabled) }
         }
-        Hint(stringResource(R.string.experimental_use_options_hint))
-        SmallHeading(stringResource(R.string.experimental_carlink))
-        Hint(stringResource(R.string.experimental_carlink_hint))
-        Toggle(stringResource(R.string.experimental_remember_subscription), options.rememberSubscription, options.active) { enabled ->
+        SettingsToggleGroup(stringResource(R.string.experimental_remember_subscription), options.rememberSubscription,
+            R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
+            header = stringResource(R.string.experimental_carlink),
+            footer = stringResource(R.string.experimental_carlink_hint) + "\n\n" + stringResource(R.string.experimental_remember_subscription_hint),
+            enabled = options.active) { enabled ->
             state.changeExperimental { it.copy(rememberSubscription = enabled) }
         }
-        Hint(stringResource(R.string.experimental_remember_subscription_hint), enabled = options.active)
-        Toggle(stringResource(R.string.experimental_keep_scanning), options.keepScanning, options.active) { enabled ->
+        SettingsToggleGroup(stringResource(R.string.experimental_keep_scanning), options.keepScanning,
+            R.drawable.symbol_scan_search, IconHue.BLUETOOTH, footer = stringResource(R.string.experimental_keep_scanning_hint),
+            enabled = options.active) { enabled ->
             state.changeExperimental { it.copy(keepScanning = enabled) }
         }
-        Hint(stringResource(R.string.experimental_keep_scanning_hint), enabled = options.active)
-        Toggle(stringResource(R.string.experimental_record_advertisements), options.recordAdvertisements, options.active) { enabled ->
+        SettingsToggleGroup(stringResource(R.string.experimental_record_advertisements), options.recordAdvertisements,
+            R.drawable.symbol_activity, IconHue.DEVELOPER, footer = stringResource(R.string.experimental_record_advertisements_hint),
+            enabled = options.active) { enabled ->
             state.changeExperimental { it.copy(recordAdvertisements = enabled) }
         }
-        Hint(stringResource(R.string.experimental_record_advertisements_hint), enabled = options.active)
-        Toggle(stringResource(R.string.experimental_send_address), options.sendBluetoothAddress, options.active) { enabled ->
+        SettingsToggleGroup(stringResource(R.string.experimental_send_address), options.sendBluetoothAddress,
+            R.drawable.symbol_bluetooth, IconHue.BLUETOOTH, footer = stringResource(R.string.experimental_send_address_hint),
+            enabled = options.active) { enabled ->
             state.changeExperimental { it.copy(sendBluetoothAddress = enabled) }
         }
-        Hint(stringResource(R.string.experimental_send_address_hint), enabled = options.active)
-        SettingField(stringResource(R.string.experimental_bluetooth_address), options.bluetoothAddress,
-            if (options.invalidAddress) R.string.experimental_address_error else null,
-            enabled = options.active && options.sendBluetoothAddress) { address ->
-            state.changeExperimental { it.copy(bluetoothAddress = address) }
+        SettingsGroup("address", R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
+            stringResource(R.string.experimental_bluetooth_address), options.bluetoothAddress, initiallyExpanded = true) {
+            SettingField(stringResource(R.string.experimental_bluetooth_address), options.bluetoothAddress,
+                if (options.invalidAddress) R.string.experimental_address_error else null,
+                enabled = options.active && options.sendBluetoothAddress) { address ->
+                state.changeExperimental { it.copy(bluetoothAddress = address) }
+            }
         }
         if (state.savingError) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
         if ("experimental" in state.errorPages(wireless))

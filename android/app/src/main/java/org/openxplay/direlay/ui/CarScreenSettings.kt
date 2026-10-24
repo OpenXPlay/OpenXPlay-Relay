@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
@@ -49,15 +50,13 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
             delay(500)
         }
     }
-    CollapsibleCard("viewAreas", stringResource(R.string.car_view_areas), stringResource(R.string.car_view_areas_hint), initiallyExpanded = true) {
-        SettingsRow(stringResource(R.string.car_view_areas), stringResource(R.string.car_view_areas_hint), R.drawable.symbol_car,
-            trailing = { LabeledSwitch(stringResource(R.string.car_view_areas), draft.viewAreas, { change(draft.copy(viewAreas = it)) }) })
-    }
+    SettingsToggleGroup(stringResource(R.string.car_view_areas), draft.viewAreas, R.drawable.symbol_monitor, IconHue.CAR,
+        footer = stringResource(R.string.car_view_areas_hint)) { change(draft.copy(viewAreas = it)) }
     val none = stringResource(R.string.car_none)
     val other = stringResource(R.string.car_other)
     val brands = models?.brands.orEmpty()
     val car = draft.car
-    CollapsibleCard("car", stringResource(R.string.car_and_screen), carSelectionSummary(car, models, locale, none, other), initiallyExpanded = false) {
+    SettingsGroup("car", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.car_and_screen), carSelectionSummary(car, models, locale, none, other), initiallyExpanded = false) {
         SmallHeading(stringResource(R.string.car_brand))
         val brandIds = listOf("") + brands.map { it.id } + "other"
         Options(listOf(none) + brands.map { it.name(locale) } + other, brandIds.indexOf(car.brand)) {
@@ -82,7 +81,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
     }
     if (car.brand == "tesla" || draft.teslaBrowser != TeslaBrowserMode.OFF)
         TeslaBrowserSettings(draft, runtime, openTrustedHttps, openOutput, change)
-    CollapsibleCard("canvas", stringResource(R.string.car_saved_canvas), savedCanvas?.let { "${it.profile.width} × ${it.profile.height}" } ?: none) {
+    SettingsGroup("canvas", R.drawable.symbol_monitor, IconHue.CAR, stringResource(R.string.car_saved_canvas), savedCanvas?.let { "${it.profile.width} × ${it.profile.height}" } ?: none) {
         savedCanvas?.let { saved ->
             Text(stringResource(R.string.car_canvas_size, saved.profile.width, saved.profile.height, saved.profile.density))
             Hint(stringResource(when (saved.source) {
@@ -95,7 +94,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
             Text(stringResource(R.string.car_clear_screen))
         }
     }
-    CollapsibleCard("detected", stringResource(R.string.car_detected), detected?.let { "${it.screen.width} × ${it.screen.height}" } ?: stringResource(R.string.car_no_screen)) {
+    SettingsGroup("detected", R.drawable.symbol_monitor, IconHue.CAR, stringResource(R.string.car_detected), detected?.let { "${it.screen.width} × ${it.screen.height}" } ?: stringResource(R.string.car_no_screen)) {
         if (models?.model(car)?.screens?.isNotEmpty() == true) Hint(stringResource(R.string.car_built_in))
         val data = detected
         if (data == null) Text(stringResource(R.string.car_no_screen)) else {
@@ -110,7 +109,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         }
     }
     val data = detected
-    CollapsibleCard("share", stringResource(R.string.car_share_title), stringResource(R.string.car_share_hint)) {
+    SettingsGroup("share", R.drawable.symbol_copy, IconHue.CAR, stringResource(R.string.car_share_title), stringResource(R.string.car_share_hint)) {
         Hint(stringResource(R.string.car_next_start))
         Hint(stringResource(R.string.car_share_hint))
         val title = stringResource(R.string.car_share_title)
@@ -138,7 +137,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         TeslaBrowserMode.PUBLIC_ADDRESS to RadioOption(R.string.tesla_public_address, R.string.tesla_public_address_hint),
         TeslaBrowserMode.TESLAMIRROR to RadioOption(R.string.tesla_mirror, R.string.tesla_virtual_name_hint),
         TeslaBrowserMode.TESLA_ANDROID to RadioOption(R.string.tesla_android, R.string.tesla_public_address_hint))
-    CollapsibleCard("tesla", stringResource(R.string.tesla_title),
+    SettingsGroup("tesla", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.tesla_title),
         stringResource(options.first { it.first == draft.teslaBrowser }.second.title), initiallyExpanded = true) {
         Hint(stringResource(R.string.tesla_intro))
         Column(Modifier.selectableGroup()) {
@@ -154,7 +153,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         if (address != null) {
             if (TeslaAddressPolicy.needsAndroid13Warning(Build.VERSION.SDK_INT, address))
                 Hint(stringResource(R.string.tesla_address_android13))
-            CollapsibleCard("teslaAddress", stringResource(R.string.tesla_address), address) {
+            SettingsGroup("teslaAddress", R.drawable.symbol_globe, IconHue.NETWORK, stringResource(R.string.tesla_address), address) {
                 val phoneAddresses = runtime.ipv4 - listOfNotNull(runtime.teslaAddress?.address).toSet()
                 SettingField(stringResource(R.string.tesla_address), address,
                     R.string.tesla_address_invalid.takeUnless { TeslaAddressPolicy.valid(address, phoneAddresses) }) {
