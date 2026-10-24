@@ -299,7 +299,8 @@ mod tests {
     }
     #[test]
     fn scan_pair_join_leave_use_only_the_admin_gap_and_record() {
-        let (admin, plan, inventory, dir) = fixture(Duration::from_millis(80));
+        // Leave enough margin to observe the gap even when other tests delay this thread.
+        let (admin, plan, inventory, dir) = fixture(Duration::from_secs(2));
         let fake = Arc::new(Fake::default());
         let carplay =
             HotspotLifetime::with_down_gap(Duration::from_secs(99), Some(dir.join("hotspot-down")));
@@ -337,7 +338,14 @@ mod tests {
         admin.observe(&serde_json::json!({"type":"link","state":"lost"}), "wlan9");
         reconcile();
         assert_eq!(admin.status().reason.as_deref(), Some("down-gap"));
-        std::thread::sleep(Duration::from_millis(90));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !admin.lifetime.down_remaining().is_zero() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for the admin down gap"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
         reconcile();
         assert_eq!(admin.status().state, "up");
         assert_eq!(fake.starts.load(Ordering::SeqCst), 2);

@@ -2918,13 +2918,22 @@ mod tests {
         assert!(!trace_dir.join(name).exists());
         {
             let _busy = a.supervisor.lock().unwrap();
-            let start = std::time::Instant::now();
-            assert_eq!(
-                a.carlink_trace_control(true, "clear"),
-                Err("error.carlinkTraceBusy".into())
-            );
-            assert!(!a.carlink_trace().unwrap().1);
-            assert!(start.elapsed() < Duration::from_secs(1));
+            let (tx, rx) = std::sync::mpsc::channel();
+            let admin = a.clone();
+            let request = std::thread::spawn(move || {
+                tx.send((
+                    admin.carlink_trace_control(true, "clear"),
+                    admin.carlink_trace().unwrap().1,
+                ))
+                .unwrap();
+            });
+            // Both requests must finish while the supervisor lock is still held.
+            let (result, running) = rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("Trace control blocked on the busy supervisor");
+            assert_eq!(result, Err("error.carlinkTraceBusy".into()));
+            assert!(!running);
+            request.join().unwrap();
         }
         let script = dir.join("child");
         let commands = dir.join("commands");
@@ -2954,15 +2963,20 @@ mod tests {
             RelaySupervisor::new(settings, Arc::new(ProcessChildFactory), Arc::new(|_| {}));
         supervisor.connect_carlink();
         supervisor.start().unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while !supervisor.trace_running() {
-            assert!(std::time::Instant::now() < deadline);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        // Tracing is advertised before spawn; running is set only after the control pipe exists.
+        while !supervisor.running() || !supervisor.trace_running() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for the trace control pipe"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         *a.supervisor.lock().unwrap() = Some(supervisor);
         a.settings.lock().unwrap().carlink_trace = "on".into();
         a.carlink_trace_control(false, "start").unwrap();
         a.carlink_trace_control(true, "clear").unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             let data = std::fs::read_to_string(&commands).unwrap_or_default();
             if data.lines().count() == 3 {
