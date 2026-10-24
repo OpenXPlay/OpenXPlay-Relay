@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.delay
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.RelayRuntime
 
@@ -36,30 +37,35 @@ import org.openxplay.direlay.relay.RelayRuntime
             delay(500)
         }
     }
-    val types = listOf(null, "Rtsp", "Frame", "Media", "Link", "Error")
-    Options(listOf(R.string.carlink_trace_all, R.string.carlink_trace_rtsp, R.string.carlink_trace_frames,
-        R.string.carlink_trace_media, R.string.carlink_trace_link, R.string.carlink_trace_errors).map { stringResource(it) }, filter) { filter = it }
-    Text(stringResource(R.string.carlink_trace_counters, lines.size, dropped, bytes))
-    lines.lastOrNull { it.type == "Media" }?.let { Text(it.json, style = MaterialTheme.typography.bodySmall) }
-    failure?.let { Text(stringResource(R.string.carlink_trace_failure, it)) }
-    OutlinedButton(enabled = file != null, onClick = {
-        file?.let {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.carlink-trace", it)
-            val intent = Intent(Intent.ACTION_SEND).setType("application/x-ndjson").putExtra(Intent.EXTRA_STREAM, uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            context.startActivity(Intent.createChooser(intent, null))
-        }
-    }) { Text(stringResource(R.string.carlink_trace_share)) }
-    TextButton(onClick = { runtime.carlinkTraceRecorder.clear(); runtime.carlinkMediaCapture.clear(); lines = emptyList(); file = null }) {
-        Text(stringResource(R.string.carlink_trace_clear))
-    }
-    OutlinedButton(enabled = enabled || capturing, onClick = {
-        if (capturing) runtime.carlinkMediaCapture.stop() else runtime.carlinkMediaCapture.start()
-        capturing = runtime.carlinkMediaCapture.capturing
-    }) { Text(stringResource(if (capturing) R.string.carlink_capture_stop else R.string.carlink_capture_start)) }
-    LazyColumn(Modifier.fillMaxWidth().height(280.dp)) {
-        items(lines.asReversed().filter { types[filter] == null || it.type == types[filter] }) {
-            Text(it.json, style = MaterialTheme.typography.bodySmall)
+    InsetGroup {
+        InsetRow(R.drawable.symbol_activity, IconHue.DEVELOPER, stringResource(R.string.carlink_debug))
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val types = listOf(null, "Rtsp", "Frame", "Media", "Link", "Error")
+            Options(listOf(R.string.carlink_trace_all, R.string.carlink_trace_rtsp, R.string.carlink_trace_frames,
+                R.string.carlink_trace_media, R.string.carlink_trace_link, R.string.carlink_trace_errors).map { stringResource(it) }, filter) { filter = it }
+            Text(stringResource(R.string.carlink_trace_counters, lines.size, dropped, bytes))
+            lines.lastOrNull { it.type == "Media" }?.let { Text(it.json, style = RelayTokens.mono) }
+            failure?.let { Text(stringResource(R.string.carlink_trace_failure, it)) }
+            OutlinedButton(enabled = file != null, onClick = {
+                file?.let {
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.carlink-trace", it)
+                    val intent = Intent(Intent.ACTION_SEND).setType("application/x-ndjson").putExtra(Intent.EXTRA_STREAM, uri)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    context.startActivity(Intent.createChooser(intent, null))
+                }
+            }) { Text(stringResource(R.string.carlink_trace_share)) }
+            TextButton(onClick = { runtime.carlinkTraceRecorder.clear(); runtime.carlinkMediaCapture.clear(); lines = emptyList(); file = null }) {
+                Text(stringResource(R.string.carlink_trace_clear))
+            }
+            OutlinedButton(enabled = enabled || capturing, onClick = {
+                if (capturing) runtime.carlinkMediaCapture.stop() else runtime.carlinkMediaCapture.start()
+                capturing = runtime.carlinkMediaCapture.capturing
+            }) { Text(stringResource(if (capturing) R.string.carlink_capture_stop else R.string.carlink_capture_start)) }
+            LazyColumn(Modifier.fillMaxWidth().height(280.dp)) {
+                items(lines.asReversed().filter { types[filter] == null || it.type == types[filter] }) {
+                    Text(it.json, style = RelayTokens.mono)
+                }
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ package org.openxplay.direlay.ui
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.RelaySettings
 import org.openxplay.direlay.relay.RelayRuntime
@@ -82,17 +83,23 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
     DetailPage(stringResource(developerPageTitle(route)), back) {
         when (route) {
             "developer" -> {
-                Toggle(stringResource(R.string.dev_use_options), state.developerDraft.value.active, { enabled ->
+                SettingsToggleGroup(stringResource(R.string.dev_use_options), state.developerDraft.value.active,
+                    R.drawable.symbol_code, IconHue.DEVELOPER, footer = stringResource(R.string.dev_use_options_hint)) { enabled ->
                     state.changeDeveloper { it.copy(active = enabled) }
-                })
-                Hint(stringResource(R.string.dev_use_options_hint))
-                SettingsMenuRow(R.string.design_gallery, stringResource(R.string.design_gallery_hint), R.drawable.symbol_settings_2) { open("developer/design") }
-                SettingsMenuRow(R.string.menu_diagnostics, stringResource(R.string.menu_diagnostics_summary, view.rows.size, view.urls.size), R.drawable.symbol_info) { open("developer/diagnostics") }
-                SettingsMenuRow(R.string.ui_carlink, "${hevcSummary(draft)} · ${menuToggleSummary(draft.carlinkTrace)}", R.drawable.symbol_car) { open("developer/carlink") }
-                SettingsMenuRow(R.string.menu_video, stringResource(R.string.menu_fps_summary, draft.fps), R.drawable.symbol_settings,
-                    "developer/video" in invalidPages) { open("developer/video") }
-                SettingsMenuRow(R.string.menu_connection_outputs, "${outputSummary(draft)} · ${connectionModeSummary(draft)}", R.drawable.symbol_wifi,
-                    "developer/connection" in invalidPages) { open("developer/connection") }
+                }
+                InsetGroup {
+                    SettingsMenuRow(R.string.design_gallery, stringResource(R.string.design_gallery_hint), R.drawable.symbol_settings_2) { open("developer/design") }
+                    InsetDivider()
+                    SettingsMenuRow(R.string.menu_diagnostics, stringResource(R.string.menu_diagnostics_summary, view.rows.size, view.urls.size), R.drawable.symbol_info) { open("developer/diagnostics") }
+                    InsetDivider()
+                    SettingsMenuRow(R.string.ui_carlink, "${hevcSummary(draft)} · ${menuToggleSummary(draft.carlinkTrace)}", R.drawable.symbol_car) { open("developer/carlink") }
+                    InsetDivider()
+                    SettingsMenuRow(R.string.menu_video, stringResource(R.string.menu_fps_summary, draft.fps), R.drawable.symbol_settings,
+                        "developer/video" in invalidPages) { open("developer/video") }
+                    InsetDivider()
+                    SettingsMenuRow(R.string.menu_connection_outputs, "${outputSummary(draft)} · ${connectionModeSummary(draft)}", R.drawable.symbol_wifi,
+                        "developer/connection" in invalidPages) { open("developer/connection") }
+                }
             }
             "developer/diagnostics" -> DeveloperDiagnostics(view, sample, setSample, openVehicle, reconnect, copy,
                 enabled = state.developerDraft.value.active)
