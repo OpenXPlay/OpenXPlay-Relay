@@ -793,4 +793,16 @@
     <string name="update_http_error">GitHub returned error %1$d.</string>
     <string name="update_invalid_response">Could not read the response from GitHub.</string>
     <string name="update_no_release">No Android release in this channel.</string>
+    <string name="carlink_picture_title">Carlink picture size</string>
+    <string name="carlink_picture_set_default">Set as default</string>
+    <string name="carlink_picture_default">Default</string>
+    <string name="carlink_picture_delete">Delete size</string>
+    <string name="carlink_picture_save">Save</string>
+    <string name="carlink_picture_trial">This connection uses %1$s. The next connection goes back to the default, %2$s.</string>
+    <string name="carlink_picture_limit">Up to 5 sizes. Delete one to save another.</string>
+    <string name="carlink_picture_output_off">Used when the car shows CarPlay through Carlink.</string>
+    <string name="carlink_picture_fixed">The developer display size is in use.</string>
+    <string name="carlink_picture_invalid">Use even pixels: 640–1920 × 360–1080, reversed for portrait.</string>
+    <string name="carlink_picture_duplicate">This size is already in the list. Save selects it.</string>
+    <string name="dev_screen_carlink_picture">%1$s (Carlink picture size)</string>
 </resources>

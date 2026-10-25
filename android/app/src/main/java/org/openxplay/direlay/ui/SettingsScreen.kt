@@ -178,6 +178,15 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
                         CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
                 }
+                val trial = runtime?.carlinkPictureTrial?.collectAsState()?.value
+                val canvas = runtime?.carlinkPictureCanvas?.collectAsState()?.value
+                val effective = runtime?.carlinkPictureEffective?.collectAsState()?.value
+                val selectPicture: (PictureSize?) -> Unit = { runtime?.tryCarlinkPicture(it) }
+                CarlinkPictureSettings(carlinkPictureUiModel(draft, trial, canvas,
+                    state.numberText["carlinkPictureWidth"].orEmpty(), state.numberText["carlinkPictureHeight"].orEmpty(), effective),
+                    select = selectPicture, setDefault = { draft = draft.copy(carlinkPictureDefault = it) },
+                    delete = { size -> state.deleteCarlinkPicture(size, trial) { runtime?.clearCarlinkPictureTrial() } }, input = state::updateCarlinkPicture,
+                    save = { state.saveCarlinkPicture(selectPicture) })
                 SettingsGroup("frameRate", R.drawable.symbol_activity, IconHue.PICTURE, stringResource(R.string.picture_frame_rate),
                     frameRateSummary(draft.frameRate, frameRate, stringResource(R.string.picture_frame_rate_auto)),
                     initiallyExpanded = false, targeted = target == "frameRate", footer = stringResource(R.string.picture_frame_rate_hint)) {

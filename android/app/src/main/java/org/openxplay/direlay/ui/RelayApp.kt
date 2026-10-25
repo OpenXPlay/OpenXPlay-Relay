@@ -129,7 +129,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                 runtime.reloadSettings()
                 val appliedAfter = checkNotNull(store.snapshot.value)
                 AppliedSettings(appliedBefore, appliedAfter, settingsFeedback(appliedBefore, appliedAfter,
-                    runtime.carlinkConnected, value.presentation.running, widthBefore, store.physicalWidthOverrideMm))
+                    runtime.carlinkConnected, value.presentation.running, widthBefore, store.physicalWidthOverrideMm, runtime.carlinkPictureTrial.value))
             }.getOrNull()
         }
     }
@@ -147,7 +147,11 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                 val result = snackbar.showSnackbar(context.getString(feedback.message),
                     feedback.action?.let { context.getString(it) }, duration = SnackbarDuration.Long)
                 if (result == SnackbarResult.ActionPerformed) {
-                    if (feedback.action == R.string.vehicle_reconnect_action) onReconnect() else onRestart()
+                    if (feedback.action == R.string.vehicle_reconnect_action) onReconnect() else {
+                        if (applied.before.carlinkPictureDefault != applied.after.carlinkPictureDefault)
+                            runtime.clearCarlinkPictureTrial(restart = false)
+                        onRestart()
+                    }
                 }
             }
         }
