@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.openxplay.direlay.ui.design.*
@@ -40,10 +41,10 @@ fun IdentitySettings(state: SettingsEditorState, view: DeveloperView, copy: (Str
     }
     SettingsGroup("mfi", R.drawable.symbol_key_round, IconHue.IDENTITY, stringResource(R.string.direlay_mfi_target), mfiTargetSummary(draft), initiallyExpanded = false) {
         Options(MfiTarget.entries.map { stringResource(when (it) { MfiTarget.LOCAL -> R.string.dev_local; MfiTarget.REMOTE -> R.string.dev_remote; MfiTarget.USB_CH341 -> R.string.dev_usb_i2c; MfiTarget.I2C -> R.string.dev_linux_i2c }) }, MfiTarget.entries.indexOf(draft.mfiTarget)) { draft = draft.copy(mfiTarget = MfiTarget.entries[it]) }
-        AnimatedVisibility(draft.mfiTarget == MfiTarget.I2C, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+        AnimatedVisibility(draft.mfiTarget == MfiTarget.I2C, enter = expandVertically(tween(ms), expandFrom = Alignment.Top), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) {
             SettingField(stringResource(R.string.direlay_i2c_path), draft.i2cPath) { draft = draft.copy(i2cPath = it) }
         }
-        AnimatedVisibility(draft.mfiTarget == MfiTarget.REMOTE, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+        AnimatedVisibility(draft.mfiTarget == MfiTarget.REMOTE, enter = expandVertically(tween(ms), expandFrom = Alignment.Top), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) {
             Column {
                 SettingField(stringResource(R.string.direlay_remote_server), draft.remoteServer) { draft = draft.copy(remoteServer = it) }
                 SettingField(stringResource(R.string.direlay_remote_token), draft.remoteToken, secret = true) { draft = draft.copy(remoteToken = it) }

@@ -39,7 +39,7 @@ import org.openxplay.direlay.ui.Symbol
             border = if (LocalRelayDark.current) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Column(Modifier.fillMaxWidth(), content = content)
         }
-        footer?.let { Text(it, Modifier.padding(horizontal = 16.dp), style = RelayTokens.footnote,
+        footer?.let { Text(it, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp), style = RelayTokens.footnote,
             color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }

@@ -7,6 +7,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
 import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
@@ -36,7 +37,7 @@ fun DeveloperVideo(state: SettingsEditorState) {
             }
         }
 
-        AnimatedVisibility(custom, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+        AnimatedVisibility(custom, enter = expandVertically(tween(ms), expandFrom = Alignment.Top), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) {
             Column {
                 EditorNumberField(state, "width", R.string.direlay_width, (draft.display?.width ?: 1280).toString(),
                     valid = { displayNumberValid("width", it) }) { value -> state.updateDisplay("width", value) }

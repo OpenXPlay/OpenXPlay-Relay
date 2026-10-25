@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import org.openxplay.direlay.ui.design.*
 import androidx.compose.foundation.BorderStroke
@@ -60,10 +60,12 @@ fun CollapsibleCard(key: String, title: String, summary: String, initiallyExpand
             if (error) Symbol(R.drawable.symbol_error, errorLabel)
             Box(Modifier.rotate(angle)) { Symbol(R.drawable.symbol_chevron, null) }
         }
-        AnimatedVisibility(expanded, enter = expandVertically(relaySpatial(motion)) + fadeIn(relayEffects(motion)),
-            exit = shrinkVertically(relaySpatial(motion)) + fadeOut(relayEffects(motion))) {
-            Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+        AnimatedVisibility(expanded, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+            Column {
+                HorizontalDivider(Modifier.padding(start = 16.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                Column(Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+            }
         }
     }
 }

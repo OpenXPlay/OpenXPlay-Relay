@@ -50,8 +50,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val ms = if (LocalRelayMotion.current) 220 else 0
     val visibility = remember { MutableTransitionState(false) }
     visibility.targetState = visible
-    AnimatedVisibility(visibility, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)),
-        exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) { RelayCard(content) }
+    AnimatedVisibility(visibility, enter = fadeIn(tween(ms)) + expandVertically(tween(ms), expandFrom = Alignment.Top),
+        exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) { RelayCard(content) }
 }
 
 @Composable fun HomeScreen(value: HomeContent, onSettings: (String) -> Unit, onStartStop: () -> Unit,

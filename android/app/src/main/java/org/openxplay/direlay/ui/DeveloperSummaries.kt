@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
@@ -22,7 +23,7 @@ import org.openxplay.direlay.settings.DisplayMode
 @Composable
 fun DeveloperOverrideContent(visible: Boolean, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
-    AnimatedVisibility(visible, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+    AnimatedVisibility(visible, enter = expandVertically(tween(ms), expandFrom = Alignment.Top), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }

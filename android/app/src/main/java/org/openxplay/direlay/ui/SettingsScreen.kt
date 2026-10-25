@@ -138,7 +138,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         }
                     }
                     if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
-                    AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
+                    AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SettingField(stringResource(R.string.direlay_carlink_name), draft.carlinkDeviceName, errors["name"]) { draft = draft.copy(carlinkDeviceName = it) }
                             SettingsToggleGroup(stringResource(R.string.vehicle_title), draft.vehicleInformation, R.drawable.symbol_car, IconHue.CAR,
@@ -198,8 +198,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         if (needsUsbConfirmation(draft.connectionMode, candidate.connectionMode, wireless(draft))) confirmUsb = true
                         else draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
                     }
-                    AnimatedVisibility(wireless(draft), enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
-                        exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
+                    AnimatedVisibility(wireless(draft), enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)),
+                        exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
                         Column {
                             IphonePickerSetting(draft.iphoneAddress, bondedDevices, target == "iphone" && !iphoneLocated) {
                                 draft = draft.copy(iphoneAddress = it)
