@@ -26,7 +26,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,8 +89,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier)
             }
             if (!setupCompleted) item("guide") {
-                TextButton(onGuide, Modifier.fillMaxWidth().height(48.dp)) {
-                    Text(stringResource(R.string.home2_setup))
+                TextButton(onGuide, Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.home2_setup), textAlign = TextAlign.Center)
                 }
             }
         })
@@ -162,7 +162,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 }
             }
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                Row(Modifier.fillMaxWidth().height(if (compact) 44.dp else 52.dp).padding(horizontal = 12.dp),
+                Row(Modifier.fillMaxWidth().heightIn(min = if (compact) 44.dp else 52.dp).padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.relay_brand_first), style = RelayTokens.headline, maxLines = 1)
                     Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { PathStatusCapsule(path) }
@@ -212,12 +212,12 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
 @Composable private fun VehicleTile(value: HomeContent, open: () -> Unit, modifier: Modifier, contentModifier: Modifier) {
     val context = LocalContext.current
     Card(onClick = open, modifier = modifier.fillMaxWidth()) {
-        Row(contentModifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
+        Row(contentModifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Symbol(R.drawable.symbol_car, null, Modifier.size(20.dp))
             Text(stringResource(R.string.vehicle_title), style = RelayTokens.footnote)
             Text(vehicleSummary(value.vehicle) { key, args -> context.getString(key, *args.toTypedArray()) },
-                Modifier.weight(1f), style = RelayTokens.caption, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                Modifier.weight(1f), style = RelayTokens.caption,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
         }

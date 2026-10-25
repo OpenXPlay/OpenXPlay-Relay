@@ -9,7 +9,6 @@ import androidx.compose.animation.*
 import org.openxplay.direlay.ui.design.*
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -32,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.*
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
@@ -58,9 +58,9 @@ import org.openxplay.direlay.settings.*
                 else -> IconHue.DEVELOPER
             })
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(label, style = RelayTokens.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(label, style = RelayTokens.body)
                 if (supporting.isNotEmpty()) Text(supporting, style = RelayTokens.footnote,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (trailing != null) trailing() else if (action != null) Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
         }
@@ -297,7 +297,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         verticalAlignment = if (extra == null) Alignment.CenterVertically else Alignment.Top) {
         RadioButton(selected = selected, enabled = enabled, onClick = null, modifier = Modifier.padding(horizontal = 12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(option.title), style = RelayTokens.headline, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(stringResource(option.title), style = RelayTokens.headline)
             val supporting = supportingText ?: stringResource(option.supporting)
             if (supporting.isNotEmpty()) Text(supporting, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -309,7 +309,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
 @Composable fun Options(labels: List<String>, selected: Int, enabled: Boolean = true, select: (Int) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         labels.forEachIndexed { index, label -> FilterChip(index == selected, { select(index) },
-            modifier = Modifier.heightIn(min = 48.dp), shape = RelayTokens.chip, enabled = enabled, label = { Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis) }) }
+            modifier = Modifier.heightIn(min = 48.dp), shape = RelayTokens.chip, enabled = enabled, label = { Text(label, textAlign = TextAlign.Center) }) }
     }
 }
 @Composable fun SettingField(label: String, value: String, error: Int? = null, number: Boolean = false,
@@ -350,8 +350,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             InsetRow(R.drawable.symbol_code, IconHue.DEVELOPER, stringResource(R.string.about_source),
                 stringResource(R.string.about_source_hint), onClick = { link(context.getString(R.string.direlay_source_url)) })
             InsetDivider()
-            InsetRow(R.drawable.symbol_info, IconHue.DEVELOPER, stringResource(R.string.about_licence),
-                stringResource(R.string.about_licence_hint), onClick = { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
+            InsetRow(R.drawable.symbol_info, IconHue.DEVELOPER, stringResource(R.string.about_licence_title),
+                stringResource(R.string.about_licence), onClick = { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
         }
         InsetGroup(header = stringResource(R.string.direlay_acknowledgements), footer = stringResource(R.string.direlay_trademark)) {
             Column(Modifier.padding(16.dp)) { Text(stringResource(R.string.direlay_acknowledgement_text), style = RelayTokens.footnote) }

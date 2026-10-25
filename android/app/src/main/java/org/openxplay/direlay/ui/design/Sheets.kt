@@ -21,7 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
@@ -66,8 +66,7 @@ import java.util.Date
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatusGlyph(step.state, 40.dp)
             IconTile(stepIcon(step.id), stepHue(step.id))
-            Text(stringResource(step.title), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(stringResource(step.title), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title)
         }
         step.detail?.let { Text(stepText(it), style = RelayTokens.body) }
         step.explanation?.let { Text(stringResource(it), style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -89,9 +88,9 @@ import java.util.Date
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             step.action?.let { action -> Button({ onAction(action) }, Modifier.weight(1f).heightIn(min = 48.dp), shape = RelayTokens.pill) {
-                Text(stringResource(step.actionLabel ?: R.string.design_open), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(step.actionLabel ?: R.string.design_open), textAlign = TextAlign.Center)
             } }
-            TextButton(onRecheck, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_check_again)) }
+            TextButton(onRecheck, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_check_again), textAlign = TextAlign.Center) }
         }
     }
 }

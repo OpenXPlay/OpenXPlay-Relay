@@ -21,7 +21,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.RelaySettings
@@ -54,8 +53,8 @@ fun CollapsibleCard(key: String, title: String, summary: String, initiallyExpand
             .clickable(role = Role.Button) { expanded = !expanded }.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(title, Modifier.semantics { heading() }, style = RelayTokens.headline, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (!expanded) Text(if (selected == true) stringResource(R.string.menu_selected_summary, summary) else summary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                Text(title, Modifier.semantics { heading() }, style = RelayTokens.headline)
+                if (!expanded) Text(if (selected == true) stringResource(R.string.menu_selected_summary, summary) else summary,
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (error) Symbol(R.drawable.symbol_error, errorLabel)
@@ -84,13 +83,13 @@ fun settingsPageTitle(route: String) = when (route) {
     else -> R.string.direlay_settings
 }
 
-internal data class SettingsFilePage(val title: Int, val summary: Int, val route: String)
+internal data class SettingsFilePage(val title: Int, val route: String)
 internal val settingsFilePages = listOf(
-    SettingsFilePage(R.string.config_title, R.string.config_summary, "settings/configFiles"),
-    SettingsFilePage(R.string.logs_title, R.string.logs_summary, "settings/logs"))
+    SettingsFilePage(R.string.config_title, "settings/configFiles"),
+    SettingsFilePage(R.string.logs_title, "settings/logs"))
 
 @Composable
-fun SettingsMenuRow(title: Int, summary: String, icon: Int, error: Boolean = false, action: () -> Unit) {
+fun SettingsMenuRow(title: Int, summary: String?, icon: Int, error: Boolean = false, action: () -> Unit) {
     val hue = when (title) {
         R.string.audio_title -> IconHue.BLUETOOTH
         R.string.ui_network -> IconHue.NETWORK
@@ -129,7 +128,7 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
         SettingsMenuRow(R.string.picture_title, "${resolutionSummary(draft)} · ${draft.carplayScreenWidth.mm} mm · ${codecSummary(draft)}",
             R.drawable.symbol_monitor) { open("settings/picture") }
         InsetDivider()
-        SettingsMenuRow(R.string.audio_title, "${stringResource(R.string.audio_car_bluetooth)} · ${menuToggleSummary(draft.carBluetoothAudio)}",
+        SettingsMenuRow(R.string.audio_title, stringResource(R.string.menu_audio_summary, menuToggleSummary(draft.carBluetoothAudio)),
             R.drawable.symbol_bluetooth) { open("settings/audio") }
     }
     InsetGroup {
@@ -146,14 +145,14 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
             "settings/identity" in invalidPages) { open("settings/identity") }
         InsetDivider()
         settingsFilePages.forEach { page ->
-            SettingsMenuRow(page.title, stringResource(page.summary), R.drawable.symbol_code) { open(page.route) }
+            SettingsMenuRow(page.title, null, R.drawable.symbol_code) { open(page.route) }
             if (page != settingsFilePages.last()) InsetDivider()
         }
     }
     InsetGroup {
         SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
         InsetDivider()
-        SettingsMenuRow(R.string.ui_developer, stringResource(R.string.menu_developer_summary, draft.fps, draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), R.drawable.symbol_code,
+        SettingsMenuRow(R.string.ui_developer, null, R.drawable.symbol_code,
             invalidPages.any { it.startsWith("developer/") }) { open("developer") }
         InsetDivider()
         SettingsMenuRow(R.string.experimental_title,

@@ -90,6 +90,7 @@ import org.openxplay.direlay.ui.LocalRelayMotion
                     InsetDivider()
                     InsetToggleRow(R.drawable.symbol_shield_check, IconHue.PERMISSIONS, stringResource(R.string.design_step_permissions), false, {}, enabled = false)
                 }
+                GalleryLongText(samples.last().path, action, recheck, { sheetStep = it })
                 Text(stringResource(R.string.design_icons), style = RelayTokens.title)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     IconHue.entries.forEach { hue -> Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
@@ -122,6 +123,31 @@ import org.openxplay.direlay.ui.LocalRelayMotion
             }
         }
     }
+}
+
+@Composable private fun GalleryLongText(path: ConnectionPath, action: (StepAction) -> Unit, recheck: () -> Unit,
+    showStep: (PathStep) -> Unit) {
+    val step = remember { PathStep(StepId.HOTSPOT, StepState.ACTION, R.string.design_long_title,
+        StepText.of(R.string.design_long_detail), StepText.raw("https://openxplay-relay-long-name.local:8443/receiver"),
+        action = StepAction.OPEN_HOTSPOT, actionLabel = R.string.design_long_action) }
+    Text(stringResource(R.string.design_long_text), style = RelayTokens.title)
+    InsetGroup {
+        InsetRow(R.drawable.symbol_radio, IconHue.NETWORK, stringResource(R.string.design_step_hotspot), "5 GHz", recheck)
+        InsetDivider()
+        InsetRow(R.drawable.symbol_globe, IconHue.NETWORK, stringResource(R.string.design_step_car_page),
+            "https://openxplay-relay-long-name.local:8443/receiver", recheck)
+        InsetDivider()
+        InsetRow(R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.design_long_title), "60 fps", recheck)
+    }
+    InsetGroup { StepRow(step, { showStep(step) }, action) }
+    FocusCard(step, action, recheck, { showStep(step) })
+    FocusCard(step, action, recheck, { showStep(step) }, compact = true)
+    val iphone = "NGNkmmTRxZV67hI38XiRGPHTo"
+    val longPath = path.copy(nodes = path.nodes.copy(iphone = iphone), sections = path.sections.map { section ->
+        section.copy(steps = section.steps.map { if (it.id == StepId.IPHONE_PAIRED) it.copy(evidence = StepText.raw(iphone)) else it })
+    })
+    PathMap(longPath, onSection = { section -> longPath.section(section)?.steps?.firstOrNull()?.let(showStep) })
+    PathMap(longPath, compact = true, onSection = { section -> longPath.section(section)?.steps?.firstOrNull()?.let(showStep) })
 }
 
 @Composable private fun GalleryPathSample(sample: DesignSample, action: (StepAction) -> Unit, recheck: () -> Unit,

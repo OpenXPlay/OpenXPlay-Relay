@@ -26,7 +26,7 @@ fun IdentitySettings(state: SettingsEditorState, view: DeveloperView, copy: (Str
     var draft by state.draft
     var confirm by remember { mutableStateOf<Boolean?>(null) }
     val ms = if (LocalRelayMotion.current) 220 else 0
-    SettingsGroup("tls", R.drawable.symbol_shield_check, IconHue.IDENTITY, stringResource(R.string.direlay_tls), view.fingerprint, initiallyExpanded = true, footer = stringResource(R.string.dev_tls_hint)) {
+    SettingsGroup("tls", R.drawable.symbol_shield_check, IconHue.IDENTITY, stringResource(R.string.direlay_tls), initiallyExpanded = true, footer = stringResource(R.string.dev_tls_hint)) {
         KeyValue(stringResource(R.string.dev_fingerprint), view.fingerprint, copy)
 
         OutlinedButton(onClick = { import(false) }) { Text(stringResource(R.string.dev_import_tls)) }

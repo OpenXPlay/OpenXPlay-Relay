@@ -24,7 +24,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.PathSection
@@ -47,14 +47,14 @@ import org.openxplay.direlay.ui.Symbol
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onClick() }, enabled = enabled,
             interactionSource = interactions, shape = RelayTokens.pill,
-            modifier = Modifier.fillMaxWidth(width).height(56.dp).graphicsLayer { scaleX = scale; scaleY = scale },
+            modifier = Modifier.fillMaxWidth(width).heightIn(min = 56.dp).graphicsLayer { scaleX = scale; scaleY = scale },
             colors = ButtonDefaults.buttonColors(containerColor = color,
                 contentColor = if (running && LocalRelayDark.current) RelayTokens.darkScheme.onPrimary else MaterialTheme.colorScheme.onPrimary)) {
             if (icon != null) {
                 Symbol(icon, null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
             }
-            Text(label, style = RelayTokens.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, Modifier.weight(1f, fill = false), style = RelayTokens.headline, textAlign = TextAlign.Center)
         }
     }
 }
@@ -87,7 +87,7 @@ import org.openxplay.direlay.ui.Symbol
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.size(8.dp).graphicsLayer { alpha = if (tone == PathTone.PROGRESS) (breath.value - .84f) / .16f else 1f }
                 .background(color, RelayTokens.pill))
-            Text(text, style = RelayTokens.caption.copy(fontFeatureSettings = "tnum"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, style = RelayTokens.caption.copy(fontFeatureSettings = "tnum"))
         }
     }
 }

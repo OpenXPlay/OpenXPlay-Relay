@@ -16,10 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import org.openxplay.direlay.R
@@ -27,17 +28,17 @@ import org.openxplay.direlay.path.*
 
 @Composable fun PathMap(path: ConnectionPath, compact: Boolean = false, onSection: (PathSection) -> Unit) {
     val phase = rememberRelayPhase(path.tone == PathTone.LIVE)
-    BoxWithConstraints(Modifier.fillMaxWidth().height(if (compact) 72.dp else 116.dp), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = if (compact) 72.dp else 116.dp), contentAlignment = Alignment.Center) {
         val nodeWidth = ((maxWidth - 96.dp) / 3).coerceIn(48.dp, 72.dp)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
             PathNode(path.nodes.iphone ?: stringResource(R.string.design_section_iphone), R.drawable.symbol_smartphone,
-                IconHue.IPHONE, null, path.section(PathSection.IPHONE), { onSection(PathSection.IPHONE) }, compact = compact, width = nodeWidth)
+                IconHue.IPHONE, stringResource(R.string.network_iphone), null, path.section(PathSection.IPHONE), { onSection(PathSection.IPHONE) }, compact = compact, width = nodeWidth)
             PathLink(path.section(PathSection.IPHONE), "3", phase, 0, compact, Modifier.weight(1f)) { onSection(PathSection.IPHONE) }
             PathNode(path.nodes.relay ?: stringResource(R.string.design_section_relay), R.drawable.symbol_phone,
-                IconHue.NETWORK, "1", path.section(PathSection.RELAY), { onSection(PathSection.RELAY) }, ring = true, compact = compact, width = nodeWidth)
+                IconHue.NETWORK, stringResource(R.string.network_this_phone), "1", path.section(PathSection.RELAY), { onSection(PathSection.RELAY) }, ring = true, compact = compact, width = nodeWidth)
             PathLink(path.section(PathSection.CAR), "2", phase, 1, compact, Modifier.weight(1f)) { onSection(PathSection.CAR) }
             PathNode(path.nodes.car ?: stringResource(R.string.design_section_car), R.drawable.symbol_car_front,
-                IconHue.CAR, "4", path.section(PathSection.PICTURE), { onSection(PathSection.PICTURE) }, compact = compact, width = nodeWidth)
+                IconHue.CAR, stringResource(R.string.network_car), "4", path.section(PathSection.PICTURE), { onSection(PathSection.PICTURE) }, compact = compact, width = nodeWidth)
         }
     }
 }
@@ -52,13 +53,17 @@ import org.openxplay.direlay.path.*
     }
 }
 
-@Composable private fun PathNode(name: String, icon: Int, hue: IconHue, number: String?, section: PathSectionView?,
+@Composable private fun PathNode(name: String, icon: Int, hue: IconHue, role: String, number: String?, section: PathSectionView?,
     click: () -> Unit, ring: Boolean = false, compact: Boolean = false, width: Dp = 72.dp) {
     val colors = LocalStatusColors.current
     val state = section?.state ?: StepState.BLOCKED
     val description = stringResource(stateLabel(state))
     val tileSize = if (compact) 36.dp else 44.dp
-    Column(Modifier.width(width).clickable(role = Role.Button, onClick = click).semantics { stateDescription = description }
+    val density = LocalDensity.current
+    var useRole by remember(name, role, width, density.density, density.fontScale) { mutableStateOf(false) }
+    Column(Modifier.width(width).clickable(role = Role.Button, onClick = click).semantics(mergeDescendants = true) {
+        contentDescription = role; stateDescription = description
+    }
         .padding(top = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(Modifier.size(tileSize), contentAlignment = Alignment.Center) {
             // Border centre is 4 dp beyond the tile; both outlines use the same concentric shape.
@@ -67,7 +72,8 @@ import org.openxplay.direlay.path.*
             // The badge centre sits 4 dp outside the tile corner, clear of the icon even at 36 dp.
             if (number != null) PathBadge(number, state, Modifier.align(Alignment.TopEnd).offset(x = 13.dp, y = (-13).dp))
         }
-        Text(name, style = RelayTokens.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(if (useRole) role else name, style = RelayTokens.caption, maxLines = 2, textAlign = TextAlign.Center,
+            onTextLayout = { if (!useRole && it.hasVisualOverflow) useRole = true })
     }
 }
 

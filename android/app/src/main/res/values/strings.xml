@@ -286,7 +286,7 @@
     <string name="about_source">Source code</string>
     <string name="about_source_hint">View OpenXPlay Relay on GitHub.</string>
     <string name="about_licence">AGPL-3.0 licence; DiPlay-derived parts GPL-3.0</string>
-    <string name="about_licence_hint">Read the licence.</string>
+    <string name="about_licence_title">Licence</string>
     <string name="about_diplay_hint">CarPlay receiver</string>
     <string name="about_xcertplay_hint">CarPlay connection and identity</string>
     <string name="dev_sample_vehicle">Show sample vehicle data</string>

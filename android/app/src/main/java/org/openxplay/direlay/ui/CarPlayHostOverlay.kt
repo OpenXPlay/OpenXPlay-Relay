@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import com.shilapi.xcertplay.AirPlayPersistence
@@ -176,8 +177,8 @@ private fun RelayRuntime.overlaySnapshot(activity: ComponentActivity, wifi: Stri
                         OutlinedButton({
                             if (button.action != HostOverlayAction.BACK) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onAction(button.action)
-                        }, Modifier.weight(1f).height(56.dp), enabled = !busy,
-                            contentPadding = PaddingValues(horizontal = 8.dp)) { Text(stringResource(button.label), maxLines = 1) }
+                        }, Modifier.weight(1f).heightIn(min = 56.dp), enabled = !busy,
+                            contentPadding = PaddingValues(horizontal = 8.dp)) { Text(stringResource(button.label), textAlign = TextAlign.Center) }
                     }
                 }
             })

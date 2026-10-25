@@ -109,7 +109,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         }
     }
     val data = detected
-    SettingsGroup("share", R.drawable.symbol_copy, IconHue.CAR, stringResource(R.string.car_share_title), stringResource(R.string.car_share_hint)) {
+    SettingsGroup("share", R.drawable.symbol_copy, IconHue.CAR, stringResource(R.string.car_share_title)) {
         Hint(stringResource(R.string.car_next_start))
         Hint(stringResource(R.string.car_share_hint))
         val title = stringResource(R.string.car_share_title)

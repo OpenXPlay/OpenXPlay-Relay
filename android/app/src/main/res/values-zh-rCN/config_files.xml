@@ -6,13 +6,12 @@ Created by riko chen on 2026-10-22
 -->
 <resources>
     <string name="config_title">配置文件</string>
-    <string name="config_summary">导出或导入用户配置和隐私配置。</string>
     <string name="config_user">用户配置</string>
     <string name="config_privacy">隐私配置</string>
     <string name="config_user_hint">连接方式、输出、画面等设置，不含账号密码和密钥。</string>
     <string name="config_privacy_hint">HTTPS 域名、证书和私钥。请妥善保管此文件。</string>
-    <string name="config_export">导出…</string>
-    <string name="config_import">导入…</string>
+    <string name="config_export">导出</string>
+    <string name="config_import">导入</string>
     <string name="config_export_confirm">导出</string>
     <string name="config_privacy_warning">此文件包含域名 Token 和证书私钥，拿到文件的人可以使用你的 HTTPS 域名。</string>
     <string name="config_replace">用文件中的值替换当前设置？</string>

@@ -22,7 +22,7 @@ import org.openxplay.direlay.ui.design.*
 
 /** Keeps section disclosure and field deep links while using the inset list components. */
 @OptIn(ExperimentalFoundationApi::class)
-@Composable internal fun SettingsGroup(key: String, icon: Int, tile: IconHue, title: String, summary: String,
+@Composable internal fun SettingsGroup(key: String, icon: Int, tile: IconHue, title: String, summary: String? = null,
     initiallyExpanded: Boolean = false, targeted: Boolean = false, selected: Boolean? = null,
     error: Boolean = false, footer: String? = null, content: @Composable ColumnScope.() -> Unit) {
     var expanded by rememberSaveable(key) { mutableStateOf(initiallyExpanded || targeted) }
@@ -46,7 +46,7 @@ import org.openxplay.direlay.ui.design.*
             if (selected != null) this.selected = selected
         }) {
             InsetRow(icon, tile, title,
-                if (selected == true) stringResource(R.string.menu_selected_summary, summary) else summary,
+                if (expanded || summary == null) null else if (selected == true) stringResource(R.string.menu_selected_summary, summary) else summary,
                 onClick = { expanded = !expanded }, trailing = {
                     if (error) CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.error) {
                         Symbol(R.drawable.symbol_error, errorLabel)
