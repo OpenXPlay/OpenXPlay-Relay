@@ -46,7 +46,7 @@ import java.io.File
 import java.time.Instant
 import java.util.Date
 
-private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR, QR, RESULT }
+private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PREPARE_QR, QR, RESULT }
 
 @Composable fun LogsScreen(files: LogFiles, uploader: LogUploader) {
     val context = LocalContext.current
@@ -92,7 +92,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
             }
         }
     }
-    InsetGroup(footer = stringResource(R.string.logs_description)) {
+    InsetGroup {
         InsetRow(R.drawable.symbol_code, IconHue.LOGS, stringResource(R.string.logs_export),
             onClick = if (step == null) ({ range = LogRange.LAST_10_MINUTES; step = LogsStep.PERIOD }) else null)
         receipt?.let { latest ->
@@ -102,6 +102,15 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
                     step = LogsStep.PREPARE_QR
                     job = scope.launch { showReceipt(latest) }
                 }) else null)
+        }
+    }
+    InsetGroup(header = stringResource(R.string.logs_privacy_title)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(R.string.logs_privacy_purpose, R.string.logs_privacy_local, R.string.logs_privacy_server,
+                R.string.logs_privacy_link, R.string.logs_privacy_content, R.string.logs_privacy_retention,
+                R.string.logs_privacy_alternative).forEach { paragraph ->
+                Text(stringResource(paragraph), style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
     when (step) {
@@ -167,6 +176,19 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
                 } },
                 confirmButton = { Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
                     TextButton(onClick = { create.launch(archive.name) }) { Text(stringResource(R.string.logs_save)) }
+                    TextButton(onClick = { step = LogsStep.CONSENT }) { Text(stringResource(R.string.logs_upload)) }
+                    TextButton(onClick = { step = null }) { Text(stringResource(android.R.string.cancel)) }
+                } })
+        }
+        LogsStep.CONSENT -> file?.let { archive ->
+            AlertDialog(onDismissRequest = { step = LogsStep.READY }, title = { Text(stringResource(R.string.logs_consent_title)) },
+                text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(stringResource(R.string.logs_consent_destination))
+                    Text(stringResource(R.string.logs_privacy_server))
+                    Text(stringResource(R.string.logs_consent_retention))
+                    Text(stringResource(R.string.logs_consent_alternative))
+                } },
+                confirmButton = { Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
                     TextButton(onClick = {
                         uploadProgress = LogUploadProgress.Connecting
                         step = LogsStep.UPLOAD
@@ -193,8 +215,9 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
                                 result(text + wait, back = true)
                             }
                         }
-                    }) { Text(stringResource(R.string.logs_upload)) }
-                    TextButton(onClick = { step = null }) { Text(stringResource(android.R.string.cancel)) }
+                    }) { Text(stringResource(R.string.logs_consent_agree)) }
+                    TextButton(onClick = { create.launch(archive.name) }) { Text(stringResource(R.string.logs_save)) }
+                    TextButton(onClick = { step = LogsStep.READY }) { Text(stringResource(android.R.string.cancel)) }
                 } })
         }
         LogsStep.QR -> AlertDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_qr_title)) },

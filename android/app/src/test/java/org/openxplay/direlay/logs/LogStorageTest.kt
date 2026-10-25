@@ -59,11 +59,20 @@ class LogStorageTest {
     }
     @Test fun ageRetentionUsesHourEndAndNeverDeletesUnrelatedFiles() {
         val directory = temporary.newFolder()
-        val old = File(directory, "relay-20261022-02.log").apply { writeText(line(time - 27 * 3_600_000L, "old") + "\n") }
-        val boundary = File(directory, "relay-20261022-03.log").apply { writeText("keep") }
-        val retained = File(directory, "relay-20261022-04.log").apply { writeText("keep") }
+        val old = File(directory, "relay-20261022-03.log").apply { writeText(line(time - 26 * 3_600_000L, "old") + "\n") }
+        val boundary = File(directory, "relay-20261022-04.log").apply { writeText("keep") }
+        val retained = File(directory, "relay-20261022-05.log").apply { writeText("keep") }
         val unrelated = File(directory, "other.txt").apply { writeText("keep") }
-        LogSegmentStore(directory, { time }).use { it.prune() }
+        var now = time - 300_001
+        LogSegmentStore(directory, { now }).use { store ->
+            store.prune()
+            assertTrue(boundary.exists())
+            now++
+            store.prune()
+            assertTrue(boundary.exists())
+            now++
+            store.prune()
+        }
         assertFalse(old.exists())
         assertFalse(boundary.exists())
         assertTrue(retained.exists())
