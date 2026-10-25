@@ -68,6 +68,29 @@ class UserConfigCodecTest {
     private fun wrapped(settings: JSONObject) = ConfigEnvelope.create(UserConfigCodec.FORMAT, meta).put("settings", settings).toString()
     private fun decode(settings: JSONObject) = UserConfigCodec.decode(wrapped(settings), base)
 
+    @Test fun legacyIncompleteCarsImportWithoutBlockingOtherSettings() {
+        for (car in listOf(CarSelection(), CarSelection("xpeng"), CarSelection("other", model = "other"),
+            CarSelection("xpeng", model = "other"))) {
+            val legacy = JSONObject().put("brand", car.brand).put("brandText", car.brandText)
+                .put("model", car.model).put("modelText", car.modelText)
+            val result = decode(JSONObject().put("car", legacy).put("autoStartOnBoot", true))
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            assertTrue(result.ignoredKeys.toString(), result.ignoredKeys.isEmpty())
+            assertEquals(car.normalized(), result.settings.car)
+            assertFalse(result.settings.car.complete)
+            assertTrue(result.settings.autoStartOnBoot)
+            result.settings.validate(wireless = false)
+        }
+        val current = base.copy(car = CarSelection("xpeng", model = "g6"))
+        val missing = UserConfigCodec.decode(wrapped(JSONObject().put("autoStartOnBoot", true)), base)
+        assertTrue(missing.errors.isEmpty())
+        assertFalse(missing.settings.car.complete)
+        val cleared = UserConfigCodec.decode(wrapped(JSONObject().put("car", JSONObject()
+            .put("brand", "").put("brandText", "").put("model", "").put("modelText", ""))), current)
+        assertTrue(cleared.errors.toString(), cleared.errors.isEmpty())
+        assertEquals(CarSelection(), cleared.settings.car)
+    }
+
     @Test fun carYearVersionOneRoundTripsKnownCustomAndIncompleteSelections() {
         for (car in listOf(CarSelection(), CarSelection("xpeng"), CarSelection("xpeng", model = "g6"),
             CarSelection("xpeng", model = "g6", year = "g6-2023"), CarSelection("tesla", model = "model-3", year = "model-3-2024"),

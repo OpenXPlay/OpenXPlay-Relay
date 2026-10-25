@@ -525,6 +525,12 @@
     <string name="car_brand">Brand</string>
     <string name="car_model">Model</string>
     <string name="car_year">Year</string>
+    <string name="car_not_sure">Not sure</string>
+    <string name="car_brand_required">Choose a brand.</string>
+    <string name="car_model_required">Choose a model.</string>
+    <string name="setup_car_title">Your car</string>
+    <string name="car_choose_title">Choose your car</string>
+    <string name="car_choose_hint">Settings and strategies differ by car.</string>
     <string name="car_detected">Detected screen data</string>
     <string name="car_built_in">This model year includes built-in screen data.</string>
     <string name="car_no_screen">No head-unit screen recorded yet.</string>

@@ -9,10 +9,12 @@ appProjected = "1.4.0"
 junit = "4.13.2"
 composeBom = "2026.02.01"
 activityCompose = "1.8.0"
+profileinstaller = "1.4.1"
 bouncycastle = "1.79"
 zxing = "3.5.3"
 
 [libraries]
+androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
 androidx-app-projected = { module = "androidx.car.app:app-projected", version.ref = "appProjected" }
 junit = { module = "junit:junit", version.ref = "junit" }

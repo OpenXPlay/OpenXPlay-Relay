@@ -111,7 +111,7 @@ fun visibleHomeFailures(settings: RelaySettings, failures: List<RelayFailure>): 
     it.outputId == "cast" && !settings.dlnaOutput || it.outputId == "miracast" && !settings.miracastOutput
 }
 
-/** Runtime values are copied by the Activity; this mapper has no services or mutable runtime references. */
+/** Runtime values are copied by the producer; this mapper has no services or mutable runtime references. */
 fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDetail: String,
     carlinkError: String?, webReason: WebStartReason?, serverState: String,
     readiness: NetworkReadiness = NetworkReadiness(), teslaFailure: String? = null,

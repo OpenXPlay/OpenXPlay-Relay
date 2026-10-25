@@ -519,6 +519,12 @@
     <string name="car_brand">品牌</string>
     <string name="car_model">车型</string>
     <string name="car_year">年份</string>
+    <string name="car_not_sure">不确定</string>
+    <string name="car_brand_required">请选择品牌。</string>
+    <string name="car_model_required">请选择车型。</string>
+    <string name="setup_car_title">你的车</string>
+    <string name="car_choose_title">选择你的车型</string>
+    <string name="car_choose_hint">不同车型会使用不同的设置和策略。</string>
     <string name="car_detected">检测到的屏幕数据</string>
     <string name="car_built_in">此年份自带内置屏幕数据。</string>
     <string name="car_no_screen">尚未记录车机屏幕。</string>

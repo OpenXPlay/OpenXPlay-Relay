@@ -27,7 +27,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
 
 @Composable fun PathMap(path: ConnectionPath, compact: Boolean = false, onSection: (PathSection) -> Unit) {
-    val phase = rememberRelayPhase(path.tone == PathTone.LIVE)
+    val phase = rememberRelayPhase(path.tone == PathTone.LIVE, path.live?.sinceMillis)
     BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = if (compact) 72.dp else 116.dp), contentAlignment = Alignment.Center) {
         val nodeWidth = ((maxWidth - 96.dp) / 3).coerceIn(48.dp, 72.dp)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {

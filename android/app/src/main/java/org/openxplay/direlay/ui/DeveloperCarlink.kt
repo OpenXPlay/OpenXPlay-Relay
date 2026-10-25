@@ -7,7 +7,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.res.stringResource
 import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
-import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.video.CarlinkGeometry
 import org.openxplay.direlay.video.VideoCompatibility
 import org.openxplay.stream.clink.ClinkHevcMode
@@ -19,7 +18,8 @@ internal fun carlinkGeometryValues(geometry: CarlinkGeometry) = with(geometry) {
 }
 
 @Composable
-fun DeveloperCarlink(state: SettingsEditorState, view: DeveloperView, debug: RelayRuntime?) {
+fun DeveloperCarlink(state: SettingsEditorState, view: DeveloperView, sources: org.openxplay.direlay.presentation.ScreenSources,
+    actions: org.openxplay.direlay.presentation.ScreenActions, shareTrace: (java.io.File) -> Unit) {
     val draft by state.draft
     val overrides by state.developerDraft
     SettingsGroup("debug", R.drawable.symbol_activity, IconHue.DEVELOPER, stringResource(R.string.carlink_debug), menuToggleSummary(draft.carlinkTrace), initiallyExpanded = true) {
@@ -35,7 +35,8 @@ fun DeveloperCarlink(state: SettingsEditorState, view: DeveloperView, debug: Rel
             KeyValue(stringResource(R.string.carlink_geometry), stringResource(R.string.carlink_geometry_value,
                 *(carlinkGeometryValues(geometry) + mode).toTypedArray()))
         }
-        if (debug != null) CarlinkDebugPanel(debug, draft.carlinkTrace)
+        val debug by sources.debug.screenState()
+        CarlinkDebugPanel(debug, draft.carlinkTrace, actions.clearTrace, actions.capture, shareTrace)
     }
     SettingsGroup("hevc", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.carlink_hevc), hevcSummary(draft), initiallyExpanded = false, footer = stringResource(R.string.carlink_hevc_hint)) {
         SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.carlink_hevc), checked = overrides.carlinkHevcEnabled, enabled = overrides.active) { enabled ->
@@ -76,6 +77,7 @@ fun DeveloperCarlink(state: SettingsEditorState, view: DeveloperView, debug: Rel
         }
     }
     SettingsGroup("areas", R.drawable.symbol_monitor, IconHue.CAR, stringResource(R.string.car_view_areas), menuToggleSummary(draft.viewAreas), initiallyExpanded = false) {
-        if (debug != null) ViewAreasPanel(debug)
+        val areas by sources.areas.screenState()
+        ViewAreasPanel(areas, actions.showArea, actions.clearWindows)
     }
 }

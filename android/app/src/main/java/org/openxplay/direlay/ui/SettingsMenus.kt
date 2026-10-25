@@ -116,16 +116,16 @@ fun SettingsMenuRow(title: Int, summary: String?, icon: Int, error: Boolean = fa
 
 @Composable
 fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Boolean,
-    accessSummary: String, carSummary: String, identityStatus: Int, frameRate: Int, open: (String) -> Unit) {
+    accessSummary: String, carSummary: String, identityStatus: Int, frameRate: Int, carComplete: Boolean, open: (String) -> Unit) {
     val experimental = draft.experimental
     val context = LocalContext.current
-    val version = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() }
+    val version = LocalAppVersion.current
     InsetGroup {
         SettingsMenuRow(R.string.ui_output, outputSummary(draft),
             R.drawable.symbol_car, "settings/output" in invalidPages) { open("settings/output") }
         InsetDivider()
         SettingsMenuRow(R.string.car_and_screen, carSummary,
-            R.drawable.symbol_car) { open("settings/car") }
+            R.drawable.symbol_car, !carComplete || "settings/car" in invalidPages) { open("settings/car") }
         InsetDivider()
         SettingsMenuRow(R.string.picture_title, pictureMenuSummary(resolutionSummary(draft), draft.carplayScreenWidth.mm, codecSummary(draft), frameRate),
             R.drawable.symbol_monitor) { open("settings/picture") }

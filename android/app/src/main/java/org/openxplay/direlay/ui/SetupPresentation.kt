@@ -11,7 +11,7 @@ import org.openxplay.direlay.settings.*
 
 /** The guided setup's pages, in order. The network page exists only for wireless CarPlay. */
 enum class SetupStep(val key: String) {
-    OUTPUT("output"), CONNECTION("connection"), NETWORK("network"), PREPARE("prepare"), START("start")
+    CAR("car"), OUTPUT("output"), CONNECTION("connection"), NETWORK("network"), PREPARE("prepare"), START("start")
 }
 fun setupSteps(wireless: Boolean) = SetupStep.entries.filter { wireless || it != SetupStep.NETWORK }
 fun setupStep(key: String) = SetupStep.entries.firstOrNull { it.key == key }
@@ -72,8 +72,11 @@ fun afterStartLines(settings: RelaySettings, wireless: Boolean): List<Int> =
 
 /** The hotspot and shared Wi-Fi fields belong to the network page; they never block the other pages. */
 private val networkFields = setOf("ssid", "password")
-fun setupStepErrors(step: SetupStep, errors: Map<String, Int>) =
-    if (step == SetupStep.NETWORK) errors else errors - networkFields
+fun setupStepErrors(step: SetupStep, errors: Map<String, Int>, car: CarSelection = CarSelection()) = when (step) {
+    SetupStep.CAR -> carSelectionErrors(car)
+    SetupStep.NETWORK -> errors
+    else -> errors - networkFields
+}
 fun chooseConnection(settings: RelaySettings, wireless: Boolean): RelaySettings {
     val candidate = settings.copy(connectionMode = if (wireless) ConnectionMode.WIRELESS else ConnectionMode.USB)
     return CarlinkConnectionPolicy.enabling(settings, candidate, wireless)

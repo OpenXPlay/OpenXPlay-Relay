@@ -37,7 +37,7 @@ fun samplePaths(nowMillis: Long, pagesLabel: String = "1"): List<DesignSample> {
         return DesignSample(title, ConnectionPath(sections, steps.firstOrNull { it.id == focus }, tone, canStart, running,
             if (live) LiveSummary(nowMillis - 751_000, listOf("1920×720", "60 fps", "H.264", "8.2 Mb/s", pagesLabel)) else null,
             PathNodes("iPhone 15", "Redmi 14C", if (pin) "Carlink" else "1920×720"),
-            line + (special?.takeIf { it.state == StepState.FAILED }?.code?.let { " | E $it 14:31:58" } ?: "") + " | 0.1.6 14:32:05"))
+            line + (special?.takeIf { it.state == StepState.FAILED }?.code?.let { " | E $it 14:31:58" } ?: ""), version = "0.1.6"))
     }
     val prepared = (relay + StepId.IPHONE_PAIRED).toSet()
     val started = (relay + car + iphone.take(2)).toSet()

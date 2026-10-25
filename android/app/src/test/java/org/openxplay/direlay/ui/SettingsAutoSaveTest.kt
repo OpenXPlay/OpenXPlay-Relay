@@ -13,6 +13,21 @@ import org.openxplay.direlay.R
 class SettingsAutoSaveTest {
     private val initial = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
         FrameRatePreference.AUTO, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
+    @Test fun incompleteCarsNeverBlockSavingOrBecomeFixSettingsErrors() {
+        for (car in listOf(CarSelection(), CarSelection("xpeng"), CarSelection("other", model = "other"),
+            CarSelection("xpeng", model = "other"))) {
+            val chosen = initial.copy(car = car, autoStartOnBoot = true)
+            assertTrue(settingsErrors(chosen, true).isEmpty())
+            assertTrue(settingsSaveErrors(chosen, true).isEmpty())
+            val pages = settingsInvalidPages(chosen, initial) { true }
+            assertTrue(pages.isEmpty())
+            assertEquals("settings", firstSettingsErrorPage(pages))
+            val published = mutableListOf<RelaySettings>()
+            assertTrue(SettingsAutoSave(initial, published::add).apply(chosen, true))
+            assertEquals(listOf(chosen), published)
+        }
+    }
+
     @Test fun teslaEditsAreSilentAndInvalidAddressesBelongToTheCarPage() {
         val edits = TeslaBrowserMode.entries.map { initial.copy(teslaBrowser = it) } + listOf(
             initial.copy(teslaVirtualAddress = "169.254.88.2"), initial.copy(teslaPublicAddress = "169.254.88.3"),
