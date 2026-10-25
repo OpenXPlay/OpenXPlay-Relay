@@ -4,18 +4,19 @@
 package org.openxplay.direlay.ui
 
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,13 +24,23 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
@@ -105,6 +116,22 @@ import org.openxplay.direlay.ui.design.*
         }
     }
     val ready = home.presentation.canStart || running
+    val preparePath = home.path
+    val prepareChecks = setupChecks(home.presentation, isWireless, draft.wirelessNetwork.choice)
+    val prepareComplete = setupPrepareComplete(preparePath, prepareChecks)
+    var prepareRequests by remember(stepKey) { mutableIntStateOf(0) }
+    val view = LocalView.current
+    val nextScale = remember { Animatable(1f) }
+    var wasPrepareComplete by remember(stepKey) { mutableStateOf(false) }
+    LaunchedEffect(step, prepareComplete, motion) {
+        val pulse = step == SetupStep.PREPARE && prepareComplete && !wasPrepareComplete
+        wasPrepareComplete = step == SetupStep.PREPARE && prepareComplete
+        nextScale.snapTo(1f)
+        if (pulse && motion) {
+            nextScale.snapTo(.97f)
+            nextScale.animateTo(1f, relaySpatial(true))
+        }
+    }
     val nextEnabled = !saving && when (step) {
         SetupStep.CAR -> draft.car.complete
         SetupStep.PREPARE -> ready
@@ -113,7 +140,7 @@ import org.openxplay.direlay.ui.design.*
     }
     Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = {
         TopAppBar(expandedHeight = if (compact) 52.dp else 72.dp, title = {
-            SetupProgressHeader(index, steps.size, compact)
+            SetupProgressHeader(index, steps.size)
         }, navigationIcon = {
             IconButton(onClick = ::previous) {
                 Symbol(R.drawable.symbol_back, stringResource(if (index > 0) R.string.ui_back else R.string.setup_close))
@@ -124,19 +151,31 @@ import org.openxplay.direlay.ui.design.*
             Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = if (compact) 8.dp else 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 Column(Modifier.widthIn(max = 720.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!compact && step == SetupStep.PREPARE && !ready) Hint(stringResource(R.string.setup_prepare_blocked))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (index > 0) TextButton(onClick = ::previous, Modifier.heightIn(min = 56.dp)) {
-                            Text(stringResource(R.string.ui_back), textAlign = TextAlign.Center)
+                    AnimatedVisibility(step == SetupStep.PREPARE && !ready && prepareRequests > 0,
+                        enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+                        Box(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
+                            Hint(stringResource(R.string.setup_prepare_blocked))
                         }
-                        Box(Modifier.weight(1f)) {
-                            PrimaryPill(running = false, enabled = nextEnabled, label = stringResource(when {
-                                step != SetupStep.START -> R.string.setup_next
-                                !running -> R.string.setup_start
-                                changed -> R.string.setup_apply_restart
-                                else -> R.string.setup_done
-                            }), onClick = ::next, icon = if (step == SetupStep.START) R.drawable.symbol_power else null)
+                    }
+                    Box(Modifier.graphicsLayer {
+                        scaleX = if (motion) nextScale.value else 1f; scaleY = scaleX
+                    }) {
+                        val label = stringResource(when {
+                            step != SetupStep.START -> R.string.setup_next
+                            !running -> R.string.setup_start
+                            changed -> R.string.setup_apply_restart
+                            else -> R.string.setup_done
+                        })
+                        val reveal = step == SetupStep.PREPARE && !ready && !nextEnabled
+                        Box(if (reveal) Modifier.clearAndSetSemantics {} else Modifier) {
+                            PrimaryPill(running = false, enabled = nextEnabled, label = label,
+                                onClick = ::next, icon = if (step == SetupStep.START) R.drawable.symbol_power else null)
                         }
+                        if (reveal) Box(Modifier.matchParentSize().semantics { contentDescription = label }
+                            .clickable(role = Role.Button, onClickLabel = label) {
+                                prepareRequests++
+                                if (Build.VERSION.SDK_INT >= 30) view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+                            })
                     }
                 }
             }
@@ -146,48 +185,50 @@ import org.openxplay.direlay.ui.design.*
             relayPageTransition(targetState > initialState, motion)
         }) { shown ->
             val current = steps.getOrElse(shown) { step }
-            SetupPage(compact, title = stringResource(when (current) {
-                SetupStep.CAR -> R.string.setup_car_title
-                SetupStep.OUTPUT -> R.string.setup2_output_title
-                SetupStep.CONNECTION -> R.string.setup2_connection_title
-                SetupStep.NETWORK -> R.string.setup2_network_title
-                SetupStep.PREPARE -> R.string.setup_prepare_title
-                SetupStep.START -> if (running) R.string.setup_start_running_title else R.string.setup_start_title
-            }), subtitle = stringResource(when (current) {
-                SetupStep.CAR -> R.string.car_choose_hint
-                SetupStep.OUTPUT -> R.string.setup2_output_subtitle
-                SetupStep.CONNECTION -> R.string.setup2_connection_subtitle
-                SetupStep.NETWORK -> R.string.setup2_network_subtitle
-                SetupStep.PREPARE -> R.string.setup2_prepare_subtitle
-                SetupStep.START -> R.string.setup2_start_subtitle
-            }), illustration = { if (compact && current != SetupStep.CAR) SetupIllustration(draft, isWireless) }) {
-                when (current) {
-                    SetupStep.CAR -> CarPicker(draft.car, carModels, LocalConfiguration.current.locales[0]) { draft = draft.copy(car = it) }
-                    SetupStep.OUTPUT -> OutputStep(draft) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
-                    SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) {
-                        val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB
-                        if (needsUsbConfirmation(draft.connectionMode, mode, isWireless)) confirmUsb = true
-                        else draft = chooseConnection(draft, it)
+            SetupPageEntrance {
+                SetupPage(compact, title = stringResource(when (current) {
+                    SetupStep.CAR -> R.string.setup_car_title
+                    SetupStep.OUTPUT -> R.string.setup2_output_title
+                    SetupStep.CONNECTION -> R.string.setup2_connection_title
+                    SetupStep.NETWORK -> R.string.setup2_network_title
+                    SetupStep.PREPARE -> R.string.setup_prepare_title
+                    SetupStep.START -> if (running) R.string.setup_start_running_title else R.string.setup_start_title
+                }), subtitle = stringResource(when (current) {
+                    SetupStep.CAR -> R.string.car_choose_hint
+                    SetupStep.OUTPUT -> R.string.setup2_output_subtitle
+                    SetupStep.CONNECTION -> R.string.setup2_connection_subtitle
+                    SetupStep.NETWORK -> R.string.setup2_network_subtitle
+                    SetupStep.PREPARE -> R.string.setup2_prepare_subtitle
+                    SetupStep.START -> R.string.setup2_start_subtitle
+                }), illustration = { if (compact && current != SetupStep.CAR) SetupIllustration(draft, isWireless) }) {
+                    when (current) {
+                        SetupStep.CAR -> CarPicker(draft.car, carModels, LocalConfiguration.current.locales[0]) { draft = draft.copy(car = it) }
+                        SetupStep.OUTPUT -> OutputStep(draft) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
+                        SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) {
+                            val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB
+                            if (needsUsbConfirmation(draft.connectionMode, mode, isWireless)) confirmUsb = true
+                            else draft = chooseConnection(draft, it)
+                        }
+                        SetupStep.NETWORK -> NetworkStep(draft, compact, if (attempted) errors else emptyMap(), home.currentWifi, useSharedWifi, nextRequests) { draft = it }
+                        SetupStep.PREPARE -> PrepareStep(draft, isWireless, home, preparePath, prepareChecks, prepareComplete,
+                            prepareRequests, bondedDevices, onStepAction, { draft = draft.copy(iphoneAddress = it) }) { action ->
+                            when (action) {
+                                SetupAction.SHARED_WIFI, SetupAction.SETTINGS -> go(if (isWireless) SetupStep.NETWORK else SetupStep.OUTPUT)
+                                else -> onSetup(action)
+                            }
+                        }
+                        SetupStep.START -> StartStep(draft, isWireless, ::go) { draft = it }
                     }
-                    SetupStep.NETWORK -> NetworkStep(draft, compact, if (attempted) errors else emptyMap(), home.currentWifi, useSharedWifi, nextRequests) { draft = it }
-                    SetupStep.PREPARE -> PrepareStep(draft, isWireless, home, bondedDevices, onStepAction, { draft = draft.copy(iphoneAddress = it) }) { action ->
-                        when (action) {
-                            SetupAction.SHARED_WIFI, SetupAction.SETTINGS -> go(if (isWireless) SetupStep.NETWORK else SetupStep.OUTPUT)
-                            else -> onSetup(action)
+                    if (attempted && current != SetupStep.PREPARE && current != SetupStep.START) {
+                        // Hotspot fields show their own errors; anything else is reported here.
+                        val shownByFields = if (current == SetupStep.NETWORK && draft.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT)
+                            setOf("ssid", "password") else emptySet()
+                        setupStepErrors(current, errors, draft.car).filterKeys { it !in shownByFields }.values.firstOrNull()?.let {
+                            Text(stringResource(it), color = MaterialTheme.colorScheme.error)
                         }
                     }
-                    SetupStep.START -> StartStep(draft, isWireless, ::go) { draft = it }
+                    if (saveFailed) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
                 }
-                if (attempted && current != SetupStep.PREPARE && current != SetupStep.START) {
-                    // Hotspot fields show their own errors; anything else is reported here.
-                    val shownByFields = if (current == SetupStep.NETWORK && draft.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT)
-                        setOf("ssid", "password") else emptySet()
-                    setupStepErrors(current, errors, draft.car).filterKeys { it !in shownByFields }.values.firstOrNull()?.let {
-                        Text(stringResource(it), color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                if (compact && current == SetupStep.PREPARE && !ready) Hint(stringResource(R.string.setup_prepare_blocked))
-                if (saveFailed) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -205,23 +246,28 @@ import org.openxplay.direlay.ui.design.*
     }
 }
 
-@Composable private fun SetupProgressHeader(index: Int, count: Int, compact: Boolean) {
+@Composable private fun SetupProgressHeader(index: Int, count: Int) {
     val progress = stringResource(R.string.setup_progress, index + 1, count)
-    Column(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = progress },
-        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            repeat(count) { position ->
-                val width by animateDpAsState(if (position == index) 48.dp else 24.dp,
-                    relaySpatial(LocalRelayMotion.current), label = "setup progress width")
-                val color by animateColorAsState(if (position <= index) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceContainerHigh, relayEffects(LocalRelayMotion.current), label = "setup progress color")
-                Surface(Modifier.width(width).heightIn(min = 24.dp), shape = RelayTokens.pill, color = color,
-                    contentColor = if (position <= index) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant) {
-                    Box(contentAlignment = Alignment.Center) { Text("${position + 1}", style = RelayTokens.caption) }
-                }
-            }
+    val motion = LocalRelayMotion.current
+    Row(Modifier.widthIn(max = 200.dp).fillMaxWidth().clearAndSetSemantics { contentDescription = progress },
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        repeat(count) { position ->
+            val track = MaterialTheme.colorScheme.outlineVariant
+            val color by animateColorAsState(when {
+                position < index -> MaterialTheme.colorScheme.primary.copy(alpha = .5f)
+                position == index -> MaterialTheme.colorScheme.primary
+                else -> track
+            }, relayEffects(motion), label = "setup progress color")
+            val fill = remember(index) { Animatable(if (position == index && motion) 0f else 1f) }
+            LaunchedEffect(index, motion) { fill.animateTo(1f, relaySpatial(motion)) }
+            Box(Modifier.weight(1f).height(4.dp).clip(RelayTokens.pill).drawWithContent {
+                drawContent()
+                if (position == index) drawRoundRect(track, cornerRadius = CornerRadius(size.height / 2))
+                val fraction = if (motion) fill.value.coerceIn(0f, 1f) else 1f
+                drawRoundRect(color, size = size.copy(width = size.width * fraction),
+                    cornerRadius = CornerRadius(size.height / 2))
+            })
         }
-        if (!compact) Text(progress, style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -249,13 +295,13 @@ import org.openxplay.direlay.ui.design.*
 
 @Composable private fun SetupTitle(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, Modifier.semantics { heading() }, style = RelayTokens.largeTitle)
+        Text(title, Modifier.semantics { heading(); liveRegion = LiveRegionMode.Polite }, style = RelayTokens.largeTitle)
         Text(subtitle, style = RelayTokens.footnote, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable private fun SetupIllustration(draft: RelaySettings, wireless: Boolean) {
-    if (wireless) NetworkDiagram(draft.wirelessNetwork.choice, true)
+    if (wireless) SetupNetworkDiagram(draft.wirelessNetwork.choice)
     else Row(Modifier.fillMaxWidth().padding(vertical = 24.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         listOf(R.drawable.symbol_smartphone to R.string.network_iphone,
@@ -270,30 +316,44 @@ import org.openxplay.direlay.ui.design.*
     }
 }
 
+@Composable private fun SetupNetworkDiagram(choice: WirelessNetworkChoice) {
+    val motion = LocalRelayMotion.current
+    SetupEntrance(0) {
+        AnimatedContent(choice, transitionSpec = {
+            if (motion) (fadeIn(relayEffects(true)) + scaleIn(relaySpatial(true), initialScale = .96f)) togetherWith
+                fadeOut(relayEffects(true))
+            else EnterTransition.None togetherWith ExitTransition.None
+        }, label = "setup network") { NetworkDiagram(it, true) }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun ChoiceCard(title: String, description: String, icon: Int, hue: IconHue, selected: Boolean,
-    badges: List<String> = emptyList(), enabled: Boolean = true, note: String? = null,
-    warningBadge: Boolean = false,
+    tag: SetupChoiceTag? = null, enabled: Boolean = true, note: String? = null, order: Int = 0,
     extra: @Composable (() -> Unit)? = null, select: () -> Unit) {
-    InsetGroup {
-        Column(Modifier.fillMaxWidth().alpha(if (enabled) 1f else .5f)
-            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .08f) else MaterialTheme.colorScheme.surface)
-            .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = select)) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconTile(icon, hue)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(title, style = RelayTokens.headline)
-                    if (badges.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        badges.forEach { ChoiceBadge(it, warning = warningBadge) }
+    val motion = LocalRelayMotion.current
+    SetupEntrance(order) {
+        InsetGroup {
+            Column(Modifier.fillMaxWidth().alpha(if (enabled) 1f else .5f)
+                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .08f) else MaterialTheme.colorScheme.surface)
+                .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = select)) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconTile(icon, hue)
+                    FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                        Text(title, style = RelayTokens.headline)
+                        tag?.let { ChoiceBadge(stringResource(it.label), warning = it.warning) }
+                    }
+                    RadioButton(selected, onClick = null, enabled = enabled, modifier = Modifier.size(24.dp))
+                }
+                AnimatedVisibility(selected, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+                    Column(Modifier.padding(start = 60.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(description, style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        note?.let { Text(it, style = RelayTokens.footnote, color = LocalStatusColors.current.action) }
+                        extra?.invoke()
                     }
                 }
-                RadioButton(selected, onClick = null, enabled = enabled)
-            }
-            Column(Modifier.padding(start = 60.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(description, style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                note?.let { Text(it, style = RelayTokens.footnote, color = LocalStatusColors.current.action) }
-                extra?.invoke()
             }
         }
     }
@@ -313,14 +373,15 @@ import org.openxplay.direlay.ui.design.*
     if (selected == null) Hint(stringResource(R.string.setup_multiple_outputs))
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ChoiceCard(stringResource(R.string.ui_browser), stringResource(R.string.setup_browser_hint), R.drawable.symbol_monitor, IconHue.CAR,
-            selected == OutputChoice.BROWSER, listOf(stringResource(R.string.setup_recommended))) { choose(OutputChoice.BROWSER, kind) }
+            selected == OutputChoice.BROWSER, setupOutputTag(OutputChoice.BROWSER),
+            extra = { Hint(stringResource(R.string.setup_browser_check_tip)) }) { choose(OutputChoice.BROWSER, kind) }
         ChoiceCard(stringResource(R.string.ui_carlink), stringResource(R.string.setup_carlink_hint), R.drawable.symbol_car_front, IconHue.CAR,
-            selected == OutputChoice.CARLINK, listOf(stringResource(R.string.setup_experimental)), carlinkSupported,
-            if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10), warningBadge = true,
+            selected == OutputChoice.CARLINK, setupOutputTag(OutputChoice.CARLINK), carlinkSupported,
+            if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10), order = 1,
             extra = { NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) { choose(OutputChoice.CARLINK, kind) }
         ChoiceCard(stringResource(R.string.wireless_display), stringResource(R.string.setup_wireless_display_hint), R.drawable.symbol_cast, IconHue.CAR,
-            selected == OutputChoice.WIRELESS, listOf(stringResource(R.string.setup_picture_only)), warningBadge = true,
-            extra = if (selected == OutputChoice.WIRELESS) ({
+            selected == OutputChoice.WIRELESS, setupOutputTag(OutputChoice.WIRELESS), order = 2,
+            extra = {
                 Column(Modifier.selectableGroup()) {
                     WirelessDisplayKind.entries.forEach { option ->
                         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -336,28 +397,25 @@ import org.openxplay.direlay.ui.design.*
                     }
                 }
                 if (kind == WirelessDisplayKind.MIRACAST) NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI)
-            }) else null) { choose(OutputChoice.WIRELESS, kind) }
+            }) { choose(OutputChoice.WIRELESS, kind) }
     }
-    if (selected == OutputChoice.BROWSER || selected == null) Hint(stringResource(R.string.setup_browser_check_tip))
 }
 
 @Composable private fun ConnectionStep(draft: RelaySettings, wireless: Boolean, choose: (Boolean) -> Unit) {
-    val recommended = recommendedConnection(draft)
-    val badge = listOf(stringResource(R.string.setup_recommended))
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ChoiceCard(stringResource(R.string.direlay_wireless), stringResource(R.string.setup_wireless_hint), R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
-            wireless, if (recommended == ConnectionMode.WIRELESS) badge else emptyList()) { choose(true) }
+            wireless, setupConnectionTag(draft, true), extra = {
+                if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.setup_carlink_hotspot_tip))
+            }) { choose(true) }
         ChoiceCard(stringResource(R.string.ui_usb), stringResource(R.string.setup_usb_hint), R.drawable.symbol_usb, IconHue.IPHONE,
-            !wireless, listOf(stringResource(R.string.setup_not_recommended)), warningBadge = true) { choose(false) }
+            !wireless, setupConnectionTag(draft, false), order = 1) { choose(false) }
     }
-    if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.setup_carlink_hotspot_tip))
 }
 
 @Composable private fun NetworkStep(draft: RelaySettings, compact: Boolean, errors: Map<String, Int>, currentWifi: String?,
     useSharedWifi: (String) -> Unit, nextRequests: Int, change: (RelaySettings) -> Unit) {
     val fields = remember { BringIntoViewRequester() }
     var revealRequests by remember { mutableIntStateOf(0) }
-    val recommended = recommendedNetwork(draft)
     val selected = draft.wirelessNetwork.choice
     LaunchedEffect(selected, revealRequests, nextRequests) {
         if (revealHotspotFields(draft.wirelessNetwork, errors)) {
@@ -365,18 +423,19 @@ import org.openxplay.direlay.ui.design.*
             fields.bringIntoView()
         }
     }
+    if (!compact) SetupNetworkDiagram(selected)
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        WirelessNetworkChoice.entries.forEach { choice ->
+        WirelessNetworkChoice.entries.forEachIndexed { index, choice ->
             val allowed = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)
             ChoiceCard(stringResource(setupNetworkLabel(choice)), stringResource(networkOption(choice).supporting), when (choice) {
                 WirelessNetworkChoice.WIFI_DIRECT -> R.drawable.symbol_link
                 WirelessNetworkChoice.PHONE_HOTSPOT -> R.drawable.symbol_hotspot
                 WirelessNetworkChoice.EXISTING_WIFI -> R.drawable.symbol_router
-            }, IconHue.NETWORK, selected == choice, if (choice == recommended) listOf(stringResource(R.string.setup_recommended)) else emptyList(),
+            }, IconHue.NETWORK, selected == choice, setupNetworkTag(draft, choice),
                 allowed, if (allowed) null else stringResource(if (draft.miracastOutput && !draft.carlinkOutput)
                     R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint),
+                order = index + 1,
                 extra = {
-                    if (!compact) NetworkDiagram(choice, selected == choice)
                     if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
                         NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
                 }) {
@@ -385,18 +444,22 @@ import org.openxplay.direlay.ui.design.*
             }
         }
     }
-    if (selected != WirelessNetworkChoice.WIFI_DIRECT) InsetGroup {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            NetworkFields(draft.wirelessNetwork, selected, errors, currentWifi, false, useSharedWifi, credentialsModifier = Modifier.bringIntoViewRequester(fields)) {
-                change(draft.copy(wirelessNetwork = it))
+    if (selected != WirelessNetworkChoice.WIFI_DIRECT) SetupEntrance(4) {
+        InsetGroup {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkFields(draft.wirelessNetwork, selected, errors, currentWifi, false, useSharedWifi,
+                    credentialsModifier = Modifier.bringIntoViewRequester(fields), compactHints = true) {
+                    change(draft.copy(wirelessNetwork = it))
+                }
             }
         }
     }
 }
 
-@Composable private fun PrepareStep(draft: RelaySettings, wireless: Boolean, home: HomeContent, bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView,
+@Composable private fun PrepareStep(draft: RelaySettings, wireless: Boolean, home: HomeContent,
+    path: ConnectionPath?, checks: List<SetupCheck>, complete: Boolean, pulse: Int, bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView,
     onStepAction: (StepAction, PathStep) -> Unit, chooseIphone: (String?) -> Unit, act: (SetupAction) -> Unit) {
-    val path = home.path
+    val motion = LocalRelayMotion.current
     var inspected by rememberSaveable { mutableStateOf<String?>(null) }
     val shownStep = path?.steps?.firstOrNull { it.id.name == inspected }
     if (shownStep != null) StepSheet(shownStep, onAction = {
@@ -405,33 +468,86 @@ import org.openxplay.direlay.ui.design.*
     }, onRecheck = { inspected = null }, onDismiss = { inspected = null })
     // Re-keying the picker opens its sheet, which keeps its own open state.
     var chooseRequests by rememberSaveable { mutableIntStateOf(0) }
-    if (path != null) {
-        setupPrepareSections(path).forEach { section ->
-            InsetGroup(header = stringResource(if (section.section == PathSection.RELAY) R.string.path_section_relay else R.string.path_section_iphone)) {
-                section.steps.forEachIndexed { position, item ->
-                    if (position > 0) InsetDivider()
-                    StepRow(item, onClick = { inspected = item.id.name }, onAction = { onStepAction(it, item) },
-                        focused = path.focus?.id == item.id)
-                }
-            }
-        }
-    } else {
-        // The first runtime snapshot may still be loading; retain the existing preparation actions.
-        InsetGroup {
-            setupChecks(home.presentation, wireless, draft.wirelessNetwork.choice).forEachIndexed { position, check ->
-                if (position > 0) InsetDivider()
-                CheckRow(check, home.deviceName, !home.busy) { action ->
-                    if (action == SetupAction.CHOOSE_IPHONE) chooseRequests++ else act(action)
+    AnimatedVisibility(!complete, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            if (path != null) {
+                val sections = setupPrepareSections(path)
+                val firstOpen = setupPrepareSteps(sections.flatMap { it.steps }).open.firstOrNull()?.id
+                sections.forEachIndexed { index, section -> key(section.section) {
+                    val steps = setupPrepareSteps(section.steps)
+                    val stateKey = section.steps.joinToString { "${it.id}:${it.state}" }
+                    var showDone by rememberSaveable(stateKey) { mutableStateOf(false) }
+                    SetupEntrance(index) {
+                        InsetGroup(header = stringResource(if (section.section == PathSection.RELAY)
+                            R.string.path_section_relay else R.string.path_section_iphone)) {
+                            Column(Modifier.animateContentSize(relaySpatial(motion))) {
+                                if (steps.done.isNotEmpty()) FoldedPrepareLine(steps.done.map { it.title }, showDone) { showDone = !showDone }
+                                val visible = if (showDone) section.steps else steps.open
+                                visible.forEachIndexed { position, item -> key(item.id) {
+                                    if (position > 0 || steps.done.isNotEmpty()) InsetDivider()
+                                    PreparePulse(pulse, item.id == firstOpen) {
+                                        StepRow(item, onClick = { inspected = item.id.name }, onAction = { onStepAction(it, item) },
+                                            focused = item.id == firstOpen)
+                                    }
+                                } }
+                            }
+                        }
+                    }
+                } }
+            } else {
+                // The first runtime snapshot may still be loading; retain the existing preparation actions.
+                val steps = setupPrepareChecks(checks)
+                var showDone by rememberSaveable(checks) { mutableStateOf(false) }
+                SetupEntrance(0) {
+                    InsetGroup {
+                        Column(Modifier.animateContentSize(relaySpatial(motion))) {
+                            if (steps.done.isNotEmpty()) FoldedPrepareLine(steps.done.map { it.title }, showDone) { showDone = !showDone }
+                            val visible = if (showDone) checks else steps.open
+                            visible.forEachIndexed { position, check -> key(check.title) {
+                                if (position > 0 || steps.done.isNotEmpty()) InsetDivider()
+                                PreparePulse(pulse, check == steps.open.firstOrNull()) {
+                                    CheckRow(check, home.deviceName, !home.busy) { action ->
+                                        if (action == SetupAction.CHOOSE_IPHONE) chooseRequests++ else act(action)
+                                    }
+                                }
+                            } }
+                        }
+                    }
                 }
             }
         }
     }
-    if (wireless) key(chooseRequests) {
+    AnimatedVisibility(complete, enter = relayDisclosureEnter(motion) + scaleIn(relaySpatial(motion), initialScale = .9f),
+        exit = relayDisclosureExit(motion)) {
+        SetupEntrance(0) {
+            var glyph by remember { mutableStateOf(if (motion) StepState.BLOCKED else StepState.OK) }
+            LaunchedEffect(Unit) { glyph = StepState.OK }
+            Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                StatusGlyph(glyph, 64.dp)
+                Text(stringResource(R.string.setup_prepare_ready), Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = RelayTokens.headline,
+                    color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
+            }
+        }
+    }
+    if (wireless) SetupEntrance(2) { key(chooseRequests) {
         IphonePickerSetting(draft.iphoneAddress, bondedDevices, chooseRequests > 0, chooseIphone)
-    }
-    if (home.presentation.canStart) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Symbol(R.drawable.symbol_check, null, Modifier.size(20.dp))
-        Text(stringResource(R.string.setup_prepare_ready), style = RelayTokens.callout, color = MaterialTheme.colorScheme.primary)
+    } }
+}
+
+@Composable private fun FoldedPrepareLine(titles: List<Int>, expanded: Boolean, toggle: () -> Unit) {
+    val state = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { stateDescription = state }
+        .clickable(role = Role.Button, onClick = toggle).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        StatusGlyph(StepState.OK, 24.dp, announce = false)
+        val done = stringResource(R.string.design_done_count, titles.size)
+        val names = titles.map { stringResource(it) }.joinToString(" · ")
+        val doneStyle = RelayTokens.footnote.toSpanStyle().copy(color = MaterialTheme.colorScheme.onSurface)
+        SegmentedText(buildAnnotatedString {
+            withStyle(doneStyle) { append(done) }
+            append(" · "); append(names)
+        }, modifier = Modifier.weight(1f), style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -460,24 +576,14 @@ import org.openxplay.direlay.ui.design.*
 
 @Composable private fun StartStep(draft: RelaySettings, wireless: Boolean, go: (SetupStep) -> Unit,
     change: (RelaySettings) -> Unit) {
-    InsetGroup { ModeSummary(modeRows(draft, wireless), go) }
-    InsetGroup(header = stringResource(R.string.setup_after_start)) {
-        afterStartLines(draft, wireless).forEachIndexed { position, line ->
-            if (position > 0) InsetDivider()
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(Modifier.size(24.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
-                    Box(contentAlignment = Alignment.Center) { Text("${position + 1}", style = RelayTokens.caption) }
-                }
-                Text(stringResource(line), Modifier.weight(1f), style = RelayTokens.callout)
-            }
+    SetupEntrance(0) { InsetGroup { ModeSummary(modeRows(draft, wireless), go) } }
+    SetupEntrance(1) {
+        InsetGroup(footer = stringResource(R.string.settings_automatic_hint)) {
+            InsetToggleRow(R.drawable.symbol_sync, IconHue.DEVELOPER, stringResource(R.string.ui_automatic), draft.autoStartWhenReady,
+                { change(draft.copy(autoStartWhenReady = it)) })
+            InsetDivider()
+            InsetToggleRow(R.drawable.symbol_power, IconHue.DEVELOPER, stringResource(R.string.ui_boot), draft.autoStartOnBoot,
+                { change(draft.copy(autoStartOnBoot = it)) })
         }
-    }
-    InsetGroup(footer = stringResource(R.string.settings_automatic_hint) + "\n" + stringResource(R.string.direlay_boot_hint)) {
-        InsetToggleRow(R.drawable.symbol_sync, IconHue.DEVELOPER, stringResource(R.string.ui_automatic), draft.autoStartWhenReady,
-            { change(draft.copy(autoStartWhenReady = it)) })
-        InsetDivider()
-        InsetToggleRow(R.drawable.symbol_power, IconHue.DEVELOPER, stringResource(R.string.ui_boot), draft.autoStartOnBoot,
-            { change(draft.copy(autoStartOnBoot = it)) })
     }
 }

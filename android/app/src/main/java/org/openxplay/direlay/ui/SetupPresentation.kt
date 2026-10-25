@@ -3,10 +3,9 @@
 // Created by riko chen on 2026-10-17
 package org.openxplay.direlay.ui
 
+import androidx.compose.runtime.Immutable
 import org.openxplay.direlay.R
-import org.openxplay.direlay.path.ConnectionPath
-import org.openxplay.direlay.path.PathSection
-import org.openxplay.direlay.path.StepId
+import org.openxplay.direlay.path.*
 import org.openxplay.direlay.settings.*
 
 /** The guided setup's pages, in order. The network page exists only for wireless CarPlay. */
@@ -31,6 +30,23 @@ fun recommendedNetwork(settings: RelaySettings) =
 /** The guide marks the recommended network with a badge, so Wi-Fi Direct drops "(recommended)" from its name. */
 fun setupNetworkLabel(choice: WirelessNetworkChoice) =
     if (choice == WirelessNetworkChoice.WIFI_DIRECT) R.string.direlay_wifi_direct else choice.label
+
+enum class SetupChoiceTag(val label: Int, val warning: Boolean = false) {
+    RECOMMENDED(R.string.setup_recommended), EXPERIMENTAL(R.string.setup_experimental, true),
+    PICTURE_ONLY(R.string.setup_picture_only, true), NOT_RECOMMENDED(R.string.setup_not_recommended, true)
+}
+fun setupOutputTag(choice: OutputChoice) = when (choice) {
+    OutputChoice.BROWSER -> SetupChoiceTag.RECOMMENDED
+    OutputChoice.CARLINK -> SetupChoiceTag.EXPERIMENTAL
+    OutputChoice.WIRELESS -> SetupChoiceTag.PICTURE_ONLY
+}
+fun setupConnectionTag(settings: RelaySettings, wireless: Boolean): SetupChoiceTag? = when {
+    !wireless -> SetupChoiceTag.NOT_RECOMMENDED
+    recommendedConnection(settings) == ConnectionMode.WIRELESS -> SetupChoiceTag.RECOMMENDED
+    else -> null
+}
+fun setupNetworkTag(settings: RelaySettings, choice: WirelessNetworkChoice): SetupChoiceTag? =
+    SetupChoiceTag.RECOMMENDED.takeIf { choice == recommendedNetwork(settings) }
 
 /** The guide edits an explicit transport; LAST_USED resolves to the transport it would use now. */
 fun setupDraft(settings: RelaySettings, wireless: Boolean) =
@@ -60,15 +76,6 @@ fun modeRows(settings: RelaySettings, wireless: Boolean): List<ModeRow> = listOf
 
 fun chooseOutput(settings: RelaySettings, choice: OutputChoice, kind: WirelessDisplayKind, wireless: Boolean): RelaySettings =
     OutputSelection.choose(settings, choice, kind, wireless)
-
-fun afterStartLines(settings: RelaySettings, wireless: Boolean): List<Int> =
-    listOf(if (wireless) R.string.setup_after_wireless else R.string.setup_after_usb) +
-        RelayOutput.entries.filter { it in settings.outputs }.map { when (it) {
-            RelayOutput.BROWSER -> R.string.setup_after_browser
-            RelayOutput.CARLINK -> R.string.setup_after_carlink
-            RelayOutput.DLNA -> R.string.setup_after_dlna
-            RelayOutput.MIRACAST -> R.string.setup_after_miracast
-        } }
 
 /** The hotspot and shared Wi-Fi fields belong to the network page; they never block the other pages. */
 private val networkFields = setOf("ssid", "password")
@@ -118,6 +125,19 @@ fun setupPrepareSections(path: ConnectionPath) = listOfNotNull(
         section.copy(steps = section.steps.filter { it.id == StepId.IPHONE_PAIRED || it.id == StepId.USB_HOST })
     },
 ).filter { it.steps.isNotEmpty() }
+
+@Immutable data class SetupPrepareSteps(val open: List<PathStep>, val done: List<PathStep>)
+fun setupPrepareSteps(steps: List<PathStep>) = SetupPrepareSteps(
+    steps.filter { it.state != StepState.OK }, steps.filter { it.state == StepState.OK })
+
+@Immutable data class SetupPrepareChecks(val open: List<SetupCheck>, val done: List<SetupCheck>)
+fun setupPrepareChecks(checks: List<SetupCheck>) = SetupPrepareChecks(
+    checks.filter { it.state != SetupCheckState.DONE }, checks.filter { it.state == SetupCheckState.DONE })
+
+fun setupPrepareComplete(path: ConnectionPath?, checks: List<SetupCheck>): Boolean = if (path != null) {
+    val steps = setupPrepareSections(path).flatMap { it.steps }
+    steps.isNotEmpty() && setupPrepareSteps(steps).open.isEmpty()
+} else checks.isNotEmpty() && setupPrepareChecks(checks).open.isEmpty()
 
 fun revealHotspotFields(network: WirelessNetworkSettings, errors: Map<String, Int>): Boolean =
     network.choice == WirelessNetworkChoice.PHONE_HOTSPOT &&

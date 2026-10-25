@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.stateDescription
 import com.shilapi.xcertplay.orchestration.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.*
@@ -286,7 +287,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
 }
 @Composable fun NetworkFields(network: WirelessNetworkSettings, choice: WirelessNetworkChoice,
-    errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit, credentialsModifier: Modifier = Modifier, change: (WirelessNetworkSettings) -> Unit) {
+    errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit,
+    credentialsModifier: Modifier = Modifier, compactHints: Boolean = false, change: (WirelessNetworkSettings) -> Unit) {
     val hotspot = choice == WirelessNetworkChoice.PHONE_HOTSPOT
     val context = LocalContext.current
     val opener: NetworkSettingsOpener = remember(context) { NetworkSettingsLauncher(context) }
@@ -297,7 +299,22 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(stringResource(if (hotspot) R.string.direlay_car_hotspot_hint else R.string.direlay_existing_wifi_hint))
         // Apps cannot read the hotspot band, so the advice is unconditional (2.4 GHz stutters on real cars).
-        Hint(stringResource(R.string.hotspot_5ghz_hint))
+        if (compactHints) {
+            var expanded by rememberSaveable { mutableStateOf(false) }
+            val motion = LocalRelayMotion.current
+            val state = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.setup_hotspot_5ghz), Modifier.weight(1f), style = RelayTokens.footnote,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                IconButton(onClick = { expanded = !expanded }, Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                    .semantics { stateDescription = state }) {
+                    Symbol(R.drawable.symbol_info, stringResource(R.string.setup_hotspot_5ghz_details))
+                }
+            }
+            AnimatedVisibility(expanded, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+                Hint(stringResource(R.string.hotspot_5ghz_hint))
+            }
+        } else Hint(stringResource(R.string.hotspot_5ghz_hint))
         TextButton(onClick = { opener.open(hotspot) }) {
             Text(stringResource(if (hotspot) R.string.settings_open_hotspot else R.string.ui_open_wifi))
         }

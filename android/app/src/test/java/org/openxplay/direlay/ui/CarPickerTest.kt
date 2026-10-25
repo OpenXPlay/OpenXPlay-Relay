@@ -59,4 +59,14 @@ class CarPickerTest {
             CarSelection("xpeng", model = "g6", year = "other"))) assertFalse(homeCarRowVisible(car))
         assertEquals("settings/car#car", relayRoute("settings:car"))
     }
+    @Test fun onlyChosenLevelsFoldAndCustomTextMustBePresentBeforeTheNextLevelAppears() {
+        val options = listOf(CarPickerOption("xpeng", "XPeng"), CarPickerOption("g6", "G6"), CarPickerOption("other", "Other"))
+        assertNull(carPickerLevelLabel("", "", options))
+        assertNull(carPickerLevelLabel("other", "  ", options))
+        assertEquals("XPeng", carPickerLevelLabel("xpeng", "", options))
+        assertEquals("G6", carPickerLevelLabel("g6", "", options))
+        assertEquals("My car", carPickerLevelLabel("other", " My car ", options))
+        assertEquals("xpeng", carPickerLevelLabel("xpeng", "", emptyList()))
+    }
+
 }
