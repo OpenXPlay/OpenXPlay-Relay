@@ -97,7 +97,7 @@ class RelaySettingsTest {
             for (mode in TeslaBrowserMode.entries) {
                 val chosen = initial.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",
                     teslaMirrorAddress = "100.88.0.3", teslaAndroidAddress = "3.3.3.3",
-                    car = CarSelection("tesla", model = "model-y-2025"))
+                    car = CarSelection("tesla", model = "model-y", year = "model-y-2025"))
                 store.save(chosen)
                 assertEquals(chosen, store.load())
                 val preferences = context.getSharedPreferences("direlay", 0)
@@ -160,14 +160,32 @@ class RelaySettingsTest {
     @Test fun carSelectionPersistsAndNormalizesOnlyOtherTexts() {
         assertEquals(CarSelection(), store.load().car)
         val original = store.load()
-        for (car in listOf(CarSelection("xpeng", model = "g6-2023"), CarSelection("xpeng", model = "other", modelText = " Custom "),
+        for (car in listOf(CarSelection("xpeng", model = "g6", year = "g6-2023"), CarSelection("xpeng", model = "other", modelText = " Custom "),
             CarSelection("other", " My brand\n", "other", " My car\t "), CarSelection())) {
             store.save(original.copy(car = car))
             assertEquals(original.copy(car = car.normalized()), store.load())
         }
         store.save(original.copy(car = CarSelection("other", "x".repeat(60), modelText = "y".repeat(60))))
-        assertEquals(CarSelection("other", "x".repeat(40), "other", "y".repeat(40)), store.load().car)
+        assertEquals(CarSelection("other", "x".repeat(40), "other", "y".repeat(40), "other"), store.load().car)
         assertEquals(CarSelection(), CarSelection("unknown", "ignored", "other", "ignored").normalized())
+    }
+
+    @Test fun legacyCarPreferencesLoadAsModelAndYearAndNextSaveWritesNewKeys() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        for ((brand, leaf, model) in listOf(Triple("xpeng", "g6-2023", "g6"), Triple("tesla", "model-3-2017", "model-3"))) {
+            preferences.edit().putString("carBrand", brand).putString("carModel", leaf).remove("carYear").remove("carYearText").commit()
+            val loaded = store.load()
+            assertEquals(CarSelection(brand, model = model, year = leaf), loaded.car)
+            assertEquals(leaf, preferences.getString("carModel", null))
+            store.save(loaded)
+            assertEquals(model, preferences.getString("carModel", null))
+            assertEquals(leaf, preferences.getString("carYear", null))
+            assertEquals("", preferences.getString("carYearText", null))
+        }
+        val custom = CarSelection("other", "Brand", "other", "Model", "other", "2026")
+        store.save(store.load().copy(car = custom))
+        assertEquals(custom, store.load().car)
+        assertEquals("2026", preferences.getString("carYearText", null))
     }
 
     @Before fun clear() {

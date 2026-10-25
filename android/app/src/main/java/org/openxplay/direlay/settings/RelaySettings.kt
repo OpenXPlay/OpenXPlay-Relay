@@ -271,7 +271,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
             viewAreas = relay.getBoolean("carPlayViewAreas", true),
             car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
-                relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
+                relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty(),
+                relay.getString("carYear", "").orEmpty(), relay.getString("carYearText", "").orEmpty()).normalized(),
             videoStats = VideoStatsWindow.fromStored(relay.getString("videoStats", null)),
             teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == relay.getString("teslaBrowser", null) } ?: TeslaBrowserMode.OFF,
             teslaVirtualAddress = relay.getString("teslaVirtualAddress", TeslaAddressPolicy.DEFAULT_VIRTUAL) ?: TeslaAddressPolicy.DEFAULT_VIRTUAL,
@@ -366,6 +367,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("carPlayViewAreas", settings.viewAreas)
             .putString("carBrand", settings.car.brand).putString("carBrandText", settings.car.brandText)
             .putString("carModel", settings.car.model).putString("carModelText", settings.car.modelText)
+            .putString("carYear", settings.car.year).putString("carYearText", settings.car.yearText)
             .putString("videoCodec", settings.videoCodec.name)
             .putString("videoStats", settings.videoStats.name)
             .putString("teslaBrowser", settings.teslaBrowser.name)

@@ -52,7 +52,7 @@ class DeveloperOverridesTest {
                 carlinkOutput = true, carlinkDeviceName = "My car", bothOutputs = true,
                 vehicleInformation = true, carlinkAutoReconnect = false, iphoneAddress = "phone",
                 wirelessNetwork = WirelessNetworkSettings(channel = 6, security = ManualHotspotSecurity.WPA2),
-                plugins = true, pluginsEnabled = listOf("test"), viewAreas = false, car = CarSelection("xpeng", model = "g6-2023"),
+                plugins = true, pluginsEnabled = listOf("test"), viewAreas = false, car = CarSelection("xpeng", model = "g6", year = "g6-2023"),
                 videoCodec = VideoCodecSetting.H264, videoStats = VideoStatsWindow.SECONDS_5,
                 carplayResolution = CarPlayResolution.P720, carplayScreenWidth = CarPlayScreenWidth.MM300,
                 carBluetoothAudio = true,

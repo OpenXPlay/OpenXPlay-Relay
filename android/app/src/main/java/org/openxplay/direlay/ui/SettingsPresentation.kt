@@ -46,5 +46,6 @@ fun carSelectionSummary(car: org.openxplay.direlay.settings.CarSelection, models
     locale: java.util.Locale, none: String, other: String): String {
     val brand = if (car.brand == "other") car.brandText.ifBlank { other } else models?.brand(car)?.name(locale)
     val model = if (car.model == "other") car.modelText.ifBlank { other } else models?.model(car)?.name(locale)
-    return listOfNotNull(brand, model).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { none }
+    val year = if (car.year == "other") car.yearText.ifBlank { other } else models?.year(car)?.name(locale)
+    return listOfNotNull(brand, model, year).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { none }
 }

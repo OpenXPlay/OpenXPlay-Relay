@@ -89,7 +89,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("carlinkPictureSize", value.carlinkPictureSize.name)
         putBoolean("carPlayViewAreas", value.viewAreas)
         putBoolean("carBluetoothAudio", value.carBluetoothAudio)
-        putStringArrayList("car", arrayListOf(value.car.brand, value.car.brandText, value.car.model, value.car.modelText))
+        putStringArrayList("car", arrayListOf(value.car.brand, value.car.brandText, value.car.model, value.car.modelText, value.car.year, value.car.yearText))
         putString("iphoneAddress", value.iphoneAddress)
         putString("displayMode", value.displayMode.name)
         putString("videoCodec", value.videoCodec.name)
@@ -143,7 +143,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.entries.firstOrNull { it.name == bundle.getString("carlinkPictureSize") } ?: base.carlinkPictureSize,
         viewAreas = bundle.getBoolean("carPlayViewAreas", base.viewAreas),
         carBluetoothAudio = bundle.getBoolean("carBluetoothAudio", base.carBluetoothAudio),
-        car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 }?.let { CarSelection(it[0], it[1], it[2], it[3]) } ?: base.car,
+        car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 || it.size == 6 }?.let {
+            if (it.size == 4) CarSelection(it[0], it[1], it[2], it[3]).normalized()
+            else CarSelection(it[0], it[1], it[2], it[3], it[4], it[5])
+        } ?: base.car,
         iphoneAddress = bundle.getString("iphoneAddress"),
         displayMode = migratedDisplayMode(bundle.getString("displayMode"), bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) }),
         display = bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) },

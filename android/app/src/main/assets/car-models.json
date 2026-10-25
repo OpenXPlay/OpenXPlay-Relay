@@ -1,31 +1,152 @@
 {
-  "format": 1,
+  "format": 2,
   "brands": [{
     "id": "xpeng",
     "names": {"en": "XPeng", "zh-CN": "小鹏"},
     "models": [{
-      "id": "g6-2023",
-      "names": {"en": "G6 2023", "zh-CN": "G6 2023 款"},
-      "screens": [{
-        "screen": {"width": 2401, "height": 1201, "densityDpi": 280},
-        "fullscreen": [{"width": 1533, "height": 1014, "count": 16}, {"width": 2401, "height": 1201, "count": 12}, {"width": 856, "height": 1014, "count": 4}],
-        "windowed": [{"width": 1533, "height": 907, "count": 5}, {"width": 2401, "height": 1201, "count": 4}, {"width": 1533, "height": 1014, "count": 1}]
-      }]
+      "id": "g3",
+      "names": {"en": "G3 / G3i", "zh-CN": "G3 / G3i"},
+      "years": [
+        {"id": "g3-2019", "names": {"en": "2019", "zh-CN": "2019"}, "screens": []},
+        {"id": "g3-2020", "names": {"en": "2020", "zh-CN": "2020"}, "screens": []},
+        {"id": "g3-2021", "names": {"en": "2021", "zh-CN": "2021"}, "screens": []},
+        {"id": "g3-2022", "names": {"en": "2022", "zh-CN": "2022"}, "screens": []}
+      ]
+    }, {
+      "id": "p7",
+      "names": {"en": "P7 / P7i", "zh-CN": "P7 / P7i"},
+      "years": [
+        {"id": "p7-2020", "names": {"en": "2020", "zh-CN": "2020"}, "screens": []},
+        {"id": "p7-2021", "names": {"en": "2021", "zh-CN": "2021"}, "screens": []},
+        {"id": "p7-2022", "names": {"en": "2022", "zh-CN": "2022"}, "screens": []},
+        {"id": "p7-2023", "names": {"en": "2023", "zh-CN": "2023"}, "screens": []},
+        {"id": "p7-2024", "names": {"en": "2024", "zh-CN": "2024"}, "screens": []},
+        {"id": "p7-2025", "names": {"en": "2025", "zh-CN": "2025"}, "screens": []}
+      ]
+    }, {
+      "id": "p5",
+      "names": {"en": "P5", "zh-CN": "P5"},
+      "years": [
+        {"id": "p5-2021", "names": {"en": "2021", "zh-CN": "2021"}, "screens": []},
+        {"id": "p5-2022", "names": {"en": "2022", "zh-CN": "2022"}, "screens": []},
+        {"id": "p5-2023", "names": {"en": "2023", "zh-CN": "2023"}, "screens": []},
+        {"id": "p5-2024", "names": {"en": "2024", "zh-CN": "2024"}, "screens": []}
+      ]
+    }, {
+      "id": "g9",
+      "names": {"en": "G9", "zh-CN": "G9"},
+      "years": [
+        {"id": "g9-2022", "names": {"en": "2022", "zh-CN": "2022"}, "screens": []},
+        {"id": "g9-2024", "names": {"en": "2024", "zh-CN": "2024"}, "screens": []},
+        {"id": "g9-2025", "names": {"en": "2025", "zh-CN": "2025"}, "screens": []},
+        {"id": "g9-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "g6",
+      "names": {"en": "G6", "zh-CN": "G6"},
+      "years": [
+        {"id": "g6-2023", "names": {"en": "2023", "zh-CN": "2023"}, "screens": [{
+          "screen": {"width": 2401, "height": 1201, "densityDpi": 280},
+          "fullscreen": [{"width": 1533, "height": 1014, "count": 16}, {"width": 2401, "height": 1201, "count": 12}, {"width": 856, "height": 1014, "count": 4}],
+          "windowed": [{"width": 1533, "height": 907, "count": 5}, {"width": 2401, "height": 1201, "count": 4}, {"width": 1533, "height": 1014, "count": 1}]
+        }]},
+        {"id": "g6-2024", "names": {"en": "2024", "zh-CN": "2024"}, "screens": []},
+        {"id": "g6-2025", "names": {"en": "2025", "zh-CN": "2025"}, "screens": []},
+        {"id": "g6-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "x9",
+      "names": {"en": "X9", "zh-CN": "X9"},
+      "years": [
+        {"id": "x9-2024", "names": {"en": "2024", "zh-CN": "2024"}, "screens": []},
+        {"id": "x9-2025", "names": {"en": "2025", "zh-CN": "2025"}, "screens": []},
+        {"id": "x9-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "mona-m03",
+      "names": {"en": "MONA M03", "zh-CN": "MONA M03"},
+      "years": [
+        {"id": "mona-m03-2024", "names": {"en": "2024", "zh-CN": "2024"}, "screens": []},
+        {"id": "mona-m03-2025", "names": {"en": "2025", "zh-CN": "2025"}, "screens": []},
+        {"id": "mona-m03-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "p7-plus",
+      "names": {"en": "P7+", "zh-CN": "P7+"},
+      "years": [
+        {"id": "p7-plus-2024", "names": {"en": "2024", "zh-CN": "2024"}, "screens": []},
+        {"id": "p7-plus-2025", "names": {"en": "2025", "zh-CN": "2025"}, "screens": []},
+        {"id": "p7-plus-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "g7",
+      "names": {"en": "G7", "zh-CN": "G7"},
+      "years": [
+        {"id": "g7-2025", "names": {"en": "2025", "zh-CN": "2025"}, "screens": []},
+        {"id": "g7-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "gx",
+      "names": {"en": "GX", "zh-CN": "GX"},
+      "years": [
+        {"id": "gx-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "mona-l03",
+      "names": {"en": "MONA L03", "zh-CN": "MONA L03"},
+      "years": [
+        {"id": "mona-l03-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
+    }, {
+      "id": "g9l",
+      "names": {"en": "G9L", "zh-CN": "G9L"},
+      "years": [
+        {"id": "g9l-2026", "names": {"en": "2026", "zh-CN": "2026"}, "screens": []}
+      ]
     }]
   }, {
     "id": "tesla",
     "names": {"en": "Tesla", "zh-CN": "特斯拉"},
-    "models": [
-      {"id": "model-3-2017", "names": {"en": "Model 3 (2017–2023)", "zh-CN": "Model 3（2017–2023 款）"}, "screens": []},
-      {"id": "model-3-2024", "names": {"en": "Model 3 (2024 and later)", "zh-CN": "Model 3 焕新版（2024 款起）"}, "screens": []},
-      {"id": "model-y-2020", "names": {"en": "Model Y (2020–2024)", "zh-CN": "Model Y（2020–2024 款）"}, "screens": []},
-      {"id": "model-y-2025", "names": {"en": "Model Y (2025 and later)", "zh-CN": "Model Y 焕新版（2025 款起）"}, "screens": []},
-      {"id": "model-y-l-2025", "names": {"en": "Model Y L", "zh-CN": "Model Y L"}, "screens": []},
-      {"id": "model-s-2021", "names": {"en": "Model S (2021 and later)", "zh-CN": "Model S（2021 款起）"}, "screens": []},
-      {"id": "model-s-2012", "names": {"en": "Model S (2012–2020)", "zh-CN": "Model S（2012–2020 款）"}, "screens": []},
-      {"id": "model-x-2021", "names": {"en": "Model X (2021 and later)", "zh-CN": "Model X（2021 款起）"}, "screens": []},
-      {"id": "model-x-2015", "names": {"en": "Model X (2015–2020)", "zh-CN": "Model X（2015–2020 款）"}, "screens": []},
-      {"id": "cybertruck-2023", "names": {"en": "Cybertruck", "zh-CN": "Cybertruck"}, "screens": []}
-    ]
+    "models": [{
+      "id": "model-3",
+      "names": {"en": "Model 3", "zh-CN": "Model 3"},
+      "years": [
+        {"id": "model-3-2017", "names": {"en": "2017–2023", "zh-CN": "2017–2023"}, "screens": []},
+        {"id": "model-3-2024", "names": {"en": "2024+", "zh-CN": "2024 起（焕新版）"}, "screens": []}
+      ]
+    }, {
+      "id": "model-y",
+      "names": {"en": "Model Y", "zh-CN": "Model Y"},
+      "years": [
+        {"id": "model-y-2020", "names": {"en": "2020–2024", "zh-CN": "2020–2024"}, "screens": []},
+        {"id": "model-y-2025", "names": {"en": "2025+", "zh-CN": "2025 起（焕新版）"}, "screens": []}
+      ]
+    }, {
+      "id": "model-y-l",
+      "names": {"en": "Model Y L", "zh-CN": "Model Y L"},
+      "years": [
+        {"id": "model-y-l-2025", "names": {"en": "2025+", "zh-CN": "2025 起"}, "screens": []}
+      ]
+    }, {
+      "id": "model-s",
+      "names": {"en": "Model S", "zh-CN": "Model S"},
+      "years": [
+        {"id": "model-s-2012", "names": {"en": "2012–2020", "zh-CN": "2012–2020"}, "screens": []},
+        {"id": "model-s-2021", "names": {"en": "2021+", "zh-CN": "2021 起"}, "screens": []}
+      ]
+    }, {
+      "id": "model-x",
+      "names": {"en": "Model X", "zh-CN": "Model X"},
+      "years": [
+        {"id": "model-x-2015", "names": {"en": "2015–2020", "zh-CN": "2015–2020"}, "screens": []},
+        {"id": "model-x-2021", "names": {"en": "2021+", "zh-CN": "2021 起"}, "screens": []}
+      ]
+    }, {
+      "id": "cybertruck",
+      "names": {"en": "Cybertruck", "zh-CN": "Cybertruck"},
+      "years": [
+        {"id": "cybertruck-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
+      ]
+    }]
   }]
 }

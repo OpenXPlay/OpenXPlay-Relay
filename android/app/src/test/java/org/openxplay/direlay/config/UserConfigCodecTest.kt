@@ -24,6 +24,54 @@ class UserConfigCodecTest {
     private fun wrapped(settings: JSONObject) = ConfigEnvelope.create(UserConfigCodec.FORMAT, meta).put("settings", settings).toString()
     private fun decode(settings: JSONObject) = UserConfigCodec.decode(wrapped(settings), base)
 
+    @Test fun carYearVersionOneRoundTripsKnownCustomAndIncompleteSelections() {
+        for (car in listOf(CarSelection(), CarSelection("xpeng"), CarSelection("xpeng", model = "g6"),
+            CarSelection("xpeng", model = "g6", year = "g6-2023"), CarSelection("tesla", model = "model-3", year = "model-3-2024"),
+            CarSelection("xpeng", model = "g6", year = "other", yearText = "Custom"),
+            CarSelection("xpeng", model = "other", modelText = "Model", year = "other", yearText = "Year"),
+            CarSelection("other", "Brand", "other", "Model", "other", "Year"))) {
+            val chosen = base.copy(car = car)
+            val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
+            val root = JSONObject(text)
+            assertEquals(1, root.getInt("version"))
+            val encoded = root.getJSONObject("settings").getJSONObject("car")
+            assertEquals(car.year, encoded.getString("year")); assertEquals(car.yearText, encoded.getString("yearText"))
+            val result = UserConfigCodec.decode(text, base)
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            assertTrue(result.ignoredKeys.toString(), result.ignoredKeys.isEmpty())
+            assertEquals(chosen, result.settings)
+        }
+    }
+    @Test fun legacyCarIdsMigrateAndExportsAlwaysWriteTheNewForm() {
+        for ((brand, models) in CarSelection.catalogIds) for ((model, years) in models) for (year in years) {
+            val legacy = CarSelection(brand, model = year)
+            val encoded = JSONObject(UserConfigCodec.encode(base.copy(car = legacy), DeveloperOverrides(), meta)).getJSONObject("settings").getJSONObject("car")
+            assertEquals(model, encoded.getString("model")); assertEquals(year, encoded.getString("year"))
+            val json = JSONObject().put("brand", brand).put("brandText", "").put("model", year).put("modelText", "")
+            val result = decode(JSONObject().put("car", json))
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            assertEquals(CarSelection(brand, model = model, year = year), result.settings.car)
+        }
+        val custom = JSONObject().put("brand", "other").put("brandText", "Brand").put("model", "other").put("modelText", "Model")
+        assertEquals(CarSelection("other", "Brand", "other", "Model", "other"), decode(JSONObject().put("car", custom)).settings.car)
+        val modelOnly = JSONObject().put("brand", "xpeng").put("brandText", "").put("model", "g6").put("modelText", "")
+        assertEquals(CarSelection("xpeng", model = "g6"), decode(JSONObject().put("car", modelOnly)).settings.car)
+        modelOnly.put("future", true)
+        assertEquals(listOf("car.future"), decode(JSONObject().put("car", modelOnly)).ignoredKeys)
+    }
+    @Test fun unknownCarIdsAndMalformedYearFieldsFailAtCarWithoutApplyingOtherChanges() {
+        val valid = JSONObject().put("brand", "xpeng").put("brandText", "").put("model", "g6").put("modelText", "").put("year", "g6-2023").put("yearText", "")
+        val invalid = listOf(valid.toString().let(::JSONObject).put("brand", "unknown"),
+            valid.toString().let(::JSONObject).put("model", "unknown"), valid.toString().let(::JSONObject).put("year", "unknown"),
+            valid.toString().let(::JSONObject).put("year", "g9-2024"), valid.toString().let(::JSONObject).put("model", "g6-2023"),
+            valid.toString().let(::JSONObject).put("year", 2023), valid.toString().let(::JSONObject).put("yearText", JSONObject.NULL))
+        invalid.forEach { car ->
+            val result = decode(JSONObject().put("car", car).put("viewAreas", false))
+            assertEquals(setOf("car"), result.errors.keys)
+            assertEquals(base, result.settings)
+        }
+    }
+
     @Test fun wirelessPictureVersionOneRoundTripsAndMissingKeysKeepParkedChoices() {
         for (mode in WirelessPictureMode.entries) for (stretch in listOf(false, true))
             for (size in listOf(WirelessPictureSize(1920, 720), WirelessPictureSize(720, 1280))) {
@@ -114,7 +162,7 @@ class UserConfigCodecTest {
             iphoneAddress = "12:34:56:78:9A:BC", plugins = true, pluginsEnabled = listOf("test.plugin"),
             carlinkTrace = true, carlinkHevc = ClinkHevcMode.SIGNAL, carlinkPictureSize = ClinkPictureSize.MODE,
             carplayResolution = CarPlayResolution.P720, carplayScreenWidth = CarPlayScreenWidth.MM300, viewAreas = false,
-            car = CarSelection("tesla", "", "model-y-2025", ""), videoCodec = VideoCodecSetting.H264,
+            car = CarSelection("tesla", model = "model-y", year = "model-y-2025"), videoCodec = VideoCodecSetting.H264,
             videoStats = VideoStatsWindow.SECONDS_15, carBluetoothAudio = false, teslaBrowser = TeslaBrowserMode.TESLA_ANDROID,
             teslaVirtualAddress = "169.254.88.2", teslaPublicAddress = "169.254.88.3",
             teslaMirrorAddress = "100.88.0.2", teslaAndroidAddress = "3.3.3.2")

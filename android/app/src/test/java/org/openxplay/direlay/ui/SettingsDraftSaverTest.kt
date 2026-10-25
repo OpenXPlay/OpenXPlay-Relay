@@ -185,14 +185,19 @@ class SettingsDraftSaverTest {
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
     @Test fun carAndViewAreasDraftRoundTripAndOldExperimentalKeyIsIgnored() {
-        for (areas in listOf(false, true)) for (car in listOf(CarSelection(), CarSelection("xpeng", model = "g6-2023"),
-            CarSelection("other", "My brand ", "other", "My model "))) {
+        for (areas in listOf(false, true)) for (car in listOf(CarSelection(), CarSelection("xpeng", model = "g6", year = "g6-2023"),
+            CarSelection("other", "My brand ", "other", "My model ", "other", "My year "))) {
             val value = base.copy(viewAreas = areas, car = car)
             assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
         }
         val old = bundle(base)
         old.remove("carPlayViewAreas"); old.remove("car"); old.putBoolean("viewAreas", false)
         assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
+    @Test fun legacyFourFieldCarDraftRestoresAsModelAndYear() {
+        val old = bundle(base)
+        old.putStringArrayList("car", arrayListOf("xpeng", "", "g6-2023", ""))
+        assertEquals(CarSelection("xpeng", model = "g6", year = "g6-2023"), relaySettingsSaver(base).restore(old)?.car)
     }
     @Test fun everyNetworkChoiceAndPhoneSelectionRoundTripWithCredentials() {
         for (choice in WirelessNetworkChoice.entries) for (selected in listOf(false, true)) {

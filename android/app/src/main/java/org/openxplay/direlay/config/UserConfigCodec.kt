@@ -33,7 +33,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   carlinkAutoReconnect, carlinkReconnectOnResize, plugins, carlinkTrace, viewAreas,
  *   carBluetoothAudio: booleans; pluginsEnabled: unique valid plugin IDs.
  * - carlinkDeviceName, carlinkDeviceModel: nonblank 1–128 UTF-8 bytes without controls.
- * - car: {brand, brandText, model, modelText}, using CarSelection's normalized values.
+ * - car: {brand, brandText, model, modelText, year, yearText}, using CarSelection's normalized
+ *   values. Year fields are optional on import; legacy leaf model IDs migrate to model + year.
  * - teslaBrowser: off/virtual-name/public-address/teslamirror/tesla-android; teslaVirtualAddress,
  *   teslaPublicAddress, teslaMirrorAddress, teslaAndroidAddress: strings; the active address must
  *   satisfy TeslaAddressPolicy and, when changed, must not collide with a phone IPv4 address.
@@ -128,7 +129,7 @@ object UserConfigCodec {
         .put("teslaAndroidAddress", s.teslaAndroidAddress)
         .put("pluginsEnabled", org.json.JSONArray(s.pluginsEnabled))
         .put("display", s.display?.let { JSONObject().put("width", it.width).put("height", it.height).put("density", it.density) } ?: JSONObject.NULL)
-        .put("car", JSONObject().put("brand", s.car.brand).put("brandText", s.car.brandText).put("model", s.car.model).put("modelText", s.car.modelText))
+        .put("car", carValues(s.car))
         .put("hotspotSsid", s.wirelessNetwork.manualSsid)
         .put("hotspotPassphrase", s.wirelessNetwork.manualPassphrase)
         .put("hotspotBand", wire(s.wirelessNetwork.band))
@@ -136,6 +137,22 @@ object UserConfigCodec {
         .put("hotspotSecurity", wire(s.wirelessNetwork.security))
         .put("developer", developerValues(d))
         .put("experimental", experimentalValues(s.experimental))
+
+    private fun carValues(selection: CarSelection): JSONObject = selection.normalized().let { car ->
+        JSONObject().put("brand", car.brand).put("brandText", car.brandText).put("model", car.model).put("modelText", car.modelText)
+            .put("year", car.year).put("yearText", car.yearText)
+    }
+
+    private fun carValue(json: JSONObject): CarSelection {
+        val car = CarSelection(json.string("brand"), json.string("brandText"), json.string("model"), json.string("modelText"),
+            if (json.has("year")) json.string("year") else "", if (json.has("yearText")) json.string("yearText") else "")
+        val normalized = car.normalized()
+        val legacy = car.year.isEmpty() && car.model == normalized.year && normalized.model != car.model
+        val expected = car.copy(model = if (legacy) normalized.model else car.model,
+            year = if (legacy || car.year.isEmpty() && normalized.year == "other") normalized.year else car.year)
+        require(expected == normalized)
+        return normalized
+    }
 
     private fun experimentalValues(e: ExperimentalOptions): JSONObject = JSONObject()
         .put("active", e.active)
@@ -187,7 +204,7 @@ object UserConfigCodec {
         j.optJSONObject("wirelessPictureSize")?.let { unknown(it, setOf("width", "height"), "wirelessPictureSize") }
         j.optJSONObject("dlnaRenderer")?.let { unknown(it, setOf("udn", "name"), "dlnaRenderer") }
         j.optJSONObject("display")?.let { unknown(it, setOf("width", "height", "density"), "display") }
-        j.optJSONObject("car")?.let { unknown(it, setOf("brand", "brandText", "model", "modelText"), "car") }
+        j.optJSONObject("car")?.let { unknown(it, setOf("brand", "brandText", "model", "modelText", "year", "yearText"), "car") }
         j.optJSONArray("sharedWifiNetworks")?.let { array -> for (index in 0 until array.length())
             array.optJSONObject(index)?.let { unknown(it, setOf("ssid", "password"), "sharedWifiNetworks[$index]") }
         }
@@ -239,7 +256,7 @@ object UserConfigCodec {
                 "teslaAndroidAddress" -> { val value = j.string(key); s = s.copy(teslaAndroidAddress = value) }
                 "pluginsEnabled" -> { val value = j.getJSONArray(key).let { a -> (0 until a.length()).map { require(a.get(it) is String); a.getString(it) } }; s = s.copy(pluginsEnabled = value) }
                 "display" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DisplayProfile(it.integer("width"), it.integer("height"), it.integer("density")).also(DisplayProfile::validate) }; s = s.copy(display = value) }
-                "car" -> { val value = j.getJSONObject(key).let { CarSelection(it.string("brand"), it.string("brandText"), it.string("model"), it.string("modelText")).also { c -> require(c == c.normalized()) } }; s = s.copy(car = value) }
+                "car" -> { val value = carValue(j.getJSONObject(key)); s = s.copy(car = value) }
                 "hotspotSsid" -> { val value = j.string(key); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(manualSsid = value)) }
                 "hotspotPassphrase" -> { val value = j.string(key); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(manualPassphrase = value)) }
                 "hotspotBand" -> { val value = enumValue<ManualHotspotBand>(j.string(key)); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(band = value)) }

@@ -13,21 +13,21 @@ class WirelessPicturePolicyTest {
     private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, 30, false, false, false, null)
     private fun saved(width: Int, height: Int) = SavedHeadUnit(DisplayProfile(width, height, 160),
         HeadUnitDisplay(ScreenDataKey(width, height, 160), null, true, true))
-    private fun model(width: Int, height: Int) = CarModel("car", mapOf("en" to "Car"),
+    private fun year(width: Int, height: Int) = CarYear("car", mapOf("en" to "Car"),
         listOf(CarScreenData(ScreenDataKey(width, height, 160), emptyList())))
 
     @Test fun autoUsesSavedBrowserThenSelectedModelThenSixteenByNineWithoutAFixedOrLiveSize() {
         val fixed = base.copy(displayMode = DisplayMode.FIXED, display = DisplayProfile(800, 480, 160))
         for (settings in listOf(base, fixed, base.copy(displayMode = DisplayMode.RELAY_SCREEN))) {
             assertEquals(WirelessPictureResolution(WirelessPictureSize(1920, 720), WirelessPictureSource.BROWSER),
-                WirelessPicturePolicy.resolve(settings, saved(1920, 720), model(1280, 720)))
+                WirelessPicturePolicy.resolve(settings, saved(1920, 720), year(1280, 720)))
             assertEquals(WirelessPictureResolution(WirelessPictureSize(1920, 720), WirelessPictureSource.CAR_MODEL),
-                WirelessPicturePolicy.resolve(settings, null, model(1280, 480)))
+                WirelessPicturePolicy.resolve(settings, null, year(1280, 480)))
             assertEquals(WirelessPictureResolution(WirelessPictureSize(1280, 720), WirelessPictureSource.DEFAULT),
                 WirelessPicturePolicy.resolve(settings))
         }
         val legacy = SavedHeadUnit(DisplayProfile(1920, 720, 160), null)
-        assertEquals(WirelessPictureSource.CAR_MODEL, WirelessPicturePolicy.resolve(base, legacy, model(1280, 720)).source)
+        assertEquals(WirelessPictureSource.CAR_MODEL, WirelessPicturePolicy.resolve(base, legacy, year(1280, 720)).source)
         val declaration = WirelessPicturePolicy.resolve(fixed, saved(1920, 720)).size
         assertEquals(fixed.display, startupCarPlayScreen(fixed, DisplayProfile(declaration.width, declaration.height, 160), null, null)?.profile)
     }
@@ -43,7 +43,7 @@ class WirelessPicturePolicyTest {
             assertEquals(p1080, WirelessPicturePolicy.resolve(base.copy(dlnaPicture = DlnaPicture.P1080), saved(screen.first, screen.second)).size)
         }
         for (picture in DlnaPicture.entries) {
-            val size = WirelessPicturePolicy.resolve(base.copy(dlnaPicture = picture), null, model(2401, 1201)).size
+            val size = WirelessPicturePolicy.resolve(base.copy(dlnaPicture = picture), null, year(2401, 1201)).size
             size.validate()
             assertEquals(2401.0 / 1201, size.width.toDouble() / size.height, .005)
         }
@@ -54,7 +54,7 @@ class WirelessPicturePolicyTest {
             val settings = base.copy(wirelessPicture = WirelessPictureMode.CUSTOM, dlnaPicture = picture,
                 wirelessPictureSize = WirelessPictureSize(1280, 480))
             assertEquals(WirelessPictureResolution(WirelessPictureSize(1280, 480), WirelessPictureSource.CUSTOM),
-                WirelessPicturePolicy.resolve(settings, saved(1920, 1080), model(720, 1280)))
+                WirelessPicturePolicy.resolve(settings, saved(1920, 1080), year(720, 1280)))
             assertEquals(WirelessPictureSize(1920, 720), WirelessPicturePolicy.resolve(
                 settings.copy(wirelessPictureSize = WirelessPictureSize(3840, 1440))).size)
         }
