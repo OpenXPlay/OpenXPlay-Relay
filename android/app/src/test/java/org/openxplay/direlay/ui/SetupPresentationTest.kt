@@ -143,21 +143,17 @@ class SetupPresentationTest {
         assertEquals(R.string.output_multiple, modeRows(settings.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.CARLINK)), wireless = true).first().value)
     }
 
-    @Test fun wirelessAndCombinationModeRowsAndAfterStartLinesUseEnumOrder() {
+    @Test fun wirelessAndCombinationModeRowsUseEnumOrder() {
         val labels = listOf(R.string.ui_browser, R.string.ui_carlink, R.string.wireless_dlna, R.string.wireless_miracast)
         val icons = listOf(R.drawable.symbol_monitor, R.drawable.symbol_car_front, R.drawable.symbol_cast, R.drawable.symbol_cast)
-        val lines = listOf(R.string.setup_after_browser, R.string.setup_after_carlink, R.string.setup_after_dlna, R.string.setup_after_miracast)
         RelayOutput.entries.forEachIndexed { index, output ->
             val chosen = settings.copy(outputs = setOf(output))
             assertEquals(labels[index], modeRows(chosen, true).first().value)
             assertEquals(icons[index], modeRows(chosen, true).first().icon)
-            assertEquals(listOf(R.string.setup_after_wireless, lines[index]), afterStartLines(chosen, true))
-            assertEquals(listOf(R.string.setup_after_usb, lines[index]), afterStartLines(chosen, false))
         }
         val combined = settings.copy(outputs = RelayOutput.entries.reversed().toSet())
         assertEquals(R.string.output_multiple, modeRows(combined, true).first().value)
         assertEquals(R.drawable.symbol_link, modeRows(combined, true).first().icon)
-        assertEquals(listOf(R.string.setup_after_wireless) + lines, afterStartLines(combined, true))
     }
 
     @Test fun overlayConsentIsIncludedInPreparationChecks() {
@@ -216,6 +212,64 @@ class SetupPresentationTest {
         assertTrue(setupPrepareSections(path).isEmpty())
         val relay = PathSectionView(PathSection.RELAY, listOf(PathStep(StepId.MODE, StepState.OK, R.string.path_mode)))
         assertEquals(listOf(relay), setupPrepareSections(ConnectionPath(sections = listOf(relay))))
+    }
+
+    @Test fun choicesHaveAtMostOneTagAndOnlyRecommendationsUseThePrimaryHue() {
+        assertEquals(listOf(SetupChoiceTag.RECOMMENDED, SetupChoiceTag.EXPERIMENTAL, SetupChoiceTag.PICTURE_ONLY),
+            OutputChoice.entries.map(::setupOutputTag))
+        assertEquals(SetupChoiceTag.RECOMMENDED, setupConnectionTag(settings, true))
+        assertEquals(SetupChoiceTag.NOT_RECOMMENDED, setupConnectionTag(settings, false))
+        SetupChoiceTag.entries.forEach { assertEquals(it != SetupChoiceTag.RECOMMENDED, it.warning) }
+        for (outputs in listOf(setOf(RelayOutput.BROWSER), setOf(RelayOutput.CARLINK), setOf(RelayOutput.MIRACAST))) {
+            val draft = settings.copy(outputs = outputs)
+            val tags = WirelessNetworkChoice.entries.map { setupNetworkTag(draft, it) }
+            assertEquals(1, tags.count { it != null })
+            assertEquals(SetupChoiceTag.RECOMMENDED, setupNetworkTag(draft, recommendedNetwork(draft)))
+        }
+    }
+
+    @Test fun preparationFoldsOnlyOkStepsAndKeepsTheFirstOpenStepInPathOrder() {
+        val states = listOf(StepState.OK, StepState.FAILED, StepState.OK, StepState.ACTION,
+            StepState.WORKING, StepState.WAITING, StepState.BLOCKED)
+        val ids = listOf(StepId.MODE, StepId.IDENTITY, StepId.PERMISSIONS, StepId.BLUETOOTH,
+            StepId.WIFI, StepId.HOTSPOT, StepId.SHARED_WIFI)
+        val steps = ids.zip(states) { id, state -> PathStep(id, state, R.string.path_mode) }
+        val shown = setupPrepareSteps(steps)
+        assertEquals(listOf(StepId.MODE, StepId.PERMISSIONS), shown.done.map { it.id })
+        assertEquals(listOf(StepId.IDENTITY, StepId.BLUETOOTH, StepId.WIFI, StepId.HOTSPOT, StepId.SHARED_WIFI), shown.open.map { it.id })
+        assertEquals(StepId.IDENTITY, shown.open.first().id)
+        assertTrue(setupPrepareSteps(emptyList()).open.isEmpty())
+        val path = ConnectionPath(sections = listOf(PathSectionView(PathSection.RELAY, steps)), canStart = true)
+        assertFalse("Next's existing gate does not hide unfinished radio checks", setupPrepareComplete(path, emptyList()))
+        assertTrue(setupPrepareComplete(path.copy(sections = listOf(PathSectionView(PathSection.RELAY,
+            steps.map { it.copy(state = StepState.OK) }))), emptyList()))
+        val readySections = listOf(PathSectionView(PathSection.RELAY, listOf(steps.first())),
+            PathSectionView(PathSection.IPHONE, listOf(PathStep(StepId.IPHONE_PAIRED, StepState.OK, R.string.path_iphone_paired),
+                PathStep(StepId.SESSION, StepState.WAITING, R.string.path_session))))
+        assertTrue("Session progress is outside one-time preparation", setupPrepareComplete(path.copy(sections = readySections), emptyList()))
+        assertFalse(setupPrepareComplete(ConnectionPath(), emptyList()))
+    }
+
+    @Test fun fallbackPreparationAlsoFoldsDoneChecksWithoutHidingCheckingOrActions() {
+        val done = SetupCheck(R.string.setup_check_permissions, SetupCheckState.DONE)
+        val checking = SetupCheck(R.string.setup_check_identity, SetupCheckState.CHECKING)
+        val todo = SetupCheck(R.string.setup_check_iphone, SetupCheckState.TO_DO, action = SetupAction.CHOOSE_IPHONE)
+        val checks = listOf(done, checking, todo)
+        assertEquals(listOf(done), setupPrepareChecks(checks).done)
+        assertEquals(listOf(checking, todo), setupPrepareChecks(checks).open)
+        assertFalse(setupPrepareComplete(null, checks))
+        assertFalse(setupPrepareComplete(null, emptyList()))
+        assertTrue(setupPrepareComplete(null, listOf(done)))
+        val path = ConnectionPath(sections = listOf(PathSectionView(PathSection.RELAY,
+            listOf(PathStep(StepId.IDENTITY, StepState.ACTION, R.string.path_identity)))))
+        assertFalse("The live path takes precedence over fallback checks", setupPrepareComplete(path, listOf(done)))
+    }
+
+    @Test fun pageEntranceStaggersBy40MsAndEndsWithin400MsForAnyGroupCount() {
+        assertEquals(listOf(0, 40, 80, 120), (0..3).map(::setupEntranceDelayMillis))
+        assertEquals(0, setupEntranceDelayMillis(-1))
+        assertEquals(120, setupEntranceDelayMillis(Int.MAX_VALUE))
+        assertTrue(setupEntranceDelayMillis(100) + 280 <= 400)
     }
 
 }

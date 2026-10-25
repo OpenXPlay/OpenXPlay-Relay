@@ -419,7 +419,6 @@
     <string name="setup_prepare_title">完成准备</string>
     <string name="setup_prepare_hint">这些只需要做一次，之后会自动记住。</string>
     <string name="setup_prepare_blocked">完成上面的步骤后才能继续。</string>
-    <string name="setup_prepare_ready">全部就绪，可以开启 CarPlay 了。</string>
     <string name="setup_check_permissions">允许所需权限</string>
     <string name="setup_check_permissions_hint">只申请当前模式需要的权限，例如蓝牙、附近设备和麦克风。</string>
     <string name="setup_check_identity">导入 CarPlay 身份</string>
@@ -433,11 +432,6 @@
     <string name="setup_start_hint">确认你的选择，点按可以修改。</string>
     <string name="setup_summary_output">车机显示方式</string>
     <string name="setup_summary_network">无线网络</string>
-    <string name="setup_after_start">开启之后</string>
-    <string name="setup_after_wireless">iPhone 会通过蓝牙自动连接，请保持 iPhone 的 Wi-Fi 和蓝牙开启。</string>
-    <string name="setup_after_usb">用数据线把 iPhone 连到这台手机。</string>
-    <string name="setup_after_browser">在车机浏览器中打开首页显示的地址。</string>
-    <string name="setup_after_carlink">在车机上打开 Carlink 应用。</string>
     <string name="setup_start">开启 CarPlay</string>
     <string name="setup_apply_restart">应用并重新连接</string>
     <string name="setup_done">完成</string>

@@ -19,7 +19,9 @@
     <string name="setup_picture_only">仅画面</string>
     <string name="setup_dlna_hint">车机的投屏接收应用播放本机推送的画面，会延迟几秒。</string>
     <string name="setup_miracast_hint">在本机系统投屏中选择车机，延迟更低，会占用 Wi-Fi 直连。</string>
-    <string name="setup_after_dlna">在车机上打开投屏接收应用，再到首页选择它。</string>
-    <string name="setup_after_miracast">在本机系统投屏中选择车机。</string>
     <string name="setup_multiple_outputs">开发者选项里开着多种输出，在这里选一种会替换它们。</string>
+    <string name="setup_change">更改</string>
+    <string name="setup_hotspot_5ghz">建议用 5 GHz</string>
+    <string name="setup_hotspot_5ghz_details">5 GHz 建议详情</string>
+    <string name="setup_prepare_ready">全部就绪</string>
 </resources>
