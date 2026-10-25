@@ -313,8 +313,6 @@
     <string name="display_automatic">自动</string>
     <string name="display_automatic_hint">匹配车机屏幕。屏幕尺寸变化后，重新连接 CarPlay 以适配。</string>
     <string name="display_relay_screen">中继设备屏幕</string>
-    <string name="display_changed">车机屏幕已变化。重新连接以适配。</string>
-    <string name="display_reconnect">重新连接</string>
     <string name="dev_carplay_screen">CarPlay 画面</string>
     <string name="dev_screen_car">%1$s（车机屏幕）</string>
     <string name="dev_screen_remembered">%1$s（上次的车机）</string>
@@ -443,16 +441,6 @@
     <string name="network_addresses">本机 IP 地址</string>
     <string name="ui_wifi_connected">已连接</string>
     <string name="ui_wifi_not_connected">未连接</string>
-    <string name="launch_title">要怎么开始？</string>
-    <string name="launch_hint">可以直接用上次的配置开启 CarPlay，也可以重新设置。</string>
-    <string name="launch_last_title">上次的配置</string>
-    <string name="launch_last_unready">还有几项准备没有完成，继续后会带你完成。</string>
-    <string name="launch_continue">用上次的配置开启</string>
-    <string name="launch_continue_prepare">继续并完成准备</string>
-    <string name="launch_countdown">已开启自动连接，%1$d 秒后自动开启。</string>
-    <string name="launch_new_title">开始新配置</string>
-    <string name="launch_new_hint">一步步重新选择车机的显示方式和 iPhone 的连接方式。</string>
-    <string name="launch_later">暂不开启，进入首页</string>
     <string name="carlink_debug">Carlink 调试</string>
     <string name="carlink_trace_enabled">记录 Carlink 跟踪</string>
     <string name="carlink_trace_all">全部</string>
@@ -517,7 +505,6 @@
     <string name="car_brand_required">请选择品牌。</string>
     <string name="car_model_required">请选择车型。</string>
     <string name="setup_car_title">你的车</string>
-    <string name="car_choose_title">选择你的车型</string>
     <string name="car_choose_hint">不同车型会使用不同的设置和策略。</string>
     <string name="car_detected">检测到的屏幕数据</string>
     <string name="car_built_in">此年份自带内置屏幕数据。</string>

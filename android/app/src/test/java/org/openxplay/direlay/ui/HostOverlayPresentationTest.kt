@@ -15,11 +15,10 @@ class HostOverlayPresentationTest {
         car = CarInput(address = "192.168.43.1", web = WebServerInput(WebPhase.LISTENING, 9443),
             pageUrl = "https://192.168.43.1:9443/"), iphone = IphoneInput(pick = IphonePick.PICKED))
 
-    @Test fun overlayUsesTheSamePathAndOffersBackAndStop() {
+    @Test fun overlayUsesTheSamePathWithoutLosingItsVersion() {
         val result = presentHostOverlay(HostOverlaySnapshot(ready))
         assertEquals(presentPath(ready), result.path)
-        assertEquals(listOf(HostOverlayAction.BACK, HostOverlayAction.STOP), result.buttons.map { it.action })
-        assertEquals(listOf(R.string.home2_back, R.string.design_stop), result.buttons.map { it.label })
+        assertEquals(ready.version, result.path.version)
     }
 
     @Test fun waitingForTheCarOffersStartNowOnTheFocusStep() {
@@ -38,11 +37,13 @@ class HostOverlayPresentationTest {
         assertEquals(PathTone.ERROR, failed.path.tone)
         assertEquals(StepAction.RETRY, failed.path.focus?.action)
         assertEquals("first_tcp_timeout", failed.path.focus?.code)
-        assertEquals(listOf(HostOverlayAction.BACK, HostOverlayAction.STOP, HostOverlayAction.RETRY), failed.buttons.map { it.action })
+        val stage = presentStage(failed.path, StageFlags(overlay = true))
+        assertEquals(StageAction.Step(StepAction.RETRY, failed.path.focus!!.id, failed.path.focus!!.actionLabel), stage.primary)
+        assertEquals(StageAction.Stop, stage.secondary)
         val retrying = presentHostOverlay(HostOverlaySnapshot(input.copy(iphone = input.iphone.copy(failure = failure.copy(retrying = true)))))
         assertEquals(PathTone.PROGRESS, retrying.path.tone)
         assertEquals(StepState.WORKING, retrying.path.steps.first { it.id == StepId.IPHONE_WIFI }.state)
-        assertFalse(retrying.buttons.any { it.action == HostOverlayAction.RETRY })
+        assertNull(presentStage(retrying.path, StageFlags(overlay = true)).primary)
     }
 
     @Test fun aLivePictureKeepsNamesChipsAndDiagnostic() {
@@ -53,6 +54,18 @@ class HostOverlayPresentationTest {
         assertEquals(input.live.chips, path.live?.chips)
         assertEquals("iPhone 15", path.nodes.iphone)
         assertEquals(presentPath(input).diagnostic, path.diagnostic)
+    }
+
+    @Test fun noticesKeepSourceFlagsAndUseTheSharedPriority() {
+        val input = ready.copy(iphone = ready.iphone.copy(started = true))
+        val result = presentHostOverlay(HostOverlaySnapshot(input, displayChanged = true,
+            carIncomplete = true, setupCompleted = false))
+        assertTrue(result.displayChanged)
+        assertTrue(result.carIncomplete)
+        assertFalse(result.setupCompleted)
+        assertEquals(StageNotice.DISPLAY_CHANGED, presentStage(result.path, StageFlags(overlay = true,
+            displayChanged = result.displayChanged, carIncomplete = result.carIncomplete,
+            setupCompleted = result.setupCompleted)).notice)
     }
 
     @Test fun previewDoesNotConstructTheOverlayOrPollItsRuntime() {

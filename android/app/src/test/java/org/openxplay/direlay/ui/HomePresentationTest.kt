@@ -126,15 +126,51 @@ class HomePresentationTest {
         assertTrue(setupHomePresentation(usb, presentPath(usb), emptyList()).checklist.isEmpty())
     }
 
-    @Test fun connectFindsPreparationInOrderButLetsRadiosArmTheStart() {
-        assertNull(missingStartStep(presentPath(ready)))
-        assertNull(missingStartStep(presentPath(ready.copy(relay = ready.relay.copy(hotspotOn = false)))))
-        val input = ready.copy(relay = ready.relay.copy(identity = IdentityState.MISSING, permissionsTotal = 1))
-        assertEquals(StepId.IDENTITY, missingStartStep(presentPath(input))?.id)
-        assertEquals(StepId.PERMISSIONS, missingStartStep(presentPath(input.copy(relay = input.relay.copy(identity = IdentityState.READY))))?.id)
-        assertEquals(StepId.MODE, missingStartStep(presentPath(input.copy(setup = input.setup.copy(valid = false))))?.id)
-        assertEquals(StepId.IPHONE_PAIRED, missingStartStep(presentPath(ready.copy(iphone = IphoneInput())))?.id)
-        assertNull(missingStartStep(presentPath(input.copy(iphone = input.iphone.copy(started = true)))))
+    @Test fun arrivalCountdownRequiresEveryEligibilityCondition() {
+        for (mask in 0 until (1 shl 5)) {
+            fun flag(bit: Int) = mask and (1 shl bit) != 0
+            val path = ConnectionPath(canStart = flag(2), running = flag(3))
+            assertEquals("mask=$mask", flag(0) && flag(1) && flag(2) && !flag(3) && !flag(4),
+                arrivalCountdown(flag(0), flag(1), path, flag(4)))
+        }
+    }
+
+    @Test fun onlyCountdownCompletionAndConnectAvoidPausingAutomaticStart() {
+        ArrivalEnd.entries.forEach { reason ->
+            assertEquals(reason.name, reason !in setOf(ArrivalEnd.COMPLETE, ArrivalEnd.CONNECT), reason.pauseAutomatic)
+        }
+        // Once consumed, a new ready snapshot cannot restart this arrival.
+        assertFalse(arrivalCountdown(false, true, ConnectionPath(canStart = true), false))
+    }
+
+    @Test fun aStageStepResolvesByIdEvenWhenSeveralStepsShareItsAction() {
+        val first = PathStep(StepId.BLUETOOTH, StepState.ACTION, R.string.design_step_bluetooth,
+            action = StepAction.TURN_ON_BLUETOOTH)
+        val second = first.copy(id = StepId.IPHONE_BLUETOOTH)
+        val path = ConnectionPath(sections = listOf(PathSectionView(PathSection.RELAY, listOf(first)),
+            PathSectionView(PathSection.IPHONE, listOf(second))))
+        StepAction.entries.forEach { action ->
+            val stage = StageAction.Step(action, second.id, null)
+            assertEquals(StageCommand.Step(action, second), stageCommand(stage, path))
+        }
+        assertNull(stageCommand(StageAction.Step(StepAction.RETRY, StepId.CARLINK_LINK, null), path))
+    }
+
+    @Test fun animatedOutgoingActionsCannotToggleTheWrongSessionState() {
+        val stopped = ConnectionPath(canStart = true)
+        val running = stopped.copy(running = true)
+        assertEquals(StageCommand.Connect, stageCommand(StageAction.Connect, stopped))
+        assertNull(stageCommand(StageAction.Connect, running))
+        assertEquals(StageCommand.Stop, stageCommand(StageAction.Stop, running))
+        assertNull(stageCommand(StageAction.Stop, stopped))
+        assertEquals(StageCommand.CancelArrival, stageCommand(StageAction.NotNow, stopped))
+    }
+
+    @Test fun stageNoticesResolveToTheExistingDestinations() {
+        assertEquals(StageNoticeTarget.RESTART, stageNoticeTarget(StageNotice.DISPLAY_CHANGED))
+        assertEquals(StageNoticeTarget.CAR_SETTINGS, stageNoticeTarget(StageNotice.CHOOSE_CAR))
+        assertEquals(StageNoticeTarget.GUIDE, stageNoticeTarget(StageNotice.SET_UP))
+        assertEquals("settings/car#car", relayRoute("settings:car"))
     }
 
     @Test fun idleWaitsCollapseWhileProblemsAndRunningWaitsExpand() {

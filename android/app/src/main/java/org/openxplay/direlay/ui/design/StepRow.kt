@@ -46,10 +46,6 @@ internal fun evidenceUsesMonospace(text: String): Boolean = text.none {
         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
 }
 
-@Composable internal fun SessionTime(sinceMillis: Long?) {
-    Text(sessionTime(rememberElapsedSeconds(sinceMillis)), style = RelayTokens.mono)
-}
-
 @Composable fun StepRow(step: PathStep, onClick: () -> Unit, onAction: (StepAction) -> Unit, focused: Boolean = false) {
     val color = LocalStatusColors.current.color(step.state)
     val detail = step.detail

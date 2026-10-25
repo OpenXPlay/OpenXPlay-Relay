@@ -30,6 +30,7 @@ import org.openxplay.direlay.settings.*
     onCopy: (String) -> Unit, onReconnect: () -> Unit,
     onStepAction: (StepAction, PathStep) -> Unit, onRecheck: () -> Unit,
     stepNavigation: StepAction? = null, onStepNavigationHandled: () -> Unit = {},
+    homeDestination: String? = null, onHomeDestinationHandled: () -> Unit = {},
     importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit, importPublicName: () -> Unit = {},
     openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {},
     onGuideVisible: (Boolean) -> Unit = {}) {
@@ -38,7 +39,6 @@ import org.openxplay.direlay.settings.*
     val motion by sources.motion.screenState()
     var entries by rememberSaveable { mutableStateOf(when {
         openSetup && sources.settings.value?.setupCompleted == false -> listOf("home", "setup")
-        openLaunch -> listOf("home", "launch")
         else -> listOf("home")
     }) }
     val common by sources.settings.screenState()
@@ -46,6 +46,21 @@ import org.openxplay.direlay.settings.*
     var setupCompleted by remember { mutableStateOf(settings.setupCompleted) }
     val initial = settings.settings
     val overrides = settings.overrides
+    var countdown by rememberSaveable {
+        mutableStateOf(openLaunch && settings.setupCompleted && entries.last() == "home" &&
+            homeDestination == null && value.automatic && !value.path.running)
+    }
+    fun endArrival(reason: ArrivalEnd) {
+        if (!countdown) return
+        if (reason.pauseAutomatic) onLater()
+        countdown = false
+    }
+    val showCountdown = arrivalCountdown(countdown, value.automatic, value.path, value.busy)
+    // Readiness checks may finish after the first Home snapshot or after rotation.
+    LaunchedEffect(value.automatic, running) {
+        if (countdown && running) endArrival(ArrivalEnd.COMPLETE)
+        else if (countdown && !value.automatic) endArrival(ArrivalEnd.UNAVAILABLE)
+    }
     val wireless: (RelaySettings) -> Boolean = remember(settings.lastWireless) {
         { it.connectionMode.wireless(settings.lastWireless) }
     }
@@ -64,10 +79,13 @@ import org.openxplay.direlay.settings.*
         }
         retained = entries
     }
-    val open: (String) -> Unit = remember(scope) { { route ->
-        scope.launch { entries = RelayBackStack(entries).open(route).entries }
-        Unit
-    } }
+    val open: (String) -> Unit = { route ->
+        endArrival(if (route.startsWith("setup")) ArrivalEnd.GUIDE else ArrivalEnd.SETTINGS)
+        entries = RelayBackStack(entries).open(route).entries
+    }
+    LaunchedEffect(homeDestination) {
+        homeDestination?.let { open(it); onHomeDestinationHandled() }
+    }
     val copy: (String) -> Unit = remember(onCopy, scope, snackbar, context) { { text ->
         onCopy(text)
         scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_copied)) }
@@ -84,18 +102,17 @@ import org.openxplay.direlay.settings.*
             withContext(NonCancellable) { navigationState.animateTo(entries) }
         }
     }
-    // Auto start waits while the launch choice or the guide is open, so CarPlay starts only from their buttons.
-    LaunchedEffect(entries.last()) { onGuideVisible(entries.last() == "launch" || entries.last().startsWith("setup")) }
+    // The activity's existing auto-start gate covers the arrival ring and every guide route.
+    LaunchedEffect(countdown, entries.last()) { onGuideVisible(countdown || entries.last().startsWith("setup")) }
     fun completeSetup() {
         if (setupCompleted) return
         setupCompleted = true
         actions.completeSetup()
     }
-    // Starting CarPlay from Home also counts as set up, and a running relay needs no launch choice.
+    // Starting CarPlay from Home also counts as set up.
     LaunchedEffect(running) {
         if (!running) return@LaunchedEffect
         completeSetup()
-        if (entries.last() == "launch") entries = listOf("home")
     }
     fun feedback(applied: AppliedSettings?): Boolean {
         if (applied != null && applied.before.wirelessNetwork.choice != applied.after.wirelessNetwork.choice && running) {
@@ -135,6 +152,7 @@ import org.openxplay.direlay.settings.*
         if (destination != null) { open(destination); onStepNavigationHandled() }
     }
     fun stepAction(action: StepAction, step: PathStep) {
+        endArrival(ArrivalEnd.STEP)
         onStepAction(action, step)
         if (action == StepAction.COPY_PAGE_ADDRESS) scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_copied)) }
     }
@@ -153,16 +171,18 @@ import org.openxplay.direlay.settings.*
                         enter = fadeIn(tween(80, delayMillis = RelayPageDurationMillis - 80)), exit = fadeOut(tween(80))) else Modifier
                     savedStates.SaveableStateProvider("${stack.lastIndex}:$route") {
                         when {
-                            route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic,
-                                copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
-                                setupCompleted, carRequired = homeCarRowVisible(initial.car)) { open("setup") }
-                            route == "launch" -> LaunchScreen(value, onContinue = {
-                                // Missing preparation opens the guide where it is finished, then Start.
-                                if (value.presentation.canStart) {
-                                    entries = listOf("home")
-                                    if (!running) onStartStop()
-                                } else open("setup:${SetupStep.PREPARE.key}")
-                            }, onNewSetup = { open("setup") }) { onLater(); entries = listOf("home") }
+                            route == "home" -> HomeScreen(value, { open("settings:$it") }, {
+                                endArrival(ArrivalEnd.CONNECT)
+                                onStartStop()
+                            }, onAutomatic, copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
+                                setupCompleted, carRequired = homeCarRowVisible(initial.car), onGuide = { open("setup") },
+                                countdown = showCountdown, onCancelCountdown = ::endArrival,
+                                onCountdownComplete = {
+                                    if (arrivalCountdown(countdown, value.automatic, value.path, value.busy)) {
+                                        endArrival(ArrivalEnd.COMPLETE)
+                                        if (!value.path.running) onStartStop()
+                                    }
+                                })
                             route.startsWith("setup") -> SetupScreen(initial, wireless, value,
                                 setupStep(route.substringAfter(':', "")), actions.readIphones, actions.useSharedWifi,
                                 { _, after -> actions.save(after) != null }, onSetup, back, carModels = settings.models, onStepAction = ::stepAction) { changed ->

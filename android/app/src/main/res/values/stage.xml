@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-25 -->
+<resources>
+    <string name="stage_not_now">Not now</string>
+    <string name="stage_steps">All steps</string>
+    <string name="stage_auto_in">Connecting in %1$d s</string>
+    <string name="stage_notice_display">Car screen changed · Reconnect</string>
+    <string name="stage_notice_car">Choose your car</string>
+    <string name="stage_gallery">Stage</string>
+    <string name="stage_countdown">Countdown</string>
+    <string name="stage_busy">Busy</string>
+    <string name="stage_drawer_open">Drawer open</string>
+</resources>

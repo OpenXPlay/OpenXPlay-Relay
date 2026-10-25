@@ -39,13 +39,11 @@
     <string name="design_after_step">After the step above</string>
     <string name="design_open">Open</string>
     <string name="design_seconds">%1$d s</string>
-    <string name="design_auto">Auto</string>
     <string name="design_live">CarPlay is live</string>
     <string name="design_ready">Ready to connect</string>
     <string name="design_idle">Not connected</string>
     <string name="design_copy_diagnostic">Copy diagnostics</string>
     <string name="design_copied">Copied</string>
-    <string name="design_details">Step details</string>
     <string name="design_check_again">Check again</string>
     <string name="design_stop">Stop</string>
     <string name="design_connect">Connect</string>

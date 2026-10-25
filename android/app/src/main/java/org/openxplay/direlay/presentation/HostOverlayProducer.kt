@@ -61,11 +61,14 @@ private fun RelayRuntime.overlaySnapshot(activity: android.content.Context, wifi
         }), wifiSsid = wifi, bluetoothName = name,
         setupSummary = modeRows(settings, wireless).joinToString(" · ") { activity.getString(it.value) },
         nowMillis = System.currentTimeMillis(), version = version, setupValid = valid))
+    val path = presentPath(input)
     return HostOverlaySnapshot(input.copy(nowMillis = 0), headUnitUrls(), settings.localPreview,
         homeProblems(visibleHomeFailures(settings, status.failures), carlink && carlinkFailed,
             carlinkDetail, carlinkError, serverReason.takeIf { settings.browserOutput },
             serverState, networkReadiness(settings, networkReadings), teslaFailure, carlinkErrorTrail,
             carlinkErrorAt, carPlayDiagnostics.error, dlnaFailure.takeIf { settings.dlnaOutput },
-            miracastFailure.takeIf { settings.miracastOutput }), presentPath(input))
+            miracastFailure.takeIf { settings.miracastOutput }), path,
+        displayChanged = displayMismatch(path.running, settings), carIncomplete = homeCarRowVisible(settings.car),
+        setupCompleted = settingsStore.setupCompleted)
 }
 

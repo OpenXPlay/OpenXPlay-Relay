@@ -4,6 +4,7 @@
 package org.openxplay.direlay.ui
 
 import org.openxplay.direlay.R
+import org.openxplay.direlay.settings.CarSelection
 import org.openxplay.direlay.settings.RelaySettings
 import org.openxplay.direlay.relay.WebStartReason
 import org.openxplay.direlay.relay.RelayFailure
@@ -42,7 +43,7 @@ data class SetupItem(val text: Int, val actionLabel: Int, val action: SetupActio
 data class HomeProblem(val title: Int, val text: String? = null, val detail: String? = null,
     val textResource: Int? = null, val action: NetworkRequirement? = null, val arguments: List<String> = emptyList(),
     val atMillis: Long? = null)
-/** Compatibility for the existing launch and setup screens; readiness comes only from the path. */
+/** Compatibility for the existing setup screens; readiness comes only from the path. */
 data class HomePresentation(val mode: List<ModeRow>, val checklist: List<SetupItem>,
     val canStart: Boolean, val running: Boolean, val checking: Boolean = false)
 
@@ -69,16 +70,45 @@ fun setupHomePresentation(input: PathInput, path: ConnectionPath, mode: List<Mod
     return HomePresentation(mode, checklist, path.canStart, path.running, input.relay.identity == IdentityState.CHECKING)
 }
 
-/** Radios may arm a start; preparation that needs the user must be finished first. */
-fun missingStartStep(path: ConnectionPath): PathStep? = if (path.canStart || path.running) null else
-    path.steps.firstOrNull { it.id in setOf(StepId.MODE, StepId.IDENTITY, StepId.PERMISSIONS, StepId.IPHONE_PAIRED) && it.state != StepState.OK }
+/** Arrival is offered once, using the same readiness as an explicit Connect. */
+internal fun arrivalCountdown(pending: Boolean, automatic: Boolean, path: ConnectionPath, busy: Boolean): Boolean =
+    pending && automatic && path.canStart && !path.running && !busy
+
+enum class ArrivalEnd {
+    COMPLETE, CONNECT, NOT_NOW, BACK, DRAWER, SETTINGS, GUIDE, STEP, UNAVAILABLE;
+    val pauseAutomatic: Boolean get() = this != COMPLETE && this != CONNECT
+}
+
+internal fun homeCarRowVisible(car: CarSelection) = !car.complete
+
+internal sealed interface StageCommand {
+    data object Connect : StageCommand
+    data object Stop : StageCommand
+    data object CancelArrival : StageCommand
+    data class Step(val action: StepAction, val step: PathStep) : StageCommand
+}
+
+/** Resolve against the current path, including while an outgoing action animates away. */
+internal fun stageCommand(action: StageAction, path: ConnectionPath): StageCommand? = when (action) {
+    StageAction.Connect -> StageCommand.Connect.takeUnless { path.running }
+    StageAction.Stop -> StageCommand.Stop.takeIf { path.running }
+    StageAction.NotNow -> StageCommand.CancelArrival
+    is StageAction.Step -> path.steps.firstOrNull { it.id == action.step }?.let { StageCommand.Step(action.action, it) }
+}
+
+internal enum class StageNoticeTarget { RESTART, CAR_SETTINGS, GUIDE }
+internal fun stageNoticeTarget(notice: StageNotice): StageNoticeTarget = when (notice) {
+    StageNotice.DISPLAY_CHANGED -> StageNoticeTarget.RESTART
+    StageNotice.CHOOSE_CAR -> StageNoticeTarget.CAR_SETTINGS
+    StageNotice.SET_UP -> StageNoticeTarget.GUIDE
+}
 
 /** The armed car-screen wait needs its Start now action even while the car page also waits. */
 fun focusForPage(path: ConnectionPath): PathStep? = path.focus?.takeIf {
     it.state == StepState.FAILED || it.state == StepState.ACTION
 } ?: path.steps.firstOrNull { it.action == StepAction.START_NOW } ?: path.focus
 
-/** Idle waits stay in the focus card; disclosure is reserved for work and problems. */
+/** Idle waits stay on the stage; disclosure is reserved for work and problems. */
 fun expandPathSection(section: PathSectionView, running: Boolean): Boolean = section.steps.any {
     it.state in setOf(StepState.FAILED, StepState.ACTION, StepState.WORKING) || running && it.state == StepState.WAITING
 }
