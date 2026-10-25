@@ -111,7 +111,7 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             playAudioLocally = { runtime.playCarPlayAudio },
             microphoneSource = { runtime.microphoneSource },
             localPreview = { runtime.localPreview },
-            fpsHint = AirPlayPersistence.loadFps(this).toDouble(),
+            fpsHint = { runtime.appliedFrameRate.value.toDouble() },
             reportInvalid = runtime::reportInvalidVideo,
         )
     }

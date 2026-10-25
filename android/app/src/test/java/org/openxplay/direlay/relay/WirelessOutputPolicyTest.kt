@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.relay
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -11,7 +12,7 @@ import org.openxplay.direlay.miracast.MiracastPicture
 import org.openxplay.stream.core.Viewport
 
 class WirelessOutputPolicyTest {
-    private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, 30, false, false, false, null)
+    private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, FrameRatePreference.AUTO, false, false, false, null)
     private val receiver = DlnaRendererChoice("uuid:car", "Car")
 
     @Test fun dlnaNeedsBothTheSwitchAndAReceiverWhileMiracastNeedsOnlyItsSwitch() {
@@ -51,7 +52,7 @@ class WirelessOutputPolicyTest {
         val policy = RetiringOutputPolicy<DlnaOutputPlan>()
         assertEquals(OutputChange.ADD, policy.update(WirelessOutputPolicy.dlna(settings)))
         for (same in listOf(settings, settings.copy(dlnaRenderer = receiver.copy(name = "New name")),
-            settings.copy(miracastOutput = true, carlinkOutput = true, fps = 60)))
+            settings.copy(miracastOutput = true, carlinkOutput = true, frameRate = FrameRatePreference.FPS_60)))
             assertEquals(OutputChange.KEEP, policy.update(WirelessOutputPolicy.dlna(same)))
         for (changed in listOf(settings.copy(dlnaPicture = DlnaPicture.P1080),
             settings.copy(dlnaRenderer = receiver.copy(udn = "uuid:new")))) {

@@ -20,7 +20,7 @@ class StreamBridgeSink(
     private val delegate: MediaSink,
     control: SessionControl,
     private val localPreview: () -> Boolean = { false },
-    private val fpsHint: Double? = null,
+    private val fpsHint: () -> Double? = { null },
     private val playAudioLocally: () -> Boolean = { false },
     private val microphoneSource: () -> MicrophoneSource = { MicrophoneSource.HEAD_UNIT },
     private val reportInvalid: (Int, Exception) -> Unit = { _, _ -> },
@@ -166,7 +166,7 @@ class StreamBridgeSink(
             val format = try {
                 val codec = codecs[screen] ?: VideoCodec.H264
                 fun create(candidate: VideoCodec) = VideoFormat.create(screen, candidate,
-                    if (candidate == VideoCodec.H265) hevcRecord(codecData) else codecData.copyOf(), fpsHint)
+                    if (candidate == VideoCodec.H265) hevcRecord(codecData) else codecData.copyOf(), fpsHint())
                 val parsed = try {
                     create(codec)
                 } catch (announced: IllegalArgumentException) {

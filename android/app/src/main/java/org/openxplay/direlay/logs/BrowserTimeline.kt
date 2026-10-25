@@ -71,11 +71,11 @@ class TimelineDisplaySettingsPort(private val port: org.openxplay.stream.web.Dis
     override fun set(settings: org.openxplay.stream.web.DisplaySettings, origin: Origin) {
         port.set(settings, origin)
         log.transition("browser", "display-settings/${origin.clientId}", "display_settings",
-            "client=${origin.clientId} resolution=${settings.resolution} screenWidth=${settings.screenWidth} videoCodec=${settings.videoCodec}")
+            "client=${origin.clientId} resolution=${settings.resolution} screenWidth=${settings.screenWidth} videoCodec=${settings.videoCodec} frameRate=${settings.frameRate.name}")
     }
     override fun listen(callback: (org.openxplay.stream.web.DisplaySettings) -> Unit): AutoCloseable = port.listen { settings ->
         log.transition("browser", "display-settings-published", "display_settings_published",
-            "clients=aggregate resolution=${settings.resolution} screenWidth=${settings.screenWidth} videoCodec=${settings.videoCodec}")
+            "clients=aggregate resolution=${settings.resolution} screenWidth=${settings.screenWidth} videoCodec=${settings.videoCodec} frameRate=${settings.frameRate.name}")
         callback(settings)
     }
 }

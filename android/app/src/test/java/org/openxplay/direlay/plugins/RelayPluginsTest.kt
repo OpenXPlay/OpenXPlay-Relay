@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-16
 package org.openxplay.direlay.plugins
 
+import org.openxplay.stream.core.FrameRatePreference
 import android.app.Application
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -21,7 +22,7 @@ import java.nio.file.Files
 class RelayPluginsTest {
     private fun initial() = org.openxplay.direlay.settings.RelaySettings(
         org.openxplay.direlay.settings.ConnectionMode.USB, com.shilapi.xcertplay.orchestration.MfiTarget.I2C,
-        "/dev/i2c-0", "", "", null, 60, false, false, false, null)
+        "/dev/i2c-0", "", "", null, FrameRatePreference.FPS_60, false, false, false, null)
     private fun packageAt(root: File, id: String, license: String = "MIT") {
         val dir = root.resolve("p/$id").apply { mkdirs() }
         dir.resolve("icon.svg").writeText("<svg/>")

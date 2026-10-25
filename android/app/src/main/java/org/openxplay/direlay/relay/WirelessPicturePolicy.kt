@@ -12,10 +12,10 @@ data class WirelessPictureResolution(val size: WirelessPictureSize, val source: 
 
 object WirelessPicturePolicy {
     /** No live display enters this path: wireless declarations must never feed their own next size. */
-    fun resolve(settings: RelaySettings, saved: SavedHeadUnit? = null, model: CarModel? = null): WirelessPictureResolution {
+    fun resolve(settings: RelaySettings, saved: SavedHeadUnit? = null, year: CarYear? = null): WirelessPictureResolution {
         if (settings.wirelessPicture == WirelessPictureMode.CUSTOM)
             return WirelessPictureResolution(settings.wirelessPictureSize.fitted(), WirelessPictureSource.CUSTOM)
-        val known = checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null, saved, model))
+        val known = checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null, saved, year))
         val source = when (known.source) {
             "remembered" -> WirelessPictureSource.BROWSER
             "built-in model" -> WirelessPictureSource.CAR_MODEL

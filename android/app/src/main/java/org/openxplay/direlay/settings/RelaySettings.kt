@@ -4,6 +4,7 @@
 package org.openxplay.direlay.settings
 
 import android.content.Context
+import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.stream.clink.ClinkHevcMode
 import org.openxplay.stream.clink.ClinkPictureSize
 import com.shilapi.xcertplay.AirPlayPersistence
@@ -52,7 +53,7 @@ data class RelaySettings(
     val remoteServer: String,
     val remoteToken: String,
     val display: DisplayProfile?,
-    val fps: Int,
+    val frameRate: FrameRatePreference = FrameRatePreference.AUTO,
     val autoStartOnBoot: Boolean,
     val autoStartWhenReady: Boolean,
     val localPreview: Boolean,
@@ -108,7 +109,6 @@ data class RelaySettings(
         wirelessPictureSize.validate()
         display?.validate()
         require(displayMode != DisplayMode.FIXED || display != null) { "Choose a fixed display profile." }
-        require(fps in 30..60 && fps % 5 == 0) { "FPS must be 30–60 in steps of 5." }
         require(webPort == null || webPort in 1024..65535) { "Web port must be 1024–65535, or empty for automatic." }
         require('\u0000' !in i2cPath && '\u0000' !in remoteServer && '\u0000' !in remoteToken) {
             "MFi settings must not contain null characters."
@@ -123,7 +123,7 @@ data class RelaySettings(
     }
 }
 
-fun RelaySettings.displaySettings() = org.openxplay.stream.web.DisplaySettings(carplayResolution.wire, carplayScreenWidth.mm, videoCodec.wire)
+fun RelaySettings.displaySettings() = org.openxplay.stream.web.DisplaySettings(carplayResolution.wire, carplayScreenWidth.mm, videoCodec.wire, frameRate)
 
 /** Maps relay controls to DiPlay's persistence; only relay-specific values live in direlay. */
 class RelaySettingsStore(private val context: Context) : AutoCloseable, org.openxplay.stream.web.DisplaySettingsPort {
@@ -131,6 +131,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
     override fun current() = cached.value?.displaySettings() ?: org.openxplay.stream.web.DisplaySettings()
     @Synchronized override fun set(settings: org.openxplay.stream.web.DisplaySettings, origin: org.openxplay.stream.core.Origin) {
         save((cached.value ?: load()).copy(
+            frameRate = settings.frameRate,
             videoCodec = VideoCodecSetting.entries.first { it.wire == settings.videoCodec },
             carplayResolution = CarPlayResolution.entries.first { it.wire == settings.resolution },
             carplayScreenWidth = CarPlayScreenWidth.entries.first { it.mm == settings.screenWidth }))
@@ -241,7 +242,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
                 ?: ConnectionMode.LAST_USED,
             AirPlayPersistence.loadMfiTarget(context), AirPlayPersistence.loadMfiI2cPath(context),
             AirPlayPersistence.loadRemoteMfiServer(context), AirPlayPersistence.loadRemoteMfiToken(context),
-            profile, AirPlayPersistence.loadFps(context), AirPlayPersistence.loadAutoStartOnBoot(context),
+            profile, loadFrameRate(), AirPlayPersistence.loadAutoStartOnBoot(context),
             diplay.getBoolean("auto_connect", true), relay.getBoolean("localPreview", false),
             relay.getInt("webPort", 0).takeIf { it in 1024..65535 },
             relay.getBoolean("carlinkOutput", false),
@@ -271,7 +272,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
             viewAreas = relay.getBoolean("carPlayViewAreas", true),
             car = CarSelection(relay.getString("carBrand", "").orEmpty(), relay.getString("carBrandText", "").orEmpty(),
-                relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty()).normalized(),
+                relay.getString("carModel", "").orEmpty(), relay.getString("carModelText", "").orEmpty(),
+                relay.getString("carYear", "").orEmpty(), relay.getString("carYearText", "").orEmpty()).normalized(),
             videoStats = VideoStatsWindow.fromStored(relay.getString("videoStats", null)),
             teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == relay.getString("teslaBrowser", null) } ?: TeslaBrowserMode.OFF,
             teslaVirtualAddress = relay.getString("teslaVirtualAddress", TeslaAddressPolicy.DEFAULT_VIRTUAL) ?: TeslaAddressPolicy.DEFAULT_VIRTUAL,
@@ -288,6 +290,23 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
                 (0 until ids.length()).map { ids.getString(it) }.also { require(org.openxplay.direlay.plugins.RelayPlugins.validIds(it)) }
             }.getOrDefault(emptyList()),
         )
+    }
+
+    private fun loadFrameRate(): FrameRatePreference {
+        val values = relay.all
+        val setting = if ("frameRate" in values) {
+            FrameRatePreference.entries.firstOrNull { it.name == values["frameRate"] }
+        } else if (values["developer.fps.enabled"] == true) {
+            (values["developer.fps"] as? Int)?.let { fps ->
+                FrameRatePreference.entries.firstOrNull { it.name == "FPS_$fps" }
+            }
+        } else null
+        val result = setting ?: FrameRatePreference.AUTO
+        if (values["frameRate"] != result.name || "developer.fps.enabled" in values || "developer.fps" in values) {
+            relay.edit().putString("frameRate", result.name)
+                .remove("developer.fps.enabled").remove("developer.fps").apply()
+        }
+        return result
     }
 
     @Synchronized fun save(value: RelaySettings) {
@@ -339,11 +358,11 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         if (settings.displayMode == DisplayMode.FIXED) settings.display?.let {
             applyDisplayProfile(it, settings.carplayScreenWidth, choices.effectivePhysicalWidth())
         }
-        AirPlayPersistence.saveFps(context, settings.fps)
         AirPlayPersistence.saveAutoStartOnBoot(context, settings.autoStartOnBoot)
         // DiPlay reads this when it builds the next session's AirPlay configuration.
         AirPlayPersistence.saveCarBluetoothAudio(context, settings.carBluetoothAudio)
-        val edit = relay.edit().putBoolean("localPreview", settings.localPreview)
+        val edit = relay.edit().putString("frameRate", settings.frameRate.name)
+            .putBoolean("localPreview", settings.localPreview)
             .putBoolean("playCarPlayAudio", settings.playCarPlayAudio)
             .putString("microphoneSource", settings.microphoneSource.name)
             .putBoolean("carlinkOutput", settings.carlinkOutput)
@@ -366,6 +385,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("carPlayViewAreas", settings.viewAreas)
             .putString("carBrand", settings.car.brand).putString("carBrandText", settings.car.brandText)
             .putString("carModel", settings.car.model).putString("carModelText", settings.car.modelText)
+            .putString("carYear", settings.car.year).putString("carYearText", settings.car.yearText)
             .putString("videoCodec", settings.videoCodec.name)
             .putString("videoStats", settings.videoStats.name)
             .putString("teslaBrowser", settings.teslaBrowser.name)
@@ -426,8 +446,6 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("developer.carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
             physicalWidthEnabled = relay.getBoolean("developer.physicalWidth.enabled", false),
             physicalWidthOverrideMm = relay.getInt("developer.physicalWidthMm", 0),
-            fpsEnabled = relay.getBoolean("developer.fps.enabled", false),
-            fps = relay.getInt("developer.fps", 30),
             localPreview = relay.getBoolean("developer.localPreview", false),
             playCarPlayAudio = relay.getBoolean("developer.playCarPlayAudio", false),
             microphoneSourceEnabled = relay.getBoolean("developer.microphoneSource.enabled", false),
@@ -445,7 +463,6 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("developer.carlinkHevc.enabled", value.carlinkHevcEnabled).putString("developer.carlinkHevc", value.carlinkHevc.name)
             .putBoolean("developer.carlinkPictureSize.enabled", value.carlinkPictureSizeEnabled).putString("developer.carlinkPictureSize", value.carlinkPictureSize.name)
             .putBoolean("developer.physicalWidth.enabled", value.physicalWidthEnabled).putInt("developer.physicalWidthMm", value.physicalWidthOverrideMm)
-            .putBoolean("developer.fps.enabled", value.fpsEnabled).putInt("developer.fps", value.fps)
             .putBoolean("developer.localPreview", value.localPreview)
             .putBoolean("developer.playCarPlayAudio", value.playCarPlayAudio)
             .putBoolean("developer.microphoneSource.enabled", value.microphoneSourceEnabled).putString("developer.microphoneSource", value.microphoneSource.name)

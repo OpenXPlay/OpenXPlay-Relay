@@ -116,7 +116,7 @@ class PathInputsTest {
         val locale = Locale.getDefault()
         try {
             Locale.setDefault(Locale.GERMANY)
-            assertEquals(listOf("${format.width}×${format.height}", "60 fps", "H.264", "8.1 Mbps"), liveChips(format, values))
+            assertEquals(listOf("${format.width}×${format.height}", "45 fps", "H.264", "8.1 Mbps"), liveChips(format, values.copy(fps = 45.0)))
             assertEquals(listOf("${format.width}×${format.height}", "60 fps", "H.264"), liveChips(format, null))
         } finally { Locale.setDefault(locale) }
         assertTrue(liveChips(null, null).isEmpty())

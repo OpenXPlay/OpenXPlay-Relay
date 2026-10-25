@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-16
 package org.openxplay.direlay.plugins
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -15,7 +16,7 @@ import java.net.Socket
 import java.nio.file.Files
 
 class PluginsOffGoldenTest {
-    private val settings = RelaySettings(ConnectionMode.USB, MfiTarget.I2C, "/dev/i2c-0", "", "", null, 60, false, false, false, null)
+    private val settings = RelaySettings(ConnectionMode.USB, MfiTarget.I2C, "/dev/i2c-0", "", "", null, FrameRatePreference.FPS_60, false, false, false, null)
     private val host = object : OutputHost {
         override fun capabilities(capabilities: OutputCapabilities) = Unit
         override fun control(event: ControlEvent) = Unit

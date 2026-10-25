@@ -202,7 +202,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                             }
                             route.startsWith("settings") && route != "settings/about" && route != "settings/access/publicName" -> SettingsScreen(settingsEditor, store::wireless,
                                 route, ::back, ::open, identityStatus, diagnostics, ::copy, importMaterial, removeMaterial,
-                                value.currentWifi, runtime.bondedDevices, runtime = runtime,
+                                value.currentWifi, runtime.bondedDevices, runtime = runtime, running = value.presentation.running,
                                 accessSummary = androidx.compose.ui.res.stringResource(R.string.menu_access_summary,
                                     menuToggleSummary(adminEnabled), menuToggleSummary(publicNameView.enabled)), useSharedWifi = { runtime.sharedWifiSelection.use(it) }, adminPage = {
                                     AdminPageSettings(adminEnabled, adminUrls, { enabled ->

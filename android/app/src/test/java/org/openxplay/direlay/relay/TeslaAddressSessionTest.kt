@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.relay
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -12,7 +13,7 @@ import org.openxplay.direlay.settings.*
 
 class TeslaAddressSessionTest {
     private val settings = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null, teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS)
+        FrameRatePreference.AUTO, false, true, false, null, teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS)
     private class Vpn : TeslaAddressVpn {
         val started = mutableListOf<String>()
         var stopped = 0

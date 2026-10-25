@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-17
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -14,7 +15,7 @@ import org.openxplay.direlay.settings.*
 
 class SetupPresentationTest {
     private val settings = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
+        FrameRatePreference.AUTO, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
     private val ready = PathInput(relay = RelayInput(identity = IdentityState.READY), iphone = IphoneInput(pick = IphonePick.PICKED))
     private fun preparation(input: PathInput) = setupHomePresentation(input, presentPath(input), modeRows(settings, input.setup.wireless))
 

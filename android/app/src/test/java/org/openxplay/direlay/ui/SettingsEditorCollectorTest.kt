@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.Snapshot
@@ -16,7 +17,7 @@ import org.openxplay.stream.clink.ClinkPictureSize
 /** Drive the same collector launched by rememberSettingsEditorState, without a second autosave controller. */
 class SettingsEditorCollectorTest {
     private val initial = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(
+        FrameRatePreference.AUTO, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(
             choice = WirelessNetworkChoice.PHONE_HOTSPOT, manualSsid = "Car", manualPassphrase = "12345678"))
     private fun editor() = SettingsEditorState(mutableStateOf(initial), mutableStateOf(initial),
         mutableStateOf(false), mutableStateMapOf(), mutableStateMapOf())

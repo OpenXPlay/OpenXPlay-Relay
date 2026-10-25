@@ -94,7 +94,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
                     InsetDivider()
                     SettingsMenuRow(R.string.ui_carlink, "${hevcSummary(draft)} · ${menuToggleSummary(draft.carlinkTrace)}", R.drawable.symbol_car) { open("developer/carlink") }
                     InsetDivider()
-                    SettingsMenuRow(R.string.menu_video, stringResource(R.string.menu_fps_summary, draft.fps), R.drawable.symbol_settings,
+                    SettingsMenuRow(R.string.menu_video, developerDisplaySummary(draft), R.drawable.symbol_settings,
                         "developer/video" in invalidPages) { open("developer/video") }
                     InsetDivider()
                     SettingsMenuRow(R.string.menu_connection_outputs, "${outputSummary(draft)} · ${connectionModeSummary(draft)}", R.drawable.symbol_wifi,

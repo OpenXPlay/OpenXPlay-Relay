@@ -15,7 +15,7 @@ import org.openxplay.direlay.video.KeyframeRequests
 import java.util.concurrent.TimeUnit
 
 /** Owns the session fence and serializes all sink callbacks, including replacement and stop. */
-class DiPlayInput(private val applyFrameRate: (Int) -> Unit = {}, private val restartCarPlay: () -> Unit = {},
+class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val restartCarPlay: () -> Unit = {},
     private val automaticHevc: () -> Boolean = { false }, private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 }) : ProjectionInput, AutoCloseable {
     @Volatile override var capabilities = InputCapabilities(
         setOf(VideoCodec.H264, VideoCodec.H265), setOf(ScreenId.MAIN),
@@ -102,7 +102,7 @@ class DiPlayInput(private val applyFrameRate: (Int) -> Unit = {}, private val re
         synchronized(gate) {
             requestedScreen.value = config.screens[ScreenId.MAIN]
             this.sink = sink
-            config.screens[ScreenId.MAIN]?.let { applyFrameRate(it.fps.toInt()) }
+            config.screens[ScreenId.MAIN]?.let { applyFrameRate(it.fps) }
         }
     }
 
