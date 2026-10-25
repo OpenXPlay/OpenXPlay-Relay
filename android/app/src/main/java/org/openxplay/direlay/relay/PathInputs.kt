@@ -47,7 +47,7 @@ fun RelayRuntime.pathInput(local: PathLocal): PathInput {
             networkReadings.wifi, local.wifiSsid, networkReadings.hotspot, settings.wirelessNetwork.manualSsid,
             hotspotBand(settings.wirelessNetwork.band), currentSharedWifi(settings, local.wifiSsid)?.ssid, local.overlayNeeded),
         car = CarInput(carIpv4.firstOrNull(), webPathInput(webPhase, settings.webPort ?: org.openxplay.direlay.tls.TlsStore.port(true), serverReason,
-                publicName.status.value.trustedName), headUnitUrls().firstOrNull(), status.connectedWebPages,
+                publicName.status.value.trustedName, serverFailureSinceMillis), headUnitUrls().firstOrNull(), status.connectedWebPages,
             primaryCarScreen?.let { pictureSize(it.widthPx, it.heightPx) },
             savedCarScreen(settings)?.let { pictureSize(it.widthPx, it.heightPx) },
             CarlinkInput(phase, carlinkSince,
@@ -108,11 +108,11 @@ internal fun carlinkPhase(state: String, stage: ClinkStage?, pinPending: Boolean
     }
 }
 
-internal fun webPathInput(phase: WebPhase, port: Int, reason: WebStartReason?, trustedName: String?): WebServerInput =
+internal fun webPathInput(phase: WebPhase, port: Int, reason: WebStartReason?, trustedName: String?, sinceMillis: Long? = null): WebServerInput =
     WebServerInput(phase, port, if (phase != WebPhase.FAILED) null else when (reason?.failure) {
         WebStartFailure.PORT_BUSY -> "web_port_busy"
         else -> "web_failed"
-    }, trustedName)
+    }, trustedName, sinceMillis.takeIf { phase == WebPhase.FAILED })
 
 internal fun dlnaPathInput(enabled: Boolean, selected: Boolean, state: CastState?, name: String?,
     failure: WirelessDisplayFailure?, sinceMillis: Long? = null): OutputInput = OutputInput(when {

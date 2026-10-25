@@ -53,6 +53,10 @@ android {
     }
 }
 
+composeCompiler {
+    stabilityConfigurationFiles.add(layout.projectDirectory.file("compose-stability.conf"))
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
@@ -72,6 +76,7 @@ dependencies {
     implementation("org.jmdns:jmdns:3.6.3")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.androidx.compose.material3)
     implementation("androidx.compose.animation:animation")
     implementation(libs.androidx.compose.ui)

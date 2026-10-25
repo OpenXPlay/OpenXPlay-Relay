@@ -119,7 +119,7 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
     accessSummary: String, carSummary: String, identityStatus: Int, frameRate: Int, carComplete: Boolean, open: (String) -> Unit) {
     val experimental = draft.experimental
     val context = LocalContext.current
-    val version = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() }
+    val version = LocalAppVersion.current
     InsetGroup {
         SettingsMenuRow(R.string.ui_output, outputSummary(draft),
             R.drawable.symbol_car, "settings/output" in invalidPages) { open("settings/output") }

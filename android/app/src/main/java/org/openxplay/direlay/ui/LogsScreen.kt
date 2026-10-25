@@ -48,7 +48,7 @@ import java.util.Date
 
 private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PREPARE_QR, QR, RESULT }
 
-@Composable fun LogsScreen(files: LogFiles, uploader: LogUploader) {
+@Composable fun LogsScreen(files: org.openxplay.direlay.presentation.LogActions, uploader: org.openxplay.direlay.presentation.UploadActions) {
     val context = LocalContext.current
     val resources = LocalResources.current
     val clipboard = LocalClipboardManager.current
@@ -59,7 +59,8 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
     var job by remember { mutableStateOf<Job?>(null) }
     var message by remember { mutableStateOf("") }
     var uploadError by remember { mutableStateOf(false) }
-    var receipt by remember(uploader) { mutableStateOf(uploader.latestReceipt()) }
+    var receipt by remember(uploader) { mutableStateOf<UploadResult?>(null) }
+    LaunchedEffect(uploader) { receipt = uploader.latestReceipt() }
     var qr by remember { mutableStateOf<ImageBitmap?>(null) }
     var copied by remember { mutableStateOf(false) }
     var uploadProgress by remember { mutableStateOf<LogUploadProgress>(LogUploadProgress.Connecting) }

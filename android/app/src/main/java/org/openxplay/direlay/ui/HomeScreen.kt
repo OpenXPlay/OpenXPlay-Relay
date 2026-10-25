@@ -32,7 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import org.openxplay.direlay.R
-import org.openxplay.direlay.clink.DialogPinProvider
+import org.openxplay.direlay.presentation.PendingPin
 import org.openxplay.direlay.clink.PinSheetState
 import org.openxplay.direlay.network.NetworkReadings
 import org.openxplay.direlay.path.*
@@ -41,10 +41,10 @@ import org.openxplay.direlay.vehicle.*
 
 data class HomeContent(val presentation: HomePresentation, val addresses: List<String>,
     val deviceName: String, val automatic: Boolean, val carlink: Boolean,
-    val pending: DialogPinProvider.Request?, val busy: Boolean = false, val vehicle: VehicleView = VehicleView(),
+    val pending: PendingPin?, val busy: Boolean = false, val vehicle: VehicleView = VehicleView(),
     val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false,
     val currentWifi: String? = null, val networkReadings: NetworkReadings = NetworkReadings(),
-    val pathInput: PathInput? = null, val stepProblems: List<HomeProblem> = emptyList())
+    val pathInput: PathInput? = null, val path: ConnectionPath = presentPath(pathInput ?: PathInput()), val stepProblems: List<HomeProblem> = emptyList())
 
 @Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -59,7 +59,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     onRecheck: () -> Unit, onVehicle: () -> Unit, vehicleModifier: Modifier = Modifier,
     vehicleContentModifier: Modifier = Modifier, onRestart: () -> Unit = {},
     setupCompleted: Boolean = true, carRequired: Boolean = false, onGuide: () -> Unit = {}) {
-    val path = presentPath(value.pathInput ?: PathInput())
+    val path = value.path
     ConnectionPathPage(path, value.addresses, value.stepProblems, onStepAction, onRecheck, onCopy,
         onStop = onStartStop, headerActions = { IconButton({ onSettings("") }) {
             Symbol(R.drawable.symbol_settings, stringResource(R.string.direlay_settings))
@@ -162,7 +162,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 } }
                 afterSections()
                 item("diagnostic") {
-                    DiagnosticLine(path.diagnostic, onCopy)
+                    DiagnosticLine(path.diagnostic, onCopy, path.version)
                 }
             }
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -202,15 +202,22 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
 }
 
 @Composable internal fun PathStatusCapsule(path: ConnectionPath) {
+    path.live?.let { live ->
+        StatusCapsule(path.tone) { LiveCapsuleTime(live.sinceMillis) }
+        return
+    }
     val text = when {
-        path.live != null -> stringResource(R.string.home2_live,
-            sessionTime(rememberElapsedSeconds(path.live.sinceMillis)))
         focusForPage(path)?.action == StepAction.START_NOW -> stringResource(R.string.home2_waiting_car)
         path.tone == PathTone.READY -> stringResource(R.string.design_ready)
         path.focus != null -> stringResource(path.focus.title)
         else -> stringResource(R.string.design_idle)
     }
     StatusCapsule(path.tone, text)
+}
+
+@Composable private fun LiveCapsuleTime(sinceMillis: Long?) {
+    Text(stringResource(R.string.home2_live, sessionTime(rememberElapsedSeconds(sinceMillis))),
+        style = RelayTokens.caption.copy(fontFeatureSettings = "tnum"))
 }
 
 @Composable private fun VehicleTile(value: HomeContent, open: () -> Unit, modifier: Modifier, contentModifier: Modifier) {
@@ -237,7 +244,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
         deliveredSuccess = value.pairingSuccess
     }
     value.pending?.let { request ->
-        val machine = remember(request) { PinSheetState(request.confirmation, request::respond) }
+        val machine = remember(request) { PinSheetState(request.confirmation, request.respond) }
         var digits by remember(request) { mutableStateOf("") }
         val shake = remember { Animatable(0f) }
         val motion = LocalRelayMotion.current

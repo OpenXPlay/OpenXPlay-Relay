@@ -64,11 +64,11 @@ import java.util.Date
     if (!visible) return
     RelaySheet({ visible = false; onDismiss() }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatusGlyph(step.state, 40.dp)
+            StatusGlyph(step.state, 40.dp, stateKey = step.id to step.sinceMillis)
             IconTile(stepIcon(step.id), stepHue(step.id))
             Text(stringResource(step.title), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title)
         }
-        step.detail?.let { Text(stepText(it), style = RelayTokens.body) }
+        step.detail?.let { StepDetail(step, style = RelayTokens.body) }
         step.explanation?.let { Text(stringResource(it), style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         step.evidence?.let { EvidenceRow(stepText(it)) }
         step.code?.let { EvidenceRow(it) }
