@@ -36,6 +36,13 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
     private var acmeName: String? = null
     /** Every install is a new generation directory, so its canonical path identifies the parsed material. */
     private var acmeCache: Pair<File, AcmeMaterial?>? = null
+    private data class MaterialIdentity(val directory: File, val certificateLength: Long, val certificateModified: Long,
+        val passwordLength: Long, val passwordModified: Long)
+    private data class ParsedMaterial(val managers: Array<KeyManager>, val fingerprint: String,
+        val validity: List<Pair<Long, Long>>)
+    private var materialCache: Pair<MaterialIdentity, ParsedMaterial>? = null
+    internal var materialLoads = 0
+        private set
 
     /** Lock-free on purpose: the log recorder must never wait for a keystore load holding this store's lock. */
     fun logPasswords(): List<String> = listOf(store.directory, generated.directory).mapNotNull {
@@ -68,6 +75,7 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
             .joinToString("") { "%02x".format(it.toInt() and 255) }.toCharArray()
         try {
             val data = SelfSignedCertificate.pkcs12(covered, password, names)
+            materialCache = null
             generated.replace {
                 PrivateStore.write(it, "certificate.p12", data)
                 PrivateStore.write(it, "password", String(password).toByteArray(Charsets.UTF_8))
@@ -87,14 +95,7 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
     @Synchronized fun fingerprint(): String? {
         val directory = if (hasImported()) store.directory else generated.directory
         if (!directory.exists()) return null
-        val password = File(directory, "password").readText().toCharArray()
-        try {
-            val keys = KeyStore.getInstance("PKCS12")
-            File(directory, "certificate.p12").inputStream().use { keys.load(it, password) }
-            val alias = keys.aliases().toList().first { keys.isKeyEntry(it) }
-            return java.security.MessageDigest.getInstance("SHA-256").digest(keys.getCertificate(alias).encoded)
-                .joinToString(":") { "%02X".format(it.toInt() and 255) }
-        } finally { password.fill('\u0000') }
+        return parsedMaterial(directory).fingerprint
     }
 
     /** Changes whenever a new connection would see a different certificate: servers restart on a change. */
@@ -111,6 +112,7 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
     @Synchronized fun importFrom(pkcs12: ByteArray, password: CharArray) {
         require(pkcs12.size in 1..MAX_FILE_BYTES) { "PKCS12 file must contain 1–1048576 bytes" }
         require(password.size <= MAX_PASSWORD_CHARS) { "Password is too long" }
+        materialCache = null
         store.replace { staging ->
             PrivateStore.write(staging, "certificate.p12", pkcs12)
             val encoded = String(password).toByteArray(Charsets.UTF_8)
@@ -134,6 +136,7 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
     }
 
     @Synchronized fun importMaterial(chain: List<X509Certificate>, key: PrivateKey) {
+        materialCache = null
         val password = ByteArray(32).also { SecureRandom().nextBytes(it) }
             .let { java.util.Base64.getEncoder().encodeToString(it) }.toCharArray()
         try {
@@ -161,7 +164,7 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
     }
 
     /** Removes only imported material; the generated certificate and the ACME certificate stay. */
-    @Synchronized fun remove() { store.remove(); onChanged() }
+    @Synchronized fun remove() { materialCache = null; store.remove(); onChanged() }
 
     /** The ACME certificate, or null when there is none or it fails validation. */
     @Synchronized fun acmeMaterial(): AcmeMaterial? {
@@ -232,24 +235,40 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
         SSLContext.getInstance("TLS").apply { init(keyManagers(directory, validateDates), null, SecureRandom()) }
 
     private fun keyManagers(directory: File, validateDates: Boolean = false): Array<KeyManager> {
-        val certificate = File(directory, "certificate.p12")
-        val passwordFile = File(directory, "password")
-        require(certificate.length() in 1..MAX_FILE_BYTES.toLong())
-        require(passwordFile.isFile && passwordFile.length() <= MAX_PASSWORD_CHARS * 4L)
+        val material = parsedMaterial(directory)
+        if (validateDates) {
+            val time = now()
+            require(material.validity.all { time >= it.first && time <= it.second }) { "TLS certificate is outside its validity period" }
+        }
+        return material.managers
+    }
+
+    private fun parsedMaterial(directory: File): ParsedMaterial {
+        val canonical = directory.canonicalFile
+        val certificate = File(canonical, "certificate.p12")
+        val passwordFile = File(canonical, "password")
+        val identity = MaterialIdentity(canonical, certificate.length(), certificate.lastModified(),
+            passwordFile.length(), passwordFile.lastModified())
+        materialCache?.takeIf { it.first == identity && passwordFile.isFile }?.let { return it.second }
+        materialCache = null
+        require(identity.certificateLength in 1..MAX_FILE_BYTES.toLong())
+        require(passwordFile.isFile && identity.passwordLength <= MAX_PASSWORD_CHARS * 4L)
         val password = passwordFile.readText(Charsets.UTF_8).toCharArray()
         try {
             val keys = KeyStore.getInstance("PKCS12")
-            certificate.inputStream().use { keys.load(it, password) }
-            require(keys.aliases().toList().any { alias ->
-                keys.isKeyEntry(alias) && keys.getKey(alias, password) is java.security.PrivateKey &&
+            certificate.inputStream().use { materialLoads++; keys.load(it, password) }
+            val aliases = keys.aliases().toList().filter { keys.isKeyEntry(it) }
+            require(aliases.any { alias ->
+                keys.getKey(alias, password) is java.security.PrivateKey &&
                     !keys.getCertificateChain(alias).isNullOrEmpty()
             }) { "PKCS12 contains no private key with a certificate chain" }
-            if (validateDates) keys.aliases().toList().filter { keys.isKeyEntry(it) }.forEach { alias ->
-                keys.getCertificateChain(alias).filterIsInstance<java.security.cert.X509Certificate>().forEach { it.checkValidity() }
-            }
+            val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(keys.getCertificate(aliases.first()).encoded)
+                .joinToString(":") { "%02X".format(it.toInt() and 255) }
+            val validity = aliases.flatMap { keys.getCertificateChain(it).filterIsInstance<X509Certificate>() }
+                .map { it.notBefore.time to it.notAfter.time }
             val managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
             managers.init(keys, password)
-            return managers.keyManagers
+            return ParsedMaterial(managers.keyManagers, fingerprint, validity).also { materialCache = identity to it }
         } finally { password.fill('\u0000') }
     }
 
