@@ -7,6 +7,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CarSelectionTest {
+    @Test fun completeRequiresBrandAndModelAndNonblankOtherNames() {
+        val cases = listOf(
+            CarSelection() to false,
+            CarSelection("xpeng") to false,
+            CarSelection(model = "g6") to false,
+            CarSelection("xpeng", model = "g6") to true,
+            CarSelection("other", model = "other") to false,
+            CarSelection("other", "Brand", "other") to false,
+            CarSelection("other", "", "other", "Model") to false,
+            CarSelection("other", " \t", "other", "Model") to false,
+            CarSelection("other", "Brand", "other", "\n ") to false,
+            CarSelection("other", "Brand", "other", "Model") to true,
+            CarSelection("other", "Brand", modelText = "Model") to false,
+            CarSelection("xpeng", model = "other") to false,
+            CarSelection("xpeng", model = "other", modelText = " \t") to false,
+            CarSelection("xpeng", model = "other", modelText = " Custom ") to true)
+        for ((car, complete) in cases) assertEquals(car.toString(), complete, car.complete)
+    }
+
+    @Test fun completenessNeverRequiresAYearOrCustomYearText() {
+        for (year in listOf("", "g6-2023", "other")) for (text in listOf("", " ", "Custom year")) {
+            assertTrue(CarSelection("xpeng", model = "g6", year = year, yearText = text).complete)
+            assertFalse(CarSelection("xpeng", year = year, yearText = text).complete)
+        }
+        assertTrue(CarSelection("other", "Brand", "other", "Model", "other").complete)
+    }
+
     @Test fun legacyLeavesMigrateWithinTheirBrandOnlyWhenYearIsEmpty() {
         for ((brand, models) in CarSelection.catalogIds) for ((model, years) in models) for (year in years) {
             val expected = CarSelection(brand, model = model, year = year)

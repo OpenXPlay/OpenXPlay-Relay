@@ -118,7 +118,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
     DetailPage(stringResource(settingsPageTitle(page)), back) {
         when (page) {
-            "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, frameRate, open)
+            "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, frameRate,
+                state.lastSaved.value.car.complete, open)
             "settings/configFiles" -> if (runtime != null) ConfigFilesScreen(remember(runtime) {
                 org.openxplay.direlay.config.ConfigFiles(runtimeContext, runtime.settingsStore, runtime.publicName, runtime.tlsStore)
             })
@@ -166,7 +167,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 WirelessDisplaySettings(draft, runtime, state, openCarScreen = { open("settings/car") }) { draft = it }
             }
             "settings/car" -> {
-                if (runtime != null) CarScreenSettings(draft, runtime,
+                if (runtime != null) CarScreenSettings(draft, runtime, target,
                     openTrustedHttps = { open("settings/access/publicName") },
                     openOutput = { open("settings/output") }) { draft = it }
             }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.RelayRuntime
+import org.openxplay.direlay.relay.CarModels
 import org.openxplay.direlay.path.StepAction
 import org.openxplay.direlay.path.PathStep
 import org.openxplay.direlay.settings.*
@@ -49,6 +50,9 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
     val publicNameView by runtime.publicName.view.collectAsState()
     val publicNameStatus by runtime.publicName.status.collectAsState()
     val initial = checkNotNull(snapshot)
+    val carModels by produceState<CarModels?>(null, runtime) {
+        this.value = withContext(Dispatchers.IO) { runtime.carModels }
+    }
     val savedStates = rememberSaveableStateHolder()
     var diagnostics by remember { mutableStateOf(DeveloperView()) }
     var identityStatus by remember { mutableIntStateOf(R.string.direlay_missing) }
@@ -185,7 +189,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                         when {
                             route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic,
                                 ::copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
-                                setupCompleted) { open("setup") }
+                                setupCompleted, carRequired = homeCarRowVisible(initial.car)) { open("setup") }
                             route == "launch" -> LaunchScreen(value, onContinue = {
                                 // Missing preparation opens the guide where it is finished, then Start.
                                 if (value.presentation.canStart) {
@@ -195,7 +199,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                             }, onNewSetup = { open("setup") }) { onLater(); entries = listOf("home") }
                             route.startsWith("setup") -> SetupScreen(initial, store::wireless, value,
                                 setupStep(route.substringAfter(':', "")), runtime.bondedDevices, { runtime.sharedWifiSelection.use(it) },
-                                { _, after -> persist(after) != null }, onSetup, ::back, onStepAction = ::stepAction) { changed ->
+                                { _, after -> persist(after) != null }, onSetup, ::back, carModels = carModels, onStepAction = ::stepAction) { changed ->
                                 completeSetup()
                                 entries = listOf("home")
                                 if (!value.presentation.running) onStartStop() else if (changed) onRestart()
