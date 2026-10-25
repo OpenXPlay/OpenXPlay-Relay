@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import com.shilapi.xcertplay.orchestration.MfiTarget
@@ -13,7 +14,7 @@ import org.openxplay.stream.clink.ClinkPictureSize
 
 class SettingsEditorStateTest {
     private val initial = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null)
+        FrameRatePreference.AUTO, false, true, false, null)
     private fun editor() = SettingsEditorState(mutableStateOf(initial), mutableStateOf(initial),
         mutableStateOf(false), mutableStateMapOf(), mutableStateMapOf())
 

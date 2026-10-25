@@ -299,7 +299,6 @@
     <string name="direlay_width">宽度（像素）</string>
     <string name="direlay_height">高度（像素）</string>
     <string name="direlay_density">密度（dpi）</string>
-    <string name="direlay_fps">每秒帧数</string>
     <string name="direlay_play_audio">在此设备播放 CarPlay 音频</string>
     <string name="direlay_microphone_source">麦克风来源</string>
     <string name="direlay_head_unit">车机</string>
@@ -373,8 +372,6 @@
     <string name="host_head_unit_address">车机访问地址</string>
     <string name="host_detected_screen">检测到的屏幕</string>
     <string name="host_state">状态</string>
-    <string name="host_frame_rate">设定 %1$s fps</string>
-    <string name="host_frame_rate_measured">设定 %1$s fps · 实测 %2$s fps</string>
     <string name="carlink_auto_reconnect">Carlink 自动重连</string>
     <string name="carlink_auto_reconnect_hint">连接断开后自动重新连接车机。</string>
     <string name="carlink_resize_reconnect">窗口尺寸变化时重新连接</string>
@@ -480,6 +477,9 @@
     <string name="picture_title">CarPlay 画面</string>
     <string name="picture_native">原画</string>
     <string name="picture_native_hint">画面最清晰，需要更多 Wi-Fi 带宽。</string>
+    <string name="picture_frame_rate">帧率</string>
+    <string name="picture_frame_rate_auto">自动</string>
+    <string name="picture_frame_rate_hint">自动按车机屏幕刷新率选择 30 或 60 fps。</string>
     <string name="picture_resolution">分辨率</string>
     <string name="picture_screen_width">CarPlay 屏幕宽度</string>
     <string name="picture_screen_width_hint">数值越大，一页显示的图标越多，Dock 栏也可能从左侧移到底部。</string>

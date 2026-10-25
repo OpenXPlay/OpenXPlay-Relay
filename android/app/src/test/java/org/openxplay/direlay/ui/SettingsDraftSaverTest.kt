@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import android.app.Application
 import android.os.Bundle
 import android.os.Parcel
@@ -18,8 +19,26 @@ import org.openxplay.direlay.settings.*
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE, application = Application::class)
 class SettingsDraftSaverTest {
+    @Test fun everyFrameRateSurvivesAParcelRoundTripAndOlderDraftsKeepTheBaseChoice() {
+        for (rate in FrameRatePreference.entries) {
+            val chosen = base.copy(frameRate = rate)
+            val saved = bundle(chosen)
+            assertEquals(rate.name, saved.getString("frameRate"))
+            val parcel = Parcel.obtain()
+            try {
+                parcel.writeBundle(saved); parcel.setDataPosition(0)
+                assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+            } finally { parcel.recycle() }
+        }
+        val chosen = base.copy(frameRate = FrameRatePreference.FPS_45)
+        val legacy = bundle(base).apply { remove("frameRate") }
+        assertEquals(chosen, relaySettingsSaver(chosen).restore(legacy))
+        legacy.putString("frameRate", "future")
+        assertEquals(chosen, relaySettingsSaver(chosen).restore(legacy))
+    }
+
     private val base = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null)
+        FrameRatePreference.AUTO, false, true, false, null)
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
 
@@ -87,7 +106,7 @@ class SettingsDraftSaverTest {
         val chosen = DeveloperOverrides(carlinkTrace = true,
             carlinkHevcEnabled = true, carlinkHevc = org.openxplay.stream.clink.ClinkHevcMode.OFF,
             carlinkPictureSizeEnabled = true, carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.MODE,
-            physicalWidthEnabled = true, physicalWidthOverrideMm = 225, fpsEnabled = true, fps = 55,
+            physicalWidthEnabled = true, physicalWidthOverrideMm = 225,
             localPreview = true, playCarPlayAudio = true, microphoneSourceEnabled = true,
             microphoneSource = MicrophoneSource.THIS_DEVICE, webPortEnabled = true, webPort = 9443,
             carlinkDeviceModelEnabled = true, carlinkDeviceModel = "Test relay")

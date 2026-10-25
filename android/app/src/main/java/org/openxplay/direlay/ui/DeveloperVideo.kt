@@ -16,7 +16,6 @@ import org.openxplay.direlay.settings.DisplayProfile
 @Composable
 fun DeveloperVideo(state: SettingsEditorState) {
     var draft by state.draft
-    val overrides by state.developerDraft
     val custom by state.customDisplayState
     val ms = if (LocalRelayMotion.current) 220 else 0
     SettingsGroup("display", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.direlay_display_profile), developerDisplaySummary(draft), initiallyExpanded = true, footer = stringResource(R.string.display_automatic_hint)) {
@@ -45,16 +44,6 @@ fun DeveloperVideo(state: SettingsEditorState) {
                     valid = { displayNumberValid("height", it) }) { value -> state.updateDisplay("height", value) }
                 EditorNumberField(state, "density", R.string.direlay_density, (draft.display?.density ?: 160).toString(),
                     valid = { displayNumberValid("density", it) }) { value -> state.updateDisplay("density", value) }
-            }
-        }
-    }
-    SettingsGroup("fps", R.drawable.symbol_activity, IconHue.PICTURE, stringResource(R.string.direlay_fps), stringResource(R.string.menu_fps_summary, draft.fps), initiallyExpanded = false) {
-        SettingsToggleRow(icon = R.drawable.symbol_activity, tile = IconHue.PICTURE, title = stringResource(R.string.direlay_fps), checked = overrides.fpsEnabled, enabled = overrides.active) { enabled ->
-            state.changeDeveloper { it.copy(fpsEnabled = enabled) }
-        }
-        DeveloperOverrideContent(overrides.fpsEnabled) {
-            Options((30..60 step 5).map(Int::toString), (overrides.fps - 30) / 5, enabled = overrides.active) { index ->
-                state.changeDeveloper { it.copy(fps = 30 + index * 5) }
             }
         }
     }

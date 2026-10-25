@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -12,7 +13,7 @@ import org.openxplay.direlay.relay.WirelessDisplayFailure
 import org.openxplay.direlay.settings.*
 
 class WirelessDisplayPresentationTest {
-    private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, 30, false, false, false, null)
+    private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, FrameRatePreference.AUTO, false, false, false, null)
     private val selected = base.copy(dlnaOutput = true, dlnaRenderer = DlnaRendererChoice("uuid:car", "Saved car"))
 
     @Test fun outputSummaryAppendsEachEnabledDisplayAndPreservesEveryBrowserCarlinkChoice() {

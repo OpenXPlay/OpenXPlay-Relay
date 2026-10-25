@@ -24,7 +24,7 @@ fun settingsNotice(before: RelaySettings, after: RelaySettings, carlinkConnected
     before.vehicleInformation != after.vehicleInformation && carlinkConnected -> SettingsNotice.RECONNECT
     // These options are captured by the next CarPlay input session.
     before.iphoneAddress != after.iphoneAddress || before.connectionMode != after.connectionMode || before.wirelessNetwork != after.wirelessNetwork ||
-        before.displayMode != after.displayMode || before.display != after.display || before.fps != after.fps || before.mfiTarget != after.mfiTarget ||
+        before.displayMode != after.displayMode || before.display != after.display || before.mfiTarget != after.mfiTarget ||
         before.i2cPath != after.i2cPath || before.remoteServer != after.remoteServer || before.remoteToken != after.remoteToken ||
         before.carBluetoothAudio != after.carBluetoothAudio || physicalWidthBefore != physicalWidthAfter -> SettingsNotice.NEXT_START
     before.carlinkPictureSize != after.carlinkPictureSize && carlinkConnected -> SettingsNotice.RECONNECT
@@ -49,3 +49,9 @@ fun carSelectionSummary(car: org.openxplay.direlay.settings.CarSelection, models
     val year = if (car.year == "other") car.yearText.ifBlank { other } else models?.year(car)?.name(locale)
     return listOfNotNull(brand, model, year).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { none }
 }
+
+fun frameRateSummary(setting: org.openxplay.stream.core.FrameRatePreference, fps: Int, automatic: String): String =
+    if (setting == org.openxplay.stream.core.FrameRatePreference.AUTO) "$automatic · $fps fps" else "$fps fps"
+
+fun pictureMenuSummary(resolution: String, widthMm: Int, codec: String, fps: Int): String =
+    "$resolution · $widthMm mm · $codec · $fps fps"

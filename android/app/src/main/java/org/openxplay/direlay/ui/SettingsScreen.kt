@@ -24,6 +24,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.openxplay.stream.core.FrameRatePreference
+import org.openxplay.direlay.relay.CarPlayFrameRate
 import org.openxplay.direlay.relay.CarModels
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,7 +78,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     route: String, back: () -> Unit, open: (String) -> Unit, identityStatus: Int, identityView: DeveloperView,
     copy: (String) -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit, currentWifi: String? = null,
     bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {},
-    adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null) {
+    adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null, running: Boolean = false) {
     val runtimeContext = LocalContext.current.applicationContext
     var draft by state.draft
     var confirmCarlink by remember { mutableStateOf(false) }
@@ -86,6 +88,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
         confirmUsb = false
     }, dismiss = { confirmUsb = false })
+    val appliedFps = runtime?.appliedFrameRate?.collectAsState()?.value
+    val negotiatedFps = runtime?.negotiatedFrameRate?.collectAsState()?.value
+    val frameRate = if (running && appliedFps != null) appliedFps else CarPlayFrameRate.requested(draft.frameRate, negotiatedFps)
     val errors = settingsErrors(draft, wireless(draft))
     val invalidPages = state.errorPages(wireless)
     val page = route.substringBefore('#')
@@ -107,7 +112,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         dismissButton = { TextButton(onClick = { confirmCarlink = false }) { Text(stringResource(android.R.string.cancel)) } })
     DetailPage(stringResource(settingsPageTitle(page)), back) {
         when (page) {
-            "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, open)
+            "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, frameRate, open)
             "settings/configFiles" -> if (runtime != null) ConfigFilesScreen(remember(runtime) {
                 org.openxplay.direlay.config.ConfigFiles(runtimeContext, runtime.settingsStore, runtime.publicName, runtime.tlsStore)
             })
@@ -158,6 +163,12 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     footer = if (draft.carplayResolution == CarPlayResolution.NATIVE) stringResource(R.string.picture_native_hint) else null) {
                     Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
                         CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
+                }
+                SettingsGroup("frameRate", R.drawable.symbol_activity, IconHue.PICTURE, stringResource(R.string.picture_frame_rate),
+                    frameRateSummary(draft.frameRate, frameRate, stringResource(R.string.picture_frame_rate_auto)),
+                    initiallyExpanded = false, targeted = target == "frameRate", footer = stringResource(R.string.picture_frame_rate_hint)) {
+                    Options(listOf(stringResource(R.string.picture_frame_rate_auto)) + (30..60 step 5).map(Int::toString),
+                        FrameRatePreference.entries.indexOf(draft.frameRate)) { draft = draft.copy(frameRate = FrameRatePreference.entries[it]) }
                 }
                 SettingsGroup("width", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_screen_width), "${draft.carplayScreenWidth.mm} mm",
                     initiallyExpanded = false, targeted = target == "width", footer = stringResource(R.string.picture_screen_width_hint)) {

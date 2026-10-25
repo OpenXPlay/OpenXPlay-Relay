@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.config
 
+import org.openxplay.stream.core.FrameRatePreference
 import android.app.Application
 import com.shilapi.xcertplay.orchestration.*
 import org.json.JSONObject
@@ -18,9 +19,52 @@ import org.openxplay.stream.clink.ClinkPictureSize
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class UserConfigCodecTest {
+    @Test fun frameRateUsesPinnedStringWiresAndExportsNoLegacyFpsKeys() {
+        val wires = listOf("auto", "30", "35", "40", "45", "50", "55", "60")
+        for ((rate, wire) in FrameRatePreference.entries.zip(wires)) {
+            val imported = decode(JSONObject().put("frameRate", wire))
+            assertTrue(imported.errors.toString(), imported.errors.isEmpty())
+            assertEquals(rate, imported.settings.frameRate)
+            val exported = JSONObject(UserConfigCodec.encode(imported.settings, imported.developer, meta)).getJSONObject("settings")
+            assertEquals(wire, exported.getString("frameRate"))
+            assertFalse(exported.has("fps"))
+            assertFalse(exported.getJSONObject("developer").has("fps"))
+            assertFalse(exported.getJSONObject("developer").has("fpsEnabled"))
+        }
+        for (bad in listOf<Any>("AUTO", "FPS_30", "31", 30, JSONObject.NULL))
+            assertEquals(mapOf("frameRate" to "invalid"), decode(JSONObject().put("frameRate", bad)).errors)
+    }
+
+    @Test fun legacyDeveloperFpsMigratesOnlyWithoutTheUserSettingAndIgnoredKeysAreReported() {
+        for (fps in 30..60 step 5) {
+            val legacy = JSONObject().put("fpsEnabled", true).put("fps", fps).put("active", false)
+            val imported = decode(JSONObject().put("fps", 30).put("developer", legacy))
+            assertTrue(imported.errors.toString(), imported.errors.isEmpty())
+            assertEquals(FrameRatePreference.valueOf("FPS_$fps"), imported.settings.frameRate)
+            assertEquals(listOf("fps"), imported.ignoredKeys)
+            val explicit = decode(JSONObject().put("frameRate", "auto").put("developer", legacy))
+            assertEquals(FrameRatePreference.AUTO, explicit.settings.frameRate)
+            assertEquals(listOf("developer.fps", "developer.fpsEnabled"), explicit.ignoredKeys)
+            assertTrue(explicit.errors.isEmpty())
+        }
+        for (enabled in listOf<Any>(false, "true", JSONObject.NULL)) for (fps in listOf<Any>(31, "60", JSONObject.NULL, 55)) {
+            val imported = decode(JSONObject().put("fps", "ignored").put("developer", JSONObject().put("fpsEnabled", enabled).put("fps", fps)))
+            assertTrue(imported.errors.toString(), imported.errors.isEmpty())
+            assertEquals(base.frameRate, imported.settings.frameRate)
+            assertEquals(listOf("developer.fps", "developer.fpsEnabled", "fps"), imported.ignoredKeys)
+            assertEquals(0, imported.changedCount)
+        }
+        for (bad in listOf<Any>(31, "60", JSONObject.NULL)) {
+            val imported = decode(JSONObject().put("developer", JSONObject().put("fpsEnabled", true).put("fps", bad)))
+            assertTrue(imported.errors.isEmpty())
+            assertEquals(base.frameRate, imported.settings.frameRate)
+            assertEquals(listOf("developer.fps", "developer.fpsEnabled"), imported.ignoredKeys)
+        }
+    }
+
     private val meta = ConfigMeta("test", "2026-10-22T00:00:00Z")
     private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "credential-not-exported",
-        null, 30, false, false, false, null)
+        null, FrameRatePreference.AUTO, false, false, false, null)
     private fun wrapped(settings: JSONObject) = ConfigEnvelope.create(UserConfigCodec.FORMAT, meta).put("settings", settings).toString()
     private fun decode(settings: JSONObject) = UserConfigCodec.decode(wrapped(settings), base)
 
@@ -153,7 +197,7 @@ class UserConfigCodecTest {
     @Test fun populatedRoundTripIncludesAllChoicesWithoutSecrets() {
         val settings = base.copy(connectionMode = ConnectionMode.WIRELESS, mfiTarget = MfiTarget.REMOTE,
             i2cPath = "/dev/i2c-1", remoteServer = "https://mfi.example.org", display = DisplayProfile(1920, 1080, 240),
-            fps = 60, autoStartOnBoot = true, autoStartWhenReady = true, localPreview = true, webPort = 8443,
+            frameRate = FrameRatePreference.FPS_60, autoStartOnBoot = true, autoStartWhenReady = true, localPreview = true, webPort = 8443,
             carlinkOutput = true, bothOutputs = true, carlinkDeviceName = "Relay test", carlinkDeviceModel = "Test model",
             wirelessNetwork = WirelessNetworkSettings(WirelessNetworkChoice.PHONE_HOTSPOT, "Phone", "password1",
                 ManualHotspotBand.GHZ_5, 36, ManualHotspotSecurity.WPA2, listOf(SharedWifiNetwork("Home", "password2"))),
@@ -168,7 +212,7 @@ class UserConfigCodecTest {
             teslaMirrorAddress = "100.88.0.2", teslaAndroidAddress = "3.3.3.2")
         val developer = DeveloperOverrides(active = false, carlinkTrace = true, carlinkHevcEnabled = true,
             carlinkHevc = ClinkHevcMode.OFF, carlinkPictureSizeEnabled = true, carlinkPictureSize = ClinkPictureSize.MODE,
-            physicalWidthEnabled = true, physicalWidthOverrideMm = 250, fpsEnabled = true, fps = 55, localPreview = true,
+            physicalWidthEnabled = true, physicalWidthOverrideMm = 250, localPreview = true,
             playCarPlayAudio = true, microphoneSourceEnabled = true, microphoneSource = MicrophoneSource.THIS_DEVICE,
             webPortEnabled = true, webPort = 9443, carlinkDeviceModelEnabled = true, carlinkDeviceModel = "Remembered model")
         val text = UserConfigCodec.encode(settings, developer, meta)
@@ -205,10 +249,10 @@ class UserConfigCodecTest {
         assertEquals(1, imported.settings.wirelessNetwork.sharedWifiNetworks.size)
     }
     @Test fun invalidValuesRejectEverythingAndUnknownValuesAreReported() {
-        val result = decode(JSONObject().put("fps", 31).put("receiverPort", 80).put("autoStartOnBoot", true)
+        val result = decode(JSONObject().put("frameRate", "31").put("receiverPort", 80).put("autoStartOnBoot", true)
             .put("videoCodec", 1).put("unknown", false).put("hotspotChannel", 999)
             .put("developer", JSONObject().put("unknown", 0)))
-        assertTrue(result.errors.keys.containsAll(listOf("fps", "receiverPort", "videoCodec")))
+        assertTrue(result.errors.keys.containsAll(listOf("frameRate", "receiverPort", "videoCodec")))
         assertTrue(result.settings == base)
         assertEquals(0, result.changedCount)
         assertEquals(listOf("developer.unknown", "hotspotChannel", "unknown"), result.ignoredKeys)
@@ -225,7 +269,7 @@ class UserConfigCodecTest {
             assertTrue(valid.errors.toString(), valid.errors.isEmpty())
             assertEquals(mode, valid.settings.teslaBrowser)
             assertEquals(wire, JSONObject(UserConfigCodec.encode(valid.settings, valid.developer, meta)).getJSONObject("settings").getString("teslaBrowser"))
-            val invalid = decode(JSONObject().put("teslaBrowser", wire).put(key, "192.168.1.1").put("fps", 60))
+            val invalid = decode(JSONObject().put("teslaBrowser", wire).put(key, "192.168.1.1").put("frameRate", "60"))
             assertEquals(mapOf(key to "invalid"), invalid.errors)
             assertTrue(invalid.settings == base)
             assertEquals(0, invalid.changedCount)
@@ -237,10 +281,10 @@ class UserConfigCodecTest {
     @Test fun missingTeslaKeysKeepCurrentValuesIncludingAnAssignedActiveAddress() {
         val current = base.copy(teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS, teslaVirtualAddress = "169.254.88.2",
             teslaPublicAddress = "169.254.88.3", teslaMirrorAddress = "100.88.0.2", teslaAndroidAddress = "3.3.3.2")
-        val result = UserConfigCodec.decode(wrapped(JSONObject().put("fps", 60)), current,
+        val result = UserConfigCodec.decode(wrapped(JSONObject().put("frameRate", "60")), current,
             phoneAddresses = setOf(current.teslaPublicAddress))
         assertTrue(result.errors.toString(), result.errors.isEmpty())
-        assertTrue(result.settings == current.copy(fps = 60))
+        assertTrue(result.settings == current.copy(frameRate = FrameRatePreference.FPS_60))
         assertEquals(1, result.changedCount)
     }
     @Test fun changedActiveTeslaAddressRejectsPhoneCollisions() {

@@ -9,6 +9,7 @@ import com.shilapi.xcertplay.orchestration.ManualHotspotBand
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.openxplay.direlay.settings.*
+import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.stream.clink.ClinkHevcMode
 import org.openxplay.stream.clink.ClinkPictureSize
 
@@ -23,8 +24,6 @@ fun developerOverridesSaver(base: DeveloperOverrides) = Saver<DeveloperOverrides
         putString("carlinkPictureSize", value.carlinkPictureSize.name)
         putBoolean("physicalWidthEnabled", value.physicalWidthEnabled)
         putInt("physicalWidthOverrideMm", value.physicalWidthOverrideMm)
-        putBoolean("fpsEnabled", value.fpsEnabled)
-        putInt("fps", value.fps)
         putBoolean("localPreview", value.localPreview)
         putBoolean("playCarPlayAudio", value.playCarPlayAudio)
         putBoolean("microphoneSourceEnabled", value.microphoneSourceEnabled)
@@ -44,7 +43,6 @@ fun developerOverridesSaver(base: DeveloperOverrides) = Saver<DeveloperOverrides
         carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == bundle.getString("carlinkPictureSize") } ?: base.carlinkPictureSize,
         physicalWidthEnabled = bundle.getBoolean("physicalWidthEnabled", base.physicalWidthEnabled),
         physicalWidthOverrideMm = bundle.getInt("physicalWidthOverrideMm", base.physicalWidthOverrideMm),
-        fpsEnabled = bundle.getBoolean("fpsEnabled", base.fpsEnabled), fps = bundle.getInt("fps", base.fps),
         localPreview = bundle.getBoolean("localPreview", base.localPreview),
         playCarPlayAudio = bundle.getBoolean("playCarPlayAudio", base.playCarPlayAudio),
         microphoneSourceEnabled = bundle.getBoolean("microphoneSourceEnabled", base.microphoneSourceEnabled),
@@ -66,7 +64,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
             SharedWifiNetworks.encode(value.wirelessNetwork.sharedWifiNetworks)))
         putBooleanArray("flags", booleanArrayOf(value.autoStartOnBoot, value.autoStartWhenReady,
             value.localPreview, value.carlinkOutput, value.playCarPlayAudio, value.bothOutputs, value.vehicleInformation))
-        putIntArray("numbers", intArrayOf(value.fps, value.webPort ?: 0, value.wirelessNetwork.channel))
+        putString("frameRate", value.frameRate.name)
+        putIntArray("numbers", intArrayOf(0, value.webPort ?: 0, value.wirelessNetwork.channel))
         putBoolean("dlnaOutput", value.dlnaOutput)
         putString("dlnaRendererUdn", value.dlnaRenderer?.udn)
         putString("dlnaRendererName", value.dlnaRenderer?.name)
@@ -118,7 +117,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         i2cPath = text[2], remoteServer = text[3], remoteToken = text[4], carlinkDeviceName = text[5], carlinkDeviceModel = text[6],
         microphoneSource = MicrophoneSource.valueOf(text[7]),
         autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],
-        playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), fps = numbers[0], webPort = numbers[1].takeIf { it != 0 },
+        playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), webPort = numbers[1].takeIf { it != 0 },
+        frameRate = FrameRatePreference.entries.firstOrNull { it.name == bundle.getString("frameRate") } ?: base.frameRate,
         videoStats = if (bundle.containsKey("videoStats")) VideoStatsWindow.fromStored(bundle.getString("videoStats")) else base.videoStats,
         teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == bundle.getString("teslaBrowser") } ?: base.teslaBrowser,
         teslaVirtualAddress = bundle.getString("teslaVirtualAddress") ?: base.teslaVirtualAddress,

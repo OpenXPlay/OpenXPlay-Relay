@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-14
 package org.openxplay.direlay.settings
 
+import org.openxplay.stream.core.FrameRatePreference
 import android.app.Application
 import android.os.Looper
 import org.robolectric.Shadows.shadowOf
@@ -24,6 +25,52 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 33], manifest = Config.NONE, application = Application::class)
 class RelaySettingsTest {
+    @Test fun frameRateMigratesOnlyAnEnabledValidDeveloperChoiceAndDropsBothKeys() {
+        store.use { store ->
+            val prefs = context.getSharedPreferences("direlay", 0)
+            for (enabled in listOf(false, true)) for (fps in listOf(29, 30, 35, 40, 45, 50, 55, 60, 61)) {
+                prefs.edit().remove("frameRate").putBoolean("developer.fps.enabled", enabled).putInt("developer.fps", fps).commit()
+                val expected = if (enabled) FrameRatePreference.entries.firstOrNull { it.name == "FPS_$fps" } ?: FrameRatePreference.AUTO
+                    else FrameRatePreference.AUTO
+                assertEquals(expected, store.load().frameRate)
+                assertEquals(expected.name, prefs.getString("frameRate", null))
+                assertFalse(prefs.contains("developer.fps.enabled"))
+                assertFalse(prefs.contains("developer.fps"))
+                assertEquals(expected, RelaySettingsStore(context).use { it.load().frameRate })
+            }
+            for (stored in listOf("AUTO", "FPS_45", "future")) {
+                prefs.edit().putString("frameRate", stored).putBoolean("developer.fps.enabled", true).putInt("developer.fps", 55).commit()
+                val expected = FrameRatePreference.entries.firstOrNull { it.name == stored } ?: FrameRatePreference.AUTO
+                assertEquals(expected, store.load().frameRate)
+                assertFalse(prefs.contains("developer.fps"))
+            }
+        }
+    }
+
+    @Test fun frameRateIsAUserSettingSharedWithTheDisplayPortWithoutOverwritingSessionFps() {
+        store.use { store ->
+            val notifications = mutableListOf<org.openxplay.stream.web.DisplaySettings>()
+            store.awaitSnapshot()
+            AirPlayPersistence.saveFps(context, 40)
+            store.listen { notifications.add(it) }.use {
+                for (frameRate in FrameRatePreference.entries) {
+                    store.save(store.load().copy(frameRate = frameRate))
+                    assertEquals(frameRate, store.current().frameRate)
+                    assertEquals(frameRate, store.snapshot.value!!.frameRate)
+                    assertEquals(frameRate, store.load().frameRate)
+                    assertEquals(40, AirPlayPersistence.loadFps(context))
+                }
+                store.set(store.current().copy(frameRate = FrameRatePreference.FPS_45), org.openxplay.stream.core.Origin("web", "primary"))
+                assertEquals(FrameRatePreference.FPS_45, store.snapshot.value!!.frameRate)
+                assertEquals(store.current(), notifications.last())
+                assertEquals(FrameRatePreference.entries.size, notifications.size)
+                store.saveDeveloperOverrides(store.developerOverrides.value.copy(active = false))
+                assertEquals(FrameRatePreference.FPS_45, store.load().frameRate)
+                assertEquals(40, AirPlayPersistence.loadFps(context))
+            }
+        }
+    }
+
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
@@ -493,19 +540,18 @@ class RelaySettingsTest {
     }
 
     @Test fun sharedValuesAreWrittenThroughAirPlayPersistenceAndReadBack() {
-        developerOptions { it.copy(fpsEnabled = true) }
         for (target in MfiTarget.entries) {
             val settings = store.load().copy(
                 mfiTarget = target, i2cPath = " /dev/i2c-3 ",
                 remoteServer = " https://mfi.example.test ", remoteToken = "private-token",
-                fps = 55, autoStartOnBoot = true,
+                frameRate = FrameRatePreference.FPS_55, autoStartOnBoot = true,
             )
             store.save(settings)
             assertEquals(target, AirPlayPersistence.loadMfiTarget(context))
             assertEquals("/dev/i2c-3", AirPlayPersistence.loadMfiI2cPath(context))
             assertEquals("https://mfi.example.test", AirPlayPersistence.loadRemoteMfiServer(context))
             assertEquals("private-token", AirPlayPersistence.loadRemoteMfiToken(context))
-            assertEquals(55, AirPlayPersistence.loadFps(context))
+            assertEquals(30, AirPlayPersistence.loadFps(context))
             assertTrue(AirPlayPersistence.loadAutoStartOnBoot(context))
             assertEquals(settings.copy(i2cPath = "/dev/i2c-3", remoteServer = "https://mfi.example.test"), store.load())
         }
@@ -523,7 +569,7 @@ class RelaySettingsTest {
         assertEquals("/dev/i2c-7", loaded.i2cPath)
         assertEquals("http://mfi.example.test", loaded.remoteServer)
         assertEquals("changed", loaded.remoteToken)
-        assertEquals(40, loaded.fps)
+        assertEquals(FrameRatePreference.AUTO, loaded.frameRate)
         assertTrue(loaded.autoStartOnBoot)
     }
 
@@ -598,11 +644,11 @@ class RelaySettingsTest {
     }
 
     @Test fun invalidInputsCannotPartiallyOverwriteSettings() {
-        developerOptions { it.copy(fpsEnabled = true, webPortEnabled = true) }
+        developerOptions { it.copy(webPortEnabled = true) }
         val original = store.load()
         val invalid = listOf(
             original.copy(displayMode = DisplayMode.FIXED, display = null),
-            original.copy(webPort = 80), original.copy(webPort = 65536), original.copy(fps = 31),
+            original.copy(webPort = 80), original.copy(webPort = 65536),
             original.copy(display = DisplayProfile(801, 480, 160)),
             original.copy(display = DisplayProfile(1280, 720, 0)),
             original.copy(mfiTarget = MfiTarget.I2C, i2cPath = ""),
@@ -624,7 +670,7 @@ class RelaySettingsTest {
     }
 
     @Test fun cachedSnapshotIsStableOnReadsAndPublishesSavesAndExternalChanges() {
-        developerOptions { it.copy(fpsEnabled = true, webPortEnabled = true) }
+        developerOptions { it.copy(webPortEnabled = true) }
         val observed = RelaySettingsStore(context)
         try {
             // Production initializes on the settings worker; reads below only inspect memory.
@@ -636,14 +682,14 @@ class RelaySettingsTest {
             assertEquals(saved, observed.load())
             context.getSharedPreferences("direlay", 0).edit().putBoolean("vehicleInformation", true).commit()
             context.getSharedPreferences("diplay", 0).edit().putBoolean("auto_connect", false).commit()
-            AirPlayPersistence.saveFps(context, 55)
+            context.getSharedPreferences("direlay", 0).edit().putString("frameRate", "FPS_55").commit()
             shadowOf(Looper.getMainLooper()).idle()
             val external = runBlocking {
                 withTimeout(5_000) { observed.snapshot.filterNotNull().first {
-                    it.vehicleInformation && !it.autoStartWhenReady && it.fps == 55
+                    it.vehicleInformation && !it.autoStartWhenReady && it.frameRate == FrameRatePreference.FPS_55
                 } }
             }
-            assertEquals(saved.copy(vehicleInformation = true, autoStartWhenReady = false, fps = 55), external)
+            assertEquals(saved.copy(vehicleInformation = true, autoStartWhenReady = false, frameRate = FrameRatePreference.FPS_55), external)
             repeat(100) { assertSame(external, observed.snapshot.value) }
         } finally { observed.close() }
     }

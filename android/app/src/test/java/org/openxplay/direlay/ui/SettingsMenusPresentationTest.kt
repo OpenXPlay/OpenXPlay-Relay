@@ -15,6 +15,14 @@ import org.openxplay.direlay.storage.MaterialStatus
 import java.util.Locale
 
 class SettingsMenusPresentationTest {
+    @Test fun frameRateAndPictureSummariesShowTheSuppliedSessionOrNextStartRate() {
+        val auto = org.openxplay.stream.core.FrameRatePreference.AUTO
+        assertEquals("Auto · 60 fps", frameRateSummary(auto, 60, "Auto"))
+        assertEquals("自动 · 30 fps", frameRateSummary(auto, 30, "自动"))
+        assertEquals("45 fps", frameRateSummary(org.openxplay.stream.core.FrameRatePreference.FPS_45, 45, "Auto"))
+        assertEquals("Automatic · 200 mm · H.265 · 60 fps", pictureMenuSummary("Automatic", 200, "H.265", 60))
+    }
+
     private val models = CarModels(listOf(CarBrand("xpeng", mapOf("en" to "XPeng", "zh-CN" to "小鹏"),
         listOf(CarModel("g6", mapOf("en" to "G6", "zh-CN" to "G6"),
             listOf(CarYear("g6-2023", mapOf("en" to "2023", "zh-CN" to "2023"), emptyList())))))))

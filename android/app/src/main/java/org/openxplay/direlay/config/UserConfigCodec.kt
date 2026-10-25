@@ -6,6 +6,7 @@ package org.openxplay.direlay.config
 import org.json.JSONObject
 import org.openxplay.direlay.settings.*
 import com.shilapi.xcertplay.orchestration.*
+import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.stream.clink.ClinkHevcMode
 import org.openxplay.stream.clink.ClinkPictureSize
 
@@ -27,7 +28,7 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   carlinkHevc, carlinkPictureSize, carplayResolution, carplayScreenWidth, videoCodec, videoStats:
  *   the explicit enumWires values for their corresponding types.
  * - mfiI2cPath: NUL-free path (nonblank for i2c); mfiRemoteServer: NUL-free URL (HTTP(S) for remote).
- * - fps: 30–60 in steps of five; display: null or {width: even 320–3840, height: even 240–2160,
+ * - frameRate: auto/30/35/40/45/50/55/60; display: null or {width: even 320–3840, height: even 240–2160,
  *   density: 120–640}; fixed displayMode requires a profile.
  * - autoStartOnBoot, autoStartWhenReady, localPreview, playCarPlayAudio, vehicleInformation,
  *   carlinkAutoReconnect, carlinkReconnectOnResize, plugins, carlinkTrace, viewAreas,
@@ -41,10 +42,12 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  * - hotspotSsid: SSID; hotspotPassphrase: empty or 8–63 chars; hotspotChannel: 0 (automatic),
  *   1–14 or 32–177, compatible with hotspotBand. Other integer channels are ignored.
  * - developer: active, carlinkTrace, carlinkHevcEnabled, carlinkPictureSizeEnabled,
- *   physicalWidthEnabled, fpsEnabled, localPreview, playCarPlayAudio, microphoneSourceEnabled,
+ *   physicalWidthEnabled, localPreview, playCarPlayAudio, microphoneSourceEnabled,
  *   webPortEnabled, carlinkDeviceModelEnabled are booleans; carlinkHevc, carlinkPictureSize,
- *   microphoneSource use enumWires; fps and webPort use the ranges above;
+ *   microphoneSource use enumWires; webPort uses the receiverPort range;
  *   physicalWidthOverrideMm is 0 or 100–400 in steps of 25; carlinkDeviceModel uses the name rule.
+ * - Legacy fps is ignored. Without frameRate, developer.fpsEnabled=true and a valid
+ *   developer.fps migrate to frameRate; otherwise both developer keys are ignored.
  * - experimental: active, rememberSubscription, keepScanning, recordAdvertisements and
  *   sendBluetoothAddress are booleans; bluetoothAddress is a user-entered unicast Bluetooth address.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
@@ -55,6 +58,9 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 object UserConfigCodec {
     const val FORMAT = "openxplay-user-config"
     private val enumWires: Map<Enum<*>, String> = mapOf(
+        FrameRatePreference.AUTO to "auto", FrameRatePreference.FPS_30 to "30", FrameRatePreference.FPS_35 to "35",
+        FrameRatePreference.FPS_40 to "40", FrameRatePreference.FPS_45 to "45", FrameRatePreference.FPS_50 to "50",
+        FrameRatePreference.FPS_55 to "55", FrameRatePreference.FPS_60 to "60",
         ConnectionMode.USB to "usb", ConnectionMode.WIRELESS to "wireless", ConnectionMode.LAST_USED to "last-used",
         MfiTarget.LOCAL to "local", MfiTarget.USB_CH341 to "usb-ch341", MfiTarget.I2C to "i2c", MfiTarget.REMOTE to "remote",
         ManualHotspotBand.AUTO to "auto", ManualHotspotBand.GHZ_2_4 to "ghz-2-4", ManualHotspotBand.GHZ_5 to "ghz-5",
@@ -98,7 +104,7 @@ object UserConfigCodec {
         .put("mfiTarget", wire(s.mfiTarget))
         .put("mfiI2cPath", s.i2cPath)
         .put("mfiRemoteServer", s.remoteServer)
-        .put("fps", s.fps)
+        .put("frameRate", wire(s.frameRate))
         .put("receiverPort", s.webPort ?: JSONObject.NULL)
         .put("iphone", s.iphoneAddress ?: JSONObject.NULL)
         .put("autoStartOnBoot", s.autoStartOnBoot)
@@ -171,8 +177,6 @@ object UserConfigCodec {
         .put("carlinkPictureSize", wire(d.carlinkPictureSize))
         .put("physicalWidthEnabled", d.physicalWidthEnabled)
         .put("physicalWidthOverrideMm", d.physicalWidthOverrideMm)
-        .put("fpsEnabled", d.fpsEnabled)
-        .put("fps", d.fps)
         .put("localPreview", d.localPreview)
         .put("playCarPlayAudio", d.playCarPlayAudio)
         .put("microphoneSourceEnabled", d.microphoneSourceEnabled)
@@ -225,7 +229,8 @@ object UserConfigCodec {
                 "mfiTarget" -> { val value = enumValue<MfiTarget>(j.string(key)); s = s.copy(mfiTarget = value) }
                 "mfiI2cPath" -> { val value = j.string(key); s = s.copy(i2cPath = value) }
                 "mfiRemoteServer" -> { val value = j.string(key); s = s.copy(remoteServer = value) }
-                "fps" -> { val value = j.integer(key); s = s.copy(fps = value) }
+                "frameRate" -> { val value = enumValue<FrameRatePreference>(j.string(key)); s = s.copy(frameRate = value) }
+                "fps" -> ignored.add(key)
                 "receiverPort" -> { val value = j.nullableInt(key); s = s.copy(webPort = value) }
                 "iphone" -> { val value = j.nullableString(key); s = s.copy(iphoneAddress = value) }
                 "autoStartOnBoot" -> { val value = j.bool(key); s = s.copy(autoStartOnBoot = value) }
@@ -294,8 +299,7 @@ object UserConfigCodec {
                             "carlinkPictureSize" -> { val value = enumValue<ClinkPictureSize>(j.string(key)); d = d.copy(carlinkPictureSize = value) }
                             "physicalWidthEnabled" -> { val value = j.bool(key); d = d.copy(physicalWidthEnabled = value) }
                             "physicalWidthOverrideMm" -> { val value = j.integer(key); d = d.copy(physicalWidthOverrideMm = value) }
-                            "fpsEnabled" -> { val value = j.bool(key); d = d.copy(fpsEnabled = value) }
-                            "fps" -> { val value = j.integer(key); d = d.copy(fps = value) }
+                            "fpsEnabled", "fps" -> Unit
                             "localPreview" -> { val value = j.bool(key); d = d.copy(localPreview = value) }
                             "playCarPlayAudio" -> { val value = j.bool(key); d = d.copy(playCarPlayAudio = value) }
                             "microphoneSourceEnabled" -> { val value = j.bool(key); d = d.copy(microphoneSourceEnabled = value) }
@@ -311,6 +315,15 @@ object UserConfigCodec {
                 else -> ignored.add(key)
             }
         } catch (_: Exception) { errors.putIfAbsent(key, "invalid") }
+        j.optJSONObject("developer")?.let { legacy ->
+            val migrated = if (!j.has("frameRate") && legacy.opt("fpsEnabled") == true) {
+                runCatching { legacy.integer("fps") }.getOrNull()?.let { fps ->
+                    FrameRatePreference.entries.firstOrNull { it.name == "FPS_$fps" }
+                }
+            } else null
+            if (migrated != null) s = s.copy(frameRate = migrated)
+            else listOf("fpsEnabled", "fps").filter(legacy::has).forEach { ignored.add("developer.$it") }
+        }
         fun check(key: String, test: () -> Unit) { try { test() } catch (_: Exception) { errors.putIfAbsent(key, "invalid") } }
         check("experimental.bluetoothAddress") { require(!s.experimental.invalidAddress) }
         val teslaKey = when (s.teslaBrowser) {
@@ -324,7 +337,6 @@ object UserConfigCodec {
             val address = checkNotNull(s.teslaAddress())
             require(TeslaAddressPolicy.valid(address, if (address != current.teslaAddress()) phoneAddresses else emptySet()))
         }
-        check("fps") { require(s.fps in 30..60 && s.fps % 5 == 0) }
         check("receiverPort") { require(s.webPort?.let { it in 1024..65535 } != false) }
         check("iphone") { require(s.iphoneAddress == null || Regex("[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}").matches(s.iphoneAddress!!)) }
         check("pluginsEnabled") { require(org.openxplay.direlay.plugins.RelayPlugins.validIds(s.pluginsEnabled)) }
@@ -349,7 +361,6 @@ object UserConfigCodec {
             require('\u0000' !in s.remoteServer)
             if (s.mfiTarget == MfiTarget.REMOTE) java.net.URI(s.remoteServer.trim()).also { require(it.scheme in listOf("http", "https") && !it.host.isNullOrBlank()) }
         }
-        check("developer.fps") { require(d.fps in 30..60 && d.fps % 5 == 0) }
         check("developer.webPort") { require(d.webPort?.let { it in 1024..65535 } != false) }
         check("developer.physicalWidthOverrideMm") { require(d.physicalWidthOverrideMm == 0 || d.physicalWidthOverrideMm in 100..400 && d.physicalWidthOverrideMm % 25 == 0) }
         check("developer.carlinkDeviceModel") { require(d.carlinkDeviceModel.isNotBlank() && d.carlinkDeviceModel.toByteArray(Charsets.UTF_8).size <= 128 && d.carlinkDeviceModel.none(Character::isISOControl)) }

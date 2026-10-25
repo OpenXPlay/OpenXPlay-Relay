@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.relay
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -10,7 +11,7 @@ import org.openxplay.direlay.settings.*
 import org.openxplay.stream.core.Viewport
 
 class WirelessPicturePolicyTest {
-    private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, 30, false, false, false, null)
+    private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, FrameRatePreference.AUTO, false, false, false, null)
     private fun saved(width: Int, height: Int) = SavedHeadUnit(DisplayProfile(width, height, 160),
         HeadUnitDisplay(ScreenDataKey(width, height, 160), null, true, true))
     private fun year(width: Int, height: Int) = CarYear("car", mapOf("en" to "Car"),
