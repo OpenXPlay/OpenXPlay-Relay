@@ -5,6 +5,8 @@ package org.openxplay.direlay.logs
 
 import android.app.Application
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -22,27 +24,43 @@ import java.util.zip.ZipFile
 class TraceLogExportTest {
     @get:Rule val temporary = TemporaryFolder()
     private val now = 1_792_727_100_000L
-    private val redactor = LogRedactor(LogSecrets(key = ByteArray(32)))
     private fun trace(file: File, vararg times: Long) {
         file.writeText(times.joinToString("\n", postfix = "\n") { at ->
-            JSONObject().put("type", "Rtsp").put("atMillis", at).put("body", "wfd_video_formats: caps\npassword: export-secret-value").toString()
+            JSONObject().put("type", "Rtsp").put("atMillis", at).put("body", "wfd_video_formats: caps\npassword: [secret#0a1b2c]").toString()
         })
     }
-    @Test fun zipIncludesOnlyOverlappingTraceFilesAndRedactsEveryLine() = runBlocking {
+    @Test fun zipIncludesOnlyOverlappingTraceFilesVerbatim() = runBlocking {
         val traces = temporary.newFolder()
-        trace(File(traces, "trace-overlap.jsonl"), now - 700_000, now - 100)
+        val overlap = File(traces, "trace-overlap.jsonl")
+        trace(overlap, now - 700_000, now - 100)
         trace(File(traces, "trace-old.jsonl"), now - 700_000)
         trace(File(traces, "trace-future.jsonl"), now + 100)
         File(traces, "media.ts").writeText("not trace data")
         LogSegmentStore(temporary.newFolder(), { now }).use { store ->
-            val file = checkNotNull(LogExporter(temporary.newFolder(), store, redactor, { "App: Test" }, { now }, traceDirectory = { traces })
+            val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { now }, traceDirectory = { traces })
                 .export(LogRange.LAST_10_MINUTES))
             ZipFile(file).use { zip ->
                 assertEquals(setOf("relay.log", "info.txt", "carlink-trace/trace-overlap.jsonl"), zip.entries().asSequence().map { it.name }.toSet())
-                val text = zip.getInputStream(zip.getEntry("carlink-trace/trace-overlap.jsonl")).bufferedReader().readText()
-                assertEquals(2, text.lines().count { it.isNotEmpty() })
-                assertTrue(text.contains("wfd_video_formats: caps")); assertTrue(text.contains("[secret#"))
-                assertFalse(text.contains("export-secret-value"))
+                assertArrayEquals(overlap.readBytes(), zip.getInputStream(zip.getEntry("carlink-trace/trace-overlap.jsonl")).readBytes())
+            }
+        }
+    }
+    @Test fun filesWithAnyCompleteLineWithoutANumericTimestampAreSkippedEntirely() = runBlocking {
+        val traces = temporary.newFolder()
+        val current = File(traces, "trace-current.jsonl")
+        trace(current, now)
+        listOf("{\"type\":\"Rtsp\",\"body\":\"raw\"}", "{\"atMillis\":\"$now\"}", "{\"atMillis\":null}", "not JSON").forEachIndexed { index, line ->
+            val legacy = File(traces, "trace-$now-$index.jsonl")
+            trace(legacy, now)
+            legacy.appendText(line + "\n")
+            legacy.setLastModified(now)
+        }
+        LogSegmentStore(temporary.newFolder(), { now }).use { store ->
+            val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { now }, traceDirectory = { traces })
+                .export(LogRange.LAST_10_MINUTES))
+            ZipFile(file).use { zip ->
+                assertEquals(setOf("relay.log", "info.txt", "carlink-trace/trace-current.jsonl"), zip.entries().asSequence().map { it.name }.toSet())
+                assertArrayEquals(current.readBytes(), zip.getInputStream(zip.getEntry("carlink-trace/trace-current.jsonl")).readBytes())
             }
         }
     }
@@ -54,7 +72,7 @@ class TraceLogExportTest {
                 .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.ofEpochMilli(now))
             store.append("$stamp +0000  1  2 I Test: baseline")
             // No traceDirectory is supplied when the developer switch is off.
-            val file = checkNotNull(LogExporter(temporary.newFolder(), store, redactor, { "App: Test" }, { now }).export(LogRange.LAST_24_HOURS))
+            val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { now }).export(LogRange.LAST_24_HOURS))
             ZipFile(file).use { zip -> assertFalse(zip.entries().asSequence().any { it.name.startsWith("carlink-trace/") }) }
         }
     }
@@ -62,13 +80,16 @@ class TraceLogExportTest {
         val traces = temporary.newFolder()
         trace(File(traces, "trace-current.jsonl"), *LongArray(200) { now })
         val exports = temporary.newFolder()
-        var lines = 0
-        val cancelling = LogRedactor(LogSecrets(refresh = { if (++lines == 10) throw CancellationException("cancelled") }, key = ByteArray(32)))
         LogSegmentStore(temporary.newFolder(), { now }).use { store ->
-            try {
-                LogExporter(exports, store, cancelling, { "App: Test" }, { now }, traceDirectory = { traces }).export(LogRange.LAST_10_MINUTES)
-                fail("Expected cancellation")
-            } catch (_: CancellationException) { }
+            val worker = launch {
+                val parent = coroutineContext
+                try {
+                    LogExporter(exports, store, { "App: Test" }, { now }, traceDirectory = { parent.cancel(); traces })
+                        .export(LogRange.LAST_10_MINUTES)
+                    fail("Expected cancellation")
+                } catch (_: CancellationException) { }
+            }
+            worker.join()
             assertTrue(exports.listFiles()!!.isEmpty())
         }
     }
@@ -76,13 +97,13 @@ class TraceLogExportTest {
         val traces = temporary.newFolder()
         val source = File(traces, "trace-current.jsonl")
         trace(source, now)
+        val complete = source.readBytes()
         source.appendText("{\"atMillis\":$now,\"password\":\"unfinished")
         LogSegmentStore(temporary.newFolder(), { now }).use { store ->
-            val file = checkNotNull(LogExporter(temporary.newFolder(), store, redactor, { "App: Test" }, { now }, traceDirectory = { traces })
+            val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { now }, traceDirectory = { traces })
                 .export(LogRange.LAST_10_MINUTES))
             ZipFile(file).use { zip ->
-                val text = zip.getInputStream(zip.getEntry("carlink-trace/trace-current.jsonl")).bufferedReader().readText()
-                assertEquals(1, text.lines().count { it.isNotEmpty() }); assertFalse(text.contains("unfinished"))
+                assertArrayEquals(complete, zip.getInputStream(zip.getEntry("carlink-trace/trace-current.jsonl")).readBytes())
             }
         }
     }

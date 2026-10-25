@@ -22,7 +22,6 @@
     <string name="logs_connecting">正在连接服务…</string>
     <string name="logs_confirming">等待收件确认…</string>
     <string name="logs_preparing_receipt">正在准备回执…</string>
-    <string name="logs_compressing_detail">正在收集所选时间段的日志、检查敏感信息并生成 ZIP 文件。</string>
     <string name="logs_connecting_detail">正在连接日志服务，ZIP 文件仍保留在这部手机上。</string>
     <string name="logs_sending_detail">正在发送 ZIP 文件，服务器确认接收后会显示回执。</string>
     <string name="logs_confirming_detail">文件已发送，正在等待服务器确认接收并返回日志 ID。</string>

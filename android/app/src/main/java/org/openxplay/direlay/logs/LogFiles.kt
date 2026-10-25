@@ -17,7 +17,7 @@ class LogFiles(private val context: Context, secrets: LogSecrets, traceDirectory
     private val redactor = LogRedactor(secrets)
     private val store = LogSegmentStore(File(context.noBackupFilesDir, "logs"))
     val recorder = LogRecorder(store, redactor)
-    private val exporter = LogExporter(File(context.cacheDir, "log-exports"), store, redactor, ::metadata,
+    private val exporter = LogExporter(File(context.cacheDir, "log-exports"), store, ::metadata,
         flush = recorder::flush, traceDirectory = traceDirectory)
     suspend fun export(range: LogRange) = exporter.export(range)
     fun failureMessage(failure: Exception): String = runCatching {

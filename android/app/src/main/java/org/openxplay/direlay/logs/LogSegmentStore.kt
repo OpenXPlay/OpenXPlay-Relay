@@ -81,11 +81,14 @@ class LogSegmentStore(private val directory: File, private val now: () -> Long =
         }
         totalBytes = total
     }
-    @Synchronized fun snapshot(): LogSnapshot {
+    @Synchronized fun snapshot(since: Long = Long.MIN_VALUE): LogSnapshot {
         flush()
         val opened = mutableListOf<InputStream>()
+        var skippedEarlier = false
         try {
             for (file in segments()) {
+                val start = segmentHour(file)
+                if (start != null && start + 3_600_000 <= since) { skippedEarlier = true; continue }
                 val length = file.length()
                 opened += object : FilterInputStream(FileInputStream(file)) {
                     var remaining = length
@@ -103,7 +106,7 @@ class LogSegmentStore(private val directory: File, private val now: () -> Long =
                     }
                 }
             }
-            return LogSnapshot(opened)
+            return LogSnapshot(opened, skippedEarlier)
         } catch (failure: Exception) { opened.forEach { runCatching { it.close() } }; throw failure }
     }
     @Synchronized override fun close() {
@@ -139,6 +142,6 @@ class LogSegmentStore(private val directory: File, private val now: () -> Long =
     }
 }
 
-class LogSnapshot(val streams: List<InputStream>) : Closeable {
+class LogSnapshot(val streams: List<InputStream>, val skippedEarlier: Boolean = false) : Closeable {
     override fun close() { streams.forEach { runCatching { it.close() } } }
 }

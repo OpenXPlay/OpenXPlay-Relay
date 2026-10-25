@@ -8,6 +8,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.Assume.assumeFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -103,6 +104,30 @@ class LogStorageTest {
             }
         }
     }
+    @Test fun snapshotsSkipEarlierHoursAndKeepTheCutoffHourAndUnparseableNamesInOrder() {
+        val directory = temporary.newFolder()
+        File(directory, "relay-20261023-03.log").writeText("old\n")
+        File(directory, "relay-20261023-04.log").writeText("boundary\n")
+        File(directory, "relay-20261023-04-2.log").writeText("boundary two\n")
+        File(directory, "relay-20261023-05.log").writeText("recent\n")
+        File(directory, "relay-20261023-99.log").writeText("unparseable\n")
+        LogSegmentStore(directory, { time }).use { store ->
+            store.snapshot(time - 600_000).use { snapshot ->
+                assertTrue(snapshot.skippedEarlier)
+                assertEquals(listOf("boundary\n", "boundary two\n", "recent\n", "unparseable\n"),
+                    snapshot.streams.map { it.bufferedReader().readText() })
+            }
+            store.snapshot(time - 300_000).use { snapshot ->
+                assertTrue(snapshot.skippedEarlier)
+                assertEquals(listOf("recent\n", "unparseable\n"), snapshot.streams.map { it.bufferedReader().readText() })
+            }
+            store.snapshot().use { snapshot ->
+                assertFalse(snapshot.skippedEarlier)
+                assertEquals(listOf("old\n", "boundary\n", "boundary two\n", "recent\n", "unparseable\n"),
+                    snapshot.streams.map { it.bufferedReader().readText() })
+            }
+        }
+    }
     @Test fun resumeFindsTheLastTimestampEvenAfterUnstampedLinesAndNumericSuffixes() {
         val directory = temporary.newFolder()
         File(directory, "relay-20261023-05-2.log").writeText(line(time, "two") + "\n")
@@ -112,22 +137,24 @@ class LogStorageTest {
             assertTrue(contents(store).indexOf("two") < contents(store).indexOf("ten"))
         }
     }
-    @Test fun zipContainsOnlyTheRangeInSegmentOrderAndRedactsAgain() = runBlocking {
+    @Test fun zipContainsOnlyTheRangeInSegmentOrderVerbatim() = runBlocking {
         val cache = temporary.newFolder()
         LogSegmentStore(temporary.newFolder(), { time }).use { store ->
+            val included = listOf(line(time - 600_000, "password=[secret#0a1b2c]"), "included continuation [secret#0a1b2c]",
+                line(time - 100, "newer"), line(time, "last"))
             store.append(line(time - 600_001, "too old")); store.append("old continuation")
-            store.append(line(time - 600_000, "password=hunter2")); store.append("included continuation")
-            store.append(line(time - 100, "newer"))
-            val exporter = LogExporter(cache, store, LogRedactor(LogSecrets(key = ByteArray(32) { it.toByte() })), { "App: Test" }, { time }, { ZoneId.of("UTC") })
+            included.forEach(store::append)
+            store.append(line(time + 1, "future")); store.append("future continuation")
+            val exporter = LogExporter(cache, store, { "App: Test" }, { time }, { ZoneId.of("UTC") })
             val file = checkNotNull(exporter.export(LogRange.LAST_10_MINUTES))
             ZipFile(file).use { zip ->
                 assertEquals(setOf("relay.log", "info.txt"), zip.entries().asSequence().map { it.name }.toSet())
-                val log = zip.getInputStream(zip.getEntry("relay.log")).bufferedReader().readText()
-                assertFalse(log.contains("too old")); assertFalse(log.contains("old continuation")); assertFalse(log.contains("hunter2"))
-                assertTrue(Regex("password=\\[secret#[0-9a-f]{6}]").containsMatchIn(log)); assertTrue(log.contains("included continuation"))
-                assertTrue(log.indexOf("password") < log.indexOf("newer"))
+                val bytes = zip.getInputStream(zip.getEntry("relay.log")).readBytes()
+                assertArrayEquals(included.joinToString("\n", postfix = "\n").toByteArray(Charsets.UTF_8), bytes)
+                val log = String(bytes, Charsets.UTF_8)
+                assertFalse(log.contains("too old")); assertFalse(log.contains("old continuation")); assertFalse(log.contains("future"))
                 val info = zip.getInputStream(zip.getEntry("info.txt")).bufferedReader().readText()
-                assertTrue(info.contains("Private values (passwords, keys, phone numbers, names, messages, media and navigation text, precise location) are replaced by tokens; the same value gives the same token on this phone."))
+                assertTrue(info.contains("Private values (passwords, keys, phone numbers, names, messages, media and navigation text, precise location) were replaced by tokens when the logs were recorded; the same value gives the same token on this phone."))
                 assertTrue(info.contains("LAST_10_MINUTES"))
             }
         }
@@ -137,7 +164,7 @@ class LogStorageTest {
         File(cache, "old.zip").writeText("old")
         LogSegmentStore(temporary.newFolder(), { time }).use { store ->
             store.append(line(time - 86_400_001, "old"))
-            val exporter = LogExporter(cache, store, LogRedactor(LogSecrets(key = ByteArray(32) { it.toByte() })), { "App: Test" }, { time })
+            val exporter = LogExporter(cache, store, { "App: Test" }, { time })
             assertNull(exporter.export(LogRange.LAST_24_HOURS))
             assertTrue(cache.list()!!.isEmpty())
         }
@@ -145,7 +172,7 @@ class LogStorageTest {
     @Test fun missingHistoryIsExplainedInInfo() = runBlocking {
         LogSegmentStore(temporary.newFolder(), { time }).use { store ->
             store.append(line(time, "only line"))
-            val file = checkNotNull(LogExporter(temporary.newFolder(), store, LogRedactor(LogSecrets(key = ByteArray(32) { it.toByte() })), { "App: Test" }, { time })
+            val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { time })
                 .export(LogRange.LAST_30_MINUTES))
             ZipFile(file).use { zip ->
                 assertTrue(zip.getInputStream(zip.getEntry("info.txt")).bufferedReader().readText().contains("64 MiB"))
@@ -155,11 +182,28 @@ class LogStorageTest {
     @Test fun quietPeriodsAfterTheCutoffAreNotReportedAsMissingHistory() = runBlocking {
         LogSegmentStore(temporary.newFolder(), { time }).use { store ->
             store.append(line(time - 3_600_000, "older than the range")); store.append(line(time - 60_000, "recent"))
-            val file = checkNotNull(LogExporter(temporary.newFolder(), store, LogRedactor(LogSecrets(key = ByteArray(32) { it.toByte() })), { "App: Test" }, { time })
+            val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { time })
                 .export(LogRange.LAST_30_MINUTES))
             ZipFile(file).use { zip ->
                 assertFalse(zip.getInputStream(zip.getEntry("info.txt")).bufferedReader().readText().contains("64 MiB"))
             }
+        }
+    }
+    @Test fun segmentsWhollyBeforeTheCutoffAreNeverOpenedOrReportedAsMissingHistory() = runBlocking {
+        val directory = temporary.newFolder()
+        LogSegmentStore(directory, { time }).use { store ->
+            store.append(line(time - 2 * 3_600_000, "old")); store.append(line(time, "recent")); store.flush()
+            val old = File(directory, "relay-20261023-03.log")
+            old.setReadable(false)
+            try {
+                assumeFalse(old.canRead())
+                val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { time })
+                    .export(LogRange.LAST_10_MINUTES))
+                ZipFile(file).use { zip ->
+                    assertEquals(line(time, "recent") + "\n", zip.getInputStream(zip.getEntry("relay.log")).bufferedReader().readText())
+                    assertFalse(zip.getInputStream(zip.getEntry("info.txt")).bufferedReader().readText().contains("64 MiB"))
+                }
+            } finally { old.setReadable(true) }
         }
     }
     @Test fun cancellationDuringStreamingDeletesThePartialZip() = runBlocking {
@@ -168,10 +212,9 @@ class LogStorageTest {
             repeat(200) { store.append(line(time, "message $it")) }
             val worker = launch {
                 val parent = coroutineContext
-                var count = 0
-                val secrets = LogSecrets(refresh = { if (++count == 10) parent.cancel() }, key = ByteArray(32) { it.toByte() })
                 try {
-                    LogExporter(cache, store, LogRedactor(secrets), { "App: Test" }, { time }).export(LogRange.LAST_10_MINUTES)
+                    LogExporter(cache, store, { "App: Test" }, { time }, flush = { store.flush(); parent.cancel() })
+                        .export(LogRange.LAST_10_MINUTES)
                     fail("Export should have been cancelled")
                 } catch (_: CancellationException) { }
             }

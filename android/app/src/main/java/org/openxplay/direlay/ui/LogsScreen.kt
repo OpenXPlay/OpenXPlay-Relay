@@ -139,7 +139,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
                 else -> R.string.logs_saving
             }
             val detail = when (step) {
-                LogsStep.COMPRESS -> R.string.logs_compressing_detail
+                LogsStep.COMPRESS -> null
                 LogsStep.UPLOAD -> when (uploadProgress) {
                     LogUploadProgress.Connecting -> R.string.logs_connecting_detail
                     LogUploadProgress.AwaitingReceipt -> R.string.logs_confirming_detail
@@ -223,7 +223,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
     }
 }
 
-@Composable private fun LogsProgressDialog(title: Int, detail: Int, transfer: LogUploadProgress.Sending?,
+@Composable private fun LogsProgressDialog(title: Int, detail: Int?, transfer: LogUploadProgress.Sending?,
     waitingForUpload: Boolean, onCancel: () -> Unit) {
     val context = LocalContext.current
     val started = remember { SystemClock.elapsedRealtime() }
@@ -245,7 +245,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, SAVE, UPLOAD, PREPARE_QR,
             } else {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
-            Text(stringResource(detail))
+            if (detail != null) Text(stringResource(detail))
             Text(stringResource(R.string.logs_elapsed, elapsed / 60, elapsed % 60),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (waitingForUpload && elapsed >= 15) Text(stringResource(R.string.logs_upload_wait), style = MaterialTheme.typography.bodySmall)
