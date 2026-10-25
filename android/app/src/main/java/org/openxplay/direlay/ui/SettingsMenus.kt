@@ -152,7 +152,7 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
         }
     }
     InsetGroup {
-        SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
+        SettingsMenuRow(R.string.direlay_about, updateMenuVersion(version), R.drawable.symbol_info) { open("settings/about") }
         InsetDivider()
         SettingsMenuRow(R.string.ui_developer, null, R.drawable.symbol_code,
             invalidPages.any { it.startsWith("developer/") }) { open("developer") }

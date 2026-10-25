@@ -762,4 +762,23 @@
     <string name="network_bluetooth_reminder">确认蓝牙已打开</string>
     <string name="network_bluetooth_problem">请打开蓝牙</string>
     <string name="network_open_bluetooth">打开蓝牙设置</string>
+    <string name="update_check">检查更新</string>
+    <string name="update_checking">正在检查</string>
+    <string name="update_up_to_date">已是最新 %1$s</string>
+    <string name="update_menu_version">%1$s · 可更新到 %2$s</string>
+    <string name="update_download">下载 %1$s</string>
+    <string name="update_open_release">打开发布页</string>
+    <string name="update_notes">更新内容</string>
+    <string name="update_stable">稳定版</string>
+    <string name="update_beta">测试版</string>
+    <string name="update_channel_hint">测试版先于稳定版发布，用于测试新功能，可能不够稳定。检查更新时会连接 GitHub。</string>
+    <string name="update_failed">检查失败</string>
+    <string name="update_no_internet">没有可用的互联网连接。请让这台手机连上能上网的网络后重试。</string>
+    <string name="update_unreachable">无法连接 GitHub。请确认这台手机能打开 github.com 后重试。</string>
+    <string name="update_timeout">GitHub 响应超时，请稍后重试。</string>
+    <string name="update_rate_limited">GitHub 限制了查询次数，请稍后重试。</string>
+    <string name="update_rate_limited_until">GitHub 限制了查询次数，请在 %1$s 后重试。</string>
+    <string name="update_http_error">GitHub 返回错误 %1$d。</string>
+    <string name="update_invalid_response">无法读取 GitHub 的回复。</string>
+    <string name="update_no_release">这个渠道还没有安卓版本。</string>
 </resources>

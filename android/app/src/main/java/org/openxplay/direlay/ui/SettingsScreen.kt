@@ -340,7 +340,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
     InsetDivider()
 }
-@Composable fun AboutScreen(back: () -> Unit) {
+@Composable fun AboutScreen(back: () -> Unit, updates: org.openxplay.direlay.update.UpdateChecker) {
     val context = LocalContext.current
     fun link(url: String) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     DetailPage(stringResource(R.string.direlay_about), back) {
@@ -364,6 +364,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             InsetRow(R.drawable.symbol_info, IconHue.DEVELOPER, stringResource(R.string.about_licence_title),
                 stringResource(R.string.about_licence), onClick = { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
         }
+        UpdateSection(updates)
         InsetGroup(header = stringResource(R.string.direlay_acknowledgements), footer = stringResource(R.string.direlay_trademark)) {
             Column(Modifier.padding(16.dp)) { Text(stringResource(R.string.direlay_acknowledgement_text), style = RelayTokens.footnote) }
             InsetDivider()

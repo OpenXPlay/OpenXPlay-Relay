@@ -126,6 +126,13 @@ class RelayRuntime(private val context: Context,
     }
     val logs: org.openxplay.direlay.logs.LogFiles by lazy { org.openxplay.direlay.logs.LogFiles(context.applicationContext, logSecrets,
         traceDirectory = { if (settingsStore.snapshot.value?.carlinkTrace == true) context.getExternalFilesDir("carlink-trace") else null }) }
+    val updates: org.openxplay.direlay.update.UpdateChecker by lazy {
+        val app = context.applicationContext
+        val version = app.packageManager.getPackageInfo(app.packageName, 0).versionName.orEmpty()
+        org.openxplay.direlay.update.UpdateChecker(org.openxplay.direlay.update.GitHubReleaseSource(
+            org.openxplay.direlay.update.InternetReleaseConnection(app.getSystemService(android.net.ConnectivityManager::class.java)), version),
+            org.openxplay.direlay.update.UpdatePreferences(app), version)
+    }
     @Volatile private var configuredPlugins: Pair<Boolean, List<String>> = false to emptyList()
 
     private fun requestedFrameRate() = CarPlayFrameRate.requested(
