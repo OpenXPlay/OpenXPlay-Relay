@@ -67,7 +67,7 @@ class LogSegmentStore(private val directory: File, private val now: () -> Long =
         val files = segments().toMutableList()
         files.filter { file ->
             val start = segmentHour(file) ?: return@filter false
-            start + 3_600_000 < now() - 25 * 3_600_000L
+            start + 3_600_000 < now() - 24 * 3_600_000L
         }.forEach { file ->
             if (file == current) { writer?.close(); writer = null; current = null; currentBytes = 0 }
             if (file.delete()) files.remove(file)

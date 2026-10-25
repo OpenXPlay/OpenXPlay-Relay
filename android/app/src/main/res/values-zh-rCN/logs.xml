@@ -5,7 +5,14 @@
 <resources>
     <string name="logs_title">日志</string>
     <string name="logs_summary">导出中继最近的日志</string>
-    <string name="logs_description">中继会在这部手机上保留最多 24 小时的日志。技术细节会保留；密码、密钥、电话号码、姓名、消息和精确位置会在存储前被替换。</string>
+    <string name="logs_privacy_title">隐私说明</string>
+    <string name="logs_privacy_purpose">日志仅用于帮助排查连接失败等问题。</string>
+    <string name="logs_privacy_local">日志默认只保存在这部手机上，保留最近约 24 小时。只有你点击“上传并显示二维码”并确认同意后，日志才会上传。</string>
+    <string name="logs_privacy_server">OpenXPlay 是完全开源、免费的项目，日志服务器取决于作者当时有哪些空闲的计算资源，地址以后可能会变化。目前上传的日志经 Cloudflare 转发（不保存），存放在 Instabox 提供的免费服务上，机房可能位于美国（AWS）。</string>
+    <string name="logs_privacy_link">这个 App 上传的日志会通过一个随机标识自动关联。这个标识与你的 iPhone、车机和手机硬件无关，卸载 App 或清除数据后会重新生成。</string>
+    <string name="logs_privacy_content">密码、密钥、电话号码、姓名、消息和精确位置在存储前就会被替换。手机型号、系统版本、蓝牙和 Wi-Fi 地址、IP 地址、Wi-Fi 名称等技术信息会保留，用于定位问题。</string>
+    <string name="logs_privacy_retention">上传后 48 小时内可以查看回执。上传的日志不提供公开下载，最多保存 72 小时，到期后自动从我们的服务器永久删除。如需提前删除，请把日志 ID 发到 support@openxplay.org。</string>
+    <string name="logs_privacy_alternative">如果你介意上传到这些服务器，可以点“保存…”把日志存到手机上，再通过社区群私聊或邮件 support@openxplay.org 发给作者帮忙排查。</string>
     <string name="logs_export">导出日志…</string>
     <string name="logs_choose_period">选择时间段</string>
     <string name="logs_10_minutes">过去 10 分钟</string>
@@ -17,7 +24,12 @@
     <string name="logs_save">保存…</string>
     <string name="logs_saving">正在保存…</string>
     <string name="logs_upload">上传并显示二维码</string>
-    <string name="logs_upload_hint">上传到 logs.openxplay.org，供维护者排查问题。文件最多保留 30 天，不提供公开下载。随机标识用于关联本次 App 安装上传过的日志。</string>
+    <string name="logs_upload_hint">上传前会请你确认隐私说明；也可以只保存到手机。</string>
+    <string name="logs_consent_title">上传前请确认</string>
+    <string name="logs_consent_destination">日志将上传到 logs.openxplay.org，仅用于帮助排查连接失败等问题，不提供公开下载。</string>
+    <string name="logs_consent_retention">上传后 48 小时内可以查看回执；日志最多保存 72 小时，到期后自动从我们的服务器永久删除。这个 App 上传的日志会通过随机标识自动关联。</string>
+    <string name="logs_consent_alternative">如果介意，可以改为保存到手机，再私下发给作者。</string>
+    <string name="logs_consent_agree">同意并上传</string>
     <string name="logs_uploading">正在上传…</string>
     <string name="logs_connecting">正在连接服务…</string>
     <string name="logs_confirming">等待收件确认…</string>
@@ -37,7 +49,7 @@
     <string name="logs_scan">反馈问题时，请附上这个 ID 或二维码。扫码查看收件回执，不会下载日志。</string>
     <string name="logs_latest_receipt">上次上传回执</string>
     <string name="logs_receipt_id">日志 ID：%1$s</string>
-    <string name="logs_receipt_expires">到期时间：%1$s</string>
+    <string name="logs_receipt_expires">回执有效期至：%1$s</string>
     <string name="logs_retry_after">请至少等待 %1$d 秒后再重试。</string>
     <string name="logs_copy">复制链接</string>
     <string name="logs_copied">链接已复制</string>
