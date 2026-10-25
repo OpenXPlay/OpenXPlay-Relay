@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -19,7 +20,7 @@ enum class LogRange(val millis: Long, val suffix: String) {
     LAST_10_MINUTES(600_000, "10m"), LAST_30_MINUTES(1_800_000, "30m"), LAST_24_HOURS(86_400_000, "24h")
 }
 
-class LogExporter(private val directory: File, private val store: LogSegmentStore, private val redactor: LogRedactor,
+class LogExporter(private val directory: File, private val store: LogSegmentStore,
     private val metadata: () -> String, private val now: () -> Long = System::currentTimeMillis,
     private val zone: () -> ZoneId = ZoneId::systemDefault, private val flush: () -> Unit = store::flush,
     private val traceDirectory: () -> File? = { null }) {
@@ -40,11 +41,11 @@ class LogExporter(private val directory: File, private val store: LogSegmentStor
             var last: Long? = null
             var include = false
             var earliest: Long? = null
-            val stream = LogRedactorStream(redactor)
-            store.snapshot().use { snapshot ->
+            store.snapshot(cutoff).use { snapshot ->
                 ZipOutputStream(file.outputStream().buffered()).use { zip ->
                     zip.setLevel(Deflater.BEST_COMPRESSION)
                     zip.putNextEntry(ZipEntry("relay.log"))
+                    val output = BufferedOutputStream(zip, 65_536)
                     for (input in snapshot.streams) input.bufferedReader(Charsets.UTF_8).use { reader ->
                         while (true) {
                             job.ensureActive()
@@ -54,17 +55,17 @@ class LogExporter(private val directory: File, private val store: LogSegmentStor
                                 include = timestamp >= cutoff && timestamp <= time
                                 if (earliest == null || timestamp < earliest!!) earliest = timestamp
                             }
-                            val cleaned = stream.redact(line)
                             if (!include) continue
                             if (timestamp != null) { if (first == null) first = timestamp; last = timestamp }
-                            zip.write(cleaned.toByteArray(Charsets.UTF_8)); zip.write('\n'.code)
+                            output.write(line.toByteArray(Charsets.UTF_8)); output.write('\n'.code)
                             count++
                         }
                     }
+                    output.flush()
                     zip.closeEntry()
                     val traces = traceDirectory()
                     if (traces != null) {
-                        count += TraceLogExport.append(zip, traces, cutoff, time, redactor) { job.ensureActive() }
+                        count += TraceLogExport.append(zip, traces, cutoff, time) { job.ensureActive() }
                     }
                     if (count > 0) {
                         job.ensureActive()
@@ -73,11 +74,11 @@ class LogExporter(private val directory: File, private val store: LogSegmentStor
                             append("Export time: ${Instant.ofEpochMilli(time)}\nDevice zone: ${zone().id}\n")
                             append("Selected range: ${range.name}\nFirst line: ${first?.let(Instant::ofEpochMilli)}\n")
                             append("Last line: ${last?.let(Instant::ofEpochMilli)}\n")
-                            append("Private values (passwords, keys, phone numbers, names, messages, media and navigation text, precise location) are replaced by tokens; the same value gives the same token on this phone.\n")
-                            if ((earliest ?: Long.MAX_VALUE) > cutoff) append("Logs start after the cut-off: recording was unavailable or older segments were removed by the 64 MiB storage cap or retention.\n")
+                            append("Private values (passwords, keys, phone numbers, names, messages, media and navigation text, precise location) were replaced by tokens when the logs were recorded; the same value gives the same token on this phone.\n")
+                            if (!snapshot.skippedEarlier && (earliest ?: Long.MAX_VALUE) > cutoff) append("Logs start after the cut-off: recording was unavailable or older segments were removed by the 64 MiB storage cap or retention.\n")
                         }
                         zip.putNextEntry(ZipEntry("info.txt"))
-                        zip.write(redactor.redact(info).toByteArray(Charsets.UTF_8))
+                        zip.write(info.toByteArray(Charsets.UTF_8))
                         zip.closeEntry()
                     }
                 }

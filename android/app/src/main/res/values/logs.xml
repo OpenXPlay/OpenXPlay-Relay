@@ -22,7 +22,6 @@
     <string name="logs_connecting">Connecting…</string>
     <string name="logs_confirming">Waiting for receipt…</string>
     <string name="logs_preparing_receipt">Preparing receipt…</string>
-    <string name="logs_compressing_detail">Collecting the selected logs, checking sensitive information and creating a ZIP file.</string>
     <string name="logs_connecting_detail">Connecting to the log service. Your ZIP file stays on this phone.</string>
     <string name="logs_sending_detail">Sending the ZIP file. A receipt will appear after the server confirms it.</string>
     <string name="logs_confirming_detail">The file has been sent. Waiting for the server to confirm it and return a log ID.</string>

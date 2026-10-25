@@ -13,10 +13,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.json.JSONObject
 
-/** Two bounded streaming passes over an open inode; rotation cannot replace the file under us. */
+/** Lines were cleaned when written. Two bounded passes over an open inode; rotation cannot replace the file under us. */
 object TraceLogExport {
-    fun append(zip: ZipOutputStream, directory: File, cutoff: Long, end: Long, redactor: LogRedactor,
-        checkCancelled: () -> Unit): Long {
+    fun append(zip: ZipOutputStream, directory: File, cutoff: Long, end: Long, checkCancelled: () -> Unit): Long {
         if (Files.isSymbolicLink(directory.toPath())) return 0
         var written = 0L
         val files = directory.listFiles().orEmpty().filter {
@@ -34,31 +33,22 @@ object TraceLogExport {
                 input.channel.position(0)
                 var first: Long? = null
                 var last: Long? = null
-                // Old traces lack wall timestamps. Their filename start and mtime bound the span.
-                val legacyStart = file.name.removePrefix("trace-").substringBefore('-').toLongOrNull()
                 var legacy = false
                 lines(reader(input, limit), terminated, checkCancelled) { line ->
                     val json = runCatching { JSONObject(line) }.getOrNull()
-                    if (json != null) {
-                        val at = runCatching { json.getLong("atMillis") }.getOrNull()
-                        if (at == null) legacy = true
-                        else {
-                            first = minOf(first ?: at, at); last = maxOf(last ?: at, at)
-                        }
+                    val at = (json?.opt("atMillis") as? Number)?.toLong()
+                    if (at == null) legacy = true
+                    else {
+                        first = minOf(first ?: at, at); last = maxOf(last ?: at, at)
                     }
                 }
-                if (legacy) {
-                    legacyStart?.let { first = minOf(first ?: it, it) }
-                    last = maxOf(last ?: file.lastModified(), file.lastModified())
-                }
+                if (legacy) return@use
                 val startTime = first ?: return@use
                 if (startTime > end || (last ?: Long.MIN_VALUE) < cutoff) return@use
                 zip.putNextEntry(ZipEntry("carlink-trace/${file.name}"))
                 input.channel.position(0)
-                val stream = LogRedactorStream(redactor)
                 lines(reader(input, limit), terminated, checkCancelled) { line ->
-                    val cleaned = stream.redact(TracePrivacy.redact(line, redactor))
-                    zip.write(cleaned.toByteArray(Charsets.UTF_8)); zip.write('\n'.code); written++
+                    zip.write(line.toByteArray(Charsets.UTF_8)); zip.write('\n'.code); written++
                 }
                 zip.closeEntry()
             }
