@@ -50,14 +50,14 @@ class AndroidRelayAdmin(private val context: Context, private val runtime: Relay
         val window = pairing.state(now)
         val format = runtime.status.videoFormat
         val port = settings.webPort ?: 8443
-        val receivers = if (!settings.carlinkOutput || settings.bothOutputs)
+        val receivers = if (settings.browserOutput)
             (listOf(host) + runtime.carIpv4.sorted()).map {
                 "https://$it:$port/"
             } else emptyList()
         return AdminStatus("android", "OpenXPlay Relay", context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
             host, "https://$host:6975/", receivers, state, running, runtime.autoStartGate.paused,
             AdminIphone(device?.name, reason), AdminNetwork(AdminSettingsMapping.network(settings), wifi),
-            AdminSettingsMapping.output(settings), if (settings.carlinkOutput || settings.bothOutputs) AdminCarlink(runtime.carlinkState, runtime.carlinkDetail) else null,
+            AdminSettingsMapping.output(settings), if (settings.carlinkOutput) AdminCarlink(runtime.carlinkState, runtime.carlinkDetail) else null,
             if (runtime.autoStartGate.paused) listOf("notice.autoStartPaused") else emptyList(),
             video = videoStatus((runtime.status.videoCodec ?: runtime.appliedVideoDecision.codec).name, runtime.videoDecision,
                 format?.codecString, format?.width, format?.height),

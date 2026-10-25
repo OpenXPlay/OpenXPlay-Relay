@@ -257,7 +257,6 @@
     <string name="dev_outputs">Outputs and network</string>
     <string name="dev_port">Web port (empty = 8443)</string>
     <string name="dev_web_port">Web port</string>
-    <string name="dev_both">Both outputs at once</string>
     <string name="dev_remove_identity_question">Remove identity?</string>
     <string name="dev_remove_tls_question">Remove imported certificate?</string>
     <string name="dev_connected_clients">Connected clients</string>
@@ -691,7 +690,7 @@
     <string name="tesla_address_invalid">Enter an IPv4 address outside 10.x, 172.16–31.x, 192.168.x and the other reserved ranges.</string>
     <string name="tesla_address_android13">Android 13 and later may drop connections from the hotspot to this address (seen on Android 15). If the Tesla cannot open the page, use a 169.254 address.</string>
     <string name="tesla_requirements">Connect the Tesla to this phone’s hotspot (5 GHz if possible) or its Wi-Fi Direct network, and turn on Remain Connected in Drive in the Tesla’s Wi-Fi settings. Needs MCU2 or later.</string>
-    <string name="tesla_needs_browser">A Tesla shows CarPlay in its browser: choose Browser (or Browser and Carlink) in Settings → Output.</string>
+    <string name="tesla_needs_browser">A Tesla shows CarPlay in its browser: choose Car browser in Settings → Output.</string>
     <string name="tesla_open_output">Open Output</string>
     <string name="tesla_needs_wireless">Tesla adaptation needs wireless CarPlay: the USB connection already uses Android’s only VPN.</string>
     <string name="tesla_needs_phone_network">Tesla adaptation needs this phone’s hotspot or Wi-Fi Direct. A shared Wi-Fi router does not pass the address to this phone.</string>
@@ -700,9 +699,8 @@
     <string name="tesla_address_failed">The Tesla address could not be added: %1$s</string>
     <string name="tesla_url">Tesla: %1$s</string>
     <string name="wireless_display">Wireless display</string>
-    <string name="wireless_dlna">DLNA</string>
-    <string name="wireless_miracast">Miracast</string>
-    <string name="dlna_hint">Shows CarPlay on the car\'s screen-casting receiver. Picture and sound only, a few seconds behind; no touch.</string>
+    <string name="wireless_dlna">DLNA casting</string>
+    <string name="wireless_miracast">Miracast casting</string>
     <string name="dlna_receiver">Receiver</string>
     <string name="dlna_choose_receiver">Choose a receiver</string>
     <string name="dlna_network_hint">Connect the car to this phone’s hotspot or the same Wi-Fi, and open the receiver app on the car.</string>
@@ -713,7 +711,6 @@
     <string name="dlna_search_again">Search again</string>
     <string name="dlna_no_receivers">No receivers found. Check the network and the receiver app, then search again.</string>
     <string name="dlna_search_failed">Could not search for receivers. Check the network and try again.</string>
-    <string name="miracast_hint">Start screen casting on this phone and choose the car; the relay then shows CarPlay on it instead of this phone\'s screen. Picture only; turn on \'Play CarPlay audio on this device\' to hear CarPlay through the car.</string>
     <string name="miracast_open_settings">Open screen casting</string>
     <string name="miracast_settings_unavailable">Screen-casting settings are unavailable on this phone.</string>
     <string name="miracast_allow_overlay">Allow display over other apps</string>

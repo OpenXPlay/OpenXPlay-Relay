@@ -25,10 +25,10 @@ import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.settings.*
 import org.openxplay.stream.cast.CastRenderer
 
-@Composable fun WirelessDisplaySettings(draft: RelaySettings, wireless: Boolean, runtime: RelayRuntime?,
+@Composable fun WirelessDisplaySettings(draft: RelaySettings, runtime: RelayRuntime?,
     editor: SettingsEditorState, openCarScreen: () -> Unit, change: (RelaySettings) -> Unit) {
+    if (!draft.dlnaOutput && !draft.miracastOutput) return
     val context = LocalContext.current
-    var confirmMiracast by remember { mutableStateOf(false) }
     var picker by rememberSaveable { mutableStateOf(false) }
     var overlayAllowed by remember { mutableStateOf(MiracastSystem.canDrawOverlays(context)) }
     LaunchedEffect(draft.miracastOutput) {
@@ -37,32 +37,16 @@ import org.openxplay.stream.cast.CastRenderer
             delay(1000)
         }
     }
-    if (confirmMiracast) AlertDialog(onDismissRequest = { confirmMiracast = false },
-        title = { Text(stringResource(R.string.wireless_miracast)) },
-        text = { Text(stringResource(R.string.miracast_wifi_direct_confirm)) },
-        confirmButton = { TextButton(onClick = {
-            change(CarlinkConnectionPolicy.enabling(draft, draft.copy(miracastOutput = true), wireless, miracast = true))
-            confirmMiracast = false
-        }) { Text(stringResource(android.R.string.ok)) } },
-        dismissButton = { TextButton(onClick = { confirmMiracast = false }) { Text(stringResource(android.R.string.cancel)) } })
     if (picker) DlnaReceiverPicker(draft.dlnaRenderer, runtime, dismiss = { picker = false }) {
         change(draft.copy(dlnaRenderer = DlnaRendererChoice(it.udn, it.friendlyName))); picker = false
     }
     SettingsGroup("wireless-display", R.drawable.symbol_cast, IconHue.CAR, stringResource(R.string.wireless_display),
-        wirelessDisplaySummary(draft), initiallyExpanded = draft.dlnaOutput || draft.miracastOutput) {
-        SettingsToggleGroup(stringResource(R.string.wireless_dlna), draft.dlnaOutput, R.drawable.symbol_cast, IconHue.CAR,
-            footer = stringResource(R.string.dlna_hint)) { change(draft.copy(dlnaOutput = it)) }
+        wirelessDisplaySummary(draft), initiallyExpanded = true) {
         if (draft.dlnaOutput) {
             InsetGroup(footer = stringResource(R.string.dlna_network_hint)) {
                 InsetRow(R.drawable.symbol_cast, IconHue.CAR, stringResource(R.string.dlna_receiver),
                     draft.dlnaRenderer?.name ?: stringResource(R.string.dlna_choose_receiver), onClick = { picker = true })
             }
-        }
-        SettingsToggleGroup(stringResource(R.string.wireless_miracast), draft.miracastOutput, R.drawable.symbol_cast, IconHue.CAR,
-            footer = stringResource(R.string.miracast_hint)) {
-            val candidate = draft.copy(miracastOutput = it)
-            if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless, miracast = it) != candidate) confirmMiracast = true
-            else change(candidate)
         }
         if (draft.miracastOutput) {
             SettingsToggleGroup(stringResource(R.string.miracast_fill_screen), draft.miracastStretch, R.drawable.symbol_monitor, IconHue.PICTURE,
@@ -84,7 +68,7 @@ import org.openxplay.stream.cast.CastRenderer
 }
 
 @Composable private fun wirelessDisplaySummary(draft: RelaySettings): String =
-    outputSummaryLabels(draft).drop(1).map { stringResource(it) }.joinToString(" · ")
+    listOfNotNull(R.string.wireless_dlna.takeIf { draft.dlnaOutput }, R.string.wireless_miracast.takeIf { draft.miracastOutput }).map { stringResource(it) }.joinToString(" · ")
         .ifEmpty { stringResource(R.string.menu_off) }
 
 @Composable internal fun DlnaReceiverPicker(choice: DlnaRendererChoice?, runtime: RelayRuntime?, dismiss: () -> Unit,

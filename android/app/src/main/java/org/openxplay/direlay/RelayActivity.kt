@@ -18,6 +18,7 @@ import android.provider.Settings
 import com.shilapi.xcertplay.AirPlayPersistence
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.openxplay.direlay.settings.StartupPermissions
+import org.openxplay.direlay.miracast.MiracastSystem
 import org.openxplay.direlay.admin.PairingVisibilityPolicy
 import org.openxplay.direlay.admin.PairingWindow
 import android.app.AlertDialog
@@ -219,7 +220,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val settings = settingsStore.snapshot.value ?: return emptyList()
         return StartupPermissions.required(
             Build.VERSION.SDK_INT, settingsStore.wireless(settings), AirPlayPersistence.loadWirelessHotspotMode(this),
-            AirPlayPersistence.loadLocationReportingEnabled(this), settings.carlinkOutput || settings.bothOutputs,
+            AirPlayPersistence.loadLocationReportingEnabled(this), settings.carlinkOutput,
         ).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
     }
 
@@ -228,6 +229,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         return if (runtime.needsVpnConsent(settings)) VpnService.prepare(this) else null
     }
 
+    private fun overlayNeeded(): Boolean =
+        settingsStore.snapshot.value?.miracastOutput == true && !MiracastSystem.canDrawOverlays(this)
+
     private fun updateReadiness() {
         if (isDestroyed) return
         val settings = settingsStore.snapshot.value ?: return
@@ -235,13 +239,13 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val missing = missingPermissions()
         val needsVpn = vpnConsent() != null
         val valid = runCatching { settings.validate(wireless) }.isSuccess &&
-            (!(settings.carlinkOutput || settings.bothOutputs) || Build.VERSION.SDK_INT >= 29)
+            (!settings.carlinkOutput || Build.VERSION.SDK_INT >= 29)
         val readyIdentity = settings.mfiTarget != MfiTarget.LOCAL || identityReady
         val phase = runtime.status.session?.phase
         val failures = org.openxplay.direlay.ui.visibleHomeFailures(settings, runtime.status.failures)
         val carPlayError = runtime.carPlayDiagnostics.error
-        val carlinkFailed = (settings.carlinkOutput || settings.bothOutputs) && runtime.carlinkFailed
-        val webReason = runtime.serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs }
+        val carlinkFailed = settings.carlinkOutput && runtime.carlinkFailed
+        val webReason = runtime.serverReason.takeIf { settings.browserOutput }
         val network = runtime.networkReadings
         val networkReadiness = runtime.networkReadiness(settings, network)
         val dlnaFailure = runtime.dlnaFailure.takeIf { settings.dlnaOutput }
@@ -253,10 +257,10 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val modes = org.openxplay.direlay.ui.modeRows(settings, wireless)
         val urls = runtime.headUnitUrls()
         val required = StartupPermissions.required(Build.VERSION.SDK_INT, wireless, settings.wirelessNetwork.choice.mode,
-            AirPlayPersistence.loadLocationReportingEnabled(this), settings.carlinkOutput || settings.bothOutputs)
+            AirPlayPersistence.loadLocationReportingEnabled(this), settings.carlinkOutput)
         val path = runtime.pathInput(org.openxplay.direlay.relay.PathLocal(
             permissionsGranted = required.count { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED },
-            permissionsTotal = required.size, vpnConsentNeeded = needsVpn,
+            permissionsTotal = required.size, vpnConsentNeeded = needsVpn, overlayNeeded = overlayNeeded(),
             identity = when { readyIdentity -> org.openxplay.direlay.path.IdentityState.READY
                 !materialChecked -> org.openxplay.direlay.path.IdentityState.CHECKING
                 else -> org.openxplay.direlay.path.IdentityState.MISSING },
@@ -271,7 +275,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         val presentation = presentPath(path)
         if (resumed) runtime.connectionLog.transition("ui", "path", "path_line", presentation.diagnostic)
         content = org.openxplay.direlay.ui.HomeContent(org.openxplay.direlay.ui.setupHomePresentation(path, presentation, modes), urls,
-            deviceName, settings.autoStartWhenReady, settings.carlinkOutput, settings.bothOutputs,
+            deviceName, settings.autoStartWhenReady, settings.carlinkOutput,
             runtime.carlinkPins.pending.takeIf { resumed }, starting || requestingPermissions, vehicle = runtime.vehicleView,
             pinRejected = runtime.pinRejected, pairingSuccess = runtime.pairingSuccess,
             displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = cachedWifi,
@@ -295,9 +299,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private fun explainPermissions() {
         val missing = missingPermissions()
         AlertDialog.Builder(this).setTitle(R.string.direlay_permissions_title)
-            .setMessage(getString(R.string.direlay_permissions_explanation) + "\n\n" +
-                missing.joinToString("\n") { permissionName(it) } +
-                if (vpnConsent() != null) "\n" + getString(R.string.direlay_vpn_required) else "")
+            .setMessage(getString(R.string.direlay_permissions_explanation) + "\n\n" + (missing.map { permissionName(it) } +
+                listOfNotNull(getString(R.string.direlay_vpn_required).takeIf { vpnConsent() != null },
+                    getString(R.string.path_allow_overlay).takeIf { overlayNeeded() })).joinToString("\n"))
             .setNegativeButton(android.R.string.cancel, null)
             .setNeutralButton(R.string.direlay_android_permissions) { _, _ ->
                 openActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
@@ -315,10 +319,14 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         if (missingPermissions().isEmpty() && consent != null) {
             if (!openActivity(consent, VPN_CONSENT)) { requestingPermissions = false; updateReadiness() }
         }
-        else {
-            requestingPermissions = false
-            updateReadiness()
-        }
+        else requestOverlayPermission()
+    }
+
+    private fun requestOverlayPermission() {
+        requestingPermissions = false
+        if (missingPermissions().isEmpty() && vpnConsent() == null && overlayNeeded())
+            openActivity(MiracastSystem.overlayPermissionIntent(this))
+        updateReadiness()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -547,8 +555,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             return
         }
         if (requestCode == VPN_CONSENT) {
-            requestingPermissions = false
-            updateReadiness()
+            requestOverlayPermission()
             return
         }
         if (resultCode != RESULT_OK) { identityImport.uri = null; identityImport.awaitingPicker = false; if (importOnly) finish(); return }

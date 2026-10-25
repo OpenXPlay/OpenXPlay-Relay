@@ -159,7 +159,7 @@ import org.openxplay.direlay.ui.design.*
                 SetupStep.START -> R.string.setup2_start_subtitle
             }), illustration = { if (compact) SetupIllustration(draft, isWireless) }) {
                 when (current) {
-                    SetupStep.OUTPUT -> OutputStep(draft) { draft = chooseOutput(draft, it, isWireless) }
+                    SetupStep.OUTPUT -> OutputStep(draft) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
                     SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) {
                         val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB
                         if (needsUsbConfirmation(draft.connectionMode, mode, isWireless)) confirmUsb = true
@@ -302,17 +302,39 @@ import org.openxplay.direlay.ui.design.*
     }
 }
 
-@Composable private fun OutputStep(draft: RelaySettings, choose: (Boolean) -> Unit) {
+@Composable private fun OutputStep(draft: RelaySettings, choose: (OutputChoice, WirelessDisplayKind) -> Unit) {
     val carlinkSupported = Build.VERSION.SDK_INT >= 29
+    val selected = OutputSelection.choice(draft.outputs)
+    val kind = OutputSelection.wirelessKind(draft.outputs)
+    if (selected == null) Hint(stringResource(R.string.setup_multiple_outputs))
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ChoiceCard(stringResource(R.string.ui_browser), stringResource(R.string.setup_browser_hint), R.drawable.symbol_monitor, IconHue.CAR,
-            !draft.carlinkOutput && !draft.bothOutputs, listOf(stringResource(R.string.setup_recommended))) { choose(false) }
+            selected == OutputChoice.BROWSER, listOf(stringResource(R.string.setup_recommended))) { choose(OutputChoice.BROWSER, kind) }
         ChoiceCard(stringResource(R.string.ui_carlink), stringResource(R.string.setup_carlink_hint), R.drawable.symbol_car_front, IconHue.CAR,
-            draft.carlinkOutput && !draft.bothOutputs, listOf(stringResource(R.string.setup_experimental)), carlinkSupported,
+            selected == OutputChoice.CARLINK, listOf(stringResource(R.string.setup_experimental)), carlinkSupported,
             if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10), warningBadge = true,
-            extra = { NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) { choose(true) }
+            extra = { NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) { choose(OutputChoice.CARLINK, kind) }
+        ChoiceCard(stringResource(R.string.wireless_display), stringResource(R.string.setup_wireless_display_hint), R.drawable.symbol_cast, IconHue.CAR,
+            selected == OutputChoice.WIRELESS, listOf(stringResource(R.string.setup_picture_only)), warningBadge = true,
+            extra = if (selected == OutputChoice.WIRELESS) ({
+                Column(Modifier.selectableGroup()) {
+                    WirelessDisplayKind.entries.forEach { option ->
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .selectable(kind == option, role = Role.RadioButton, onClick = { choose(OutputChoice.WIRELESS, option) })
+                            .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(if (option == WirelessDisplayKind.DLNA) "DLNA" else "Miracast", style = RelayTokens.headline)
+                                Hint(stringResource(if (option == WirelessDisplayKind.DLNA) R.string.setup_dlna_hint else R.string.setup_miracast_hint))
+                            }
+                            RadioButton(kind == option, onClick = null)
+                        }
+                    }
+                }
+                if (kind == WirelessDisplayKind.MIRACAST) NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI)
+            }) else null) { choose(OutputChoice.WIRELESS, kind) }
     }
-    Hint(stringResource(R.string.setup_browser_check_tip))
+    if (selected == OutputChoice.BROWSER || selected == null) Hint(stringResource(R.string.setup_browser_check_tip))
 }
 
 @Composable private fun ConnectionStep(draft: RelaySettings, wireless: Boolean, choose: (Boolean) -> Unit) {
@@ -347,7 +369,8 @@ import org.openxplay.direlay.ui.design.*
                 WirelessNetworkChoice.PHONE_HOTSPOT -> R.drawable.symbol_hotspot
                 WirelessNetworkChoice.EXISTING_WIFI -> R.drawable.symbol_router
             }, IconHue.NETWORK, selected == choice, if (choice == recommended) listOf(stringResource(R.string.setup_recommended)) else emptyList(),
-                allowed, if (allowed) null else stringResource(R.string.carlink_wifi_direct_constraint),
+                allowed, if (allowed) null else stringResource(if (draft.miracastOutput && !draft.carlinkOutput)
+                    R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint),
                 extra = {
                     if (!compact) NetworkDiagram(choice, selected == choice)
                     if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
@@ -435,8 +458,7 @@ import org.openxplay.direlay.ui.design.*
     change: (RelaySettings) -> Unit) {
     InsetGroup { ModeSummary(modeRows(draft, wireless), go) }
     InsetGroup(header = stringResource(R.string.setup_after_start)) {
-        listOf(if (wireless) R.string.setup_after_wireless else R.string.setup_after_usb,
-            if (draft.carlinkOutput) R.string.setup_after_carlink else R.string.setup_after_browser).forEachIndexed { position, line ->
+        afterStartLines(draft, wireless).forEachIndexed { position, line ->
             if (position > 0) InsetDivider()
             Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(Modifier.size(24.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,

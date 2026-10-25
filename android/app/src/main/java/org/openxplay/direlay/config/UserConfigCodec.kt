@@ -17,7 +17,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 
 /**
  * Version-1 key catalogue (enum strings are pinned in enumWires below):
- * - output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
+ * - outputs: non-empty unique array of web/carlink/dlna/miracast; wins over legacy output keys.
+ * - Legacy output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
  * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string};
  *   dlnaPicture: 720p/1080p.
  * - wirelessPicture: auto/custom; wirelessPictureSize: {width, height}, even pixels in
@@ -90,7 +91,8 @@ object UserConfigCodec {
         ConfigEnvelope.finish(ConfigEnvelope.create(FORMAT, meta).put("settings", values(settings, developer)))
 
     private fun values(s: RelaySettings, d: DeveloperOverrides): JSONObject = JSONObject()
-        .put("output", if (s.bothOutputs) "both" else if (s.carlinkOutput) "carlink" else "web")
+        .put("outputs", org.json.JSONArray(RelayOutput.entries.filter { it in s.outputs }.map { it.wire }))
+        .put("output", when { s.browserOutput && s.carlinkOutput -> "both"; s.carlinkOutput -> "carlink"; s.browserOutput -> "web"; else -> null })
         .put("dlnaOutput", s.dlnaOutput)
         .put("dlnaRenderer", s.dlnaRenderer?.let { JSONObject().put("udn", it.udn).put("name", it.name) } ?: JSONObject.NULL)
         .put("dlnaPicture", wire(s.dlnaPicture))
@@ -213,16 +215,27 @@ object UserConfigCodec {
             array.optJSONObject(index)?.let { unknown(it, setOf("ssid", "password"), "sharedWifiNetworks[$index]") }
         }
         val before = values(current, choices)
-        for (key in j.keys().asSequence().toList()) try {
+        val legacyOutputs = setOf("output", "dlnaOutput", "miracastOutput")
+        for (key in j.keys().asSequence().toList().filterNot { j.has("outputs") && it in legacyOutputs }) try {
             when (key) {
-                "output" -> { val value = j.string(key).also { require(it in listOf("web", "carlink", "both")) }; s = s.copy(carlinkOutput = value != "web", bothOutputs = value == "both") }
-                "dlnaOutput" -> { val value = j.bool(key); s = s.copy(dlnaOutput = value) }
+                "outputs" -> {
+                    val array = j.getJSONArray(key)
+                    val wires = (0 until array.length()).map { require(array.get(it) is String); array.getString(it) }
+                    require(wires.isNotEmpty() && wires.distinct().size == wires.size)
+                    s = s.copy(outputs = wires.map { wire -> RelayOutput.entries.first { it.wire == wire } }.toSet())
+                }
+                "output" -> {
+                    val value = j.string(key).also { require(it in listOf("web", "carlink", "both")) }
+                    s = s.copy(outputs = s.outputs - setOf(RelayOutput.BROWSER, RelayOutput.CARLINK) +
+                        OutputSelection.legacy(value != "web", value == "both", false, false))
+                }
+                "dlnaOutput" -> { s = s.copy(outputs = if (j.bool(key)) s.outputs + RelayOutput.DLNA else s.outputs - RelayOutput.DLNA) }
                 "dlnaRenderer" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DlnaRendererChoice(it.string("udn"), it.string("name")) }; s = s.copy(dlnaRenderer = value) }
                 "dlnaPicture" -> { val value = enumValue<DlnaPicture>(j.string(key)); s = s.copy(dlnaPicture = value) }
                 "wirelessPicture" -> { val value = enumValue<WirelessPictureMode>(j.string(key)); s = s.copy(wirelessPicture = value) }
                 "wirelessPictureSize" -> { val value = j.getJSONObject(key).let { WirelessPictureSize(it.integer("width"), it.integer("height")).also(WirelessPictureSize::validate) }; s = s.copy(wirelessPictureSize = value) }
                 "miracastStretch" -> { val value = j.bool(key); s = s.copy(miracastStretch = value) }
-                "miracastOutput" -> { val value = j.bool(key); s = s.copy(miracastOutput = value) }
+                "miracastOutput" -> { s = s.copy(outputs = if (j.bool(key)) s.outputs + RelayOutput.MIRACAST else s.outputs - RelayOutput.MIRACAST) }
                 "networkMode" -> { val value = when (j.string(key)) { "device-hotspot" -> WirelessNetworkChoice.PHONE_HOTSPOT; "shared-wifi" -> WirelessNetworkChoice.EXISTING_WIFI; "wifi-direct" -> WirelessNetworkChoice.WIFI_DIRECT; else -> error("invalid") }; s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(choice = value)) }
                 "sharedWifiNetworks" -> { val value = j.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it).let { o -> SharedWifiNetwork(o.string("ssid"), o.string("password")) } } }.also(SharedWifiNetworks::validate); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(sharedWifiNetworks = value)) }
                 "iphoneConnection" -> { val value = enumValue<ConnectionMode>(j.string(key)); s = s.copy(connectionMode = value) }
@@ -364,10 +377,13 @@ object UserConfigCodec {
         check("developer.webPort") { require(d.webPort?.let { it in 1024..65535 } != false) }
         check("developer.physicalWidthOverrideMm") { require(d.physicalWidthOverrideMm == 0 || d.physicalWidthOverrideMm in 100..400 && d.physicalWidthOverrideMm % 25 == 0) }
         check("developer.carlinkDeviceModel") { require(d.carlinkDeviceModel.isNotBlank() && d.carlinkDeviceModel.toByteArray(Charsets.UTF_8).size <= 128 && d.carlinkDeviceModel.none(Character::isISOControl)) }
+        check("outputs") { require(s.outputs.isNotEmpty()) }
         // Run the same full validation and incomplete-network allowance as the editor.
         if (errors.isEmpty()) check("settings") { s.validate(useWireless, allowEmptySharedWifi = true); d.effectiveSettings(s).validate(useWireless, allowEmptySharedWifi = true) }
         val after = values(s, d)
-        var changed = before.keys().asSequence().filter { it !in setOf("developer", "experimental") }.count { before.get(it).toString() != after.get(it).toString() }
+        var changed = (before.keys().asSequence().toSet() + after.keys().asSequence().toSet())
+            .filter { it !in setOf("developer", "experimental") && it !in legacyOutputs }
+            .count { before.opt(it).toString() != after.opt(it).toString() }
         val oldDev = before.getJSONObject("developer")
         val newDev = after.getJSONObject("developer")
         changed += oldDev.keys().asSequence().count { oldDev.get(it).toString() != newDev.get(it).toString() }

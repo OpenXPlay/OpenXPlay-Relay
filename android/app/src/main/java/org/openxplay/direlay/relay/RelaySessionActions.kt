@@ -175,9 +175,10 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         }
         val wireless = store.wireless(settings)
         val permissions = StartupPermissions.required(Build.VERSION.SDK_INT, wireless,
-            settings.wirelessNetwork.choice.mode, AirPlayPersistence.loadLocationReportingEnabled(context), settings.carlinkOutput || settings.bothOutputs)
+            settings.wirelessNetwork.choice.mode, AirPlayPersistence.loadLocationReportingEnabled(context), settings.carlinkOutput)
         if (permissions.any { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) return "error.conflict"
         if (runtime.needsVpnConsent(settings, wireless) && VpnService.prepare(context) != null) return "error.conflict"
+        if (settings.miracastOutput && !org.openxplay.direlay.miracast.MiracastSystem.canDrawOverlays(context)) return "error.conflict"
         if (settings.mfiTarget == MfiTarget.LOCAL && runtime.identityStore.status() != MaterialStatus.Installed) return "error.conflict"
         if (runCatching { settings.validate(wireless) }.isFailure) return "error.invalid"
         if (!networkAccepted && !networkStart.request(manual,
@@ -204,7 +205,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         runtime.status.clearFailure()
         runtime.carPlayDiagnostics.clear()
         if (!carWaitSatisfied) carFirst.request(System.currentTimeMillis(), settings.displayMode == org.openxplay.direlay.settings.DisplayMode.AUTOMATIC,
-            !settings.carlinkOutput || settings.bothOutputs, settings.carlinkOutput || settings.bothOutputs,
+            settings.browserOutput, settings.carlinkOutput,
             runtime.carScreenReported, runtime.savedCarScreen(settings) != null)
         continueStart(launchGeneration, source, networkAccepted)
         return null

@@ -424,7 +424,7 @@ class RelayRuntime(private val context: Context,
 
     fun teslaActivation(settings: RelaySettings, wireless: Boolean = settingsStore.wireless(settings)) =
         teslaBrowserActivation(settings.teslaBrowser, wireless, settings.wirelessNetwork.choice,
-            publicName.view.value.hasTrustedNameConfiguration(), settings.carlinkOutput, settings.bothOutputs)
+            publicName.view.value.hasTrustedNameConfiguration(), settings.browserOutput)
 
     fun needsVpnConsent(settings: RelaySettings, wireless: Boolean = settingsStore.wireless(settings)): Boolean =
         !wireless || teslaActivation(settings, wireless) == TeslaBrowserActivation.READY
@@ -618,7 +618,7 @@ class RelayRuntime(private val context: Context,
     private val pathVideoStats = VideoStats()
     @Synchronized internal fun pathVideoSnapshot(): VideoStatsSnapshot? {
         val settings = settingsStore.snapshot.value ?: return null
-        return pathVideoStats.sample(status, settings.videoStats, settings.carlinkOutput || settings.bothOutputs,
+        return pathVideoStats.sample(status, settings.videoStats, settings.carlinkOutput,
             carlinkStatistics, carlinkVideoDecision, carlinkScreen)
     }
     val networkStart get() = sessionController.networkStart
@@ -676,7 +676,7 @@ class RelayRuntime(private val context: Context,
             playCarPlayAudio = initial.playCarPlayAudio
             automaticEnabled = initial.autoStartWhenReady
             configuredWebPort = initial.webPort
-            webEnabled = !initial.carlinkOutput || initial.bothOutputs
+            webEnabled = initial.browserOutput
             updateKeepAlive(initial)
             prepareCarPlay()
             ipv4 = ipv4Addresses(); carIpv4 = ipv4Addresses(includeIphoneLink = false)
@@ -850,7 +850,7 @@ class RelayRuntime(private val context: Context,
         }
         val port = settings.webPort
         val networkGranted = hasNetworkPermission()
-        val enabled = !settings.carlinkOutput || settings.bothOutputs
+        val enabled = settings.browserOutput
         if (pluginsChanged || port != configuredWebPort || networkGranted != networkPermissionAvailable || enabled != webEnabled) {
             webEnabled = enabled
             configuredWebPort = port
@@ -861,7 +861,7 @@ class RelayRuntime(private val context: Context,
     }
 
     private fun updateKeepAlive(settings: RelaySettings) = synchronized(lifecycle) {
-        keepAlive.update(RelayKeepAlivePolicy.needed(!closed, webEnabled, settings.carlinkOutput || settings.bothOutputs,
+        keepAlive.update(RelayKeepAlivePolicy.needed(!closed, webEnabled, settings.carlinkOutput,
             settings.dlnaOutput, settings.miracastOutput))
     }
 
@@ -995,7 +995,7 @@ class RelayRuntime(private val context: Context,
         val permitted = StartupPermissions.carlink(Build.VERSION.SDK_INT, true).all {
             context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
         }
-        val requested = CarlinkConfig(settings.carlinkOutput || settings.bothOutputs, permitted,
+        val requested = CarlinkConfig(settings.carlinkOutput, permitted,
             settings.carlinkDeviceName, settings.carlinkDeviceModel,
             carlinkBlock.blocked(CarlinkConnectionPolicy.enabled(settings),
                 settingsStore.carlinkWifiDirectConflict(settings), autoStartSessions.tracker.running), settings.carlinkTrace, settings.carlinkHevc, settings.carlinkPictureSize)
@@ -1242,7 +1242,7 @@ class RelayRuntime(private val context: Context,
     /** Reconnects an ended Carlink session with backoff when the user enabled automatic reconnection. */
     private fun scheduleCarlinkReconnect() {
         val settings = settingsStore.snapshot.value ?: return
-        if (closed || !settings.carlinkAutoReconnect || !(settings.carlinkOutput || settings.bothOutputs)) return
+        if (closed || !settings.carlinkAutoReconnect || !settings.carlinkOutput) return
         carlinkRetrying = true
         val delay = carlinkBackoff.next()
         carlinkTrail.record(ClinkDiagnostic.Retry(delay).line(), false, System.currentTimeMillis(), System.nanoTime())

@@ -24,9 +24,9 @@ fun recommendedConnection(settings: RelaySettings) = ConnectionMode.WIRELESS
 fun needsUsbConfirmation(before: ConnectionMode, after: ConnectionMode, lastUsedWireless: Boolean): Boolean =
     after == ConnectionMode.USB && before.wireless(lastUsedWireless)
 
-/** Wi-Fi Direct is the fastest link for the browser; Carlink can replace the Wi-Fi Direct group. */
+/** Carlink and Miracast need Wi-Fi Direct's radio for their link to the car. */
 fun recommendedNetwork(settings: RelaySettings) =
-    if (CarlinkConnectionPolicy.enabled(settings)) WirelessNetworkChoice.PHONE_HOTSPOT else WirelessNetworkChoice.WIFI_DIRECT
+    if (CarlinkConnectionPolicy.usesWifiDirect(settings)) WirelessNetworkChoice.PHONE_HOTSPOT else WirelessNetworkChoice.WIFI_DIRECT
 
 /** The guide marks the recommended network with a badge, so Wi-Fi Direct drops "(recommended)" from its name. */
 fun setupNetworkLabel(choice: WirelessNetworkChoice) =
@@ -40,28 +40,35 @@ fun setupDraft(settings: RelaySettings, wireless: Boolean) =
 /** One line of the chosen mode: what it is, the current choice, and the guide step that changes it. */
 data class ModeRow(val title: Int, val value: Int, val icon: Int, val step: SetupStep)
 fun modeRows(settings: RelaySettings, wireless: Boolean): List<ModeRow> = listOfNotNull(
-    ModeRow(R.string.setup_summary_output, when {
-        settings.bothOutputs -> R.string.dev_both
-        settings.carlinkOutput -> R.string.ui_carlink
-        else -> R.string.ui_browser
-    }, if (settings.carlinkOutput && !settings.bothOutputs) R.drawable.symbol_car else R.drawable.symbol_link, SetupStep.OUTPUT),
+    ModeRow(R.string.setup_summary_output, when (OutputSelection.choice(settings.outputs)) {
+        OutputChoice.BROWSER -> R.string.ui_browser
+        OutputChoice.CARLINK -> R.string.ui_carlink
+        OutputChoice.WIRELESS -> if (OutputSelection.wirelessKind(settings.outputs) == WirelessDisplayKind.MIRACAST)
+            R.string.wireless_miracast else R.string.wireless_dlna
+        null -> R.string.output_multiple
+    }, when (OutputSelection.choice(settings.outputs)) {
+        OutputChoice.BROWSER -> R.drawable.symbol_monitor
+        OutputChoice.CARLINK -> R.drawable.symbol_car_front
+        OutputChoice.WIRELESS -> R.drawable.symbol_cast
+        null -> R.drawable.symbol_link
+    }, SetupStep.OUTPUT),
     ModeRow(R.string.ui_iphone_connection, if (wireless) R.string.direlay_wireless else R.string.ui_usb,
         if (wireless) R.drawable.symbol_wifi else R.drawable.symbol_phone, SetupStep.CONNECTION),
     if (!wireless) null else ModeRow(R.string.setup_summary_network, setupNetworkLabel(settings.wirelessNetwork.choice),
         R.drawable.symbol_router, SetupStep.NETWORK),
 )
 
-/**
- * Choosing an output replaces both outputs, a developer option, with the single chosen one. Carlink
- * can move the network to a hotspot nobody has named yet; leaving Carlink then returns that unset
- * hotspot to the recommended Wi-Fi Direct instead of leaving a network the user never filled in.
- */
-fun chooseOutput(settings: RelaySettings, carlink: Boolean, wireless: Boolean): RelaySettings {
-    val chosen = CarlinkConnectionPolicy.enabling(settings, settings.copy(carlinkOutput = carlink, bothOutputs = false), wireless)
-    val network = chosen.wirelessNetwork
-    return if (carlink || network.choice != WirelessNetworkChoice.PHONE_HOTSPOT || network.manualSsid.isNotEmpty()) chosen
-    else chosen.copy(wirelessNetwork = network.copy(choice = WirelessNetworkChoice.WIFI_DIRECT))
-}
+fun chooseOutput(settings: RelaySettings, choice: OutputChoice, kind: WirelessDisplayKind, wireless: Boolean): RelaySettings =
+    OutputSelection.choose(settings, choice, kind, wireless)
+
+fun afterStartLines(settings: RelaySettings, wireless: Boolean): List<Int> =
+    listOf(if (wireless) R.string.setup_after_wireless else R.string.setup_after_usb) +
+        RelayOutput.entries.filter { it in settings.outputs }.map { when (it) {
+            RelayOutput.BROWSER -> R.string.setup_after_browser
+            RelayOutput.CARLINK -> R.string.setup_after_carlink
+            RelayOutput.DLNA -> R.string.setup_after_dlna
+            RelayOutput.MIRACAST -> R.string.setup_after_miracast
+        } }
 
 /** The hotspot and shared Wi-Fi fields belong to the network page; they never block the other pages. */
 private val networkFields = setOf("ssid", "password")

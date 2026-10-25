@@ -155,7 +155,7 @@ class UserConfigCodecTest {
     @Test fun wirelessDisplaysRoundTripAtVersionOneAndMissingKeysKeepChoices() {
         for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
             for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
-                val value = base.copy(dlnaOutput = dlna, miracastOutput = miracast, dlnaPicture = picture, dlnaRenderer = receiver)
+                val value = base.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
                 val text = UserConfigCodec.encode(value, DeveloperOverrides(), meta)
                 val root = JSONObject(text)
                 assertEquals(1, root.getInt("version"))
@@ -194,11 +194,67 @@ class UserConfigCodecTest {
         assertTrue(decode(JSONObject().put("dlnaOutput", true)).errors.isEmpty())
     }
 
+    @Test fun eachSingleOutputAndACombinationRoundTripWithOrderedWiresAndLegacyExport() {
+        for (outputs in RelayOutput.entries.map { setOf(it) } + listOf(RelayOutput.entries.reversed().toSet())) {
+            val settings = base.copy(outputs = outputs)
+            val encoded = UserConfigCodec.encode(settings, DeveloperOverrides(), meta)
+            val json = JSONObject(encoded).getJSONObject("settings")
+            assertEquals(RelayOutput.entries.filter { it in outputs }.map { it.wire },
+                json.getJSONArray("outputs").let { array -> (0 until array.length()).map(array::getString) })
+            val legacy = when {
+                settings.browserOutput && settings.carlinkOutput -> "both"
+                settings.browserOutput -> "web"
+                settings.carlinkOutput -> "carlink"
+                else -> null
+            }
+            assertEquals(legacy, json.opt("output"))
+            assertEquals(settings.dlnaOutput, json.getBoolean("dlnaOutput"))
+            assertEquals(settings.miracastOutput, json.getBoolean("miracastOutput"))
+            val imported = UserConfigCodec.decode(encoded, base)
+            assertTrue(imported.errors.toString(), imported.errors.isEmpty())
+            assertTrue(imported.ignoredKeys.isEmpty())
+            assertEquals(settings, imported.settings)
+            assertEquals(if (settings == base) 0 else 1, imported.changedCount)
+            assertEquals(0, UserConfigCodec.decode(encoded, settings).changedCount)
+        }
+    }
+
+    @Test fun explicitOutputsSkipEvenInvalidLegacyFieldsWithoutChangesOrIgnoredReports() {
+        val json = JSONObject().put("outputs", org.json.JSONArray().put("dlna"))
+            .put("output", "invalid").put("dlnaOutput", "invalid").put("miracastOutput", JSONObject.NULL)
+        val imported = decode(json)
+        assertTrue(imported.errors.toString(), imported.errors.isEmpty())
+        assertTrue(imported.ignoredKeys.isEmpty())
+        assertEquals(setOf(RelayOutput.DLNA), imported.settings.outputs)
+        assertEquals(1, imported.changedCount)
+        assertEquals(0, UserConfigCodec.decode(wrapped(json), imported.settings).changedCount)
+    }
+
+    @Test fun legacyOutputKeysApplyToCurrentMembersAndInvalidArraysRejectAtomically() {
+        for (output in listOf("web", "carlink", "both")) for (dlna in listOf(false, true)) for (miracast in listOf(false, true)) {
+            val json = JSONObject().put("output", output).put("dlnaOutput", dlna).put("miracastOutput", miracast)
+            val imported = UserConfigCodec.decode(wrapped(json), base.copy(outputs = RelayOutput.entries.toSet()))
+            assertTrue(imported.errors.toString(), imported.errors.isEmpty())
+            assertEquals(OutputSelection.legacy(output != "web", output == "both", dlna, miracast), imported.settings.outputs)
+        }
+        val existing = base.copy(outputs = setOf(RelayOutput.CARLINK, RelayOutput.DLNA))
+        assertEquals(setOf(RelayOutput.BROWSER, RelayOutput.DLNA),
+            UserConfigCodec.decode(wrapped(JSONObject().put("output", "web")), existing).settings.outputs)
+        assertEquals(mapOf("outputs" to "invalid"), UserConfigCodec.decode(wrapped(JSONObject().put("dlnaOutput", false)),
+            base.copy(outputs = setOf(RelayOutput.DLNA))).errors)
+        for (invalid in listOf<Any>(org.json.JSONArray(), org.json.JSONArray().put("web").put("web"),
+            org.json.JSONArray().put("future"), org.json.JSONArray().put("web").put(1), "web", JSONObject.NULL)) {
+            val imported = decode(JSONObject().put("outputs", invalid).put("autoStartOnBoot", true))
+            assertEquals(mapOf("outputs" to "invalid"), imported.errors)
+            assertEquals(base, imported.settings)
+            assertEquals(0, imported.changedCount)
+        }
+    }
+
     @Test fun populatedRoundTripIncludesAllChoicesWithoutSecrets() {
-        val settings = base.copy(connectionMode = ConnectionMode.WIRELESS, mfiTarget = MfiTarget.REMOTE,
+        val settings = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.CARLINK), connectionMode = ConnectionMode.WIRELESS, mfiTarget = MfiTarget.REMOTE,
             i2cPath = "/dev/i2c-1", remoteServer = "https://mfi.example.org", display = DisplayProfile(1920, 1080, 240),
-            frameRate = FrameRatePreference.FPS_60, autoStartOnBoot = true, autoStartWhenReady = true, localPreview = true, webPort = 8443,
-            carlinkOutput = true, bothOutputs = true, carlinkDeviceName = "Relay test", carlinkDeviceModel = "Test model",
+            frameRate = FrameRatePreference.FPS_60, autoStartOnBoot = true, autoStartWhenReady = true, localPreview = true, webPort = 8443, carlinkDeviceName = "Relay test", carlinkDeviceModel = "Test model",
             wirelessNetwork = WirelessNetworkSettings(WirelessNetworkChoice.PHONE_HOTSPOT, "Phone", "password1",
                 ManualHotspotBand.GHZ_5, 36, ManualHotspotSecurity.WPA2, listOf(SharedWifiNetwork("Home", "password2"))),
             playCarPlayAudio = true, microphoneSource = MicrophoneSource.THIS_DEVICE, vehicleInformation = true,
@@ -242,7 +298,7 @@ class UserConfigCodecTest {
         val sample = JSONObject("""{"output":"both","networkMode":"shared-wifi","sharedWifiNetworks":[{"ssid":"Home","password":"password1"}],"receiverPort":8443,"wifiInterface":"wlan0"}""")
         val imported = decode(sample)
         assertTrue(imported.errors.isEmpty())
-        assertTrue(imported.settings.bothOutputs && imported.settings.carlinkOutput)
+        assertTrue(imported.settings.browserOutput && imported.settings.carlinkOutput)
         assertEquals(WirelessNetworkChoice.EXISTING_WIFI, imported.settings.wirelessNetwork.choice)
         assertEquals(8443, imported.settings.webPort)
         assertEquals(listOf("wifiInterface"), imported.ignoredKeys)

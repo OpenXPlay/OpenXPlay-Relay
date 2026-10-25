@@ -53,7 +53,7 @@ class TeslaAddressSession(private val vpn: TeslaAddressVpn, private val clock: (
         }
         val (chosen, useWireless) = checkNotNull(session)
         if (teslaBrowserActivation(settings.teslaBrowser, useWireless, chosen.wirelessNetwork.choice,
-                trustedNameConfigured, chosen.carlinkOutput, chosen.bothOutputs) != TeslaBrowserActivation.READY) {
+                trustedNameConfigured, chosen.browserOutput) != TeslaBrowserActivation.READY) {
             if (request != null) { stopVpn(); active = null; attempted = false }
             return
         }

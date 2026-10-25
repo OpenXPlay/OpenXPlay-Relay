@@ -226,7 +226,6 @@
     <string name="dev_outputs">输出与网络</string>
     <string name="dev_port">网页端口（留空为 8443）</string>
     <string name="dev_web_port">网页端口</string>
-    <string name="dev_both">同时使用两种输出</string>
     <string name="dev_remove_identity_question">移除身份文件？</string>
     <string name="dev_remove_tls_question">移除导入的证书？</string>
     <string name="dev_connected_clients">已连接客户端</string>
@@ -682,7 +681,7 @@
     <string name="tesla_address_invalid">请输入不在 10.x、172.16–31.x、192.168.x 和其他保留网段内的 IPv4 地址。</string>
     <string name="tesla_address_android13">Android 13 及更高版本可能会丢弃热点设备发往这个地址的连接（已在 Android 15 上出现）。如果特斯拉打不开页面，请改用 169.254 开头的地址。</string>
     <string name="tesla_requirements">让特斯拉连接这台手机的热点（最好用 5 GHz）或 Wi-Fi 直连网络，并在特斯拉的 Wi-Fi 设置中打开“驾驶时保持连接”（Remain Connected in Drive）。需要 MCU2 或更新的车机。</string>
-    <string name="tesla_needs_browser">特斯拉通过浏览器显示 CarPlay：请在「设置 → 输出」中选择浏览器（或浏览器和 Carlink）。</string>
+    <string name="tesla_needs_browser">特斯拉通过浏览器显示 CarPlay：请在「设置 → 输出」中选择车载浏览器。</string>
     <string name="tesla_open_output">打开输出设置</string>
     <string name="tesla_needs_wireless">特斯拉适配需要使用无线 CarPlay：USB 连接已经占用了 Android 唯一的 VPN。</string>
     <string name="tesla_needs_phone_network">特斯拉适配需要使用本机热点或 Wi-Fi 直连。共享 Wi-Fi 路由器不会把这个地址转给这台手机。</string>
@@ -693,7 +692,6 @@
     <string name="wireless_display">无线投屏</string>
     <string name="wireless_dlna">DLNA 投屏</string>
     <string name="wireless_miracast">Miracast 投屏</string>
-    <string name="dlna_hint">在车机的投屏接收端显示 CarPlay。只有画面和声音，会延迟几秒，不能触控。</string>
     <string name="dlna_receiver">接收端</string>
     <string name="dlna_choose_receiver">选择接收端</string>
     <string name="dlna_network_hint">请让车机连接本机热点，或与本机连接同一 Wi-Fi，并打开车机上的投屏接收应用。</string>
@@ -704,7 +702,6 @@
     <string name="dlna_search_again">重新搜索</string>
     <string name="dlna_no_receivers">未找到接收端。请检查网络和车机上的接收应用，然后重新搜索。</string>
     <string name="dlna_search_failed">搜索接收端失败，请检查网络后重试。</string>
-    <string name="miracast_hint">在本机启动系统投屏并选择车机，中继便会在车机上显示 CarPlay，替代本机屏幕的镜像。仅输出画面；打开“在此设备播放 CarPlay 音频”，让车机播放 CarPlay 的声音。</string>
     <string name="miracast_open_settings">打开系统投屏</string>
     <string name="miracast_settings_unavailable">本机无法打开系统投屏设置。</string>
     <string name="miracast_allow_overlay">允许显示在其他应用上层</string>

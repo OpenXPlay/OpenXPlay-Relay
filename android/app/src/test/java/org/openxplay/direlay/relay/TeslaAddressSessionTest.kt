@@ -52,9 +52,8 @@ class TeslaAddressSessionTest {
         session.prepare(settings, wireless = true)
         tick()
         for (mode in TeslaBrowserMode.entries.filter { it != TeslaBrowserMode.OFF }) {
-            val next = settings.copy(teslaBrowser = mode, connectionMode = ConnectionMode.USB,
-                wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.EXISTING_WIFI),
-                carlinkOutput = true, bothOutputs = false)
+            val next = settings.copy(outputs = setOf(RelayOutput.CARLINK), teslaBrowser = mode, connectionMode = ConnectionMode.USB,
+                wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.EXISTING_WIFI))
             val starts = vpn.started.size
             val stops = vpn.stopped
             tick(value = next, wireless = false)
@@ -185,7 +184,7 @@ class TeslaAddressSessionTest {
         for (mode in TeslaBrowserMode.entries.filter { it != TeslaBrowserMode.OFF })
             for ((carlink, both, browser) in listOf(Triple(false, false, true), Triple(false, true, true),
                 Triple(true, false, false), Triple(true, true, true))) {
-                val chosen = settings.copy(teslaBrowser = mode, carlinkOutput = carlink, bothOutputs = both)
+                val chosen = settings.copy(outputs = OutputSelection.legacy(carlink, both, false, false), teslaBrowser = mode)
                 val controller = Vpn()
                 TeslaAddressSession(controller).use { candidate ->
                     candidate.prepare(chosen, wireless = true)

@@ -36,7 +36,7 @@ class SettingsAutoSaveTest {
     @Test fun validChangesPublishImmediatelyAndIdenticalDraftsDoNotPublish() {
         val published = mutableListOf<RelaySettings>()
         val saver = SettingsAutoSave(initial, published::add)
-        val updated = initial.copy(carlinkOutput = true, vehicleInformation = true)
+        val updated = initial.copy(outputs = setOf(RelayOutput.CARLINK), vehicleInformation = true)
         assertTrue(saver.apply(updated, true)); assertEquals(updated, saver.saved)
         assertFalse(saver.apply(updated, true)); assertEquals(listOf(updated), published)
         assertFalse(initial.vehicleInformation)
@@ -106,7 +106,7 @@ class SettingsAutoSaveTest {
         assertEquals(SettingsNotice.SILENT, settingsNotice(initial, initial, true))
         for (value in listOf(initial.copy(autoStartWhenReady = false), initial.copy(autoStartOnBoot = true),
             initial.copy(localPreview = true), initial.copy(playCarPlayAudio = true), initial.copy(webPort = 9443),
-            initial.copy(frameRate = FrameRatePreference.FPS_60), initial.copy(carlinkDeviceName = "Car"), initial.copy(carlinkOutput = true))) {
+            initial.copy(frameRate = FrameRatePreference.FPS_60), initial.copy(carlinkDeviceName = "Car"), initial.copy(outputs = setOf(RelayOutput.CARLINK)))) {
             assertEquals(SettingsNotice.SILENT, settingsNotice(initial, value, false))
         }
         for (connected in listOf(false, true)) {
@@ -124,14 +124,15 @@ class SettingsAutoSaveTest {
     }
     @Test fun radioRowsHaveDistinctTitlesAndSupportingCopyForEveryChoice() {
         assertEquals(listOf(RadioOption(R.string.ui_browser, R.string.option_browser_hint),
-            RadioOption(R.string.ui_carlink, R.string.option_carlink_hint)), outputOptions)
+            RadioOption(R.string.ui_carlink, R.string.option_carlink_hint),
+            RadioOption(R.string.wireless_display, R.string.option_wireless_display_hint)), outputOptions)
         assertEquals(listOf(R.string.option_wireless_hint, R.string.option_usb_hint), connectionOptions.map { it.supporting })
         val network = WirelessNetworkChoice.entries.map(::networkOption)
         assertEquals(listOf(R.string.ui_wifi_direct_recommended, R.string.direlay_car_hotspot,
             R.string.direlay_existing_wifi), network.map { it.title })
         assertEquals(listOf(R.string.option_direct_hint, R.string.option_hotspot_hint,
             R.string.option_wifi_hint), network.map { it.supporting })
-        assertEquals(7, (outputOptions + connectionOptions + network).map { it.supporting }.distinct().size)
+        assertEquals(8, (outputOptions + connectionOptions + network).map { it.supporting }.distinct().size)
     }
 
     @Test fun onlyDeferredChangesHaveNoticesAndRunningSessionsOfferAnAction() {

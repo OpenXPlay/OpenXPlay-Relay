@@ -7,7 +7,7 @@ package org.openxplay.direlay.settings
 object CarlinkConnectionPolicy {
     const val REASON = "Carlink can replace CarPlay's Wi-Fi Direct group, so use the local hotspot or USB."
     const val REASON_KEY = "constraint.carlinkWifiDirect"
-    fun enabled(settings: RelaySettings) = settings.carlinkOutput || settings.bothOutputs
+    fun enabled(settings: RelaySettings) = settings.carlinkOutput
     const val MIRACAST_REASON = "Miracast can replace CarPlay's Wi-Fi Direct group, so use the local hotspot or USB."
     const val MIRACAST_REASON_KEY = "constraint.miracastWifiDirect"
     fun usesWifiDirect(settings: RelaySettings, miracast: Boolean = settings.miracastOutput) = enabled(settings) || miracast

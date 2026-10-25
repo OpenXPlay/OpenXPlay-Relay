@@ -11,12 +11,25 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
 import org.openxplay.direlay.clink.ClinkStage
 import org.openxplay.direlay.miracast.MiracastState
 import org.openxplay.direlay.path.*
+import org.openxplay.direlay.settings.*
 import org.openxplay.stream.cast.CastState
 import org.openxplay.stream.core.*
 import java.util.Locale
 
 class PathInputsTest {
     private val phone = BondedDevice("00:11:22:33:44:55", "iPhone 15", true, false, false)
+    @Test fun setupOutputsFollowTheSelectionAndAddOnlyTheTeslaRoute() {
+        val settings = RelaySettings(ConnectionMode.USB, com.shilapi.xcertplay.orchestration.MfiTarget.LOCAL, "", "", "", null,
+            autoStartOnBoot = false, autoStartWhenReady = true, localPreview = false, webPort = null)
+        for (mask in 1..15) for (tesla in TeslaBrowserMode.entries) {
+            val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
+            val selected = settings.copy(outputs = outputs, teslaBrowser = tesla)
+            val expected = outputs.map { CarOutput.valueOf(it.name) }.toSet() +
+                if (tesla == TeslaBrowserMode.OFF) emptySet() else setOf(CarOutput.TESLA)
+            assertEquals(expected, pathOutputs(selected))
+        }
+    }
+
     @Test fun onlyBondedRequiresIphoneEvidenceAndExplicitChoicesStillWork() {
         val headphones = phone.copy(name = "Headphones", phoneClass = false)
         assertEquals(IphonePick.NOT_IPHONE, iphonePick(IphoneSelection.OnlyBonded(headphones)))

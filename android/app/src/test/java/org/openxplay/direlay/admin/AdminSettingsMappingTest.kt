@@ -35,17 +35,16 @@ class AdminSettingsMappingTest {
     }
     @Test fun allSupportedSettingsRoundTripWithoutLosingNativeFields() {
         val original = initial().copy(videoStats = VideoStatsWindow.SECONDS_15)
-        for (network in WirelessNetworkChoice.entries) for (mode in DisplayMode.entries) for (output in listOf("web", "carlink", "both")) {
-            val value = original.copy(connectionMode = ConnectionMode.WIRELESS,
-                carlinkOutput = output != "web", bothOutputs = output == "both",
+        for (network in WirelessNetworkChoice.entries) for (mode in DisplayMode.entries) for (outputs in RelayOutput.entries.map { setOf(it) } + listOf(RelayOutput.entries.toSet())) {
+            val value = original.copy(outputs = outputs, connectionMode = ConnectionMode.WIRELESS,
                 iphoneAddress = "01:23:45:67:89:AB", autoStartOnBoot = true, autoStartWhenReady = false,
                 carlinkDeviceName = "My car", vehicleInformation = true, carBluetoothAudio = true, displayMode = mode,
                 display = if (mode == DisplayMode.FIXED) DisplayProfile(1920, 1080, 240) else null,
                 wirelessNetwork = WirelessNetworkSettings(network, "Phone", "password", ManualHotspotBand.GHZ_5,
                     0, ManualHotspotSecurity.WPA2, listOf(SharedWifiNetwork("Home", "password"))))
             val result = AdminSettingsMapping.update(value, AdminSettingsMapping.values(value).filterKeys { it != "sharedWifiNetworks" }, true)
-            if (network == WirelessNetworkChoice.WIFI_DIRECT && output != "web") {
-                assertEquals(mapOf("networkMode" to CarlinkConnectionPolicy.REASON_KEY), result.errors)
+            if (network == WirelessNetworkChoice.WIFI_DIRECT && CarlinkConnectionPolicy.usesWifiDirect(value)) {
+                assertEquals(mapOf("networkMode" to if (value.carlinkOutput) CarlinkConnectionPolicy.REASON_KEY else CarlinkConnectionPolicy.MIRACAST_REASON_KEY), result.errors)
                 assertNull(result.settings)
             } else {
                 assertTrue(result.errors.toString(), result.errors.isEmpty())
@@ -67,12 +66,42 @@ class AdminSettingsMappingTest {
             mapOf("networkMode" to "phone-hotspot", "hotspotSsid" to "Phone", "hotspotPassword" to "short"))
             .forEach { val result = AdminSettingsMapping.update(before, it, true); assertNull(result.settings); assertTrue(result.errors.isNotEmpty()) }
         val updated = AdminSettingsMapping.update(before, mapOf("displayMode" to "custom", "displayWidth" to 1024,
-            "displayHeight" to 600, "displayDensity" to 160, "output" to "both", "iphone" to "auto"), true).settings!!
+            "displayHeight" to 600, "displayDensity" to 160, "output" to "carlink", "iphone" to "auto"), true).settings!!
         assertEquals(DisplayProfile(1024, 600, 160), updated.display)
-        assertTrue(updated.bothOutputs)
+        assertEquals(setOf(RelayOutput.CARLINK), updated.outputs)
         assertTrue(updated.carlinkOutput)
         assertNull(updated.iphoneAddress)
     }
+    @Test fun outputChoicesKindsVisibilityAndPhoneOnlyCombinations() {
+        val before = initial()
+        val expected = listOf("web", "carlink", "wireless", "wireless")
+        RelayOutput.entries.forEachIndexed { index, output ->
+            val values = AdminSettingsMapping.values(before.copy(outputs = setOf(output)))
+            assertEquals(expected[index], values["output"])
+            assertEquals(if (output == RelayOutput.MIRACAST) "miracast" else "dlna", values["wirelessDisplay"])
+        }
+        val all = before.copy(outputs = RelayOutput.entries.toSet())
+        assertEquals("multiple", AdminSettingsMapping.output(all))
+        assertEquals(all, AdminSettingsMapping.update(all, mapOf("output" to "multiple"), true).settings)
+        assertEquals(mapOf("output" to "error.outputsOnPhone"),
+            AdminSettingsMapping.update(before, mapOf("output" to "multiple"), true).errors)
+        val fields = AdminSettingsMapping.schema.flatMap { it.fields }
+        assertEquals(listOf("wireless"), fields.single { it.key == "wirelessDisplay" }.visibleWhen!!.equals)
+        assertEquals(listOf("carlink", "multiple"), fields.single { it.key == "carlinkName" }.visibleWhen!!.equals)
+        for ((kind, output) in listOf("dlna" to RelayOutput.DLNA, "miracast" to RelayOutput.MIRACAST)) {
+            val result = AdminSettingsMapping.update(before, mapOf("output" to "wireless", "wirelessDisplay" to kind), true)
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            val chosen = result.settings!!
+            assertEquals(setOf(output), chosen.outputs)
+            assertEquals(if (kind == "miracast") WirelessNetworkChoice.PHONE_HOTSPOT else WirelessNetworkChoice.WIFI_DIRECT,
+                chosen.wirelessNetwork.choice)
+            if (kind == "miracast") assertEquals(mapOf("networkMode" to CarlinkConnectionPolicy.MIRACAST_REASON_KEY),
+                AdminSettingsMapping.update(chosen, mapOf("networkMode" to "wifi-direct"), true).errors)
+            val swapped = AdminSettingsMapping.update(chosen, mapOf("wirelessDisplay" to if (kind == "dlna") "miracast" else "dlna"), true)
+            assertEquals(setOf(if (kind == "dlna") RelayOutput.MIRACAST else RelayOutput.DLNA), swapped.settings!!.outputs)
+        }
+    }
+
     @Test fun mappedValuesPersistThroughRelaySettingsStore() {
         val context = RuntimeEnvironment.getApplication()
         val before = initial()
