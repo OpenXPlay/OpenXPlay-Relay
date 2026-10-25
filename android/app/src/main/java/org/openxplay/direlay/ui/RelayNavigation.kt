@@ -22,13 +22,6 @@ data class RelayBackStack(val entries: List<String> = listOf("home")) {
     }
     fun back() = if (canBack) copy(entries = entries.dropLast(1)) else this
 }
-enum class WindowLayout { COMPACT, MEDIUM, EXPANDED }
-fun windowLayout(widthDp: Int) = when { widthDp < 600 -> WindowLayout.COMPACT; widthDp < 840 -> WindowLayout.MEDIUM; else -> WindowLayout.EXPANDED }
-
-/** Height is measured from this window, never the physical display or its orientation. */
-data class HomeWindow(val layout: WindowLayout, val inlineActions: Boolean)
-fun homeWindow(widthDp: Int, heightDp: Int) = HomeWindow(windowLayout(widthDp), heightDp < 480)
-
 /** Old field links resolve to a destination plus an optional card/picker target. */
 fun relayRoute(entry: String): String = when {
     entry.startsWith("settings:") -> when (entry.substringAfter(':')) {

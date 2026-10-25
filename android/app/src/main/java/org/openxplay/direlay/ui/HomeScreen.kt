@@ -3,34 +3,22 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.ui
 
-import android.os.Build
-import android.view.HapticFeedbackConstants
-import androidx.compose.animation.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import org.openxplay.direlay.R
 import org.openxplay.direlay.presentation.PendingPin
 import org.openxplay.direlay.clink.PinSheetState
@@ -46,193 +34,21 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val currentWifi: String? = null, val networkReadings: NetworkReadings = NetworkReadings(),
     val pathInput: PathInput? = null, val path: ConnectionPath = presentPath(pathInput ?: PathInput()), val stepProblems: List<HomeProblem> = emptyList())
 
-@Composable fun MotionCard(visible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
-    val ms = if (LocalRelayMotion.current) 220 else 0
-    val visibility = remember { MutableTransitionState(false) }
-    visibility.targetState = visible
-    AnimatedVisibility(visibility, enter = fadeIn(tween(ms)) + expandVertically(tween(ms), expandFrom = Alignment.Top),
-        exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) { RelayCard(content) }
-}
-
 @Composable fun HomeScreen(value: HomeContent, onSettings: (String) -> Unit, onStartStop: () -> Unit,
     onAutomatic: (Boolean) -> Unit, onCopy: (String) -> Unit, onStepAction: (StepAction, PathStep) -> Unit,
     onRecheck: () -> Unit, onVehicle: () -> Unit, vehicleModifier: Modifier = Modifier,
     vehicleContentModifier: Modifier = Modifier, onRestart: () -> Unit = {},
-    setupCompleted: Boolean = true, carRequired: Boolean = false, onGuide: () -> Unit = {}) {
-    val path = value.path
-    ConnectionPathPage(path, value.addresses, value.stepProblems, onStepAction, onRecheck, onCopy,
-        onStop = onStartStop, headerActions = { IconButton({ onSettings("") }) {
-            Symbol(R.drawable.symbol_settings, stringResource(R.string.direlay_settings))
-        } }, actions = { reveal ->
-            val missing = missingStartStep(path)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // The disabled pill still directs a tap to the preparation the user must finish.
-                Box(Modifier.weight(1f)) {
-                    PrimaryPill(path.running, path.running || !value.busy && path.canStart,
-                        stringResource(if (path.running) R.string.design_stop else R.string.home2_connect)) {
-                        if (path.running || path.canStart) onStartStop() else missing?.let(reveal)
-                    }
-                    if (!value.busy && missing != null) Box(Modifier.matchParentSize().clickable(
-                        role = Role.Button, onClickLabel = stringResource(R.string.home2_connect)) { reveal(missing) })
-                }
-                AutoSwitch(value.automatic, onAutomatic)
-            }
-        }, afterFocus = { HomeCarRow(carRequired) { onSettings("car") } }, afterSections = {
-            if (value.displayMismatch && path.running) item("display") {
-                RelayCard {
-                    Text(stringResource(R.string.display_changed), style = RelayTokens.footnote)
-                    TextButton(onRestart) { Text(stringResource(R.string.display_reconnect)) }
-                }
-            }
-            if (value.carlink || value.vehicle.sample) item("vehicle") {
-                VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier)
-            }
-            if (!setupCompleted) item("guide") {
-                TextButton(onGuide, Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.home2_setup), textAlign = TextAlign.Center)
-                }
-            }
-        })
-}
-
-/** Shared layout keeps Home and the opaque host overlay on the same path and disclosure policy. */
-@Composable internal fun ConnectionPathPage(path: ConnectionPath, addresses: List<String>, problems: List<HomeProblem>,
-    onStepAction: (StepAction, PathStep) -> Unit, onRecheck: () -> Unit, onCopy: (String) -> Unit,
-    onStop: () -> Unit, headerActions: @Composable RowScope.() -> Unit = {},
-    actions: @Composable ((PathStep) -> Unit) -> Unit,
-    afterFocus: @Composable () -> Unit = {},
-    afterSections: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {}) {
-    val scroll = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-    val view = LocalView.current
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
-    var expanded by rememberSaveable { mutableStateOf(listOf<String>()) }
-    var fullyExpanded by rememberSaveable { mutableStateOf(listOf<String>()) }
-    var stateKeys by rememberSaveable { mutableStateOf(listOf<String>()) }
-    var pulsed by remember { mutableStateOf<StepId?>(null) }
-    var pulse by remember { mutableIntStateOf(0) }
-    LaunchedEffect(pulse) {
-        if (pulse > 0) { kotlinx.coroutines.delay(700); pulsed = null }
-    }
-    val keys = path.sections.map { section -> section.steps.joinToString { "${it.id}:${it.state}" } }
-    LaunchedEffect(keys, path.running) {
-        path.sections.forEachIndexed { index, section ->
-            if (stateKeys.getOrNull(index) != keys[index]) {
-                expanded = expanded - section.section.name
-                fullyExpanded = fullyExpanded - section.section.name
-                if (expandPathSection(section, path.running)) expanded = expanded + section.section.name
-            }
-        }
-        stateKeys = keys
-    }
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val compact = homeWindow(maxWidth.value.toInt(), maxHeight.value.toInt()).inlineActions
-            fun reveal(section: PathSection, step: PathStep? = null) {
-                expanded = (expanded + section.name).distinct()
-                if (step == null) fullyExpanded = (fullyExpanded + section.name).distinct()
-                if (step != null) {
-                    pulsed = step.id; pulse++
-                    view.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.REJECT
-                        else HapticFeedbackConstants.LONG_PRESS)
-                }
-                val index = path.sections.indexOfFirst { it.section == section }
-                if (index >= 0) scope.launch { scroll.animateScrollToItem(index + if (compact) 0 else 2) }
-            }
-            val revealStep: (PathStep) -> Unit = { reveal(it.id.section, it) }
-            val focusStep = focusForPage(path)
-            val focus: @Composable () -> Unit = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    path.live?.let { LiveCard(it, path, onStop, compact = true) }
-                        ?: focusStep?.let { step -> FocusCard(step, { onStepAction(it, step) }, onRecheck,
-                            { selected = step.id.name }, compact = true) }
-                    afterFocus()
-                }
-            }
-            val sections: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
-                path.sections.forEach { section -> item(section.section.name) {
-                    PathSectionCard(section, section.section.name in expanded, { open ->
-                        expanded = if (open) (expanded + section.section.name).distinct() else expanded - section.section.name
-                        fullyExpanded = if (open) (fullyExpanded + section.section.name).distinct() else fullyExpanded - section.section.name
-                    }, { selected = it.id.name }, { action ->
-                        section.steps.firstOrNull { it.action == action }?.let { onStepAction(action, it) }
-                    }, focusedStep = pulsed ?: focusStep?.id, autoExpand = false, pulse = if (pulsed == null) 0 else pulse,
-                        onStepAction = onStepAction, fullyExpanded = section.section.name in fullyExpanded)
-                } }
-                afterSections()
-                item("diagnostic") {
-                    DiagnosticLine(path.diagnostic, onCopy, path.version)
-                }
-            }
-            Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                Row(Modifier.fillMaxWidth().heightIn(min = if (compact) 44.dp else 52.dp).padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.relay_brand_first), style = RelayTokens.headline, maxLines = 1)
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { PathStatusCapsule(path) }
-                    headerActions()
-                }
-                if (compact) Row(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        PathMap(path, compact = true) { reveal(it) }
-                        focus()
-                        actions(revealStep)
-                    }
-                    LazyColumn(Modifier.weight(1.25f).fillMaxHeight(), state = scroll,
-                        verticalArrangement = Arrangement.spacedBy(4.dp), content = sections)
-                } else {
-                    LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp), state = scroll,
-                        contentPadding = PaddingValues(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        item("map") { PathMap(path) { reveal(it) } }
-                        item("focus") { focus() }
-                        sections()
-                    }
-                    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = .92f)) {
-                        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) { actions(revealStep) }
-                    }
-                }
-            }
-        }
-    }
-    selected?.let { id -> path.steps.firstOrNull { it.id.name == id }?.let { step ->
-        StepSheet(stepDetails(step, addresses, problems), { action -> selected = null; onStepAction(action, step) },
-            onRecheck, onDismiss = { selected = null })
-    } }
-}
-
-@Composable internal fun PathStatusCapsule(path: ConnectionPath) {
-    path.live?.let { live ->
-        StatusCapsule(path.tone) { LiveCapsuleTime(live.sinceMillis) }
-        return
-    }
-    val text = when {
-        focusForPage(path)?.action == StepAction.START_NOW -> stringResource(R.string.home2_waiting_car)
-        path.tone == PathTone.READY -> stringResource(R.string.design_ready)
-        path.focus != null -> stringResource(path.focus.title)
-        else -> stringResource(R.string.design_idle)
-    }
-    StatusCapsule(path.tone, text)
-}
-
-@Composable private fun LiveCapsuleTime(sinceMillis: Long?) {
-    Text(stringResource(R.string.home2_live, sessionTime(rememberElapsedSeconds(sinceMillis))),
-        style = RelayTokens.caption.copy(fontFeatureSettings = "tnum"))
-}
-
-@Composable private fun VehicleTile(value: HomeContent, open: () -> Unit, modifier: Modifier, contentModifier: Modifier) {
-    val context = LocalContext.current
-    Card(onClick = open, modifier = modifier.fillMaxWidth()) {
-        Row(contentModifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Symbol(R.drawable.symbol_car, null, Modifier.size(20.dp))
-            Text(stringResource(R.string.vehicle_title), style = RelayTokens.footnote)
-            Text(vehicleSummary(value.vehicle) { key, args -> context.getString(key, *args.toTypedArray()) },
-                Modifier.weight(1f), style = RelayTokens.caption,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
-        }
-    }
+    setupCompleted: Boolean = true, carRequired: Boolean = false, onGuide: () -> Unit = {},
+    countdown: Boolean = false, onCancelCountdown: (ArrivalEnd) -> Unit = {}, onCountdownComplete: () -> Unit = {}) {
+    BackHandler(countdown) { onCancelCountdown(ArrivalEnd.BACK) }
+    StageHome(value.path, StageFlags(countdown = countdown, busy = value.busy,
+        displayChanged = value.displayMismatch && value.path.running, carIncomplete = carRequired,
+        setupCompleted = setupCompleted), value.addresses, value.stepProblems, onStepAction, onRecheck, onCopy,
+        onStartStop, onSettings = onSettings, onGuide = onGuide, onRestart = onRestart,
+        onCancelCountdown = onCancelCountdown, onCountdownComplete = onCountdownComplete,
+        automatic = value.automatic, onAutomatic = onAutomatic,
+        vehicle = value.vehicle.takeIf { value.carlink || it.sample }, onVehicle = onVehicle,
+        vehicleModifier = vehicleModifier, vehicleContentModifier = vehicleContentModifier)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

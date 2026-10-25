@@ -63,6 +63,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private var cachedDeviceName: String? = null
     private var networkRefreshPending = false
     private var networkRefreshAgain = false
+    private var homeDestination by androidx.compose.runtime.mutableStateOf<String?>(null)
+    private var pausingArrival = false
     private var stepNavigation by androidx.compose.runtime.mutableStateOf<StepAction?>(null)
     private var lastNetworkRefresh = Long.MIN_VALUE / 2
     private val presentation by lazy {
@@ -81,7 +83,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         get() = presentation.pendingPairingPrompt
         set(value) { presentation.pendingPairingPrompt = value }
     private var bootAutoStart = false
-    /** The launch choice or the guided setup is on screen; CarPlay then starts only from their buttons. */
+    /** The arrival countdown or the guided setup is on screen; CarPlay then starts only from their buttons. */
     private var guideOpen = false
     private val importOnly get() = intent.getBooleanExtra(EXTRA_IMPORT_IDENTITY, false) ||
         intent.getBooleanExtra(EXTRA_IMPORT_TLS, false) || intent.getBooleanExtra(EXTRA_IMPORT_PUBLIC_NAME, false)
@@ -108,9 +110,11 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             ?: intent.getBooleanExtra(EXTRA_AUTO_START, false)
         requestingPermissions = savedInstanceState?.getBoolean("requestingPermissions") ?: false
         pairingInFlight = savedInstanceState?.getBoolean("pairingInFlight") ?: false
-        // A fresh open with a saved setup asks whether to continue with it; a running relay skips the question.
-        val offerLaunchChoice = savedInstanceState == null && runtime.status.session?.phase !in
+        // A fresh open with a saved setup can offer the arrival countdown on Home.
+        val offerArrival = savedInstanceState == null && runtime.status.session?.phase !in
             setOf(SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.RECONNECTING)
+        // Hold auto start until restored UI state reports whether the countdown or guide is visible.
+        guideOpen = !bootAutoStart && !importOnly
         enableEdgeToEdge(SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
         lifecycleScope.launch {
@@ -156,14 +160,23 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     onStepAction = ::performStepAction,
                     onRecheck = ::recheckPath,
                     stepNavigation = stepNavigation,
+                    homeDestination = homeDestination,
+                    onHomeDestinationHandled = { homeDestination = null },
                     onStepNavigationHandled = { stepNavigation = null },
                     importMaterial = { identity -> openDocument(if (identity) IDENTITY_KEY else TLS_FILE, if (identity) R.string.direlay_choose_key else R.string.direlay_choose_tls) },
                     removeMaterial = { identity -> work { if (identity) runtime.identityStore.remove() else runtime.tlsStore.remove() } },
                     importPublicName = { openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose) },
                     openSetup = !bootAutoStart && !importOnly,
-                    openLaunch = offerLaunchChoice && !bootAutoStart && !importOnly,
+                    openLaunch = offerArrival && !bootAutoStart && !importOnly,
                     onLater = {
-                        if (settingsStore.snapshot.value?.autoStartWhenReady == true) presentation.action { runtime.autoStartSessions.pause("not now at launch") }
+                        if (value.automatic) {
+                            pausingArrival = true
+                            refreshPresentation()
+                            presentation.action {
+                                try { runtime.autoStartSessions.pause("not now on Home") }
+                                finally { handler.post { pausingArrival = false; refreshPresentation() } }
+                            }
+                        }
                     },
                     onGuideVisible = { visible -> guideOpen = visible; refreshPresentation() },
                     )
@@ -239,7 +252,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    private fun hostFlags() = HostFlags(resumed, guideOpen, requestingPermissions, bootAutoStart,
+    private fun hostFlags() = HostFlags(resumed, guideOpen || pausingArrival, requestingPermissions, bootAutoStart,
         importOnly, materialChecked, identityReady, networkRefreshPending, cachedWifi, cachedDeviceName)
 
     private fun publishHostFlags() { presentation.hostFlags.value = hostFlags() }
@@ -420,6 +433,11 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     }
 
     private fun handleStepIntent(intent: Intent) {
+        intent.getStringExtra(EXTRA_HOME_DESTINATION)?.let { destination ->
+            intent.removeExtra(EXTRA_HOME_DESTINATION)
+            if (destination == "setup" || destination == "settings:" || destination == "settings:car")
+                homeDestination = destination
+        }
         val name = intent.getStringExtra(EXTRA_STEP_ACTION) ?: return
         intent.removeExtra(EXTRA_STEP_ACTION)
         runCatching { StepAction.valueOf(name) }.getOrNull()?.let { performStepAction(it, null) }
@@ -670,6 +688,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_HOME_DESTINATION = "org.openxplay.relay.HOME_DESTINATION"
         const val EXTRA_STEP_ACTION = "org.openxplay.relay.STEP_ACTION"
         const val EXTRA_IMPORT_IDENTITY = "org.openxplay.relay.IMPORT_IDENTITY"
         const val EXTRA_IMPORT_TLS = "org.openxplay.relay.IMPORT_TLS"

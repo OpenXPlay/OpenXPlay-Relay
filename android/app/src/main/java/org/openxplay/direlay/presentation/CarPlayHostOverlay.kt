@@ -72,6 +72,11 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
             } finally { busy = false; model.refresh() }
         }
     }
+    fun openHome(destination: String) {
+        activity.startActivity(Intent(activity, RelayActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(RelayActivity.EXTRA_HOME_DESTINATION, destination))
+    }
     fun stepAction(action: StepAction, step: PathStep) {
         when (action) {
             StepAction.START_NOW -> sessionAction("startNow")
@@ -92,10 +97,10 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
             if (value == null) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Box(Modifier.safeDrawingPadding(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.host_connecting)) }
             } else if (!value.localPreview) HostOverlayScreen(presentHostOverlay(value), busy, ::stepAction,
-                { model.refresh() }, ::copy) { action -> when (action) {
+                { model.refresh() }, ::copy, onStartStop = { sessionAction("start") }, onRestart = { sessionAction("restart") },
+                onSettings = { openHome("settings:$it") }, onGuide = { openHome("setup") }) { action -> when (action) {
                     HostOverlayAction.BACK -> back()
                     HostOverlayAction.STOP -> sessionAction("stop", leave = true)
-                    HostOverlayAction.RETRY -> sessionAction("retry")
                 } }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp))
         }

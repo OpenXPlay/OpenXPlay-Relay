@@ -3,6 +3,8 @@
 // Created by riko chen on 2026-10-24
 package org.openxplay.direlay.ui.design
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -11,6 +13,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.platform.LocalView
 import org.openxplay.direlay.ui.LocalRelayMotion
+import org.openxplay.direlay.ui.Symbol
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -56,6 +59,18 @@ import java.util.Date
         shape = RelayTokens.sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         dragHandle = { BottomSheetDefaults.DragHandle() }) {
         body()
+    }
+}
+
+@Composable internal fun EvidenceRow(value: String) {
+    val copied = stringResource(R.string.design_copied)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val clipboard = context.getSystemService(ClipboardManager::class.java)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(value, Modifier.weight(1f), style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption)
+        IconButton({ clipboard.setPrimaryClip(ClipData.newPlainText(copied, value)); android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show() }) {
+            Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy))
+        }
     }
 }
 

@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.ui.LocalRelayMotion
+import org.openxplay.direlay.ui.presentStage
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable fun DesignGalleryScreen(onBack: () -> Unit) {
@@ -46,13 +47,13 @@ import org.openxplay.direlay.ui.LocalRelayMotion
                     InsetDivider()
                     InsetToggleRow(R.drawable.symbol_activity, IconHue.DEVELOPER, stringResource(R.string.design_motion), motion, { motion = it })
                 }
+                StageGallery(samples, copy, recheck)
                 Text(stringResource(R.string.design_paths), style = RelayTokens.title)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     samples.forEachIndexed { index, item -> FilterChip(selected == index, { selected = index },
                         modifier = Modifier.heightIn(min = 48.dp), label = { Text(stringResource(item.title)) }) }
                 }
                 GalleryPathSample(sample, action, recheck, copy, { sheetStep = it })
-                AutoSwitch(automatic) { automatic = it }
                 Text(stringResource(R.string.design_states), style = RelayTokens.title)
                 InsetGroup {
                     StepState.entries.forEachIndexed { index, state ->
@@ -63,21 +64,6 @@ import org.openxplay.direlay.ui.LocalRelayMotion
                             actionLabel = R.string.design_open, sinceMillis = System.currentTimeMillis() - 12_000)
                         StepRow(step, { sheetStep = step }, action, focused = state == StepState.ACTION)
                     }
-                }
-                PathTone.entries.forEach { StatusCapsule(it, stringResource(when (it) {
-                    PathTone.LIVE -> R.string.design_live
-                    PathTone.READY -> R.string.design_ready
-                    PathTone.PROGRESS -> R.string.design_sample_car_wait
-                    PathTone.ACTION -> R.string.design_state_action
-                    PathTone.ERROR -> R.string.design_state_failed
-                    PathTone.IDLE -> R.string.design_idle
-                })) }
-                StepState.entries.forEach { state ->
-                    val step = PathStep(StepId.HOTSPOT, state, R.string.design_step_hotspot, StepText.of(stateLabel(state)),
-                        if (state == StepState.OK) StepText.of(R.string.design_state_ok) else StepText.raw("OpenXPlay-1A2B · 5 GHz"),
-                        action = if (state == StepState.ACTION || state == StepState.FAILED) StepAction.OPEN_HOTSPOT else null,
-                        actionLabel = R.string.design_open)
-                    FocusCard(step, action, recheck, { sheetStep = step })
                 }
                 PrimaryPill(false, true, stringResource(R.string.design_connect), onClick = recheck)
                 PrimaryPill(true, true, stringResource(R.string.design_stop), onClick = recheck)
@@ -140,14 +126,16 @@ import org.openxplay.direlay.ui.LocalRelayMotion
         InsetRow(R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.design_long_title), "60 fps", recheck)
     }
     InsetGroup { StepRow(step, { showStep(step) }, action) }
-    FocusCard(step, action, recheck, { showStep(step) })
-    FocusCard(step, action, recheck, { showStep(step) }, compact = true)
+    val view = presentStage(path.copy(focus = step, live = null, running = false))
+    StageHeadline(view, {})
+    StageActions(view, { recheck() }, {})
     val iphone = "NGNkmmTRxZV67hI38XiRGPHTo"
     val longPath = path.copy(nodes = path.nodes.copy(iphone = iphone), sections = path.sections.map { section ->
         section.copy(steps = section.steps.map { if (it.id == StepId.IPHONE_PAIRED) it.copy(evidence = StepText.raw(iphone)) else it })
     })
-    PathMap(longPath, onSection = { section -> longPath.section(section)?.steps?.firstOrNull()?.let(showStep) })
-    PathMap(longPath, compact = true, onSection = { section -> longPath.section(section)?.steps?.firstOrNull()?.let(showStep) })
+    ConnectionStage(longPath, presentStage(longPath).nodes) { section ->
+        longPath.section(section)?.steps?.firstOrNull()?.let(showStep)
+    }
 }
 
 @Composable private fun GalleryPathSample(sample: DesignSample, action: (StepAction) -> Unit, recheck: () -> Unit,
@@ -160,11 +148,6 @@ import org.openxplay.direlay.ui.LocalRelayMotion
             section.copy(steps = section.steps.map { if (it.id == focus.id) focus else it })
         })
     } else sample.path
-    StatusCapsule(path.tone, stringResource(sample.title))
-    PathMap(path, onSection = { section -> path.section(section)?.steps?.firstOrNull()?.let(showStep) })
-    PathMap(path, compact = true, onSection = { section -> path.section(section)?.steps?.firstOrNull()?.let(showStep) })
-    path.live?.let { LiveCard(it, path, recheck) }
-        ?: path.focus?.let { FocusCard(it, action, recheck, { showStep(it) }) }
     path.sections.forEach { section ->
         key(sample.title, section.section) {
             var expanded by rememberSaveable { mutableStateOf(section.state != StepState.OK) }

@@ -322,8 +322,6 @@
     <string name="display_automatic">Automatic</string>
     <string name="display_automatic_hint">Match the car screen. Reconnect CarPlay to apply a changed size.</string>
     <string name="display_relay_screen">Relay screen</string>
-    <string name="display_changed">The car screen changed. Reconnect to fit it.</string>
-    <string name="display_reconnect">Reconnect</string>
     <string name="dev_carplay_screen">CarPlay screen</string>
     <string name="dev_screen_car">%1$s (car screen)</string>
     <string name="dev_screen_remembered">%1$s (remembered car)</string>
@@ -449,16 +447,6 @@
     <string name="network_addresses">IP addresses</string>
     <string name="ui_wifi_connected">Connected</string>
     <string name="ui_wifi_not_connected">Not connected</string>
-    <string name="launch_title">How do you want to start?</string>
-    <string name="launch_hint">Start CarPlay with your last setup, or set it up again.</string>
-    <string name="launch_last_title">Last setup</string>
-    <string name="launch_last_unready">A few things still need preparing. Continue to finish them.</string>
-    <string name="launch_continue">Start with the last setup</string>
-    <string name="launch_continue_prepare">Continue and finish preparing</string>
-    <string name="launch_countdown">Automatic start is on: starting in %1$d s.</string>
-    <string name="launch_new_title">New setup</string>
-    <string name="launch_new_hint">Choose how the car shows CarPlay and how the iPhone connects again, step by step.</string>
-    <string name="launch_later">Not now, go to Home</string>
     <string name="carlink_debug">Carlink debug</string>
     <string name="carlink_trace_enabled">Record Carlink trace</string>
     <string name="carlink_trace_all">All</string>
@@ -523,7 +511,6 @@
     <string name="car_brand_required">Choose a brand.</string>
     <string name="car_model_required">Choose a model.</string>
     <string name="setup_car_title">Your car</string>
-    <string name="car_choose_title">Choose your car</string>
     <string name="car_choose_hint">Settings and strategies differ by car.</string>
     <string name="car_detected">Detected screen data</string>
     <string name="car_built_in">This model year includes built-in screen data.</string>

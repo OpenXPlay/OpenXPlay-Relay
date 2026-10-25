@@ -11,9 +11,6 @@
     <string name="setup2_network_subtitle">选择 iPhone 使用的 Wi-Fi 网络。</string>
     <string name="setup2_prepare_subtitle">检查本机，再检查 iPhone。</string>
     <string name="setup2_start_subtitle">连接前确认所选方案。</string>
-    <string name="setup2_launch_title">准备连接</string>
-    <string name="setup2_launch_subtitle">继续使用已保存的连接方案。</string>
-    <string name="setup2_continue">继续</string>
     <string name="setup2_set_up_again">重新设置</string>
     <string name="setup_wireless_display_hint">用车机的投屏接收功能显示。只有画面，不能在车机上触控。</string>
     <string name="setup_picture_only">仅画面</string>

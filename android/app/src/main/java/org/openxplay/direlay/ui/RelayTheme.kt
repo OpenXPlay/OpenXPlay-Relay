@@ -4,7 +4,6 @@
 package org.openxplay.direlay.ui
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
 import org.openxplay.direlay.ui.design.*
@@ -26,13 +25,6 @@ val RelayGreen: Color @Composable get() = MaterialTheme.colorScheme.primary
             Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState())
                 .padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
         }
-    }
-}
-@Composable fun RelayCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RelayTokens.card,
-        border = if (LocalRelayDark.current) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
 @Composable fun Heading(text: String) = Text(text, modifier = Modifier.semantics { heading() }, style = RelayTokens.title)
