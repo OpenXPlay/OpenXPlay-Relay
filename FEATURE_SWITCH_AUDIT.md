@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
 # 功能开关盘点
 
 日期：2026-10-25。

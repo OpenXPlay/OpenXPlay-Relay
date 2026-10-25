@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
 # 双无线连接调整与功能开关盘点
 
 记录日期：2026-10-25。三项连接调整已接入独立的实验开关；实现与实机验收分别记录。
