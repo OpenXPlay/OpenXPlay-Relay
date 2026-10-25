@@ -17,7 +17,7 @@ fun presentPath(input: PathInput, zone: ZoneId = ZoneId.systemDefault()): Connec
     val running = input.iphone.started || input.iphone.armed || input.iphone.step !in setOf(LinkStep.IDLE, LinkStep.ENDED)
     // Read the pick before blocking: Bluetooth may be off when Connect arms a start.
     val canStart = input.setup.valid && input.relay.identity == IdentityState.READY &&
-        input.relay.permissionsGranted >= input.relay.permissionsTotal && !input.relay.vpnConsentNeeded &&
+        input.relay.permissionsGranted >= input.relay.permissionsTotal && !input.relay.vpnConsentNeeded && !input.relay.overlayNeeded &&
         (!input.setup.wireless || input.iphone.pick == IphonePick.PICKED) && !running
     val ownSteps = input.stepIds().map { input.presentStep(it, canStart, running) }
     val prerequisites = prerequisites(ownSteps.map { it.id }, input.setup.network)
@@ -52,7 +52,7 @@ fun presentPath(input: PathInput, zone: ZoneId = ZoneId.systemDefault()): Connec
         if (live) LiveSummary(input.live.sessionSinceMillis, input.live.chips.toList()) else null,
         PathNodes(input.iphone.name, input.relay.bluetoothName,
             input.car.carlink.carName ?: input.car.screen
-                ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name),
+                ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name ?: input.car.miracast.name),
         diagnostic(sections, input, zone))
 }
 
@@ -64,7 +64,8 @@ private fun PathInput.stepIds(): List<StepId> = buildList {
         setup.outputs.any { it == CarOutput.CARLINK || it == CarOutput.MIRACAST }) add(WIFI)
     if (setup.network == NetworkPlan.PHONE_HOTSPOT) add(HOTSPOT)
     if (setup.network == NetworkPlan.SHARED_WIFI) add(SHARED_WIFI)
-    if (CarOutput.BROWSER in setup.outputs) addAll(listOf(CAR_NETWORK, WEB_SERVER, CAR_PAGE))
+    if (CarOutput.BROWSER in setup.outputs || CarOutput.DLNA in setup.outputs) add(CAR_NETWORK)
+    if (CarOutput.BROWSER in setup.outputs) addAll(listOf(WEB_SERVER, CAR_PAGE))
     if (CarOutput.CARLINK in setup.outputs) addAll(listOf(CARLINK_FIND, CARLINK_LINK, CARLINK_PIN, CARLINK_READY))
     if (CarOutput.DLNA in setup.outputs) add(DLNA)
     if (CarOutput.MIRACAST in setup.outputs) add(MIRACAST)
@@ -91,7 +92,7 @@ private fun prerequisites(ids: List<StepId>, network: NetworkPlan): Map<StepId, 
         put(CARLINK_LINK, listOf(CARLINK_FIND))
         put(CARLINK_PIN, listOf(CARLINK_LINK))
         put(CARLINK_READY, listOf(CARLINK_PIN))
-        put(DLNA, if (CAR_NETWORK in ids) listOf(CAR_NETWORK) else listOf(WIFI, HOTSPOT).filter { it in ids })
+        put(DLNA, listOf(CAR_NETWORK))
         put(MIRACAST, listOf(WIFI))
         put(IPHONE_PAIRED, listOf(BLUETOOTH))
         iphone.zipWithNext().forEach { (before, after) -> put(after, listOf(before)) }
@@ -170,11 +171,16 @@ private fun PathInput.identityStep() = when (relay.identity) {
 }
 
 private fun PathInput.permissionsStep(): PathStep {
-    val missing = (relay.permissionsTotal - relay.permissionsGranted).coerceAtLeast(0)
-    return if (missing == 0 && !relay.vpnConsentNeeded) pathStep(PERMISSIONS, OK,
-        evidence = raw("${relay.permissionsGranted}/${relay.permissionsTotal}"))
-    else pathStep(PERMISSIONS, ACTION, if (relay.vpnConsentNeeded && missing <= 1) text(R.string.path_allow_vpn)
-        else text(R.string.path_permissions_needed, missing.toString()), action = GRANT_PERMISSIONS)
+    val total = relay.permissionsTotal + (if (relay.vpnConsentNeeded) 1 else 0) + (if (relay.overlayNeeded) 1 else 0)
+    val missing = (relay.permissionsTotal - relay.permissionsGranted).coerceAtLeast(0) +
+        (if (relay.vpnConsentNeeded) 1 else 0) + (if (relay.overlayNeeded) 1 else 0)
+    return if (missing == 0) pathStep(PERMISSIONS, OK,
+        evidence = raw("${relay.permissionsGranted}/$total"))
+    else pathStep(PERMISSIONS, ACTION, when {
+        relay.overlayNeeded && missing == 1 -> text(R.string.path_allow_overlay)
+        relay.vpnConsentNeeded && missing == 1 -> text(R.string.path_allow_vpn)
+        else -> text(R.string.path_permissions_needed, missing.toString())
+    }, action = GRANT_PERMISSIONS)
 }
 
 private fun PathInput.keepAliveStep() = if (relay.keepAlive == KeepAliveState.PENDING)

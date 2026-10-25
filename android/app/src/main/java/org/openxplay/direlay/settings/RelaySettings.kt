@@ -58,13 +58,12 @@ data class RelaySettings(
     val autoStartWhenReady: Boolean,
     val localPreview: Boolean,
     val webPort: Int?,
-    val carlinkOutput: Boolean = false,
+    val outputs: Set<RelayOutput> = setOf(RelayOutput.BROWSER),
     val carlinkDeviceName: String = "OpenXPlay",
     val carlinkDeviceModel: String = "Android relay",
     val wirelessNetwork: WirelessNetworkSettings = WirelessNetworkSettings(),
     val playCarPlayAudio: Boolean = false,
     val microphoneSource: MicrophoneSource = MicrophoneSource.HEAD_UNIT,
-    val bothOutputs: Boolean = false,
     val vehicleInformation: Boolean = false,
     val carlinkAutoReconnect: Boolean = true,
     val carlinkReconnectOnResize: Boolean = false,
@@ -88,17 +87,21 @@ data class RelaySettings(
     val teslaPublicAddress: String = TeslaAddressPolicy.DEFAULT_PUBLIC,
     val teslaMirrorAddress: String = TeslaAddressPolicy.DEFAULT_MIRROR,
     val teslaAndroidAddress: String = TeslaAddressPolicy.DEFAULT_ANDROID,
-    val dlnaOutput: Boolean = false,
     val dlnaRenderer: DlnaRendererChoice? = null,
     val dlnaPicture: DlnaPicture = DlnaPicture.P720,
-    val miracastOutput: Boolean = false,
     val wirelessPicture: WirelessPictureMode = WirelessPictureMode.AUTO,
     val wirelessPictureSize: WirelessPictureSize = WirelessPictureSize(),
     val miracastStretch: Boolean = false,
     val experimental: ExperimentalOptions = ExperimentalOptions(),
 ) {
+    val browserOutput get() = RelayOutput.BROWSER in outputs
+    val carlinkOutput get() = RelayOutput.CARLINK in outputs
+    val dlnaOutput get() = RelayOutput.DLNA in outputs
+    val miracastOutput get() = RelayOutput.MIRACAST in outputs
+
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false,
         phoneAddresses: Set<String> = emptySet()) {
+        require(outputs.isNotEmpty()) { "Choose an output." }
         teslaAddress()?.let { require(TeslaAddressPolicy.valid(it, phoneAddresses)) { "Invalid or already assigned Tesla address: $it" } }
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.usesWifiDirect(this))
         for (value in listOf(carlinkDeviceName, carlinkDeviceModel)) {
@@ -219,7 +222,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         AccessoryIdentityDefaults.apply(context, relay)
         // Settings saved before the guided setup existed mean the relay is already set up. Decided once, before
         // the guide's own saves could look the same.
-        if (!relay.contains("setupCompleted")) relay.edit().putBoolean("setupCompleted", relay.contains("carlinkOutput")).apply()
+        if (!relay.contains("setupCompleted")) relay.edit().putBoolean("setupCompleted", relay.contains("carlinkOutput") || relay.contains("outputs")).apply()
         // Migrate an existing choice once, before installing our safe default into DiPlay's store.
         // Keep the user-choice marker unset until a choice is actually saved.
         if (!relay.getBoolean("wirelessNetworkInitialized", false)) {
@@ -245,23 +248,24 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             profile, loadFrameRate(), AirPlayPersistence.loadAutoStartOnBoot(context),
             diplay.getBoolean("auto_connect", true), relay.getBoolean("localPreview", false),
             relay.getInt("webPort", 0).takeIf { it in 1024..65535 },
-            relay.getBoolean("carlinkOutput", false),
-            relay.getString("carlinkDeviceName", "OpenXPlay") ?: "OpenXPlay",
-            relay.getString("carlinkDeviceModel", "Android relay") ?: "Android relay",
-            WirelessNetworkSettings.load(context),
-            relay.getBoolean("playCarPlayAudio", false),
-            MicrophoneSource.entries.firstOrNull { it.name == relay.getString("microphoneSource", null) }
+            outputs = if (relay.contains("outputs")) relay.getString("outputs", "").orEmpty().split(',')
+                .mapNotNull { wire -> RelayOutput.entries.firstOrNull { it.wire == wire } }.toSet()
+                .ifEmpty { setOf(RelayOutput.BROWSER) }
+            else OutputSelection.legacy(relay.getBoolean("carlinkOutput", false), relay.getBoolean("bothOutputs", false),
+                relay.getBoolean("dlnaOutput", false), relay.getBoolean("miracastOutput", false)),
+            carlinkDeviceName = relay.getString("carlinkDeviceName", "OpenXPlay") ?: "OpenXPlay",
+            carlinkDeviceModel = relay.getString("carlinkDeviceModel", "Android relay") ?: "Android relay",
+            wirelessNetwork = WirelessNetworkSettings.load(context),
+            playCarPlayAudio = relay.getBoolean("playCarPlayAudio", false),
+            microphoneSource = MicrophoneSource.entries.firstOrNull { it.name == relay.getString("microphoneSource", null) }
                 ?: MicrophoneSource.HEAD_UNIT,
-            relay.getBoolean("bothOutputs", false),
-            relay.getBoolean("vehicleInformation", false),
+            vehicleInformation = relay.getBoolean("vehicleInformation", false),
             carlinkAutoReconnect = relay.getBoolean("carlinkAutoReconnect", true),
             carlinkReconnectOnResize = relay.getBoolean("carlinkReconnectOnResize", false),
-            mode,
-            relay.getString("iphoneAddress", null),
-            dlnaOutput = relay.getBoolean("dlnaOutput", false),
+            displayMode = mode,
+            iphoneAddress = relay.getString("iphoneAddress", null),
             dlnaRenderer = relay.getString("dlnaRendererUdn", null)?.let { DlnaRendererChoice(it, relay.getString("dlnaRendererName", "").orEmpty()) },
             dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == relay.getString("dlnaPicture", null) } ?: DlnaPicture.P720,
-            miracastOutput = relay.getBoolean("miracastOutput", false),
             wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == relay.getString("wirelessPicture", null) } ?: WirelessPictureMode.AUTO,
             wirelessPictureSize = WirelessPictureSize(relay.getInt("wirelessPictureWidth", 1280), relay.getInt("wirelessPictureHeight", 720))
                 .takeIf { runCatching { it.validate() }.isSuccess } ?: WirelessPictureSize(),
@@ -365,13 +369,11 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("localPreview", settings.localPreview)
             .putBoolean("playCarPlayAudio", settings.playCarPlayAudio)
             .putString("microphoneSource", settings.microphoneSource.name)
-            .putBoolean("carlinkOutput", settings.carlinkOutput)
-            .putBoolean("bothOutputs", settings.bothOutputs)
-            .putBoolean("dlnaOutput", settings.dlnaOutput)
+            .putString("outputs", RelayOutput.entries.filter { it in settings.outputs }.joinToString(",") { it.wire })
+            .remove("carlinkOutput").remove("bothOutputs").remove("dlnaOutput").remove("miracastOutput")
             .putString("dlnaRendererUdn", settings.dlnaRenderer?.udn)
             .putString("dlnaRendererName", settings.dlnaRenderer?.name)
             .putString("dlnaPicture", settings.dlnaPicture.name)
-            .putBoolean("miracastOutput", settings.miracastOutput)
             .putString("wirelessPicture", settings.wirelessPicture.name)
             .putInt("wirelessPictureWidth", settings.wirelessPictureSize.width)
             .putInt("wirelessPictureHeight", settings.wirelessPictureSize.height)

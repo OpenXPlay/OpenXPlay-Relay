@@ -5,6 +5,8 @@ package org.openxplay.direlay.relay
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.openxplay.direlay.settings.*
+import org.openxplay.stream.core.*
 
 class CarFirstPolicyTest {
     @Test fun allStartConditionsMustRequireANewCarScreen() {
@@ -33,6 +35,28 @@ class CarFirstPolicyTest {
         assertTrue(policy.ready(101, false))
         assertNull(policy.untilMillis)
     }
+    @Test fun wirelessOnlyStartsDoNotWaitWhileDeclarationsCannotReportACarScreen() {
+        for (id in listOf("cast", "miracast")) {
+            val memory = CarDisplayMemory()
+            val caps = OutputCapabilities(LatencyClass.INTERACTIVE, listOf(DecoderSupport("avc1.64002a", true)),
+                mapOf(ScreenId.MAIN to DisplayInfo(1920, 1080, 160, 60.0)), 0, emptySet(), emptySet(), false)
+            memory.exclude(RecordingOutput(id, caps)).open(object : OutputHost {
+                override fun capabilities(capabilities: OutputCapabilities) {
+                    assertNull(memory.measuredDisplay(capabilities))
+                }
+                override fun control(event: ControlEvent) {}
+                override fun stats(stats: OutputStats) {}
+            })
+            val settings = RelaySettings(ConnectionMode.USB, com.shilapi.xcertplay.orchestration.MfiTarget.LOCAL, "", "", "", null,
+                autoStartOnBoot = false, autoStartWhenReady = true, localPreview = false, webPort = null,
+                outputs = setOf(if (id == "cast") RelayOutput.DLNA else RelayOutput.MIRACAST))
+            val policy = CarFirstPolicy()
+            assertFalse(policy.request(0, true, settings.browserOutput, settings.carlinkOutput,
+                memory.measuredDisplay(caps) != null, false))
+            assertTrue(policy.ready(0, false))
+        }
+    }
+
     @Test fun anotherStartUsesItsOwnDeadline() {
         val policy = CarFirstPolicy()
         policy.request(0, true, false, true, false, false)

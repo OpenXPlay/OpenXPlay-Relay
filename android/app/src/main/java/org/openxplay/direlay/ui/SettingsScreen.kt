@@ -81,7 +81,13 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null, running: Boolean = false) {
     val runtimeContext = LocalContext.current.applicationContext
     var draft by state.draft
-    var confirmCarlink by remember { mutableStateOf(false) }
+    var confirmOutput by remember { mutableStateOf<RelaySettings?>(null) }
+    fun selectOutput(choice: OutputChoice, kind: WirelessDisplayKind) {
+        val next = OutputSelection.choose(draft, choice, kind, wireless(draft))
+        val candidate = draft.copy(outputs = OutputSelection.outputs(choice, kind))
+        if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmOutput = next
+        else draft = next
+    }
     var confirmUsb by remember { mutableStateOf(false) }
     if (confirmUsb) UsbConnectionDialog(confirm = {
         val candidate = draft.copy(connectionMode = ConnectionMode.USB)
@@ -102,14 +108,14 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     val carSummary = carSelectionSummary(draft.car, models, LocalConfiguration.current.locales[0],
         stringResource(R.string.car_none), stringResource(R.string.car_other))
     val ms = if (LocalRelayMotion.current) 220 else 0
-    if (confirmCarlink) AlertDialog(onDismissRequest = { confirmCarlink = false },
-        title = { Text(stringResource(R.string.ui_carlink)) },
-        text = { Text(stringResource(R.string.carlink_wifi_direct_confirm)) },
-        confirmButton = { TextButton(onClick = {
-            draft = CarlinkConnectionPolicy.enabling(draft, draft.copy(carlinkOutput = true), wireless(draft))
-            confirmCarlink = false
-        }) { Text(stringResource(android.R.string.ok)) } },
-        dismissButton = { TextButton(onClick = { confirmCarlink = false }) { Text(stringResource(android.R.string.cancel)) } })
+    confirmOutput?.let { next ->
+        val miracast = next.miracastOutput
+        AlertDialog(onDismissRequest = { confirmOutput = null },
+            title = { Text(stringResource(if (miracast) R.string.wireless_miracast else R.string.ui_carlink)) },
+            text = { Text(stringResource(if (miracast) R.string.miracast_wifi_direct_confirm else R.string.carlink_wifi_direct_confirm)) },
+            confirmButton = { TextButton(onClick = { draft = next; confirmOutput = null }) { Text(stringResource(android.R.string.ok)) } },
+            dismissButton = { TextButton(onClick = { confirmOutput = null }) { Text(stringResource(android.R.string.cancel)) } })
+    }
     DetailPage(stringResource(settingsPageTitle(page)), back) {
         when (page) {
             "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, frameRate, open)
@@ -126,19 +132,26 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
             "settings/output" -> {
                 SettingsGroup("output", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.ui_output), outputSummary(draft),
-                    initiallyExpanded = true, targeted = target == "output") {
+                    initiallyExpanded = true, targeted = target == "output",
+                    footer = if (OutputSelection.choice(draft.outputs) == null) stringResource(R.string.output_multiple_hint) else null) {
+                    val selected = OutputSelection.choice(draft.outputs)
+                    val kind = OutputSelection.wirelessKind(draft.outputs)
                     Column(Modifier.selectableGroup()) {
                         outputOptions.forEachIndexed { index, option ->
-                            RadioOptionRow(option, (if (draft.carlinkOutput) 1 else 0) == index,
-                                extra = if (index == 1) ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) else null) {
-                                val candidate = draft.copy(carlinkOutput = index == 1)
-                                if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmCarlink = true
-                                else draft = candidate
-                            }
+                            val choice = OutputChoice.entries[index]
+                            RadioOptionRow(option, selected == choice, extra = when {
+                                choice == OutputChoice.CARLINK -> ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) })
+                                choice == OutputChoice.WIRELESS && selected == choice -> ({
+                                    Options(listOf("DLNA", "Miracast"), kind.ordinal) { selectOutput(choice, WirelessDisplayKind.entries[it]) }
+                                })
+                                else -> null
+                            }) { selectOutput(choice, kind) }
                         }
                     }
+                    if (selected == null) InsetRow(R.drawable.symbol_link, IconHue.DEVELOPER,
+                        stringResource(R.string.output_multiple), outputSummary(draft), onClick = { open("developer") })
                     if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
-                    AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
+                    AnimatedVisibility(draft.carlinkOutput, enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SettingField(stringResource(R.string.direlay_carlink_name), draft.carlinkDeviceName, errors["name"]) { draft = draft.copy(carlinkDeviceName = it) }
                             SettingsToggleGroup(stringResource(R.string.vehicle_title), draft.vehicleInformation, R.drawable.symbol_car, IconHue.CAR,
@@ -150,7 +163,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         }
                     }
                 }
-                WirelessDisplaySettings(draft, wireless(draft), runtime, state, openCarScreen = { open("settings/car") }) { draft = it }
+                WirelessDisplaySettings(draft, runtime, state, openCarScreen = { open("settings/car") }) { draft = it }
             }
             "settings/car" -> {
                 if (runtime != null) CarScreenSettings(draft, runtime,
@@ -226,7 +239,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                                     if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
                                         NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
                                     if (choice == WirelessNetworkChoice.WIFI_DIRECT && !CarlinkConnectionPolicy.wifiDirectAllowed(draft))
-                                        Hint(stringResource(if (draft.miracastOutput) R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint))
+                                        Hint(stringResource(if (draft.miracastOutput && !draft.carlinkOutput) R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint))
                                 }, enabled = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)) {
                                 draft = draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice))
                             }

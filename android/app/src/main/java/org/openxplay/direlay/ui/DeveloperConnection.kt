@@ -16,22 +16,21 @@ import org.openxplay.direlay.settings.*
 fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) -> Boolean) {
     var draft by state.draft
     val overrides by state.developerDraft
-    var confirmCarlink by remember { mutableStateOf(false) }
+    var confirmOutput by remember { mutableStateOf<Pair<RelayOutput, RelaySettings>?>(null) }
     var confirmUsb by remember { mutableStateOf(false) }
     if (confirmUsb) UsbConnectionDialog(confirm = {
         val next = draft.copy(connectionMode = ConnectionMode.USB)
         draft = CarlinkConnectionPolicy.enabling(draft, next, wireless(next))
         confirmUsb = false
     }, dismiss = { confirmUsb = false })
-    if (confirmCarlink) AlertDialog(onDismissRequest = { confirmCarlink = false },
-        title = { Text(stringResource(R.string.ui_carlink)) },
-        text = { Text(stringResource(R.string.carlink_wifi_direct_confirm)) },
-        confirmButton = { TextButton(onClick = {
-            val next = draft.copy(bothOutputs = true)
-            draft = CarlinkConnectionPolicy.enabling(draft, next, wireless(next))
-            confirmCarlink = false
-        }) { Text(stringResource(android.R.string.ok)) } },
-        dismissButton = { TextButton(onClick = { confirmCarlink = false }) { Text(stringResource(android.R.string.cancel)) } })
+    confirmOutput?.let { (output, next) ->
+        val miracast = output == RelayOutput.MIRACAST
+        AlertDialog(onDismissRequest = { confirmOutput = null },
+            title = { Text(stringResource(if (miracast) R.string.wireless_miracast else R.string.ui_carlink)) },
+            text = { Text(stringResource(if (miracast) R.string.miracast_wifi_direct_confirm else R.string.carlink_wifi_direct_confirm)) },
+            confirmButton = { TextButton(onClick = { draft = next; confirmOutput = null }) { Text(stringResource(android.R.string.ok)) } },
+            dismissButton = { TextButton(onClick = { confirmOutput = null }) { Text(stringResource(android.R.string.cancel)) } })
+    }
     SettingsGroup("outputs", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.dev_outputs), stringResource(R.string.menu_outputs_summary, outputSummary(draft),
         draft.webPort?.toString() ?: stringResource(R.string.display_automatic)), initiallyExpanded = true) {
         SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.dev_web_port), checked = overrides.webPortEnabled, enabled = overrides.active) { enabled ->
@@ -58,10 +57,20 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
                 }
             }
         }
-        SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.dev_both), checked = draft.bothOutputs) {
-            val next = draft.copy(bothOutputs = it)
-            if (CarlinkConnectionPolicy.enabling(draft, next, wireless(next)) != next) confirmCarlink = true
-            else draft = next
+        InsetGroup(header = stringResource(R.string.dev_outputs_combine), footer = stringResource(R.string.dev_outputs_combine_hint)) {
+            RelayOutput.entries.forEachIndexed { index, output ->
+                if (index > 0) InsetDivider()
+                InsetToggleRow(if (output == RelayOutput.BROWSER) R.drawable.symbol_monitor else if (output == RelayOutput.CARLINK)
+                    R.drawable.symbol_car_front else R.drawable.symbol_cast, IconHue.CAR, stringResource(outputLabel(output)),
+                    output in draft.outputs, { on ->
+                        val next = OutputSelection.toggle(draft, output, on, wireless(draft))
+                        if (next != null) {
+                            val candidate = draft.copy(outputs = next.outputs)
+                            if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmOutput = output to next
+                            else draft = next
+                        }
+                    }, enabled = draft.outputs.size > 1 || output !in draft.outputs)
+            }
         }
         if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
         SettingsToggleRow(icon = R.drawable.symbol_settings_2, tile = IconHue.DEVELOPER, title = stringResource(R.string.direlay_local_preview), checked = overrides.localPreview, enabled = overrides.active) { enabled ->

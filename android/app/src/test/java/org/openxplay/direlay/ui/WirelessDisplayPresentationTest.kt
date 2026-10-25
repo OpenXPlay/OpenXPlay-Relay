@@ -14,18 +14,25 @@ import org.openxplay.direlay.settings.*
 
 class WirelessDisplayPresentationTest {
     private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, FrameRatePreference.AUTO, false, false, false, null)
-    private val selected = base.copy(dlnaOutput = true, dlnaRenderer = DlnaRendererChoice("uuid:car", "Saved car"))
+    private val selected = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.DLNA), dlnaRenderer = DlnaRendererChoice("uuid:car", "Saved car"))
 
     @Test fun outputSummaryAppendsEachEnabledDisplayAndPreservesEveryBrowserCarlinkChoice() {
         for (carlink in listOf(false, true)) for (both in listOf(false, true))
             for (dlna in listOf(false, true)) for (miracast in listOf(false, true)) {
-                val settings = base.copy(carlinkOutput = carlink, bothOutputs = both, dlnaOutput = dlna, miracastOutput = miracast)
-                val expected = listOf(if (both) R.string.menu_both_outputs else if (carlink) R.string.ui_carlink else R.string.ui_browser) +
+                val settings = base.copy(outputs = OutputSelection.legacy(carlink, both, dlna, miracast))
+                val expected = listOfNotNull(R.string.ui_browser.takeIf { !carlink || both }, R.string.ui_carlink.takeIf { carlink || both }) +
                     listOfNotNull(R.string.wireless_dlna.takeIf { dlna }, R.string.wireless_miracast.takeIf { miracast })
                 assertEquals(expected, outputSummaryLabels(settings))
             }
         val labels = mapOf(R.string.ui_browser to "Car browser", R.string.wireless_dlna to "DLNA")
         assertEquals("Car browser · DLNA", outputSummary(selected, labels::getValue))
+    }
+
+    @Test fun singleWirelessOutputSummariesDoNotIncludeABrowser() {
+        assertEquals(listOf(R.string.wireless_dlna), outputSummaryLabels(base.copy(outputs = setOf(RelayOutput.DLNA))))
+        assertEquals(listOf(R.string.wireless_miracast), outputSummaryLabels(base.copy(outputs = setOf(RelayOutput.MIRACAST))))
+        assertEquals(listOf(R.string.ui_browser, R.string.ui_carlink, R.string.wireless_dlna, R.string.wireless_miracast),
+            outputSummaryLabels(base.copy(outputs = RelayOutput.entries.reversed().toSet())))
     }
 
     @Test fun disablingWirelessOutputsHidesTheirHubFailuresAndKeepsOtherFailures() {
@@ -34,7 +41,7 @@ class WirelessDisplayPresentationTest {
         val others = listOf(RelayFailure("web", "Browser"), RelayFailure("clink", "Carlink"), RelayFailure(null, "Input"))
         for (castOn in listOf(false, true)) for (miracastOn in listOf(false, true))
             assertEquals(listOfNotNull(dlna.takeIf { castOn }, miracast.takeIf { miracastOn }) + others,
-                visibleHomeFailures(base.copy(dlnaOutput = castOn, miracastOutput = miracastOn), listOf(dlna, miracast) + others))
+                visibleHomeFailures(base.copy(outputs = OutputSelection.legacy(false, false, castOn, miracastOn)), listOf(dlna, miracast) + others))
     }
 
     @Test fun failureRowsKeepTechnicalDetailsAndTimesWithLocalizedTitlesAndExplanations() {

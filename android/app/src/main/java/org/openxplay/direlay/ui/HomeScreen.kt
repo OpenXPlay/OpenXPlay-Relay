@@ -40,7 +40,7 @@ import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.vehicle.*
 
 data class HomeContent(val presentation: HomePresentation, val addresses: List<String>,
-    val deviceName: String, val automatic: Boolean, val carlink: Boolean, val both: Boolean,
+    val deviceName: String, val automatic: Boolean, val carlink: Boolean,
     val pending: DialogPinProvider.Request?, val busy: Boolean = false, val vehicle: VehicleView = VehicleView(),
     val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false,
     val currentWifi: String? = null, val networkReadings: NetworkReadings = NetworkReadings(),
@@ -85,7 +85,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                     TextButton(onRestart) { Text(stringResource(R.string.display_reconnect)) }
                 }
             }
-            if (value.carlink || value.both || value.vehicle.sample) item("vehicle") {
+            if (value.carlink || value.vehicle.sample) item("vehicle") {
                 VehicleTile(value, onVehicle, vehicleModifier, vehicleContentModifier)
             }
             if (!setupCompleted) item("guide") {

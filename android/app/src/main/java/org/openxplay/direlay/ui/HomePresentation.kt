@@ -48,7 +48,7 @@ data class HomePresentation(val mode: List<ModeRow>, val checklist: List<SetupIt
 
 fun setupHomePresentation(input: PathInput, path: ConnectionPath, mode: List<ModeRow>): HomePresentation {
     val checklist = buildList {
-        if (input.relay.permissionsGranted < input.relay.permissionsTotal || input.relay.vpnConsentNeeded)
+        if (input.relay.permissionsGranted < input.relay.permissionsTotal || input.relay.vpnConsentNeeded || input.relay.overlayNeeded)
             add(SetupItem(R.string.ui_permissions, R.string.ui_allow, SetupAction.PERMISSIONS))
         if (input.relay.identity == IdentityState.MISSING)
             add(SetupItem(R.string.direlay_identity_required, R.string.direlay_import, SetupAction.IDENTITY))

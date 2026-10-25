@@ -17,7 +17,7 @@ import java.util.Locale
 
 /** Activity-owned facts, copied at the same time as the rest of Home's readiness snapshot. */
 data class PathLocal(val permissionsGranted: Int = 0, val permissionsTotal: Int = 0,
-    val vpnConsentNeeded: Boolean = false, val identity: IdentityState = IdentityState.CHECKING,
+    val vpnConsentNeeded: Boolean = false, val overlayNeeded: Boolean = false, val identity: IdentityState = IdentityState.CHECKING,
     val identityLabel: String? = null, val wifiSsid: String? = null, val bluetoothName: String? = null,
     val setupSummary: String = "", val nowMillis: Long = 0, val version: String = "", val setupValid: Boolean = true)
 
@@ -26,8 +26,6 @@ fun RelayRuntime.pathInput(local: PathLocal): PathInput {
     val wireless = settingsStore.wireless(settings)
     val selection = iphoneSelection(settings.iphoneAddress)
     val link = iphoneLink.snapshot
-    val carlink = settings.carlinkOutput || settings.bothOutputs
-    val browser = !settings.carlinkOutput || settings.bothOutputs
     val clink = carlinkStatistics
     val phase = carlinkPhase(carlinkState, carlinkStage?.first, carlinkPins.pending != null)
     val carlinkSince = if (carlinkCode != null) carlinkErrorAt else when (phase) {
@@ -43,17 +41,11 @@ fun RelayRuntime.pathInput(local: PathLocal): PathInput {
             WirelessNetworkChoice.WIFI_DIRECT -> NetworkPlan.WIFI_DIRECT
             WirelessNetworkChoice.PHONE_HOTSPOT -> NetworkPlan.PHONE_HOTSPOT
             WirelessNetworkChoice.EXISTING_WIFI -> NetworkPlan.SHARED_WIFI
-        }, buildSet {
-            if (browser) add(CarOutput.BROWSER)
-            if (carlink) add(CarOutput.CARLINK)
-            if (settings.dlnaOutput) add(CarOutput.DLNA)
-            if (settings.miracastOutput) add(CarOutput.MIRACAST)
-            if (settings.teslaBrowser != TeslaBrowserMode.OFF) add(CarOutput.TESLA)
-        }, local.setupSummary, local.setupValid),
+        }, pathOutputs(settings), local.setupSummary, local.setupValid),
         relay = RelayInput(local.identity, local.identityLabel, local.permissionsGranted, local.permissionsTotal,
             local.vpnConsentNeeded, keepAlive.state, networkReadings.bluetooth, local.bluetoothName,
             networkReadings.wifi, local.wifiSsid, networkReadings.hotspot, settings.wirelessNetwork.manualSsid,
-            hotspotBand(settings.wirelessNetwork.band), currentSharedWifi(settings, local.wifiSsid)?.ssid),
+            hotspotBand(settings.wirelessNetwork.band), currentSharedWifi(settings, local.wifiSsid)?.ssid, local.overlayNeeded),
         car = CarInput(carIpv4.firstOrNull(), webPathInput(webPhase, settings.webPort ?: org.openxplay.direlay.tls.TlsStore.port(true), serverReason,
                 publicName.status.value.trustedName), headUnitUrls().firstOrNull(), status.connectedWebPages,
             primaryCarScreen?.let { pictureSize(it.widthPx, it.heightPx) },
@@ -168,3 +160,10 @@ internal fun liveChips(format: VideoFormat?, values: VideoMeasurement.Values?): 
     format?.codec?.let { add(codecLabel(it)) }
     values?.bitsPerSecond?.takeIf { it.isFinite() && it > 0 }?.let { add(String.format(Locale.ROOT, "%.1f Mbps", it / 1_000_000)) }
 }
+
+internal fun pathOutputs(settings: RelaySettings): Set<CarOutput> = settings.outputs.mapTo(linkedSetOf()) { when (it) {
+    RelayOutput.BROWSER -> CarOutput.BROWSER
+    RelayOutput.CARLINK -> CarOutput.CARLINK
+    RelayOutput.DLNA -> CarOutput.DLNA
+    RelayOutput.MIRACAST -> CarOutput.MIRACAST
+} }.apply { if (settings.teslaBrowser != TeslaBrowserMode.OFF) add(CarOutput.TESLA) }

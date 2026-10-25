@@ -28,15 +28,17 @@ class SetupPresentationTest {
 
     @Test fun wirelessIsRecommendedWithOrWithoutCarlink() {
         for (mode in ConnectionMode.entries) for (carlink in listOf(false, true)) {
-            assertEquals(ConnectionMode.WIRELESS, recommendedConnection(settings.copy(connectionMode = mode, carlinkOutput = carlink)))
+            assertEquals(ConnectionMode.WIRELESS, recommendedConnection(settings.copy(outputs = OutputSelection.legacy(carlink, false, false, false), connectionMode = mode)))
         }
-        assertEquals(ConnectionMode.WIRELESS, recommendedConnection(settings.copy(bothOutputs = true)))
+        assertEquals(ConnectionMode.WIRELESS, recommendedConnection(settings.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.CARLINK))))
     }
 
     @Test fun networkRecommendationsFollowTheOutput() {
         assertEquals(WirelessNetworkChoice.WIFI_DIRECT, recommendedNetwork(settings))
-        val carlink = settings.copy(carlinkOutput = true)
+        val carlink = settings.copy(outputs = setOf(RelayOutput.CARLINK))
         assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, recommendedNetwork(carlink))
+        assertEquals(WirelessNetworkChoice.WIFI_DIRECT, recommendedNetwork(settings.copy(outputs = setOf(RelayOutput.DLNA))))
+        assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, recommendedNetwork(settings.copy(outputs = setOf(RelayOutput.MIRACAST))))
     }
 
     @Test fun onlySwitchingToUsbFromWirelessNeedsConfirmation() {
@@ -54,26 +56,26 @@ class SetupPresentationTest {
     }
 
     @Test fun choosingCarlinkLeavesWifiDirectAndReplacesBothOutputs() {
-        val carlink = chooseOutput(settings, carlink = true, wireless = true)
+        val carlink = chooseOutput(settings, choice = OutputChoice.CARLINK, kind = WirelessDisplayKind.DLNA, wireless = true)
         assertTrue(carlink.carlinkOutput)
         assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, carlink.wirelessNetwork.choice)
-        val single = chooseOutput(settings.copy(bothOutputs = true), carlink = false, wireless = true)
-        assertFalse(single.carlinkOutput || single.bothOutputs)
+        val single = chooseOutput(settings.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.CARLINK)), choice = OutputChoice.BROWSER, kind = WirelessDisplayKind.DLNA, wireless = true)
+        assertEquals(setOf(RelayOutput.BROWSER), single.outputs)
         // Over USB the network choice is unused, so it stays as it was.
-        assertEquals(WirelessNetworkChoice.WIFI_DIRECT, chooseOutput(settings, carlink = true, wireless = false).wirelessNetwork.choice)
-        val usbCarlink = settings.copy(carlinkOutput = true, connectionMode = ConnectionMode.USB)
+        assertEquals(WirelessNetworkChoice.WIFI_DIRECT, chooseOutput(settings, choice = OutputChoice.CARLINK, kind = WirelessDisplayKind.DLNA, wireless = false).wirelessNetwork.choice)
+        val usbCarlink = settings.copy(outputs = setOf(RelayOutput.CARLINK), connectionMode = ConnectionMode.USB)
         assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, chooseConnection(usbCarlink, wireless = true).wirelessNetwork.choice)
     }
 
     @Test fun leavingCarlinkReturnsAnUnsetHotspotToWifiDirect() {
-        val carlink = chooseOutput(settings, carlink = true, wireless = true)
+        val carlink = chooseOutput(settings, choice = OutputChoice.CARLINK, kind = WirelessDisplayKind.DLNA, wireless = true)
         assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, carlink.wirelessNetwork.choice)
-        val browser = chooseOutput(carlink, carlink = false, wireless = true)
+        val browser = chooseOutput(carlink, choice = OutputChoice.BROWSER, kind = WirelessDisplayKind.DLNA, wireless = true)
         assertEquals(WirelessNetworkChoice.WIFI_DIRECT, browser.wirelessNetwork.choice)
         assertTrue("the browser choice can be saved at once", settingsSaveErrors(browser, wireless = true).isEmpty())
         // A hotspot the user named stays chosen.
         val named = carlink.copy(wirelessNetwork = carlink.wirelessNetwork.copy(manualSsid = "Car"))
-        assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, chooseOutput(named, carlink = false, wireless = true).wirelessNetwork.choice)
+        assertEquals(WirelessNetworkChoice.PHONE_HOTSPOT, chooseOutput(named, choice = OutputChoice.BROWSER, kind = WirelessDisplayKind.DLNA, wireless = true).wirelessNetwork.choice)
     }
 
     @Test fun networkFieldErrorsBlockOnlyTheNetworkPage() {
@@ -119,9 +121,35 @@ class SetupPresentationTest {
         val wireless = modeRows(settings, wireless = true)
         assertEquals(listOf(SetupStep.OUTPUT, SetupStep.CONNECTION, SetupStep.NETWORK), wireless.map { it.step })
         assertEquals(listOf(R.string.ui_browser, R.string.direlay_wireless, R.string.direlay_wifi_direct), wireless.map { it.value })
-        val usbCarlink = modeRows(settings.copy(carlinkOutput = true), wireless = false)
+        val usbCarlink = modeRows(settings.copy(outputs = setOf(RelayOutput.CARLINK)), wireless = false)
         assertEquals(listOf(R.string.ui_carlink, R.string.ui_usb), usbCarlink.map { it.value })
-        assertEquals(R.string.dev_both, modeRows(settings.copy(bothOutputs = true), wireless = true).first().value)
+        assertEquals(R.string.output_multiple, modeRows(settings.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.CARLINK)), wireless = true).first().value)
+    }
+
+    @Test fun wirelessAndCombinationModeRowsAndAfterStartLinesUseEnumOrder() {
+        val labels = listOf(R.string.ui_browser, R.string.ui_carlink, R.string.wireless_dlna, R.string.wireless_miracast)
+        val icons = listOf(R.drawable.symbol_monitor, R.drawable.symbol_car_front, R.drawable.symbol_cast, R.drawable.symbol_cast)
+        val lines = listOf(R.string.setup_after_browser, R.string.setup_after_carlink, R.string.setup_after_dlna, R.string.setup_after_miracast)
+        RelayOutput.entries.forEachIndexed { index, output ->
+            val chosen = settings.copy(outputs = setOf(output))
+            assertEquals(labels[index], modeRows(chosen, true).first().value)
+            assertEquals(icons[index], modeRows(chosen, true).first().icon)
+            assertEquals(listOf(R.string.setup_after_wireless, lines[index]), afterStartLines(chosen, true))
+            assertEquals(listOf(R.string.setup_after_usb, lines[index]), afterStartLines(chosen, false))
+        }
+        val combined = settings.copy(outputs = RelayOutput.entries.reversed().toSet())
+        assertEquals(R.string.output_multiple, modeRows(combined, true).first().value)
+        assertEquals(R.drawable.symbol_link, modeRows(combined, true).first().icon)
+        assertEquals(listOf(R.string.setup_after_wireless) + lines, afterStartLines(combined, true))
+    }
+
+    @Test fun overlayConsentIsIncludedInPreparationChecks() {
+        val input = ready.copy(relay = ready.relay.copy(overlayNeeded = true))
+        val checks = setupChecks(preparation(input), true, WirelessNetworkChoice.WIFI_DIRECT)
+        val permissions = checks.single { it.title == R.string.setup_check_permissions }
+        assertEquals(SetupCheckState.TO_DO, permissions.state)
+        assertEquals(SetupAction.PERMISSIONS, permissions.action)
+        assertFalse(preparation(input).canStart)
     }
 
     @Test fun identityIsCheckingUntilTheStoreAnswers() {

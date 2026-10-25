@@ -185,7 +185,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
                 }
             }
             Hint(stringResource(R.string.tesla_requirements))
-            if (draft.carlinkOutput && !draft.bothOutputs) {
+            if (!draft.browserOutput) {
                 Hint(stringResource(R.string.tesla_needs_browser))
                 TextButton(onClick = openOutput, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.tesla_open_output))

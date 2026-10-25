@@ -59,6 +59,7 @@ data class RelayInput(
     val hotspotBand: String? = null,
     /** The saved shared Wi-Fi this phone is on now; null when it is on none of them. */
     val sharedWifiSsid: String? = null,
+    val overlayNeeded: Boolean = false,
 )
 
 enum class WebPhase { OFF, STARTING, LISTENING, FAILED }

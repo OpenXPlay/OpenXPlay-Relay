@@ -19,8 +19,7 @@ class WirelessOutputPolicyTest {
         for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
             for (choice in listOf(null, receiver)) for (picture in DlnaPicture.entries)
                 for (carlink in listOf(false, true)) for (both in listOf(false, true)) {
-                    val settings = base.copy(dlnaOutput = dlna, dlnaRenderer = choice, dlnaPicture = picture,
-                        miracastOutput = miracast, carlinkOutput = carlink, bothOutputs = both)
+                    val settings = base.copy(outputs = OutputSelection.legacy(carlink, both, dlna, miracast), dlnaRenderer = choice, dlnaPicture = picture)
                     assertEquals(if (dlna && choice != null) DlnaOutputPlan(choice.udn, if (picture == DlnaPicture.P720) WirelessPictureSize(1280, 720) else WirelessPictureSize(1920, 1080)) else null,
                         WirelessOutputPolicy.dlna(settings))
                     assertEquals(if (miracast) MiracastPicture() else null, WirelessOutputPolicy.miracast(settings))
@@ -28,7 +27,7 @@ class WirelessOutputPolicyTest {
     }
 
     @Test fun resolvedSizeAndCustomPictureChangesRebuildOnlyTheAffectedOutput() {
-        val settings = base.copy(dlnaOutput = true, dlnaRenderer = receiver, miracastOutput = true)
+        val settings = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.DLNA, RelayOutput.MIRACAST), dlnaRenderer = receiver)
         val first = WirelessOutputPolicy.dlna(settings)
         val dlna = RetiringOutputPolicy<DlnaOutputPlan>()
         assertEquals(OutputChange.ADD, dlna.update(first))
@@ -48,11 +47,11 @@ class WirelessOutputPolicyTest {
     }
 
     @Test fun onlyUdnAndPictureChangesRebuildDlna() {
-        val settings = base.copy(dlnaOutput = true, dlnaRenderer = receiver)
+        val settings = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.DLNA), dlnaRenderer = receiver)
         val policy = RetiringOutputPolicy<DlnaOutputPlan>()
         assertEquals(OutputChange.ADD, policy.update(WirelessOutputPolicy.dlna(settings)))
         for (same in listOf(settings, settings.copy(dlnaRenderer = receiver.copy(name = "New name")),
-            settings.copy(miracastOutput = true, carlinkOutput = true, frameRate = FrameRatePreference.FPS_60)))
+            settings.copy(outputs = settings.outputs + setOf(RelayOutput.CARLINK, RelayOutput.MIRACAST), frameRate = FrameRatePreference.FPS_60)))
             assertEquals(OutputChange.KEEP, policy.update(WirelessOutputPolicy.dlna(same)))
         for (changed in listOf(settings.copy(dlnaPicture = DlnaPicture.P1080),
             settings.copy(dlnaRenderer = receiver.copy(udn = "uuid:new")))) {

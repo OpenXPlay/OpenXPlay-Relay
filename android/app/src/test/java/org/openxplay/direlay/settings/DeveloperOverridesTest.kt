@@ -45,11 +45,11 @@ class DeveloperOverridesTest {
     @Test fun effectiveSettingsUseTheApplySwitchAndPreserveEveryUngovernedField() {
         RelaySettingsStore(context).use { store ->
             val base = store.load().copy(
+                outputs = setOf(RelayOutput.BROWSER, RelayOutput.CARLINK),
                 connectionMode = ConnectionMode.USB, mfiTarget = MfiTarget.I2C, i2cPath = "/dev/i2c-3",
                 remoteServer = "https://mfi.example.test", remoteToken = "token",
                 display = DisplayProfile(1280, 720, 160), displayMode = DisplayMode.FIXED,
-                autoStartOnBoot = true, autoStartWhenReady = false,
-                carlinkOutput = true, carlinkDeviceName = "My car", bothOutputs = true,
+                autoStartOnBoot = true, autoStartWhenReady = false, carlinkDeviceName = "My car",
                 vehicleInformation = true, carlinkAutoReconnect = false, iphoneAddress = "phone",
                 wirelessNetwork = WirelessNetworkSettings(channel = 6, security = ManualHotspotSecurity.WPA2),
                 plugins = true, pluginsEnabled = listOf("test"), viewAreas = false, car = CarSelection("xpeng", model = "g6", year = "g6-2023"),
@@ -128,7 +128,7 @@ class DeveloperOverridesTest {
             val settings = store.load()
             assertFalse(relay.getBoolean("developerMode", false))
             assertEquals(DeveloperOverrides(), store.developerOverrides.value)
-            assertTrue(settings.bothOutputs && settings.vehicleInformation)
+            assertTrue(settings.browserOutput && settings.carlinkOutput && settings.vehicleInformation)
         }
     }
 
@@ -321,7 +321,7 @@ class DeveloperOverridesTest {
     @Test fun editorPublishesNormalSettingsAndWindowFitChoicesTogetherAndRejectsInvalidSettings() {
         RelaySettingsStore(context).use { store ->
             val base = store.awaitSnapshot()
-            val next = base.copy(autoStartOnBoot = true, carlinkOutput = true)
+            val next = base.copy(outputs = setOf(RelayOutput.CARLINK), autoStartOnBoot = true)
             store.save(next, chosen)
             assertEquals(chosen.effectiveSettings(next), store.snapshot.value)
             assertEquals(chosen, store.developerOverrides.value)

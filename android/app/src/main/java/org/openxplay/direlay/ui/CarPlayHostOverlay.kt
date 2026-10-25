@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
 import org.openxplay.direlay.RelayActivity
+import org.openxplay.direlay.miracast.MiracastSystem
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.relay.PathLocal
 import org.openxplay.direlay.relay.RelayRuntime
@@ -53,7 +54,7 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
 private fun RelayRuntime.overlaySnapshot(activity: ComponentActivity, wifi: String?, name: String?, version: String): HostOverlaySnapshot? {
     val settings = settingsStore.snapshot.value ?: return null
     val wireless = settingsStore.wireless(settings)
-    val carlink = settings.carlinkOutput || settings.bothOutputs
+    val carlink = settings.carlinkOutput
     val required = StartupPermissions.required(Build.VERSION.SDK_INT, wireless, settings.wirelessNetwork.choice.mode,
         AirPlayPersistence.loadLocationReportingEnabled(activity), carlink)
     val identity = settings.mfiTarget != MfiTarget.LOCAL || identityStore.status() == MaterialStatus.Installed
@@ -62,6 +63,7 @@ private fun RelayRuntime.overlaySnapshot(activity: ComponentActivity, wifi: Stri
         permissionsGranted = required.count { activity.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED },
         permissionsTotal = required.size,
         vpnConsentNeeded = needsVpnConsent(settings) && VpnService.prepare(activity) != null,
+        overlayNeeded = settings.miracastOutput && !MiracastSystem.canDrawOverlays(activity),
         identity = if (identity) IdentityState.READY else IdentityState.MISSING,
         identityLabel = if (!identity) null else activity.getString(when (settings.mfiTarget) {
             MfiTarget.LOCAL -> R.string.direlay_installed
@@ -73,7 +75,7 @@ private fun RelayRuntime.overlaySnapshot(activity: ComponentActivity, wifi: Stri
         nowMillis = System.currentTimeMillis(), version = version, setupValid = valid))
     return HostOverlaySnapshot(input, headUnitUrls(), settings.localPreview,
         homeProblems(visibleHomeFailures(settings, status.failures), carlink && carlinkFailed,
-            carlinkDetail, carlinkError, serverReason.takeIf { !settings.carlinkOutput || settings.bothOutputs },
+            carlinkDetail, carlinkError, serverReason.takeIf { settings.browserOutput },
             serverState, networkReadiness(settings, networkReadings), teslaFailure, carlinkErrorTrail,
             carlinkErrorAt, carPlayDiagnostics.error, dlnaFailure.takeIf { settings.dlnaOutput },
             miracastFailure.takeIf { settings.miracastOutput }))
