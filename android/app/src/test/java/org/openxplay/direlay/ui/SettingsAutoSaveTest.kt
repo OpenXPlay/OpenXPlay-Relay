@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -11,7 +12,7 @@ import org.openxplay.direlay.R
 
 class SettingsAutoSaveTest {
     private val initial = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
+        FrameRatePreference.AUTO, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
     @Test fun teslaEditsAreSilentAndInvalidAddressesBelongToTheCarPage() {
         val edits = TeslaBrowserMode.entries.map { initial.copy(teslaBrowser = it) } + listOf(
             initial.copy(teslaVirtualAddress = "169.254.88.2"), initial.copy(teslaPublicAddress = "169.254.88.3"),
@@ -105,13 +106,13 @@ class SettingsAutoSaveTest {
         assertEquals(SettingsNotice.SILENT, settingsNotice(initial, initial, true))
         for (value in listOf(initial.copy(autoStartWhenReady = false), initial.copy(autoStartOnBoot = true),
             initial.copy(localPreview = true), initial.copy(playCarPlayAudio = true), initial.copy(webPort = 9443),
-            initial.copy(carlinkDeviceName = "Car"), initial.copy(carlinkOutput = true))) {
+            initial.copy(frameRate = FrameRatePreference.FPS_60), initial.copy(carlinkDeviceName = "Car"), initial.copy(carlinkOutput = true))) {
             assertEquals(SettingsNotice.SILENT, settingsNotice(initial, value, false))
         }
         for (connected in listOf(false, true)) {
             assertEquals(SettingsNotice.SILENT, settingsNotice(initial, initial.copy(carlinkReconnectOnResize = true), connected))
         }
-        for (value in listOf(initial.copy(connectionMode = ConnectionMode.USB), initial.copy(fps = 60),
+        for (value in listOf(initial.copy(connectionMode = ConnectionMode.USB),
             initial.copy(display = DisplayProfile(800, 480, 160)), initial.copy(mfiTarget = MfiTarget.USB_CH341),
             initial.copy(i2cPath = "/dev/i2c-2"), initial.copy(remoteServer = "https://example.test"),
             initial.copy(remoteToken = "new"), initial.copy(carBluetoothAudio = false), initial.copy(wirelessNetwork = initial.wirelessNetwork.copy(sharedWifiNetworks = listOf(SharedWifiNetwork("Car", "")))))) {
@@ -135,7 +136,7 @@ class SettingsAutoSaveTest {
 
     @Test fun onlyDeferredChangesHaveNoticesAndRunningSessionsOfferAnAction() {
         assertNull(settingsFeedback(initial, initial.copy(autoStartOnBoot = true), false, true))
-        val next = initial.copy(fps = 60)
+        val next = initial.copy(connectionMode = ConnectionMode.USB)
         assertEquals(SettingsFeedback(R.string.settings_next_start), settingsFeedback(initial, next, false, false))
         assertEquals(SettingsFeedback(R.string.settings_next_start, R.string.settings_restart), settingsFeedback(initial, next, false, true))
         assertEquals(SettingsFeedback(R.string.vehicle_reconnect, R.string.vehicle_reconnect_action),

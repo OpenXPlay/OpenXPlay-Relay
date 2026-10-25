@@ -28,6 +28,9 @@ import com.shilapi.xcertplay.orchestration.MfiTarget
 import com.shilapi.xcertplay.AirPlayPersistence
 import org.openxplay.direlay.bridge.DiPlayInput
 import org.openxplay.direlay.video.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.stream.core.VideoCodec
 import org.openxplay.stream.core.DecoderSupport
 import org.openxplay.stream.core.VideoCodecDecision
@@ -89,9 +92,12 @@ class RelayRuntime(private val context: Context,
         Log.i("OpenXPlay Relay", "Automatic start resumed: new boot")
     }
     val autoStartSessions = AutoStartSessions(context, autoStartGate, autoStartBoot, autoStartStorage)
-    @Volatile private var negotiatedFps = 60
+    private val negotiatedFps = MutableStateFlow<Double?>(null)
+    val negotiatedFrameRate = negotiatedFps.asStateFlow()
+    private val appliedFps = MutableStateFlow(60)
+    val appliedFrameRate = appliedFps.asStateFlow()
     val input = DiPlayInput(
-        applyFrameRate = { fps -> negotiatedFps = fps; AirPlayPersistence.saveFps(context, fps) },
+        applyFrameRate = ::applyFrameRate,
         restartCarPlay = { setup.execute { sessionActions.action("restart", manual = false) } },
         automaticHevc = { settingsStore.snapshot.value?.videoCodec == VideoCodecSetting.AUTO && appliedVideoDecision.codec == VideoCodec.H265 },
     )
@@ -122,7 +128,23 @@ class RelayRuntime(private val context: Context,
         traceDirectory = { if (settingsStore.snapshot.value?.carlinkTrace == true) context.getExternalFilesDir("carlink-trace") else null }) }
     @Volatile private var configuredPlugins: Pair<Boolean, List<String>> = false to emptyList()
 
-    fun prepareCarPlayFrameRate() { AirPlayPersistence.saveFps(context, negotiatedFps) }
+    private fun requestedFrameRate() = CarPlayFrameRate.requested(
+        settingsStore.awaitSnapshot().frameRate, negotiatedFps.value)
+
+    private fun applyFrameRate(negotiated: Double) {
+        negotiatedFps.value = negotiated
+        // A new output negotiation affects the next start, not the running session's displayed rate.
+        AirPlayPersistence.saveFps(context, requestedFrameRate())
+    }
+
+    fun prepareCarPlayFrameRate() {
+        val settings = settingsStore.awaitSnapshot()
+        val requested = CarPlayFrameRate.requested(settings.frameRate, negotiatedFps.value)
+        AirPlayPersistence.saveFps(context, requested)
+        appliedFps.value = requested
+        observedFrameRateSetting = settings.frameRate
+        immediateFrameRateChange = false
+    }
     private fun redactFailureMessage(text: String): String {
         val settings = settingsStore.snapshot.value
         val secrets = buildList {
@@ -204,16 +226,16 @@ class RelayRuntime(private val context: Context,
         loadRememberedDisplay()
         val settings = settingsStore.snapshot.value ?: return@synchronized CarPlayScreen(CarDisplayFit.default, "default")
         checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null,
-            savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car)))
+            savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car)))
     }
 
     fun wirelessPicture(settings: RelaySettings): WirelessPictureResolution = synchronized(this) {
         loadRememberedDisplay()
-        WirelessPicturePolicy.resolve(settings, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car))
+        WirelessPicturePolicy.resolve(settings, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car))
     }
 
     private fun planningDisplay(settings: RelaySettings) = planningDisplay(
-        displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from), savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car))
+        displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from), savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car))
 
     val sharedWifiSelection = org.openxplay.direlay.settings.SharedWifiSelection()
     private val sharedWifiConnectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
@@ -328,7 +350,7 @@ class RelayRuntime(private val context: Context,
         loadRememberedDisplay()
         val display = if (screenPrepared) preparedPlanningDisplay else planningDisplay(settings)
         viewAreaPreference = display?.preferred
-        val areas = planHeadUnitAreas(width, height, display, windowRecords.snapshot(), carModels.model(settings.car))
+        val areas = planHeadUnitAreas(width, height, display, windowRecords.snapshot(), carModels.year(settings.car))
         return areas.also { declaredViewAreas = it; publishArea(0) }
     }
     private val displayRefit = DisplayRefit()
@@ -345,7 +367,7 @@ class RelayRuntime(private val context: Context,
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
         preparedPlanningDisplay = planningDisplay(settings)
-        return startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car)).also {
+        return startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car)).also {
             settingsStore.prepareDisplay(it?.profile, settings.carplayScreenWidth)
             carPlayScreenWidthMm = AirPlayPersistence.loadWidthPhysicalMm(context)
             appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth, preparedPlanningDisplay?.screen) }
@@ -367,7 +389,7 @@ class RelayRuntime(private val context: Context,
     val carPlayScreenSummary: Pair<String, String> get() {
         val settings = settingsStore.snapshot.value
         val selected = if (screenPrepared) carPlayScreen else settings?.let {
-            startupCarPlayScreen(it, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, it.car), carModels.model(it.car))
+            startupCarPlayScreen(it, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, it.car), carModels.year(it.car))
         }
         if (selected != null) return "${selected.profile.width} × ${selected.profile.height} · ${selected.profile.density} dpi" to selected.source
         val metrics = context.resources.displayMetrics
@@ -686,9 +708,11 @@ class RelayRuntime(private val context: Context,
         private set
     @Volatile var appliedVideoDecision = videoDecision
         private set
-    @Volatile private var codecRestartPending = false
+    @Volatile private var sessionRestartPending = false
     @Volatile private var observedCodecSetting: VideoCodecSetting? = null
     @Volatile private var immediateCodecChange = false
+    @Volatile private var observedFrameRateSetting: FrameRatePreference? = null
+    @Volatile private var immediateFrameRateChange = false
     @Volatile private var carlinkDecoders: List<DecoderSupport> = emptyList()
     private var hevcFailed = false
     private var rememberedCodec: VideoCodec? = null
@@ -713,10 +737,15 @@ class RelayRuntime(private val context: Context,
             displayPolicy.activeOutputs, carlinkRequiresAvc(carlinkConnected, carlinkDecoders), hevcFailed, rememberedCodec,
             carlinkHevc = carlinkConnected && VideoCompatibility.hasHevc(carlinkDecoders))
     }
-    private fun refreshVideoCodec() {
+    private fun refreshVideoSettings() {
         val setting = settingsStore.snapshot.value?.videoCodec ?: return
         if (observedCodecSetting != null && observedCodecSetting != setting) immediateCodecChange = true
         observedCodecSetting = setting
+        val frameRate = settingsStore.snapshot.value?.frameRate ?: FrameRatePreference.AUTO
+        if (observedFrameRateSetting != null && observedFrameRateSetting != frameRate) immediateFrameRateChange = true
+        observedFrameRateSetting = frameRate
+        val requestedFps = CarPlayFrameRate.requested(frameRate, negotiatedFps.value)
+        if (requestedFps == appliedFps.value) immediateFrameRateChange = false
         val next = currentVideoCodecDecision()
         if (setting == VideoCodecSetting.AUTO && next.reason != "remembered-codec" && next.reason != "no-main-screen-output" && next.codec != rememberedCodec) {
             rememberedCodec = next.codec
@@ -728,11 +757,12 @@ class RelayRuntime(private val context: Context,
             Log.i("OpenXPlay Relay", "video codec ${next.codec} reason=${next.reason}")
         }
         if (autoStartSessions.tracker.running && !sessionActions.restarting && !startRequest.pending &&
-            !codecRestartPending && next.codec != appliedVideoDecision.codec &&
-            (immediateCodecChange || codecRestarts.allow(android.os.SystemClock.elapsedRealtime()))) {
-            codecRestartPending = true
-            if (sessionActions.action("restart", manual = false) != null) codecRestartPending = false
-            else immediateCodecChange = false
+            !sessionRestartPending && ((immediateFrameRateChange && requestedFps != appliedFps.value) ||
+                (next.codec != appliedVideoDecision.codec &&
+                    (immediateCodecChange || codecRestarts.allow(android.os.SystemClock.elapsedRealtime()))))) {
+            sessionRestartPending = true
+            if (sessionActions.action("restart", manual = false) != null) sessionRestartPending = false
+            else { immediateCodecChange = false; immediateFrameRateChange = false }
         }
         if (next.codec == appliedVideoDecision.codec) immediateCodecChange = false
     }
@@ -742,7 +772,7 @@ class RelayRuntime(private val context: Context,
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
         val settings = settingsStore.snapshot.value ?: return
-        val desiredScreen = startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.model(settings.car))
+        val desiredScreen = startupCarPlayScreen(settings, displayPolicy.carDisplay, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car))
         val desired = desiredScreen?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth,
             displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from)?.screen?.let { screen ->
                 if (!carlinkScreenChanged(screen, appliedDisplay?.screen, carlinkPrimary(), carlinkMatchingArea(settings)))
@@ -752,7 +782,7 @@ class RelayRuntime(private val context: Context,
                 settings.displayMode, appliedDisplay, desired, displayPolicy.primaryDisplay?.viewport != null, settings.viewAreas || declaredViewAreas.isNotEmpty()) &&
             !sessionActions.restarting && !startRequest.pending) sessionActions.action("restart", manual = false)
     }
-    private val displayTick = setup.scheduleWithFixedDelay({ refreshDisplay(); refreshVideoCodec() }, 0, 250, TimeUnit.MILLISECONDS)
+    private val displayTick = setup.scheduleWithFixedDelay({ refreshDisplay(); refreshVideoSettings() }, 0, 250, TimeUnit.MILLISECONDS)
 
     private val vehicleTick = setup.scheduleWithFixedDelay({
         try {
@@ -773,7 +803,7 @@ class RelayRuntime(private val context: Context,
             immediateCodecChange = false
             videoDecision = decision
             appliedVideoDecision = decision
-            codecRestartPending = false
+            sessionRestartPending = false
             AirPlayPersistence.saveHevcEnabled(context, decision.codec == VideoCodec.H265)
             Log.i("OpenXPlay Relay", "video codec ${decision.codec} reason=${decision.reason}")
         }
@@ -1173,7 +1203,7 @@ class RelayRuntime(private val context: Context,
             val decoders = caps?.decoders.orEmpty()
             if (carlinkDecoders != decoders) {
                 carlinkDecoders = decoders
-                try { setup.execute { refreshVideoCodec() } }
+                try { setup.execute { refreshVideoSettings() } }
                 catch (_: java.util.concurrent.RejectedExecutionException) { }
             }
             Log.i("DiRelayCarlink", "video decoders=${decoders.joinToString { it.codecString }}")

@@ -13,7 +13,10 @@ data class ScreenDataKey(val width: Int, val height: Int, val densityDpi: Int) {
     fun json() = JSONObject().put("width", width).put("height", height).put("densityDpi", densityDpi)
 }
 data class CarScreenData(val screen: ScreenDataKey, val records: List<WindowSizeRecord>)
-data class CarModel(val id: String, val names: Map<String, String>, val screens: List<CarScreenData>) {
+data class CarYear(val id: String, val names: Map<String, String>, val screens: List<CarScreenData>) {
+    fun name(locale: Locale) = localizedCarName(names, locale)
+}
+data class CarModel(val id: String, val names: Map<String, String>, val years: List<CarYear>) {
     fun name(locale: Locale) = localizedCarName(names, locale)
 }
 data class CarBrand(val id: String, val names: Map<String, String>, val models: List<CarModel>) {
@@ -27,33 +30,38 @@ fun localizedCarName(names: Map<String, String>, locale: Locale): String {
 class CarModels(val brands: List<CarBrand>) {
     fun brand(car: CarSelection) = brands.firstOrNull { it.id == car.brand }
     fun model(car: CarSelection) = brand(car)?.models?.firstOrNull { it.id == car.model }
+    fun year(car: CarSelection) = model(car)?.years?.firstOrNull { it.id == car.year }
     companion object {
         fun parse(text: String): CarModels {
             fun names(json: JSONObject): Map<String, String> = json.keys().asSequence().associateWith { json.getString(it) }
                 .also { require(!it["en"].isNullOrBlank()) }
             val root = JSONObject(text)
-            require(root.getInt("format") == 1)
+            require(root.getInt("format") == 2)
             val brands = root.getJSONArray("brands")
             return CarModels((0 until brands.length()).map { b ->
                 val brand = brands.getJSONObject(b)
                 val models = brand.getJSONArray("models")
                 CarBrand(brand.getString("id"), names(brand.getJSONObject("names")), (0 until models.length()).map { m ->
                     val model = models.getJSONObject(m)
-                    val screens = model.getJSONArray("screens")
-                    CarModel(model.getString("id"), names(model.getJSONObject("names")), (0 until screens.length()).map { s ->
-                        val data = screens.getJSONObject(s)
-                        val screen = data.getJSONObject("screen").let { ScreenDataKey(it.getInt("width"), it.getInt("height"), it.getInt("densityDpi")) }
-                        require(listOf(screen.width, screen.height, screen.densityDpi).all { it in 1..32768 })
-                        val records = listOf(true, false).flatMap { full ->
-                            val rows = data.getJSONArray(if (full) "fullscreen" else "windowed")
-                            (0 until rows.length()).map { i ->
-                                val row = rows.getJSONObject(i)
-                                val width = row.getInt("width"); val height = row.getInt("height"); val count = row.getLong("count")
-                                require(width in 1..32768 && height in 1..32768 && count > 0)
-                                WindowSizeRecord(screen.width, screen.height, screen.densityDpi, width, height, full, count, 0)
+                    val years = model.getJSONArray("years")
+                    CarModel(model.getString("id"), names(model.getJSONObject("names")), (0 until years.length()).map { y ->
+                        val year = years.getJSONObject(y)
+                        val screens = year.getJSONArray("screens")
+                        CarYear(year.getString("id"), names(year.getJSONObject("names")), (0 until screens.length()).map { s ->
+                            val data = screens.getJSONObject(s)
+                            val screen = data.getJSONObject("screen").let { ScreenDataKey(it.getInt("width"), it.getInt("height"), it.getInt("densityDpi")) }
+                            require(listOf(screen.width, screen.height, screen.densityDpi).all { it in 1..32768 })
+                            val records = listOf(true, false).flatMap { full ->
+                                val rows = data.getJSONArray(if (full) "fullscreen" else "windowed")
+                                (0 until rows.length()).map { i ->
+                                    val row = rows.getJSONObject(i)
+                                    val width = row.getInt("width"); val height = row.getInt("height"); val count = row.getLong("count")
+                                    require(width in 1..32768 && height in 1..32768 && count > 0)
+                                    WindowSizeRecord(screen.width, screen.height, screen.densityDpi, width, height, full, count, 0)
+                                }
                             }
-                        }
-                        CarScreenData(screen, records)
+                            CarScreenData(screen, records)
+                        })
                     })
                 })
             })
@@ -71,8 +79,8 @@ object CarScreenShare {
         fun rows(full: Boolean) = JSONArray().apply { sizes(records.filter(screen::matches), full).forEach {
             put(JSONObject().put("width", it.width).put("height", it.height).put("count", it.count))
         } }
-        val json = JSONObject().put("format", 1).put("app", version).put("brand", car.brand).put("brandText", car.brandText)
-            .put("model", car.model).put("modelText", car.modelText).put("screen", screen.json())
+        val json = JSONObject().put("format", 2).put("app", version).put("brand", car.brand).put("brandText", car.brandText)
+            .put("model", car.model).put("modelText", car.modelText).put("year", car.year).put("yearText", car.yearText).put("screen", screen.json())
             .put("fullscreen", rows(true)).put("windowed", rows(false))
         receiver?.optString("userAgent")?.takeIf { it.isNotEmpty() }?.let { json.put("userAgent", it) }
         // Copy only the known capability fields, including nested MediaCapabilities results.

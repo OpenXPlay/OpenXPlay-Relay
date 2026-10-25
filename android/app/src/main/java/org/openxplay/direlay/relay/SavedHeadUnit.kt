@@ -37,10 +37,12 @@ class SavedHeadUnitStore(private val preferences: SharedPreferences) {
             preferences.getBoolean("wholeScreen", false), preferences.getInt("maxMacroblocks", 0).takeIf { it > 0 },
             if (preferences.contains("carBrand")) CarSelection(preferences.getString("carBrand", "").orEmpty(),
                 preferences.getString("carBrandText", "").orEmpty(), preferences.getString("carModel", "").orEmpty(),
-                preferences.getString("carModelText", "").orEmpty()) else null)
+                preferences.getString("carModelText", "").orEmpty(), preferences.getString("carYear", "").orEmpty(),
+                preferences.getString("carYearText", "").orEmpty()).normalized() else null)
     }.getOrNull()
     fun save(value: SavedHeadUnit) {
         val report = checkNotNull(value.display)
+        val car = value.car?.normalized()
         fun flag(value: Boolean?) = when (value) { true -> 1; false -> 0; null -> -1 }
         preferences.edit().putInt("width", value.canvas.width).putInt("height", value.canvas.height).putInt("density", value.canvas.density)
             .putInt("screenWidth", report.screen.width).putInt("screenHeight", report.screen.height).putInt("screenDensity", report.screen.densityDpi)
@@ -49,20 +51,23 @@ class SavedHeadUnitStore(private val preferences: SharedPreferences) {
             } }.putInt("fullscreen", flag(report.fullscreen)).putInt("fullscreenPreferred", flag(report.preferred))
             .putString("resolution", value.resolution?.name).putBoolean("wholeScreen", value.wholeScreen)
             .putInt("maxMacroblocks", value.maxMacroblocks ?: 0).apply {
-                if (value.car == null) { remove("carBrand"); remove("carBrandText"); remove("carModel"); remove("carModelText") }
-                else putString("carBrand", value.car.brand).putString("carBrandText", value.car.brandText)
-                    .putString("carModel", value.car.model).putString("carModelText", value.car.modelText)
+                if (car == null) {
+                    remove("carBrand"); remove("carBrandText"); remove("carModel"); remove("carModelText"); remove("carYear"); remove("carYearText")
+                }
+                else putString("carBrand", car.brand).putString("carBrandText", car.brandText)
+                    .putString("carModel", car.model).putString("carModelText", car.modelText)
+                    .putString("carYear", car.year).putString("carYearText", car.yearText)
             }.apply()
     }
     fun clear() { preferences.edit().clear().apply() }
 }
 
-fun planningDisplay(live: HeadUnitDisplay?, saved: SavedHeadUnit?, model: CarModel?): HeadUnitDisplay? =
-    live ?: saved?.display ?: model?.screens?.firstOrNull()?.let(HeadUnitDisplay::builtIn)
+fun planningDisplay(live: HeadUnitDisplay?, saved: SavedHeadUnit?, year: CarYear?): HeadUnitDisplay? =
+    live ?: saved?.display ?: year?.screens?.firstOrNull()?.let(HeadUnitDisplay::builtIn)
 
-fun startupCarPlayScreen(settings: RelaySettings, live: DisplayProfile?, saved: SavedHeadUnit?, model: CarModel?): CarPlayScreen? {
+fun startupCarPlayScreen(settings: RelaySettings, live: DisplayProfile?, saved: SavedHeadUnit?, year: CarYear?): CarPlayScreen? {
     val whole = settings.viewAreas && settings.displayMode == DisplayMode.AUTOMATIC
-    val builtIn = model?.screens?.firstOrNull()?.let { fitDisplay(HeadUnitDisplay.builtIn(it).display(), settings.carplayResolution, wholeScreen = true) }
+    val builtIn = year?.screens?.firstOrNull()?.let { fitDisplay(HeadUnitDisplay.builtIn(it).display(), settings.carplayResolution, wholeScreen = true) }
     val remembered = saved?.takeIf { it.display != null || builtIn == null }?.let {
         if (it.display != null && (it.resolution != null || settings.carplayResolution == CarPlayResolution.NATIVE) && (it.resolution != settings.carplayResolution || it.wholeScreen != whole))
             fitDisplay(it.display.display(), settings.carplayResolution, it.maxMacroblocks, whole) else it.canvas
@@ -70,11 +75,11 @@ fun startupCarPlayScreen(settings: RelaySettings, live: DisplayProfile?, saved: 
     return resolveCarPlayScreen(settings.displayMode, settings.display, live, remembered, builtIn)
 }
 
-fun planHeadUnitAreas(width: Int, height: Int, display: HeadUnitDisplay?, local: List<WindowSizeRecord>, model: CarModel?): List<ViewAreaSize> {
-    val records = display?.let { ViewAreaPlanner.mergeRecords(local, model?.screens.orEmpty(), it.screen) }.orEmpty()
+fun planHeadUnitAreas(width: Int, height: Int, display: HeadUnitDisplay?, local: List<WindowSizeRecord>, year: CarYear?): List<ViewAreaSize> {
+    val records = display?.let { ViewAreaPlanner.mergeRecords(local, year?.screens.orEmpty(), it.screen) }.orEmpty()
     return ViewAreaPlanner.plan(width, height, records, display?.visible, display?.fullscreen)
 }
 
 /** Legacy records cannot identify a selected car; retain them only for the unnamed configuration. */
 fun savedHeadUnitForCar(saved: SavedHeadUnit?, car: CarSelection): SavedHeadUnit? =
-    saved?.takeIf { it.car == car || it.car == null && car == CarSelection() }
+    saved?.takeIf { it.car?.normalized() == car.normalized() || it.car == null && car.normalized() == CarSelection() }

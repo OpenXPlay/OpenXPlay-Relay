@@ -122,10 +122,10 @@ class DiPlayInputTest {
                 assertEquals(ReconfigureResult.RESTART_SESSION, input.reconfigure(config))
                 assertTrue(calls.isEmpty())
                 input.restart(config, sink, authorized = true)
-                assertEquals(listOf("fps:$fps", "restart"), calls)
+                assertEquals(listOf("fps:${fps.toDouble()}", "restart"), calls)
                 calls.clear()
                 input.restart(config, sink, authorized = false)
-                assertEquals(listOf("fps:$fps"), calls)
+                assertEquals(listOf("fps:${fps.toDouble()}"), calls)
             }
         }
     }

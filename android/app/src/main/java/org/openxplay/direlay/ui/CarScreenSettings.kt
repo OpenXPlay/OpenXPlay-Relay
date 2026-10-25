@@ -60,22 +60,37 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         SmallHeading(stringResource(R.string.car_brand))
         val brandIds = listOf("") + brands.map { it.id } + "other"
         Options(listOf(none) + brands.map { it.name(locale) } + other, brandIds.indexOf(car.brand)) {
-            change(draft.copy(car = CarSelection(brand = brandIds[it], model = if (brandIds[it] == "other") "other" else "")))
+            change(draft.copy(car = CarSelection(brand = brandIds[it], model = if (brandIds[it] == "other") "other" else "",
+                year = if (brandIds[it] == "other") "other" else "")))
         }
         if (car.brand == "other") SettingField(stringResource(R.string.car_brand), car.brandText) {
             change(draft.copy(car = car.copy(brandText = CarSelection.cleanText(it))))
         }
         if (car.brand.isNotEmpty()) {
-            SmallHeading(stringResource(R.string.car_model))
             if (car.brand != "other") {
+                SmallHeading(stringResource(R.string.car_model))
                 val choices = models?.brand(car)?.models.orEmpty()
                 val ids = listOf("") + choices.map { it.id } + "other"
                 Options(listOf(none) + choices.map { it.name(locale) } + other, ids.indexOf(car.model)) {
-                    change(draft.copy(car = car.copy(model = ids[it], modelText = "")))
+                    change(draft.copy(car = car.copy(model = ids[it], modelText = "", year = if (ids[it] == "other") "other" else "", yearText = "")))
                 }
             }
             if (car.brand == "other" || car.model == "other") SettingField(stringResource(R.string.car_model), car.modelText) {
                 change(draft.copy(car = car.copy(modelText = CarSelection.cleanText(it))))
+            }
+            if (car.model.isNotEmpty()) {
+                if (car.brand != "other" && car.model != "other") {
+                    SmallHeading(stringResource(R.string.car_year))
+                    val choices = models?.model(car)?.years.orEmpty()
+                    val ids = listOf("") + choices.map { it.id } + "other"
+                    Options(listOf(none) + choices.map { it.name(locale) } + other, ids.indexOf(car.year)) {
+                        change(draft.copy(car = car.copy(year = ids[it], yearText = "")))
+                    }
+                }
+                if (car.brand == "other" || car.model == "other" || car.year == "other")
+                    SettingField(stringResource(R.string.car_year), car.yearText) {
+                        change(draft.copy(car = car.copy(yearText = CarSelection.cleanText(it))))
+                    }
             }
         }
     }
@@ -95,7 +110,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         }
     }
     SettingsGroup("detected", R.drawable.symbol_monitor, IconHue.CAR, stringResource(R.string.car_detected), detected?.let { "${it.screen.width} × ${it.screen.height}" } ?: stringResource(R.string.car_no_screen)) {
-        if (models?.model(car)?.screens?.isNotEmpty() == true) Hint(stringResource(R.string.car_built_in))
+        if (models?.year(car)?.screens?.isNotEmpty() == true) Hint(stringResource(R.string.car_built_in))
         val data = detected
         if (data == null) Text(stringResource(R.string.car_no_screen)) else {
             Text(stringResource(R.string.car_screen_size, data.screen.width, data.screen.height,
@@ -116,7 +131,10 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         val cleaned = car.normalized()
         val brandName = if (cleaned.brand == "other") cleaned.brandText.ifEmpty { other } else models?.brand(cleaned)?.name(locale) ?: none
         val modelName = if (cleaned.model == "other") cleaned.modelText.ifEmpty { other } else models?.model(cleaned)?.name(locale) ?: none
-        val carLine = stringResource(R.string.car_share_identity, brandName, modelName)
+        val yearName = if (cleaned.year == "other") cleaned.yearText.ifEmpty { other } else models?.year(cleaned)?.name(locale) ?: none
+        val carLine = if (listOf(cleaned.brand, cleaned.model, cleaned.year).all { it.isNotEmpty() })
+            stringResource(R.string.car_share_identity, brandName, modelName, yearName)
+        else carSelectionSummary(cleaned, models, locale, none, other)
         val copied = stringResource(R.string.car_copied)
         OutlinedButton(enabled = data != null && version.isNotEmpty(), onClick = {
             if (data != null) {

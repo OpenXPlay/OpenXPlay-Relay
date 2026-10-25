@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.settings
 
+import org.openxplay.stream.core.FrameRatePreference
 import android.app.Application
 import com.shilapi.xcertplay.AirPlayPersistence
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
@@ -30,7 +31,6 @@ class DeveloperOverridesTest {
         carlinkHevcEnabled = true, carlinkHevc = ClinkHevcMode.entries.first { it != ClinkHevcMode.STREAM_ONLY },
         carlinkPictureSizeEnabled = true, carlinkPictureSize = ClinkPictureSize.MODE,
         physicalWidthEnabled = true, physicalWidthOverrideMm = 225,
-        fpsEnabled = true, fps = 55,
         localPreview = true, playCarPlayAudio = true,
         microphoneSourceEnabled = true, microphoneSource = MicrophoneSource.THIS_DEVICE,
         webPortEnabled = true, webPort = 9443,
@@ -52,19 +52,19 @@ class DeveloperOverridesTest {
                 carlinkOutput = true, carlinkDeviceName = "My car", bothOutputs = true,
                 vehicleInformation = true, carlinkAutoReconnect = false, iphoneAddress = "phone",
                 wirelessNetwork = WirelessNetworkSettings(channel = 6, security = ManualHotspotSecurity.WPA2),
-                plugins = true, pluginsEnabled = listOf("test"), viewAreas = false, car = CarSelection("xpeng", model = "g6-2023"),
+                plugins = true, pluginsEnabled = listOf("test"), viewAreas = false, car = CarSelection("xpeng", model = "g6", year = "g6-2023"),
                 videoCodec = VideoCodecSetting.H264, videoStats = VideoStatsWindow.SECONDS_5,
                 carplayResolution = CarPlayResolution.P720, carplayScreenWidth = CarPlayScreenWidth.MM300,
                 carBluetoothAudio = true,
-                fps = 60, localPreview = true, playCarPlayAudio = true, webPort = 10443,
+                frameRate = FrameRatePreference.FPS_60, localPreview = true, playCarPlayAudio = true, webPort = 10443,
                 carlinkDeviceModel = "Base model", microphoneSource = MicrophoneSource.THIS_DEVICE,
                 carlinkTrace = true, carlinkHevc = chosen.carlinkHevc, carlinkPictureSize = ClinkPictureSize.MODE,
             )
             val defaults = base.copy(carlinkTrace = false, carlinkHevc = ClinkHevcMode.STREAM_ONLY,
-                carlinkPictureSize = ClinkPictureSize.WINDOW, fps = 30, localPreview = false,
+                carlinkPictureSize = ClinkPictureSize.WINDOW, localPreview = false,
                 playCarPlayAudio = false, microphoneSource = MicrophoneSource.HEAD_UNIT, webPort = null,
                 carlinkDeviceModel = "Android relay")
-            val enabled = base.copy(fps = 55, webPort = 9443, carlinkDeviceModel = "Test relay")
+            val enabled = base.copy(webPort = 9443, carlinkDeviceModel = "Test relay")
             for (master in listOf(false, true)) {
                 val overrides = chosen.copy(active = master)
                 assertEquals(if (master) enabled else defaults, overrides.effectiveSettings(base))
@@ -76,7 +76,6 @@ class DeveloperOverridesTest {
                 chosen.copy(carlinkTrace = false) to enabled.copy(carlinkTrace = false),
                 chosen.copy(carlinkHevcEnabled = false) to enabled.copy(carlinkHevc = ClinkHevcMode.STREAM_ONLY),
                 chosen.copy(carlinkPictureSizeEnabled = false) to enabled.copy(carlinkPictureSize = ClinkPictureSize.WINDOW),
-                chosen.copy(fpsEnabled = false) to enabled.copy(fps = 30),
                 chosen.copy(localPreview = false) to enabled.copy(localPreview = false),
                 chosen.copy(playCarPlayAudio = false) to enabled.copy(playCarPlayAudio = false),
                 chosen.copy(microphoneSourceEnabled = false) to enabled.copy(microphoneSource = MicrophoneSource.HEAD_UNIT),
@@ -105,7 +104,7 @@ class DeveloperOverridesTest {
             val settings = store.awaitSnapshot()
             assertFalse(relay.getBoolean("developerMode", false))
             assertEquals(chosen, store.developerOverrides.value)
-            assertEquals(55, settings.fps)
+            assertEquals(FrameRatePreference.AUTO, settings.frameRate)
             assertEquals(9443, settings.webPort)
             assertEquals(225, store.physicalWidthOverrideMm)
             assertTrue(settings.carlinkTrace && settings.localPreview && settings.playCarPlayAudio)
@@ -116,7 +115,7 @@ class DeveloperOverridesTest {
             store.saveDeveloperOverrides(chosen.copy(active = false))
         }
         RelaySettingsStore(context).use { store ->
-            assertEquals(30, store.load().fps)
+            assertEquals(FrameRatePreference.AUTO, store.load().frameRate)
             assertFalse(relay.getBoolean("developerMode", false))
             assertEquals(chosen.copy(active = false), store.developerOverrides.value)
         }
@@ -135,7 +134,7 @@ class DeveloperOverridesTest {
 
     @Test fun freshStorePartialEditsPreserveEveryRememberedOverrideAndSwitch() {
         val disabledItems = chosen.copy(carlinkHevcEnabled = false, carlinkPictureSizeEnabled = false,
-            physicalWidthEnabled = false, fpsEnabled = false, microphoneSourceEnabled = false,
+            physicalWidthEnabled = false, microphoneSourceEnabled = false,
             webPortEnabled = false, carlinkDeviceModelEnabled = false)
         for (initial in listOf(chosen, chosen.copy(active = false), disabledItems)) {
             clear()
@@ -166,7 +165,7 @@ class DeveloperOverridesTest {
         AirPlayPersistence.saveFps(context, 55)
         val migrated = DeveloperOverrides(microphoneSourceEnabled = true,
             microphoneSource = MicrophoneSource.THIS_DEVICE, physicalWidthEnabled = true,
-            physicalWidthOverrideMm = 225, fpsEnabled = true, fps = 55)
+            physicalWidthOverrideMm = 225)
         RelaySettingsStore(context).use { store ->
             assertEquals(migrated, store.developerOverrides.value)
             store.saveDeveloperOverrides(store.developerOverrides.value.copy(playCarPlayAudio = true))
@@ -175,7 +174,7 @@ class DeveloperOverridesTest {
             assertEquals(migrated.copy(playCarPlayAudio = true), store.developerOverrides.value)
             val settings = store.load()
             assertEquals(MicrophoneSource.THIS_DEVICE, settings.microphoneSource)
-            assertEquals(55, settings.fps)
+            assertEquals(FrameRatePreference.AUTO, settings.frameRate)
             assertEquals(225, store.physicalWidthOverrideMm)
             assertTrue(settings.playCarPlayAudio)
             assertFalse(relay.getBoolean("developerMode", true))
@@ -227,7 +226,7 @@ class DeveloperOverridesTest {
             assertEquals("Android relay", relay.getString("carlinkDeviceModel", null))
             assertEquals(0, relay.getInt("devPhysicalWidthMm", -1))
             assertEquals(250, AirPlayPersistence.loadWidthPhysicalMm(context))
-            assertEquals(55, relay.getInt("developer.fps", 0))
+            assertFalse(relay.contains("developer.fps"))
             assertEquals(225, relay.getInt("developer.physicalWidthMm", 0))
             assertEquals(chosen.copy(active = false), store.developerOverrides.value)
         }
@@ -236,7 +235,7 @@ class DeveloperOverridesTest {
             assertEquals(chosen.copy(active = false), store.developerOverrides.value)
             store.saveDeveloperOverrides(store.developerOverrides.value.copy(active = true))
             assertEquals(chosen.effectiveSettings(defaults), store.snapshot.value)
-            assertEquals(55, AirPlayPersistence.loadFps(context))
+            assertEquals(30, AirPlayPersistence.loadFps(context))
             assertEquals(225, AirPlayPersistence.loadWidthPhysicalMm(context))
             assertEquals(chosen, store.developerOverrides.value)
         }
@@ -254,7 +253,7 @@ class DeveloperOverridesTest {
                 assertEquals(legacyMode, relay.getBoolean("developerMode", !legacyMode))
             }
             store.saveDeveloperOverrides(chosen.copy(active = false))
-            assertEquals(30, store.load().fps)
+            assertEquals(FrameRatePreference.AUTO, store.load().frameRate)
             assertFalse(store.developerOverrides.value.active)
         }
     }
@@ -263,15 +262,15 @@ class DeveloperOverridesTest {
         RelaySettingsStore(context).use { store ->
             store.saveDeveloperOverrides(chosen)
             val disabled = chosen.copy(carlinkHevcEnabled = false, carlinkPictureSizeEnabled = false,
-                physicalWidthEnabled = false, fpsEnabled = false, microphoneSourceEnabled = false,
+                physicalWidthEnabled = false, microphoneSourceEnabled = false,
                 webPortEnabled = false, carlinkDeviceModelEnabled = false)
             store.saveDeveloperOverrides(disabled)
             assertEquals(disabled, store.developerOverrides.value)
-            assertEquals(30, store.load().fps)
+            assertEquals(FrameRatePreference.AUTO, store.load().frameRate)
             assertNull(store.load().webPort)
             assertEquals(0, store.physicalWidthOverrideMm)
             store.saveDeveloperOverrides(chosen)
-            assertEquals(55, store.load().fps)
+            assertEquals(FrameRatePreference.AUTO, store.load().frameRate)
             assertEquals(9443, store.load().webPort)
             assertEquals(225, store.physicalWidthOverrideMm)
         }
@@ -283,18 +282,18 @@ class DeveloperOverridesTest {
             val choices = when (gate) {
                 0 -> chosen.copy(active = false)
                 else -> chosen.copy(carlinkTrace = false, localPreview = false, playCarPlayAudio = false,
-                    carlinkHevcEnabled = false, carlinkPictureSizeEnabled = false, fpsEnabled = false,
+                    carlinkHevcEnabled = false, carlinkPictureSizeEnabled = false,
                     physicalWidthEnabled = false, microphoneSourceEnabled = false, webPortEnabled = false,
                     carlinkDeviceModelEnabled = false)
             }
             store.saveDeveloperOverrides(choices)
             val effective = store.load()
-            store.save(effective.copy(fps = 60, webPort = 10443, carlinkDeviceModel = "Incoming model",
+            store.save(effective.copy(frameRate = FrameRatePreference.FPS_60, webPort = 10443, carlinkDeviceModel = "Incoming model",
                 carlinkHevc = chosen.carlinkHevc, carlinkPictureSize = chosen.carlinkPictureSize,
                 microphoneSource = MicrophoneSource.THIS_DEVICE, carlinkTrace = true,
                 localPreview = true, playCarPlayAudio = true, autoStartOnBoot = true))
             assertEquals(choices, store.developerOverrides.value)
-            assertEquals(effective.copy(autoStartOnBoot = true), store.load())
+            assertEquals(effective.copy(autoStartOnBoot = true, frameRate = FrameRatePreference.FPS_60), store.load())
             assertEquals(30, AirPlayPersistence.loadFps(context))
         }
     }
@@ -302,12 +301,12 @@ class DeveloperOverridesTest {
     @Test fun ordinarySavesUpdateRememberedValuesOfActiveOverrides() {
         RelaySettingsStore(context).use { store ->
             store.saveDeveloperOverrides(chosen)
-            val incoming = store.load().copy(fps = 60, webPort = null, carlinkDeviceModel = "Changed model",
+            val incoming = store.load().copy(frameRate = FrameRatePreference.FPS_60, webPort = null, carlinkDeviceModel = "Changed model",
                 carlinkHevc = ClinkHevcMode.STREAM_ONLY, carlinkPictureSize = ClinkPictureSize.WINDOW,
                 microphoneSource = MicrophoneSource.HEAD_UNIT, carlinkTrace = false, localPreview = false,
                 playCarPlayAudio = false)
             store.save(incoming)
-            val remembered = chosen.copy(fps = 60, webPort = null, carlinkDeviceModel = "Changed model",
+            val remembered = chosen.copy(webPort = null, carlinkDeviceModel = "Changed model",
                 carlinkHevc = ClinkHevcMode.STREAM_ONLY, carlinkPictureSize = ClinkPictureSize.WINDOW,
                 microphoneSource = MicrophoneSource.HEAD_UNIT, carlinkTrace = false, localPreview = false,
                 playCarPlayAudio = false)
@@ -338,12 +337,7 @@ class DeveloperOverridesTest {
     @Test fun feedbackUsesEffectiveValuesAndIncludesPhysicalWidthChanges() {
         RelaySettingsStore(context).use { store ->
             val base = store.load()
-            val options = DeveloperOverrides(fpsEnabled = true, fps = 55)
-            val enabled = options.effectiveSettings(base)
-            val disabled = options.copy(active = false).effectiveSettings(base)
-            assertEquals(SettingsFeedback(R.string.settings_next_start, R.string.settings_restart),
-                settingsFeedback(enabled, disabled, false, true))
-            assertNull(settingsFeedback(disabled, options.copy(fps = 60).copy(active = false).effectiveSettings(base), false, true))
+            assertNull(settingsFeedback(base, base.copy(frameRate = FrameRatePreference.FPS_55), false, true))
             assertEquals(SettingsFeedback(R.string.settings_next_start, R.string.settings_restart),
                 settingsFeedback(base, base, false, true, 225, 0))
             assertNull(settingsFeedback(base, base, false, true, 0, 0))
