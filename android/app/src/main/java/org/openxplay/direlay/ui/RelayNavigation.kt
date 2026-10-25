@@ -33,7 +33,7 @@ fun homeWindow(widthDp: Int, heightDp: Int) = HomeWindow(windowLayout(widthDp), 
 fun relayRoute(entry: String): String = when {
     entry.startsWith("settings:") -> when (entry.substringAfter(':')) {
         "output" -> "settings/output#output"
-        "car" -> "settings/car"
+        "car" -> "settings/car#car"
         "picture" -> "settings/picture"
         "audio" -> "settings/audio"
         "connection" -> "settings/connection#connection"

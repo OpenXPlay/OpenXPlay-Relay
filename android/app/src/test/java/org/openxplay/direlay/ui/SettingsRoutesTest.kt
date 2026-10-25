@@ -9,7 +9,7 @@ import org.junit.Test
 class SettingsRoutesTest {
     @Test fun everyLegacyFieldLinkOpensItsPageAndParents() {
         val routes = mapOf(
-            "" to "settings", "output" to "settings/output#output", "car" to "settings/car",
+            "" to "settings", "output" to "settings/output#output", "car" to "settings/car#car",
             "picture" to "settings/picture", "audio" to "settings/audio",
             "connection" to "settings/connection#connection", "iphone" to "settings/connection#iphone",
             "network" to "settings/connection/network", "sharedWifi" to "settings/connection/network#sharedWifi",

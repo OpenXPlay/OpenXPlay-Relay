@@ -21,9 +21,26 @@ class SetupPresentationTest {
 
     @Test fun theNetworkStepExistsOnlyForWirelessCarPlay() {
         assertEquals(SetupStep.entries, setupSteps(wireless = true))
-        assertEquals(listOf(SetupStep.OUTPUT, SetupStep.CONNECTION, SetupStep.PREPARE, SetupStep.START), setupSteps(wireless = false))
+        assertEquals(listOf(SetupStep.CAR, SetupStep.OUTPUT, SetupStep.CONNECTION, SetupStep.PREPARE, SetupStep.START), setupSteps(wireless = false))
+        assertEquals(SetupStep.CAR, setupSteps(wireless = true).first())
+        assertEquals(SetupStep.CAR, setupStep("car"))
+        assertEquals("setup:car", relayRoute("setup:car"))
         assertEquals(SetupStep.NETWORK, setupStep("network"))
         assertNull(setupStep(""))
+    }
+
+    @Test fun theCarStepBlocksNextUntilCompleteWithoutBlockingOtherSteps() {
+        val incomplete = listOf(CarSelection(), CarSelection("xpeng"), CarSelection("other", model = "other"),
+            CarSelection("other", "Brand", "other"), CarSelection("xpeng", model = "other", modelText = " "))
+        for (car in incomplete) {
+            assertTrue(setupStepErrors(SetupStep.CAR, emptyMap(), car).isNotEmpty())
+            for (step in SetupStep.entries.filter { it != SetupStep.CAR })
+                assertTrue(setupStepErrors(step, emptyMap(), car).isEmpty())
+        }
+        val complete = listOf(CarSelection("xpeng", model = "g6"), CarSelection("other", "Brand", "other", "Model"),
+            CarSelection("xpeng", model = "other", modelText = "Model"), CarSelection("xpeng", model = "g6", year = "other"))
+        for (car in complete) assertTrue(setupStepErrors(SetupStep.CAR, emptyMap(), car).isEmpty())
+        assertTrue(setupStepErrors(SetupStep.CAR, mapOf("ssid" to R.string.settings_ssid_error), complete.first()).isEmpty())
     }
 
     @Test fun wirelessIsRecommendedWithOrWithoutCarlink() {

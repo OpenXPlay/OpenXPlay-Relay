@@ -25,7 +25,7 @@ import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 
 private data class DetectedCarScreen(val screen: ScreenDataKey, val records: List<WindowSizeRecord>, val receiver: org.json.JSONObject?)
-@Composable fun CarScreenSettings(draft: RelaySettings, runtime: RelayRuntime,
+@Composable fun CarScreenSettings(draft: RelaySettings, runtime: RelayRuntime, target: String = "",
     openTrustedHttps: () -> Unit = {}, openOutput: () -> Unit = {}, change: (RelaySettings) -> Unit) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
@@ -54,45 +54,10 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         footer = stringResource(R.string.car_view_areas_hint)) { change(draft.copy(viewAreas = it)) }
     val none = stringResource(R.string.car_none)
     val other = stringResource(R.string.car_other)
-    val brands = models?.brands.orEmpty()
     val car = draft.car
-    SettingsGroup("car", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.car_and_screen), carSelectionSummary(car, models, locale, none, other), initiallyExpanded = false) {
-        SmallHeading(stringResource(R.string.car_brand))
-        val brandIds = listOf("") + brands.map { it.id } + "other"
-        Options(listOf(none) + brands.map { it.name(locale) } + other, brandIds.indexOf(car.brand)) {
-            change(draft.copy(car = CarSelection(brand = brandIds[it], model = if (brandIds[it] == "other") "other" else "",
-                year = if (brandIds[it] == "other") "other" else "")))
-        }
-        if (car.brand == "other") SettingField(stringResource(R.string.car_brand), car.brandText) {
-            change(draft.copy(car = car.copy(brandText = CarSelection.cleanText(it))))
-        }
-        if (car.brand.isNotEmpty()) {
-            if (car.brand != "other") {
-                SmallHeading(stringResource(R.string.car_model))
-                val choices = models?.brand(car)?.models.orEmpty()
-                val ids = listOf("") + choices.map { it.id } + "other"
-                Options(listOf(none) + choices.map { it.name(locale) } + other, ids.indexOf(car.model)) {
-                    change(draft.copy(car = car.copy(model = ids[it], modelText = "", year = if (ids[it] == "other") "other" else "", yearText = "")))
-                }
-            }
-            if (car.brand == "other" || car.model == "other") SettingField(stringResource(R.string.car_model), car.modelText) {
-                change(draft.copy(car = car.copy(modelText = CarSelection.cleanText(it))))
-            }
-            if (car.model.isNotEmpty()) {
-                if (car.brand != "other" && car.model != "other") {
-                    SmallHeading(stringResource(R.string.car_year))
-                    val choices = models?.model(car)?.years.orEmpty()
-                    val ids = listOf("") + choices.map { it.id } + "other"
-                    Options(listOf(none) + choices.map { it.name(locale) } + other, ids.indexOf(car.year)) {
-                        change(draft.copy(car = car.copy(year = ids[it], yearText = "")))
-                    }
-                }
-                if (car.brand == "other" || car.model == "other" || car.year == "other")
-                    SettingField(stringResource(R.string.car_year), car.yearText) {
-                        change(draft.copy(car = car.copy(yearText = CarSelection.cleanText(it))))
-                    }
-            }
-        }
+    SettingsGroup("car", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.car_and_screen), carSelectionSummary(car, models, locale, none, other), initiallyExpanded = false,
+        targeted = target == "car", error = !car.complete) {
+        CarPicker(car, models, locale) { change(draft.copy(car = it)) }
     }
     if (car.brand == "tesla" || draft.teslaBrowser != TeslaBrowserMode.OFF)
         TeslaBrowserSettings(draft, runtime, openTrustedHttps, openOutput, change)
