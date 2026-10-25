@@ -299,10 +299,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private fun explainPermissions() {
         val missing = missingPermissions()
         AlertDialog.Builder(this).setTitle(R.string.direlay_permissions_title)
-            .setMessage(getString(R.string.direlay_permissions_explanation) + "\n\n" +
-                missing.joinToString("\n") { permissionName(it) } +
-                (if (vpnConsent() != null) "\n" + getString(R.string.direlay_vpn_required) else "") +
-                (if (overlayNeeded()) "\n" + getString(R.string.path_allow_overlay) else ""))
+            .setMessage(getString(R.string.direlay_permissions_explanation) + "\n\n" + (missing.map { permissionName(it) } +
+                listOfNotNull(getString(R.string.direlay_vpn_required).takeIf { vpnConsent() != null },
+                    getString(R.string.path_allow_overlay).takeIf { overlayNeeded() })).joinToString("\n"))
             .setNegativeButton(android.R.string.cancel, null)
             .setNeutralButton(R.string.direlay_android_permissions) { _, _ ->
                 openActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
