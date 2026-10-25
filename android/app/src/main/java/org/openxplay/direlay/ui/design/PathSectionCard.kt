@@ -4,8 +4,6 @@
 package org.openxplay.direlay.ui.design
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -99,8 +97,9 @@ internal fun visibleSectionSteps(section: PathSectionView, showAllSteps: Boolean
             StatusGlyph(section.state, 24.dp, announce = false)
             Symbol(R.drawable.symbol_chevron_down, null, Modifier.size(16.dp).rotate(disclosure))
         }
-        AnimatedVisibility(expanded, enter = expandVertically(relaySpatial(motion)), exit = shrinkVertically(relaySpatial(motion))) {
+        AnimatedVisibility(expanded, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
             Column {
+                InsetDivider()
                 if (foldedSteps.isNotEmpty()) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
                         manuallyExpanded = true
