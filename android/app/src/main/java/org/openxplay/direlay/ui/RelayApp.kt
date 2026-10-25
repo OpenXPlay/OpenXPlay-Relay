@@ -107,7 +107,11 @@ import org.openxplay.direlay.settings.*
                 val result = snackbar.showSnackbar(context.getString(feedback.message),
                     feedback.action?.let { context.getString(it) }, duration = SnackbarDuration.Long)
                 if (result == SnackbarResult.ActionPerformed) {
-                    if (feedback.action == R.string.vehicle_reconnect_action) onReconnect() else onRestart()
+                    if (feedback.action == R.string.vehicle_reconnect_action) onReconnect() else {
+                        if (applied.before.carlinkPictureDefault != applied.after.carlinkPictureDefault)
+                            actions.clearCarlinkPictureTrial(false)
+                        onRestart()
+                    }
                 }
             }
         }

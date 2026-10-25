@@ -91,6 +91,8 @@ data class RelaySettings(
     val dlnaPicture: DlnaPicture = DlnaPicture.P720,
     val wirelessPicture: WirelessPictureMode = WirelessPictureMode.AUTO,
     val wirelessPictureSize: WirelessPictureSize = WirelessPictureSize(),
+    val carlinkPictureSizes: List<PictureSize> = emptyList(),
+    val carlinkPictureDefault: PictureSize? = null,
     val miracastStretch: Boolean = false,
     val experimental: ExperimentalOptions = ExperimentalOptions(),
 ) {
@@ -110,6 +112,7 @@ data class RelaySettings(
         }
         require(org.openxplay.direlay.plugins.RelayPlugins.validIds(pluginsEnabled)) { "error.plugins" }
         wirelessPictureSize.validate()
+        require(normalizedCarlinkPictures() == this) { "Invalid Carlink picture sizes or default." }
         display?.validate()
         require(displayMode != DisplayMode.FIXED || display != null) { "Choose a fixed display profile." }
         require(webPort == null || webPort in 1024..65535) { "Web port must be 1024–65535, or empty for automatic." }
@@ -269,6 +272,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == relay.getString("wirelessPicture", null) } ?: WirelessPictureMode.AUTO,
             wirelessPictureSize = WirelessPictureSize(relay.getInt("wirelessPictureWidth", 1280), relay.getInt("wirelessPictureHeight", 720))
                 .takeIf { runCatching { it.validate() }.isSuccess } ?: WirelessPictureSize(),
+            carlinkPictureSizes = CarlinkPictureSizes.decodeSaved(relay.getString("carlinkPictureSizes", "[]").orEmpty()),
+            carlinkPictureDefault = CarlinkPictureSizes.decodeDefault(relay.getString("carlinkPictureDefault", null)),
             miracastStretch = relay.getBoolean("miracastStretch", false),
             experimental = loadExperimentalOptions(),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
@@ -293,7 +298,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
                 val ids = org.json.JSONArray(relay.getString("pluginsEnabled", "[]"))
                 (0 until ids.length()).map { ids.getString(it) }.also { require(org.openxplay.direlay.plugins.RelayPlugins.validIds(it)) }
             }.getOrDefault(emptyList()),
-        )
+        ).normalizedCarlinkPictures()
     }
 
     private fun loadFrameRate(): FrameRatePreference {
@@ -377,6 +382,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putString("wirelessPicture", settings.wirelessPicture.name)
             .putInt("wirelessPictureWidth", settings.wirelessPictureSize.width)
             .putInt("wirelessPictureHeight", settings.wirelessPictureSize.height)
+            .putString("carlinkPictureSizes", CarlinkPictureSizes.savedJson(settings.carlinkPictureSizes).toString())
+            .putString("carlinkPictureDefault", settings.carlinkPictureDefault?.let { CarlinkPictureSizes.json(it).toString() })
             .putBoolean("miracastStretch", settings.miracastStretch)
             .putBoolean("vehicleInformation", settings.vehicleInformation)
             .putBoolean("carlinkAutoReconnect", settings.carlinkAutoReconnect)

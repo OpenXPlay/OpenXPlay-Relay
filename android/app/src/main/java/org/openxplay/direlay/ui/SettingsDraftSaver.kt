@@ -74,6 +74,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("wirelessPicture", value.wirelessPicture.name)
         putInt("wirelessPictureWidth", value.wirelessPictureSize.width)
         putInt("wirelessPictureHeight", value.wirelessPictureSize.height)
+        putString("carlinkPictureSizes", CarlinkPictureSizes.savedJson(value.carlinkPictureSizes).toString())
+        putString("carlinkPictureDefault", value.carlinkPictureDefault?.let { CarlinkPictureSizes.json(it).toString() })
         putBoolean("miracastStretch", value.miracastStretch)
         putBoolean("experimental.active", value.experimental.active)
         putBoolean("experimental.rememberSubscription", value.experimental.rememberSubscription)
@@ -134,6 +136,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == bundle.getString("wirelessPicture") } ?: base.wirelessPicture,
         wirelessPictureSize = WirelessPictureSize(bundle.getInt("wirelessPictureWidth", base.wirelessPictureSize.width),
             bundle.getInt("wirelessPictureHeight", base.wirelessPictureSize.height)),
+        carlinkPictureSizes = if (bundle.containsKey("carlinkPictureSizes"))
+            CarlinkPictureSizes.decodeSaved(bundle.getString("carlinkPictureSizes").orEmpty()) else base.carlinkPictureSizes,
+        carlinkPictureDefault = if (bundle.containsKey("carlinkPictureDefault"))
+            CarlinkPictureSizes.decodeDefault(bundle.getString("carlinkPictureDefault")) else base.carlinkPictureDefault,
         miracastStretch = bundle.getBoolean("miracastStretch", base.miracastStretch),
         carlinkReconnectOnResize = bundle.getBoolean("carlinkReconnectOnResize", base.carlinkReconnectOnResize),
         videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == bundle.getString("videoCodec") } ?: base.videoCodec,

@@ -25,9 +25,10 @@ class AndroidBootIdentity(private val context: Context) : BootIdentitySource {
 }
 
 /** The service remains observable while the host screen covers the relay activity. */
-class AutoStartSessions(context: Context, val gate: AutoStartGate, boot: BootIdentitySource, storage: AutoStartStorage) {
+class AutoStartSessions(context: Context, val gate: AutoStartGate, boot: BootIdentitySource, storage: AutoStartStorage,
+    stopped: () -> Unit = {}) {
     private val manager = context.getSystemService(ActivityManager::class.java)
-    val tracker = SessionStopTracker(boot, storage) { pause("session stopped") }
+    val tracker = SessionStopTracker(boot, storage) { pause("session stopped"); stopped() }
     fun pause(reason: String) {
         if (!gate.paused) { gate.pause(); Log.i("OpenXPlay Relay", "Automatic start paused: $reason") }
     }

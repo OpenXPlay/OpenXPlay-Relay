@@ -48,6 +48,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         "start" -> start(manual)
         "stop" -> {
             userStopped = true
+            runtime.carlinkPictureStopped()
             networkStart.cancel()
             carFirst.cancel()
             runtime.startRequest.finish()
@@ -98,7 +99,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
                 restarting = false
                 startChecked(manualRestart)
             } else if (System.nanoTime() < deadline) awaitStopped(deadline)
-            else { restarting = false; runtime.status.inputFailed(IllegalStateException("Restart timed out")) }
+            else { restarting = false; runtime.carlinkPictureStopped(); runtime.status.inputFailed(IllegalStateException("Restart timed out")) }
         } }, 250, TimeUnit.MILLISECONDS)
     }
     @Synchronized override fun start(manual: Boolean): String? {

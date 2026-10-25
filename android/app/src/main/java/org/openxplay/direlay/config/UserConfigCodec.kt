@@ -23,6 +23,7 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   dlnaPicture: 720p/1080p.
  * - wirelessPicture: auto/custom; wirelessPictureSize: {width, height}, even pixels in
  *   landscape 640–1920 × 360–1080 (portrait bounds reversed); miracastStretch: boolean.
+ * - carlinkPictureSizes: up to five unique valid custom sizes; carlinkPictureDefault: a preset, saved size or null.
  * - sharedWifiNetworks: up to ten {ssid: 1–32 UTF-8 bytes, password: empty or 8–63 chars}.
  * - iphone: Bluetooth address or null; receiverPort: 1024–65535 or null.
  * - iphoneConnection, mfiTarget, hotspotBand, hotspotSecurity, displayMode, microphoneSource,
@@ -99,6 +100,8 @@ object UserConfigCodec {
         .put("miracastOutput", s.miracastOutput)
         .put("wirelessPicture", wire(s.wirelessPicture))
         .put("wirelessPictureSize", JSONObject().put("width", s.wirelessPictureSize.width).put("height", s.wirelessPictureSize.height))
+        .put("carlinkPictureSizes", CarlinkPictureSizes.savedJson(s.carlinkPictureSizes))
+        .put("carlinkPictureDefault", s.carlinkPictureDefault?.let(CarlinkPictureSizes::json) ?: JSONObject.NULL)
         .put("miracastStretch", s.miracastStretch)
         .put("networkMode", networkWire(s.wirelessNetwork.choice))
         .put("sharedWifiNetworks", org.json.JSONArray().also { a -> s.wirelessNetwork.sharedWifiNetworks.forEach { a.put(JSONObject().put("ssid", it.ssid).put("password", it.passphrase)) } })
@@ -208,6 +211,10 @@ object UserConfigCodec {
             objectValue.keys().asSequence().filter { it !in known }.forEach { ignored.add("$prefix.$it") }
         }
         j.optJSONObject("wirelessPictureSize")?.let { unknown(it, setOf("width", "height"), "wirelessPictureSize") }
+        j.optJSONObject("carlinkPictureDefault")?.let { unknown(it, setOf("width", "height"), "carlinkPictureDefault") }
+        j.optJSONArray("carlinkPictureSizes")?.let { array -> for (index in 0 until array.length())
+            array.optJSONObject(index)?.let { unknown(it, setOf("width", "height"), "carlinkPictureSizes[$index]") }
+        }
         j.optJSONObject("dlnaRenderer")?.let { unknown(it, setOf("udn", "name"), "dlnaRenderer") }
         j.optJSONObject("display")?.let { unknown(it, setOf("width", "height", "density"), "display") }
         j.optJSONObject("car")?.let { unknown(it, setOf("brand", "brandText", "model", "modelText", "year", "yearText"), "car") }
@@ -234,6 +241,8 @@ object UserConfigCodec {
                 "dlnaPicture" -> { val value = enumValue<DlnaPicture>(j.string(key)); s = s.copy(dlnaPicture = value) }
                 "wirelessPicture" -> { val value = enumValue<WirelessPictureMode>(j.string(key)); s = s.copy(wirelessPicture = value) }
                 "wirelessPictureSize" -> { val value = j.getJSONObject(key).let { WirelessPictureSize(it.integer("width"), it.integer("height")).also(WirelessPictureSize::validate) }; s = s.copy(wirelessPictureSize = value) }
+                "carlinkPictureSizes" -> { s = s.copy(carlinkPictureSizes = CarlinkPictureSizes.readSaved(j.getJSONArray(key))) }
+                "carlinkPictureDefault" -> { s = s.copy(carlinkPictureDefault = CarlinkPictureSizes.read(j.opt(key))) }
                 "miracastStretch" -> { val value = j.bool(key); s = s.copy(miracastStretch = value) }
                 "miracastOutput" -> { s = s.copy(outputs = if (j.bool(key)) s.outputs + RelayOutput.MIRACAST else s.outputs - RelayOutput.MIRACAST) }
                 "networkMode" -> { val value = when (j.string(key)) { "device-hotspot" -> WirelessNetworkChoice.PHONE_HOTSPOT; "shared-wifi" -> WirelessNetworkChoice.EXISTING_WIFI; "wifi-direct" -> WirelessNetworkChoice.WIFI_DIRECT; else -> error("invalid") }; s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(choice = value)) }
@@ -337,6 +346,7 @@ object UserConfigCodec {
             if (migrated != null) s = s.copy(frameRate = migrated)
             else listOf("fpsEnabled", "fps").filter(legacy::has).forEach { ignored.add("developer.$it") }
         }
+        s = s.normalizedCarlinkPictures()
         fun check(key: String, test: () -> Unit) { try { test() } catch (_: Exception) { errors.putIfAbsent(key, "invalid") } }
         check("experimental.bluetoothAddress") { require(!s.experimental.invalidAddress) }
         val teslaKey = when (s.teslaBrowser) {

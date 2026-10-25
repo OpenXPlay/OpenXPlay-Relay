@@ -94,7 +94,9 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
         name = sampled(NameView()) { NameView(runtime.publicName.view.value, runtime.publicName.status.value, runtime.publicNameUrl()) },
         iphones = sampled(IphonePickerView()) {
             IphonePickerView(runtime.bondedDevices.read(), runtime.bondedDevices.localName())
-        })
+        },
+        carlinkPicture = combine(runtime.carlinkPictureTrial, runtime.carlinkPictureCanvas, runtime.carlinkPictureEffective,
+            ::CarlinkPictureView).stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), CarlinkPictureView()))
 
     fun refresh() { revision.update { it + 1 } }
     fun action(block: () -> Unit) { viewModelScope.launch(commands) { try { block() } finally { refresh() } } }
@@ -109,7 +111,8 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
                     runtime.reloadSettings()
                     val after = store.awaitSnapshot()
                     AppliedSettings(before, after, settingsFeedback(before, after, runtime.carlinkConnected,
-                        readiness.value?.home?.presentation?.running == true, width, store.physicalWidthOverrideMm))
+                        readiness.value?.home?.presentation?.running == true, width, store.physicalWidthOverrideMm,
+                        runtime.carlinkPictureTrial.value))
                 }.getOrNull()
             } finally { refresh() }
         }
@@ -131,7 +134,9 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
         removeName = { withContext(NonCancellable + commands) { runCatching { runtime.publicName.remove() }.isSuccess.also { refresh() } } },
         useSharedWifi = { ssid -> action { runtime.sharedWifiSelection.use(ssid) } },
         sampleVehicle = { enabled -> action { runtime.setSampleVehicleData(enabled) } },
-        clearVehicleHistory = { action { runtime.clearVehicleHistory() } })
+        clearVehicleHistory = { action { runtime.clearVehicleHistory() } },
+        tryCarlinkPicture = { size -> action { runtime.tryCarlinkPicture(size) } },
+        clearCarlinkPictureTrial = { restart -> action { runtime.clearCarlinkPictureTrial(restart) } })
 
     private val configFiles by lazy {
         org.openxplay.direlay.config.ConfigFiles(this.context, store, runtime.publicName, runtime.tlsStore)

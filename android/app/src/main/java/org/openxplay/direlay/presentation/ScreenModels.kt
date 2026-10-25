@@ -38,7 +38,11 @@ class ScreenSources(val motion: StateFlow<Boolean>, val settings: StateFlow<Sett
     val wirelessPicture: StateFlow<WirelessPictureView>, val areas: StateFlow<ViewAreasView>,
     val debug: StateFlow<CarlinkDebugView>, val developer: StateFlow<DeveloperView>,
     val identity: StateFlow<Int>, val admin: StateFlow<AdminView>, val name: StateFlow<NameView>,
-    val iphones: StateFlow<IphonePickerView>)
+    val iphones: StateFlow<IphonePickerView>, val carlinkPicture: StateFlow<CarlinkPictureView>)
+
+/** The size tried for this connection, the canvas it produced and the size the running connection uses. */
+data class CarlinkPictureView(val trial: CarlinkPictureTrial? = null, val canvas: PictureSize? = null,
+    val effective: CarlinkPictureTrial? = null)
 
 class ScreenActions(val save: suspend (RelaySettings) -> AppliedSettings?,
     val saveDeveloper: suspend (RelaySettings, DeveloperOverrides) -> AppliedSettings?,
@@ -49,4 +53,5 @@ class ScreenActions(val save: suspend (RelaySettings) -> AppliedSettings?,
     val adminEnabled: (Boolean) -> Unit, val resetPassword: suspend () -> Unit,
     val saveName: suspend (PublicNameEdit) -> List<ConfigError>?, val renewName: () -> Unit,
     val removeName: suspend () -> Boolean, val useSharedWifi: (String) -> Unit,
-    val sampleVehicle: (Boolean) -> Unit, val clearVehicleHistory: () -> Unit)
+    val sampleVehicle: (Boolean) -> Unit, val clearVehicleHistory: () -> Unit,
+    val tryCarlinkPicture: (PictureSize?) -> Unit, val clearCarlinkPictureTrial: (restart: Boolean) -> Unit)

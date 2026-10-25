@@ -16,6 +16,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
             "built-in model" -> R.string.dev_screen_model
             "default" -> R.string.dev_screen_default
             "fixed" -> R.string.dev_screen_fixed
+            "carlink picture" -> R.string.dev_screen_carlink_picture
             else -> R.string.dev_screen_relay
         }, valueArguments = listOf(size)))
     }

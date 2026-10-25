@@ -125,6 +125,28 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
         wirelessPictureNumberKeys.forEach { invalidNumbers.remove(it); numberText.remove(it) }
         draft.value = draft.value.copy(wirelessPictureSize = size)
     }
+    /** Typing never selects: choosing a size can restart CarPlay, so only a row tap or Save does. */
+    fun updateCarlinkPicture(key: String, text: String) {
+        require(key in listOf("carlinkPictureWidth", "carlinkPictureHeight"))
+        numberText[key] = text
+    }
+    /** Saves a new size, or selects the listed one it equals; either way the fields are cleared. */
+    fun saveCarlinkPicture(select: (PictureSize?) -> Unit) {
+        val model = carlinkPictureUiModel(draft.value, null, width = numberText["carlinkPictureWidth"].orEmpty(),
+            height = numberText["carlinkPictureHeight"].orEmpty())
+        val size = model.custom ?: return
+        when (model.save) {
+            CarlinkPictureSave.READY -> draft.value = draft.value.copy(carlinkPictureSizes = draft.value.carlinkPictureSizes + size)
+            CarlinkPictureSave.DUPLICATE -> Unit
+            else -> return
+        }
+        numberText.remove("carlinkPictureWidth"); numberText.remove("carlinkPictureHeight")
+        select(size)
+    }
+    fun deleteCarlinkPicture(size: PictureSize, trial: CarlinkPictureTrial?, clearTrial: () -> Unit) {
+        if (draft.value.effectiveCarlinkPicture(trial) == size) clearTrial()
+        draft.value = draft.value.deleteCarlinkPicture(size)
+    }
     fun clearDisplayErrors() {
         listOf("width", "height", "density").forEach { invalidNumbers.remove(it) }
     }

@@ -778,4 +778,16 @@
     <string name="update_http_error">GitHub 返回错误 %1$d。</string>
     <string name="update_invalid_response">无法读取 GitHub 的回复。</string>
     <string name="update_no_release">这个渠道还没有安卓版本。</string>
+    <string name="carlink_picture_title">Carlink 画面尺寸</string>
+    <string name="carlink_picture_set_default">设为默认</string>
+    <string name="carlink_picture_default">默认</string>
+    <string name="carlink_picture_delete">删除尺寸</string>
+    <string name="carlink_picture_save">保存</string>
+    <string name="carlink_picture_trial">本次连接使用 %1$s，下次连接回到默认的 %2$s。</string>
+    <string name="carlink_picture_limit">最多保存 5 个，删除一个后再保存。</string>
+    <string name="carlink_picture_output_off">车机通过 Carlink 显示 CarPlay 时使用。</string>
+    <string name="carlink_picture_fixed">正在使用开发者设置的显示尺寸。</string>
+    <string name="carlink_picture_invalid">请输入偶数像素：横屏 640–1920 × 360–1080，竖屏宽高互换。</string>
+    <string name="carlink_picture_duplicate">列表中已有此尺寸，保存即选中它。</string>
+    <string name="dev_screen_carlink_picture">%1$s（Carlink 画面尺寸）</string>
 </resources>
