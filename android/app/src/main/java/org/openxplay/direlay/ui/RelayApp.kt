@@ -151,7 +151,7 @@ import org.openxplay.direlay.settings.*
                         when {
                             route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic,
                                 copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
-                                setupCompleted) { open("setup") }
+                                setupCompleted, carRequired = homeCarRowVisible(initial.car)) { open("setup") }
                             route == "launch" -> LaunchScreen(value, onContinue = {
                                 // Missing preparation opens the guide where it is finished, then Start.
                                 if (value.presentation.canStart) {
@@ -161,7 +161,7 @@ import org.openxplay.direlay.settings.*
                             }, onNewSetup = { open("setup") }) { onLater(); entries = listOf("home") }
                             route.startsWith("setup") -> SetupScreen(initial, wireless, value,
                                 setupStep(route.substringAfter(':', "")), actions.readIphones, actions.useSharedWifi,
-                                { _, after -> actions.save(after) != null }, onSetup, back, onStepAction = ::stepAction) { changed ->
+                                { _, after -> actions.save(after) != null }, onSetup, back, carModels = settings.models, onStepAction = ::stepAction) { changed ->
                                 completeSetup()
                                 entries = listOf("home")
                                 if (!running) onStartStop() else if (changed) onRestart()

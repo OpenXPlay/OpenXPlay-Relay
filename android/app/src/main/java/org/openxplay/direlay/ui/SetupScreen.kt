@@ -35,11 +35,12 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
+import org.openxplay.direlay.relay.CarModels
 import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.ui.design.*
 
 /**
- * The guided setup: how the car shows CarPlay, how the iPhone connects, the wireless network, the
+ * The guided setup: the car, how it shows CarPlay, how the iPhone connects, the wireless network, the
  * one-time preparation, then Start. Choices are saved as they are made, like Settings, so the
  * preparation step already reflects them; Settings keep the advanced options.
  */
@@ -47,7 +48,7 @@ import org.openxplay.direlay.ui.design.*
 @Composable fun SetupScreen(initial: RelaySettings, wireless: (RelaySettings) -> Boolean, home: HomeContent,
     startAt: SetupStep?, bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, useSharedWifi: (String) -> Unit,
     persist: suspend (RelaySettings, RelaySettings) -> Boolean, onSetup: (SetupAction) -> Unit,
-    close: () -> Unit, onStepAction: (StepAction, PathStep) -> Unit = { _, _ -> }, finish: (changed: Boolean) -> Unit) {
+    close: () -> Unit, carModels: CarModels? = null, onStepAction: (StepAction, PathStep) -> Unit = { _, _ -> }, finish: (changed: Boolean) -> Unit) {
     val entry by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(setupDraft(initial, wireless(initial))) }
     var lastSaved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
@@ -69,7 +70,7 @@ import org.openxplay.direlay.ui.design.*
     val isWireless = wireless(draft)
     val saving = draft != lastSaved && settingsSaveErrors(draft, isWireless).isEmpty()
     val steps = setupSteps(isWireless)
-    var stepKey by rememberSaveable { mutableStateOf((startAt ?: SetupStep.OUTPUT).key) }
+    var stepKey by rememberSaveable { mutableStateOf((startAt ?: SetupStep.CAR).key) }
     // The network page disappears with USB; land on the choice that removed it.
     val step = setupStep(stepKey)?.takeIf { it in steps } ?: SetupStep.CONNECTION
     val index = steps.indexOf(step)
@@ -90,7 +91,7 @@ import org.openxplay.direlay.ui.design.*
         when (step) {
             SetupStep.START -> finish(changed)
             SetupStep.PREPARE -> go(SetupStep.START)
-            else -> if (setupStepErrors(step, errors).isEmpty() && !saving && !saveFailed) go(steps[index + 1])
+            else -> if (setupStepErrors(step, errors, draft.car).isEmpty() && !saving && !saveFailed) go(steps[index + 1])
         }
     }
     BackHandler(index > 0 && Build.VERSION.SDK_INT < 34) { previous() }
@@ -105,6 +106,7 @@ import org.openxplay.direlay.ui.design.*
     }
     val ready = home.presentation.canStart || running
     val nextEnabled = !saving && when (step) {
+        SetupStep.CAR -> draft.car.complete
         SetupStep.PREPARE -> ready
         SetupStep.START -> running || (home.presentation.canStart && !home.busy)
         else -> true
@@ -145,19 +147,22 @@ import org.openxplay.direlay.ui.design.*
         }) { shown ->
             val current = steps.getOrElse(shown) { step }
             SetupPage(compact, title = stringResource(when (current) {
+                SetupStep.CAR -> R.string.setup_car_title
                 SetupStep.OUTPUT -> R.string.setup2_output_title
                 SetupStep.CONNECTION -> R.string.setup2_connection_title
                 SetupStep.NETWORK -> R.string.setup2_network_title
                 SetupStep.PREPARE -> R.string.setup_prepare_title
                 SetupStep.START -> if (running) R.string.setup_start_running_title else R.string.setup_start_title
             }), subtitle = stringResource(when (current) {
+                SetupStep.CAR -> R.string.car_choose_hint
                 SetupStep.OUTPUT -> R.string.setup2_output_subtitle
                 SetupStep.CONNECTION -> R.string.setup2_connection_subtitle
                 SetupStep.NETWORK -> R.string.setup2_network_subtitle
                 SetupStep.PREPARE -> R.string.setup2_prepare_subtitle
                 SetupStep.START -> R.string.setup2_start_subtitle
-            }), illustration = { if (compact) SetupIllustration(draft, isWireless) }) {
+            }), illustration = { if (compact && current != SetupStep.CAR) SetupIllustration(draft, isWireless) }) {
                 when (current) {
+                    SetupStep.CAR -> CarPicker(draft.car, carModels, LocalConfiguration.current.locales[0]) { draft = draft.copy(car = it) }
                     SetupStep.OUTPUT -> OutputStep(draft) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
                     SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) {
                         val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB
@@ -177,7 +182,7 @@ import org.openxplay.direlay.ui.design.*
                     // Hotspot fields show their own errors; anything else is reported here.
                     val shownByFields = if (current == SetupStep.NETWORK && draft.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT)
                         setOf("ssid", "password") else emptySet()
-                    setupStepErrors(current, errors).filterKeys { it !in shownByFields }.values.firstOrNull()?.let {
+                    setupStepErrors(current, errors, draft.car).filterKeys { it !in shownByFields }.values.firstOrNull()?.let {
                         Text(stringResource(it), color = MaterialTheme.colorScheme.error)
                     }
                 }

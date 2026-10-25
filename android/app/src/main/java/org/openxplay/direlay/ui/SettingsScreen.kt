@@ -120,7 +120,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 val identityStatus by sources.identity.screenState()
                 val summary = stringResource(R.string.menu_access_summary,
                     menuToggleSummary(settings.adminEnabled), menuToggleSummary(settings.publicNameEnabled))
-                SettingsMenu(draft, invalidPages, wireless(draft), summary, carSummary, identityStatus, frameRate, open)
+                SettingsMenu(draft, invalidPages, wireless(draft), summary, carSummary, identityStatus, frameRate,
+                    state.lastSaved.value.car.complete, open)
             }
             "settings/configFiles" -> ConfigFilesScreen(support.config)
             "settings/logs" -> LogsScreen(support.logs, support.upload)
@@ -168,7 +169,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             }
             "settings/car" -> {
                 val view by sources.car.screenState()
-                CarScreenSettings(draft, view, wireless, actions.clearHeadUnit,
+                CarScreenSettings(draft, view, wireless, actions.clearHeadUnit, target,
                     openTrustedHttps = { open("settings/access/publicName") },
                     openOutput = { open("settings/output") }) { draft = it }
             }

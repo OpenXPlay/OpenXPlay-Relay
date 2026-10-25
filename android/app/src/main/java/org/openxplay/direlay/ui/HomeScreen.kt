@@ -58,7 +58,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     onAutomatic: (Boolean) -> Unit, onCopy: (String) -> Unit, onStepAction: (StepAction, PathStep) -> Unit,
     onRecheck: () -> Unit, onVehicle: () -> Unit, vehicleModifier: Modifier = Modifier,
     vehicleContentModifier: Modifier = Modifier, onRestart: () -> Unit = {},
-    setupCompleted: Boolean = true, onGuide: () -> Unit = {}) {
+    setupCompleted: Boolean = true, carRequired: Boolean = false, onGuide: () -> Unit = {}) {
     val path = value.path
     ConnectionPathPage(path, value.addresses, value.stepProblems, onStepAction, onRecheck, onCopy,
         onStop = onStartStop, headerActions = { IconButton({ onSettings("") }) {
@@ -78,7 +78,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 }
                 AutoSwitch(value.automatic, onAutomatic)
             }
-        }, afterSections = {
+        }, afterFocus = { HomeCarRow(carRequired) { onSettings("car") } }, afterSections = {
             if (value.displayMismatch && path.running) item("display") {
                 RelayCard {
                     Text(stringResource(R.string.display_changed), style = RelayTokens.footnote)
@@ -101,6 +101,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     onStepAction: (StepAction, PathStep) -> Unit, onRecheck: () -> Unit, onCopy: (String) -> Unit,
     onStop: () -> Unit, headerActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable ((PathStep) -> Unit) -> Unit,
+    afterFocus: @Composable () -> Unit = {},
     afterSections: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {}) {
     val scroll = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -142,9 +143,12 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
             val revealStep: (PathStep) -> Unit = { reveal(it.id.section, it) }
             val focusStep = focusForPage(path)
             val focus: @Composable () -> Unit = {
-                path.live?.let { LiveCard(it, path, onStop, compact = true) }
-                    ?: focusStep?.let { step -> FocusCard(step, { onStepAction(it, step) }, onRecheck,
-                        { selected = step.id.name }, compact = true) }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    path.live?.let { LiveCard(it, path, onStop, compact = true) }
+                        ?: focusStep?.let { step -> FocusCard(step, { onStepAction(it, step) }, onRecheck,
+                            { selected = step.id.name }, compact = true) }
+                    afterFocus()
+                }
             }
             val sections: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
                 path.sections.forEach { section -> item(section.section.name) {
