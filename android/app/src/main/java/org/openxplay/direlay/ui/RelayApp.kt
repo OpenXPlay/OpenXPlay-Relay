@@ -169,7 +169,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
         onStepAction(action, step)
         if (action == StepAction.COPY_PAGE_ADDRESS) scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_copied)) }
     }
-    CompositionLocalProvider(LocalRelayMotion provides motion) {
+    CompositionLocalProvider(LocalRelayMotion provides motion, LocalUpdateChecker provides runtime.updates) {
         Box(Modifier.fillMaxSize()) {
             SharedTransitionLayout {
                 navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), contentKey = { "${it.lastIndex}:${it.last()}" }, transitionSpec = {
@@ -209,7 +209,7 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                                         runtime.adminService.setEnabled(enabled); adminEnabled = enabled
                                     }, ::copy, { withContext(Dispatchers.IO) { runtime.adminService.resetPassword() } })
                                 })
-                            route == "settings/about" -> AboutScreen(::back)
+                            route == "settings/about" -> AboutScreen(::back, runtime.updates)
                             route == "settings/access/publicName" -> PublicNameScreen(publicNameView, publicNameStatus,
                                 remember(publicNameStatus) { runtime.publicNameUrl() }, ::back,
                                 { edit -> withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.save(edit) }.getOrNull() } },

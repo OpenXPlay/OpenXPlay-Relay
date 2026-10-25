@@ -768,4 +768,23 @@
     <string name="network_bluetooth_reminder">Make sure Bluetooth is on.</string>
     <string name="network_bluetooth_problem">Turn on Bluetooth</string>
     <string name="network_open_bluetooth">Open Bluetooth settings</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_checking">Checking for updates</string>
+    <string name="update_up_to_date">Up to date %1$s</string>
+    <string name="update_menu_version">%1$s · Update to %2$s</string>
+    <string name="update_download">Download %1$s</string>
+    <string name="update_open_release">Open release page</string>
+    <string name="update_notes">Release notes</string>
+    <string name="update_stable">Stable</string>
+    <string name="update_beta">Beta</string>
+    <string name="update_channel_hint">Beta releases arrive before stable releases to test new features and may be less reliable. Checking for updates connects to GitHub.</string>
+    <string name="update_failed">Check failed</string>
+    <string name="update_no_internet">No Internet connection is available. Connect this phone to a network with Internet access and try again.</string>
+    <string name="update_unreachable">Could not reach GitHub. Check that this phone can open github.com and try again.</string>
+    <string name="update_timeout">GitHub took too long to respond. Try again later.</string>
+    <string name="update_rate_limited">GitHub has limited update checks. Try again later.</string>
+    <string name="update_rate_limited_until">GitHub has limited update checks. Try again after %1$s.</string>
+    <string name="update_http_error">GitHub returned error %1$d.</string>
+    <string name="update_invalid_response">Could not read the response from GitHub.</string>
+    <string name="update_no_release">No Android release in this channel.</string>
 </resources>

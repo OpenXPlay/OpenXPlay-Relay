@@ -4,7 +4,7 @@
 package org.openxplay.direlay.logs
 
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
+import org.openxplay.direlay.network.validatedInternetNetwork
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -38,11 +38,7 @@ fun interface UploadConnectionFactory { fun open(url: URL): HttpURLConnection }
 
 class InternetUploadConnection(private val connectivity: ConnectivityManager) : UploadConnectionFactory {
     override fun open(url: URL): HttpURLConnection {
-        fun validated(network: android.net.Network): Boolean = connectivity.getNetworkCapabilities(network)?.let {
-            it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-        } == true
-        val network = connectivity.activeNetwork?.takeIf(::validated) ?: connectivity.allNetworks.firstOrNull(::validated)
-            ?: throw LogUploadFailure("no-internet")
+        val network = validatedInternetNetwork(connectivity) ?: throw LogUploadFailure("no-internet")
         return network.openConnection(url) as HttpURLConnection
     }
 }
