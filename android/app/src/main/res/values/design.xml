@@ -15,6 +15,10 @@
     <string name="design_paths">Connection paths</string>
     <string name="design_states">Step states</string>
     <string name="design_lists">Grouped lists</string>
+    <string name="design_long_text">Long text</string>
+    <string name="design_long_title">CarPlay picture settings for the car\'s connected display</string>
+    <string name="design_long_detail">Open the wireless network settings on this phone, check the hotspot name and password, then return here to check the connection again.</string>
+    <string name="design_long_action">Open this phone\'s wireless network settings</string>
     <string name="design_icons">Step icons</string>
     <string name="design_open_sheet">Open sheet</string>
     <string name="design_close">Close</string>

@@ -30,7 +30,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
 import org.openxplay.direlay.R
@@ -126,7 +126,7 @@ import org.openxplay.direlay.ui.design.*
                     if (!compact && step == SetupStep.PREPARE && !ready) Hint(stringResource(R.string.setup_prepare_blocked))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         if (index > 0) TextButton(onClick = ::previous, Modifier.heightIn(min = 56.dp)) {
-                            Text(stringResource(R.string.ui_back))
+                            Text(stringResource(R.string.ui_back), textAlign = TextAlign.Center)
                         }
                         Box(Modifier.weight(1f)) {
                             PrimaryPill(running = false, enabled = nextEnabled, label = stringResource(when {
@@ -246,8 +246,7 @@ import org.openxplay.direlay.ui.design.*
 @Composable private fun SetupTitle(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, Modifier.semantics { heading() }, style = RelayTokens.largeTitle)
-        Text(subtitle, style = RelayTokens.footnote, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(subtitle, style = RelayTokens.footnote, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -425,7 +424,7 @@ import org.openxplay.direlay.ui.design.*
                     check.detail?.let { Hint(stringResource(it)) }
                     if (check.action == SetupAction.IPHONE) Hint(stringResource(R.string.iphone_pair_hint, deviceName))
                     if (check.action != null && check.actionLabel != null) FilledTonalButton(onClick = { act(check.action) },
-                        enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(check.actionLabel)) }
+                        enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(check.actionLabel), textAlign = TextAlign.Center) }
                 }
             }
         }

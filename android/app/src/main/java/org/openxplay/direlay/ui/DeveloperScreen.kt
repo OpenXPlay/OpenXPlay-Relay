@@ -88,7 +88,7 @@ fun developerView(runtime: RelayRuntime): DeveloperView {
                     state.changeDeveloper { it.copy(active = enabled) }
                 }
                 InsetGroup {
-                    SettingsMenuRow(R.string.design_gallery, stringResource(R.string.design_gallery_hint), R.drawable.symbol_settings_2) { open("developer/design") }
+                    SettingsMenuRow(R.string.design_gallery, null, R.drawable.symbol_settings_2) { open("developer/design") }
                     InsetDivider()
                     SettingsMenuRow(R.string.menu_diagnostics, stringResource(R.string.menu_diagnostics_summary, view.rows.size, view.urls.size), R.drawable.symbol_info) { open("developer/diagnostics") }
                     InsetDivider()

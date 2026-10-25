@@ -12,10 +12,10 @@
     <string name="menu_identity">身份与证书</string>
     <string name="menu_on">开启</string>
     <string name="menu_off">关闭</string>
+    <string name="menu_audio_summary">车辆蓝牙：%1$s</string>
     <string name="menu_startup_summary">自动启动：%1$s · 开机启动：%2$s</string>
     <string name="menu_access_summary">管理页面：%1$s · 可信 HTTPS：%2$s</string>
     <string name="menu_both_outputs">浏览器与 Carlink</string>
-    <string name="menu_developer_summary">视频：%1$d 帧/秒 · 网页端口：%2$s</string>
     <string name="menu_selected_summary">已选中 · %1$s</string>
     <string name="menu_fps_summary">%1$d 帧/秒</string>
     <string name="menu_outputs_summary">%1$s · 网页端口：%2$s</string>

@@ -69,11 +69,9 @@ import org.openxplay.direlay.ui.design.*
         resolved?.let { stringResource(R.string.iphone_automatic_name, it.name?.takeIf(String::isNotBlank) ?: unnamed) }
             ?: stringResource(R.string.iphone_automatic)
     } else devices.firstOrNull { it.address.equals(choice, ignoreCase = true) }?.name?.takeIf(String::isNotBlank) ?: unnamed
-    SettingsRow(stringResource(R.string.iphone_title), stringResource(R.string.iphone_hint),
-        R.drawable.symbol_phone, { visible = true }, trailing = {
-            Text(value, Modifier.widthIn(max = 160.dp), style = MaterialTheme.typography.bodyMedium)
-            Symbol(R.drawable.symbol_chevron, null)
-        })
+    InsetGroup(footer = stringResource(R.string.iphone_hint)) {
+        InsetRow(R.drawable.symbol_phone, IconHue.IPHONE, "iPhone", value, onClick = { visible = true })
+    }
     if (visible) RelaySheet(onDismiss = { visible = false }) {
         Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
             Heading(stringResource(R.string.iphone_choose))

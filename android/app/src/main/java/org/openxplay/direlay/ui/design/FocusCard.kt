@@ -17,7 +17,7 @@ import android.content.ClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
@@ -32,20 +32,18 @@ import org.openxplay.direlay.ui.Symbol
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 StatusGlyph(step.state, 40.dp)
-                Text(stringResource(step.title), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(step.title), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title)
                 IconButton(onDetails) { Symbol(R.drawable.symbol_info, stringResource(R.string.design_details)) }
             }
-            step.detail?.let { Text(stepText(it), style = RelayTokens.body, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+            step.detail?.let { Text(stepText(it), style = RelayTokens.body) }
             if (step.state == StepState.WORKING || step.state == StepState.WAITING) ElapsedTime(step.sinceMillis)
             step.evidence?.let { EvidenceRow(stepText(it)) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 step.action?.let { action -> Button(onClick = { onAction(action) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                     shape = RelayTokens.pill) {
-                    Text(stringResource(step.actionLabel ?: R.string.design_open), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(stringResource(step.actionLabel ?: R.string.design_open), textAlign = TextAlign.Center)
                 } }
-                TextButton(onRecheck, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_check_again),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                TextButton(onRecheck, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_check_again), textAlign = TextAlign.Center) }
             }
         }
     }
@@ -56,8 +54,7 @@ import org.openxplay.direlay.ui.Symbol
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = context.getSystemService(ClipboardManager::class.java)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(value, Modifier.weight(1f), style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption,
-            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(value, Modifier.weight(1f), style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption)
         IconButton({ clipboard.setPrimaryClip(ClipData.newPlainText(copied, value)); android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show() }) {
             Symbol(R.drawable.symbol_copy, stringResource(R.string.ui_copy))
         }
@@ -75,8 +72,7 @@ import org.openxplay.direlay.ui.Symbol
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 StatusGlyph(StepState.OK, 40.dp)
-                Text(stringResource(R.string.design_live), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(R.string.design_live), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title)
                 Text(sessionTime(seconds), style = RelayTokens.mono)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -85,9 +81,9 @@ import org.openxplay.direlay.ui.Symbol
                         style = if (evidenceUsesMonospace(chip)) RelayTokens.mono else RelayTokens.caption)
                 } }
             }
-            path.nodes.car?.let { Text(it, style = RelayTokens.footnote, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            path.nodes.car?.let { Text(it, style = RelayTokens.footnote,
                 color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            TextButton({ haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStop() }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_stop)) }
+            TextButton({ haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStop() }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.design_stop), textAlign = TextAlign.Center) }
         }
     }
 }
@@ -106,9 +102,8 @@ import org.openxplay.direlay.ui.Symbol
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatusGlyph(step.state, 32.dp)
                     Column(Modifier.weight(1f)) {
-                        Text(stringResource(step.title), style = RelayTokens.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        step.detail?.let { Text(stepText(it), style = RelayTokens.caption, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        Text(stringResource(step.title), style = RelayTokens.headline)
+                        step.detail?.let { Text(stepText(it), style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
                     IconButton(onDetails, Modifier.size(40.dp)) { Symbol(R.drawable.symbol_info, stringResource(R.string.design_details)) }
                 }
@@ -118,20 +113,18 @@ import org.openxplay.direlay.ui.Symbol
                         Text(value, Modifier.weight(1f).clickable {
                             context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(copied, value))
                             android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show()
-                        }, style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }, style = if (evidenceUsesMonospace(value)) RelayTokens.mono else RelayTokens.caption)
                     }
-                    if (step.evidence == null) step.code?.let { Text(it, Modifier.weight(1f), style = RelayTokens.mono,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    if (step.evidence == null) step.code?.let { Text(it, Modifier.weight(1f), style = RelayTokens.mono) }
                     if (step.state == StepState.WORKING || step.state == StepState.WAITING) ElapsedTime(step.sinceMillis)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    step.action?.let { action -> Button({ onAction(action) }, Modifier.weight(1f).height(40.dp), shape = RelayTokens.pill,
+                    step.action?.let { action -> Button({ onAction(action) }, Modifier.weight(1f).heightIn(min = 40.dp), shape = RelayTokens.pill,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        Text(stringResource(step.actionLabel ?: R.string.design_open), maxLines = 1, style = RelayTokens.footnote)
+                        Text(stringResource(step.actionLabel ?: R.string.design_open), style = RelayTokens.footnote, textAlign = TextAlign.Center)
                     } }
-                    TextButton(onRecheck, Modifier.height(40.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                        Text(stringResource(R.string.design_check_again), maxLines = 1, style = RelayTokens.footnote)
+                    TextButton(onRecheck, Modifier.heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+                        Text(stringResource(R.string.design_check_again), style = RelayTokens.footnote, textAlign = TextAlign.Center)
                     }
                 }
             }
@@ -147,20 +140,17 @@ import org.openxplay.direlay.ui.Symbol
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, LocalStatusColors.current.ok.copy(alpha = .35f))) {
             Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(Modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically,
+                Row(Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatusGlyph(StepState.OK, 32.dp)
-                    Text(stringResource(R.string.design_live), Modifier.weight(1f), style = RelayTokens.headline,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(stringResource(R.string.design_live), Modifier.weight(1f), style = RelayTokens.headline)
                     Text(sessionTime(seconds), style = RelayTokens.mono)
                 }
                 val evidence = live.chips.joinToString(" · ")
-                Text(evidence, style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(Modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(path.nodes.car.orEmpty(), Modifier.weight(1f), style = RelayTokens.caption, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton({ haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStop() }) { Text(stringResource(R.string.design_stop)) }
+                Text(evidence, style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption)
+                Row(Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(path.nodes.car.orEmpty(), Modifier.weight(1f), style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton({ haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStop() }) { Text(stringResource(R.string.design_stop), textAlign = TextAlign.Center) }
                 }
             }
         }

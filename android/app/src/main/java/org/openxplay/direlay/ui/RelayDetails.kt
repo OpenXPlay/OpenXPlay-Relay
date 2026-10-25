@@ -32,8 +32,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.openxplay.direlay.R
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -103,16 +105,24 @@ import org.openxplay.direlay.R
                 }
             }
         } else {
-            Text((explanation ?: text).replace('\n', ' '), style = MaterialTheme.typography.bodyMedium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text((explanation ?: text).replace('\n', ' '), style = MaterialTheme.typography.bodyMedium)
             settingsAction()
         }
     }
 }
 
 @Composable internal fun FittingAddress(value: String, modifier: Modifier = Modifier) {
-    Text(value, modifier, style = RelayTokens.title.copy(fontFamily = FontFamily.Monospace, fontFeatureSettings = "tnum"),
-        maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+    val measurer = rememberTextMeasurer()
+    val style = RelayTokens.title.copy(fontFamily = FontFamily.Monospace, fontFeatureSettings = "tnum")
+    val minimum = RelayTokens.footnote.fontSize.value
+    BoxWithConstraints(modifier) {
+        var size = style.fontSize.value
+        while (size > minimum && measurer.measure(value, style.copy(fontSize = size.sp), softWrap = false,
+                constraints = Constraints(maxWidth = constraints.maxWidth)).didOverflowWidth) {
+            size = (size - 1).coerceAtLeast(minimum)
+        }
+        Text(value, style = style.copy(fontSize = size.sp))
+    }
 }
 
 @Composable internal fun ReceiverAddresses(addresses: List<String>, onCopy: (String) -> Unit, teslaUrl: String? = null) {

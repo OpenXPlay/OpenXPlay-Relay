@@ -22,7 +22,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
@@ -88,11 +89,12 @@ internal fun visibleSectionSteps(section: PathSectionView, showAllSteps: Boolean
         }.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(sectionNumber(section.section), style = RelayTokens.headline, color = LocalStatusColors.current.color(section.state))
-            Text(stringResource(sectionTitle(section.section)), Modifier.weight(1f).alpha(if (section.state == StepState.BLOCKED) .5f else 1f), style = RelayTokens.headline,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (allOk && !expanded && evidence.isNotEmpty()) Text(evidence, Modifier.weight(1f),
-                style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(stringResource(sectionTitle(section.section)), Modifier.alpha(if (section.state == StepState.BLOCKED) .5f else 1f), style = RelayTokens.headline)
+                if (allOk && !expanded && evidence.isNotEmpty()) Text(evidence,
+                    style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text("${section.done}/${section.total}", style = RelayTokens.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
             StatusGlyph(section.state, 24.dp, announce = false)
             Symbol(R.drawable.symbol_chevron_down, null, Modifier.size(16.dp).rotate(disclosure))
@@ -106,10 +108,14 @@ internal fun visibleSectionSteps(section: PathSectionView, showAllSteps: Boolean
                     }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatusGlyph(StepState.OK, 24.dp, announce = false)
-                        Text(stringResource(R.string.design_done_count, foldedSteps.size), style = RelayTokens.footnote)
-                        Text(foldedSteps.map { stringResource(it.title) }.joinToString(" · "), Modifier.weight(1f),
-                            style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val done = stringResource(R.string.design_done_count, foldedSteps.size)
+                        val names = foldedSteps.map { stringResource(it.title) }.joinToString(" · ")
+                        val doneStyle = RelayTokens.footnote.toSpanStyle().copy(color = MaterialTheme.colorScheme.onSurface)
+                        SegmentedText(buildAnnotatedString {
+                            withStyle(doneStyle) { append(done) }
+                            append(" · "); append(names)
+                        }, modifier = Modifier.weight(1f),
+                            style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 visibleSteps.forEachIndexed { index, step ->

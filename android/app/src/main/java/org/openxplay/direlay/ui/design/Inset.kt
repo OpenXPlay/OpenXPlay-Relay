@@ -11,10 +11,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.ui.Symbol
@@ -38,6 +44,56 @@ import org.openxplay.direlay.ui.Symbol
     }
 }
 
+/** True when title and value both fit on one line, whole, beside each other. */
+internal fun valueFitsInline(titleWidth: Int, valueWidth: Int, gap: Int, available: Int): Boolean =
+    titleWidth.toLong() + valueWidth + gap <= available
+
+internal fun summarySegments(value: String): List<String> = value.split(" · ").filter { it.isNotBlank() }.let { segments ->
+    segments.mapIndexed { index, segment -> segment + if (index < segments.lastIndex) " ·" else "" }
+}
+
+@Composable internal fun SegmentedText(value: String, style: TextStyle, color: Color, modifier: Modifier = Modifier) =
+    SegmentedText(AnnotatedString(value), style, color, modifier)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable internal fun SegmentedText(value: AnnotatedString, style: TextStyle, color: Color, modifier: Modifier = Modifier) {
+    FlowRow(modifier.semantics(mergeDescendants = true) { contentDescription = value.text },
+        horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+        var start = 0
+        summarySegments(value.text).forEach { segment ->
+            val offset = value.text.indexOf(segment, start)
+            Text(value.subSequence(offset, offset + segment.length), Modifier.clearAndSetSemantics {}, style = style, color = color)
+            start = offset + segment.length
+        }
+    }
+}
+
+@Composable internal fun TitleValue(title: String, value: String, modifier: Modifier = Modifier) {
+    Layout(content = {
+        Text(title, style = RelayTokens.body)
+        // Preserve the plain text's intrinsic width and inline layout when deciding whether to stack.
+        Text(value, style = RelayTokens.callout, textAlign = TextAlign.Start, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SegmentedText(value, style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }, modifier = modifier) { measurables, constraints ->
+        val titleWidth = measurables[0].maxIntrinsicWidth(Constraints.Infinity)
+        val valueWidth = measurables[1].maxIntrinsicWidth(Constraints.Infinity)
+        val gap = 12.dp.roundToPx()
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else
+            constraints.constrainWidth((titleWidth.toLong() + valueWidth + gap).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        val inline = '\n' !in title && '\n' !in value && valueFitsInline(titleWidth, valueWidth, gap, width)
+        val titlePlaceable = measurables[0].measure(Constraints(maxWidth = if (inline) titleWidth else width))
+        val valuePlaceable = measurables[if (inline) 1 else 2].measure(Constraints(maxWidth = if (inline) valueWidth else width))
+        val spacing = if (inline) 0 else 2.dp.roundToPx()
+        val height = constraints.constrainHeight(if (inline) maxOf(titlePlaceable.height, valuePlaceable.height) else
+            titlePlaceable.height + spacing + valuePlaceable.height)
+        layout(width, height) {
+            titlePlaceable.placeRelative(0, if (inline) (height - titlePlaceable.height) / 2 else 0)
+            valuePlaceable.placeRelative(if (inline) width - valuePlaceable.width else 0,
+                if (inline) (height - valuePlaceable.height) / 2 else titlePlaceable.height + spacing)
+        }
+    }
+}
+
 @Composable fun InsetRow(icon: Int? = null, tile: IconHue = IconHue.DEVELOPER, title: String,
     value: String? = null, onClick: (() -> Unit)? = null, trailing: @Composable (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
@@ -45,10 +101,8 @@ import org.openxplay.direlay.ui.Symbol
         .padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (icon != null) IconTile(icon, tile)
-        Text(title, Modifier.weight(1f), style = RelayTokens.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        // The value fills its share and hugs the end, so chevrons line up on every row.
-        if (value != null) Text(value, Modifier.weight(.8f), style = RelayTokens.callout, textAlign = TextAlign.End,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (value == null) Text(title, Modifier.weight(1f), style = RelayTokens.body)
+        else TitleValue(title, value, Modifier.weight(1f))
         if (trailing != null) trailing() else if (onClick != null) Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp))
     }
 }
@@ -61,7 +115,7 @@ import org.openxplay.direlay.ui.Symbol
         .padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (icon != null) IconTile(icon, tile)
-        Text(title, Modifier.weight(1f), style = RelayTokens.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(title, Modifier.weight(1f), style = RelayTokens.body)
         RelaySwitch(checked, null, enabled = enabled)
     }
 }

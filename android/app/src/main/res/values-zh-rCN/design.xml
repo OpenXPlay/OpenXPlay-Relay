@@ -15,6 +15,10 @@
     <string name="design_paths">连接路径</string>
     <string name="design_states">步骤状态</string>
     <string name="design_lists">分组列表</string>
+    <string name="design_long_text">长文本</string>
+    <string name="design_long_title">用于车辆已连接屏幕的 CarPlay 画面设置</string>
+    <string name="design_long_detail">打开此手机的无线网络设置，检查热点名称和密码，然后返回这里重新检查连接情况。</string>
+    <string name="design_long_action">打开此手机的无线网络设置</string>
     <string name="design_icons">步骤图标</string>
     <string name="design_open_sheet">打开面板</string>
     <string name="design_close">关闭</string>

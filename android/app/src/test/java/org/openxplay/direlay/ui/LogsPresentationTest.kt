@@ -21,7 +21,7 @@ class LogsPresentationTest {
     @Test fun logsMenuRowFollowsConfigurationFilesAndHasItsOwnTitleAndRoute() {
         assertEquals(listOf("settings/configFiles", "settings/logs"), settingsFilePages.map { it.route })
         val page = settingsFilePages.last()
-        assertEquals(R.string.logs_title, page.title); assertEquals(R.string.logs_summary, page.summary)
+        assertEquals(R.string.logs_title, page.title)
         assertEquals(R.string.logs_title, settingsPageTitle(page.route))
         assertEquals(listOf("home", "settings", "settings/logs"), RelayBackStack().open(page.route).entries)
         assertEquals(listOf(R.string.logs_10_minutes, R.string.logs_30_minutes, R.string.logs_24_hours), LogRange.entries.map(::logRangeTitle))
