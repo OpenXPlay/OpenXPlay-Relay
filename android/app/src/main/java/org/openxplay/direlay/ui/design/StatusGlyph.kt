@@ -22,7 +22,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.isActive
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.StepState
 import org.openxplay.direlay.ui.LocalRelayMotion
@@ -57,33 +56,48 @@ internal fun stateLabel(state: StepState) = when (state) {
     StepState.BLOCKED -> R.string.design_state_blocked
 }
 
-@Composable internal fun rememberRelayPhase(active: Boolean): State<Float> {
+internal suspend fun runRelayPhase(periodMillis: Long, durationMillis: Long, publish: (Float) -> Unit) {
+    val start = withFrameNanos { it }
+    var elapsed = 0L
+    while (elapsed < durationMillis * 1_000_000L) {
+        withFrameNanos { now ->
+            elapsed = (now - start).coerceAtLeast(0)
+            publish((elapsed.coerceAtMost(durationMillis * 1_000_000L) % (periodMillis * 1_000_000L)) /
+                (periodMillis * 1_000_000f))
+        }
+    }
+}
+
+internal suspend fun runRelayBreath(amount: Animatable<Float, androidx.compose.animation.core.AnimationVector1D>) {
+    repeat(2) {
+        amount.animateTo(.92f, spring(dampingRatio = 1f, stiffness = 20f))
+        amount.animateTo(1f, spring(dampingRatio = 1f, stiffness = 20f))
+    }
+    amount.snapTo(1f)
+}
+
+@Composable internal fun rememberRelayPhase(active: Boolean, stateKey: Any? = active,
+    periodMillis: Long = 6000, durationMillis: Long = 12000): State<Float> {
     val phase = remember { mutableFloatStateOf(0f) }
     val motion = LocalRelayMotion.current
-    LaunchedEffect(active, motion) {
+    LaunchedEffect(active, stateKey, motion, periodMillis, durationMillis) {
         phase.floatValue = 0f
-        if (active && motion) {
-            val start = withFrameNanos { it }
-            while (isActive) withFrameNanos { phase.floatValue = ((it - start) % 6_000_000_000L) / 6_000_000_000f }
-        }
+        if (active && motion) runRelayPhase(periodMillis, durationMillis) { phase.floatValue = it }
     }
     return phase
 }
 
-@Composable internal fun rememberRelayBreath(active: Boolean): State<Float> {
+@Composable internal fun rememberRelayBreath(active: Boolean, stateKey: Any? = active): State<Float> {
     val amount = remember { Animatable(1f) }
     val motion = LocalRelayMotion.current
-    LaunchedEffect(active, motion) {
+    LaunchedEffect(active, stateKey, motion) {
         amount.snapTo(1f)
-        if (active && motion) while (isActive) {
-            amount.animateTo(.92f, spring(dampingRatio = 1f, stiffness = 20f))
-            amount.animateTo(1f, spring(dampingRatio = 1f, stiffness = 20f))
-        }
+        if (active && motion) runRelayBreath(amount)
     }
     return amount.asState()
 }
 
-@Composable fun StatusGlyph(state: StepState, size: Dp = 28.dp, announce: Boolean = true) {
+@Composable fun StatusGlyph(state: StepState, size: Dp = 28.dp, announce: Boolean = true, stateKey: Any? = state) {
     val motion = LocalRelayMotion.current
     val view = LocalView.current
     var previous by remember { mutableStateOf(state) }
@@ -116,8 +130,8 @@ internal fun stateLabel(state: StepState) = when (state) {
         progress.snapTo(if (motion) 0f else 1f)
         if (motion) progress.animateTo(1f, relaySpatial(true))
     }
-    val rotation = rememberRelayPhase(state == StepState.WORKING)
-    val breath = rememberRelayBreath(state == StepState.WAITING)
+    val rotation = rememberRelayPhase(state == StepState.WORKING, stateKey, durationMillis = 8000)
+    val breath = rememberRelayBreath(state == StepState.WAITING, stateKey)
     val colors = LocalStatusColors.current
     val color = colors.color(state)
     val label = stringResource(stateLabel(state))

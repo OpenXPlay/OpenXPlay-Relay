@@ -90,6 +90,7 @@ data class PathStep(
     val sinceMillis: Long? = null,
     val explanation: Int? = null,
     val trail: List<String> = emptyList(),
+    val carWaitUntilMillis: Long? = null,
 )
 
 data class PathSectionView(val section: PathSection, val steps: List<PathStep>) {
@@ -127,6 +128,7 @@ data class ConnectionPath(
     val nodes: PathNodes = PathNodes(),
     /** One line for screenshots and logs, e.g. "R MODE✓ ID✓ BT✓ HS! | C NET· … | E hotspot_configuration 14:31:58". */
     val diagnostic: String = "",
+    val version: String = "",
 ) {
     fun section(section: PathSection) = sections.firstOrNull { it.section == section }
     val steps get() = sections.flatMap { it.steps }

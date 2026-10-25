@@ -9,13 +9,14 @@ import org.openxplay.direlay.path.*
 enum class HostOverlayAction { BACK, STOP, RETRY }
 data class HostOverlayButton(val label: Int, val action: HostOverlayAction)
 data class HostOverlaySnapshot(val input: PathInput, val receiverUrls: List<String> = emptyList(),
-    val localPreview: Boolean = false, val problems: List<HomeProblem> = emptyList())
+    val localPreview: Boolean = false, val problems: List<HomeProblem> = emptyList(),
+    val path: ConnectionPath = presentPath(input))
 data class HostOverlayPresentation(val path: ConnectionPath, val receiverUrls: List<String>,
     val buttons: List<HostOverlayButton>, val problems: List<HomeProblem> = emptyList())
 
 /** The host and Home use exactly the same readiness, failures and live state. */
 fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
-    val path = presentPath(value.input)
+    val path = value.path
     return HostOverlayPresentation(path, value.receiverUrls.distinct(), buildList {
         add(HostOverlayButton(R.string.home2_back, HostOverlayAction.BACK))
         add(HostOverlayButton(R.string.design_stop, HostOverlayAction.STOP))

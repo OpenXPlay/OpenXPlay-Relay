@@ -34,7 +34,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
 import org.openxplay.direlay.R
-import org.openxplay.direlay.bluetooth.BondedDevices
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.ui.design.*
@@ -46,7 +45,7 @@ import org.openxplay.direlay.ui.design.*
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun SetupScreen(initial: RelaySettings, wireless: (RelaySettings) -> Boolean, home: HomeContent,
-    startAt: SetupStep?, bondedDevices: BondedDevices, useSharedWifi: (String) -> Unit,
+    startAt: SetupStep?, bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, useSharedWifi: (String) -> Unit,
     persist: suspend (RelaySettings, RelaySettings) -> Boolean, onSetup: (SetupAction) -> Unit,
     close: () -> Unit, onStepAction: (StepAction, PathStep) -> Unit = { _, _ -> }, finish: (changed: Boolean) -> Unit) {
     val entry by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
@@ -390,9 +389,9 @@ import org.openxplay.direlay.ui.design.*
     }
 }
 
-@Composable private fun PrepareStep(draft: RelaySettings, wireless: Boolean, home: HomeContent, bondedDevices: BondedDevices,
+@Composable private fun PrepareStep(draft: RelaySettings, wireless: Boolean, home: HomeContent, bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView,
     onStepAction: (StepAction, PathStep) -> Unit, chooseIphone: (String?) -> Unit, act: (SetupAction) -> Unit) {
-    val path = remember(home.pathInput) { home.pathInput?.let { presentPath(it) } }
+    val path = home.path
     var inspected by rememberSaveable { mutableStateOf<String?>(null) }
     val shownStep = path?.steps?.firstOrNull { it.id.name == inspected }
     if (shownStep != null) StepSheet(shownStep, onAction = {

@@ -154,8 +154,8 @@ import org.openxplay.direlay.ui.LocalRelayMotion
     copy: (String) -> Unit, showStep: (PathStep) -> Unit) {
     val countdownStart = remember(sample.title) { System.currentTimeMillis() - 8000 }
     val path = if (sample.title == R.string.design_sample_car_wait) {
-        val seconds = (20 - rememberElapsedSeconds(countdownStart)).coerceAtLeast(0)
-        val focus = checkNotNull(sample.path.focus).copy(detail = StepText.of(R.string.design_car_countdown, seconds.toString()), sinceMillis = countdownStart)
+        val focus = checkNotNull(sample.path.focus).copy(detail = StepText.of(R.string.design_car_countdown),
+            sinceMillis = countdownStart, carWaitUntilMillis = countdownStart + 20000)
         sample.path.copy(focus = focus, sections = sample.path.sections.map { section ->
             section.copy(steps = section.steps.map { if (it.id == focus.id) focus else it })
         })
@@ -171,6 +171,6 @@ import org.openxplay.direlay.ui.LocalRelayMotion
             PathSectionCard(section, expanded, { expanded = it }, showStep, action, focusedStep = path.focus?.id)
         }
     }
-    DiagnosticLine(path.diagnostic, copy)
+    DiagnosticLine(path.diagnostic, copy, path.version)
     PrimaryPill(path.running, true, stringResource(if (path.running) R.string.design_stop else R.string.design_connect), onClick = recheck)
 }

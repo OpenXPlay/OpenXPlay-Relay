@@ -15,29 +15,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.miracast.MiracastSystem
-import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.settings.*
 import org.openxplay.stream.cast.CastRenderer
 
-@Composable fun WirelessDisplaySettings(draft: RelaySettings, runtime: RelayRuntime?,
+@Composable fun WirelessDisplaySettings(draft: RelaySettings, view: org.openxplay.direlay.presentation.WirelessPictureView,
+    searchRenderers: suspend () -> List<CastRenderer>,
     editor: SettingsEditorState, openCarScreen: () -> Unit, change: (RelaySettings) -> Unit) {
     if (!draft.dlnaOutput && !draft.miracastOutput) return
     val context = LocalContext.current
     var picker by rememberSaveable { mutableStateOf(false) }
-    var overlayAllowed by remember { mutableStateOf(MiracastSystem.canDrawOverlays(context)) }
-    LaunchedEffect(draft.miracastOutput) {
-        while (draft.miracastOutput) {
-            overlayAllowed = MiracastSystem.canDrawOverlays(context)
-            delay(1000)
-        }
-    }
-    if (picker) DlnaReceiverPicker(draft.dlnaRenderer, runtime, dismiss = { picker = false }) {
+    val overlayAllowed = view.overlayAllowed
+    if (picker) DlnaReceiverPicker(draft.dlnaRenderer, searchRenderers, dismiss = { picker = false }) {
         change(draft.copy(dlnaRenderer = DlnaRendererChoice(it.udn, it.friendlyName))); picker = false
     }
     SettingsGroup("wireless-display", R.drawable.symbol_cast, IconHue.CAR, stringResource(R.string.wireless_display),
@@ -63,7 +54,7 @@ import org.openxplay.stream.cast.CastRenderer
             if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.miracast_carlink_hint))
             Hint(stringResource(R.string.miracast_wifi_direct_constraint))
         }
-        if (draft.dlnaOutput || draft.miracastOutput) WirelessPictureSettings(editor, runtime, openCarScreen)
+        if (draft.dlnaOutput || draft.miracastOutput) WirelessPictureSettings(editor, view, openCarScreen)
     }
 }
 
@@ -71,16 +62,16 @@ import org.openxplay.stream.cast.CastRenderer
     listOfNotNull(R.string.wireless_dlna.takeIf { draft.dlnaOutput }, R.string.wireless_miracast.takeIf { draft.miracastOutput }).map { stringResource(it) }.joinToString(" · ")
         .ifEmpty { stringResource(R.string.menu_off) }
 
-@Composable internal fun DlnaReceiverPicker(choice: DlnaRendererChoice?, runtime: RelayRuntime?, dismiss: () -> Unit,
+@Composable internal fun DlnaReceiverPicker(choice: DlnaRendererChoice?, searchRenderers: suspend () -> List<CastRenderer>, dismiss: () -> Unit,
     choose: (CastRenderer) -> Unit) {
     var revision by remember { mutableIntStateOf(0) }
     var searching by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
     var renderers by remember { mutableStateOf(emptyList<CastRenderer>()) }
-    LaunchedEffect(runtime, revision) {
+    LaunchedEffect(searchRenderers, revision) {
         searching = true; failed = false
         try {
-            renderers = withContext(Dispatchers.IO) { checkNotNull(runtime).searchDlnaRenderers() }
+            renderers = searchRenderers()
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { renderers = emptyList(); failed = true }
         finally { searching = false }

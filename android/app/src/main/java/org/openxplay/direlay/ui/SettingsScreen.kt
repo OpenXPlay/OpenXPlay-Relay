@@ -22,11 +22,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.direlay.relay.CarPlayFrameRate
-import org.openxplay.direlay.relay.CarModels
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -75,11 +72,13 @@ import org.openxplay.direlay.settings.*
 private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading() })
 
 @Composable fun SettingsScreen(state: SettingsEditorState, wireless: (RelaySettings) -> Boolean,
-    route: String, back: () -> Unit, open: (String) -> Unit, identityStatus: Int, identityView: DeveloperView,
+    route: String, back: () -> Unit, open: (String) -> Unit,
     copy: (String) -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit, currentWifi: String? = null,
-    bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {},
-    adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null, running: Boolean = false) {
-    val runtimeContext = LocalContext.current.applicationContext
+    bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, useSharedWifi: (String) -> Unit = {},
+    sources: org.openxplay.direlay.presentation.ScreenSources, actions: org.openxplay.direlay.presentation.ScreenActions,
+    support: org.openxplay.direlay.presentation.SupportActions, running: Boolean = false) {
+    val common by sources.settings.screenState()
+    val settings = common ?: return
     var draft by state.draft
     var confirmOutput by remember { mutableStateOf<RelaySettings?>(null) }
     fun selectOutput(choice: OutputChoice, kind: WirelessDisplayKind) {
@@ -94,17 +93,16 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
         confirmUsb = false
     }, dismiss = { confirmUsb = false })
-    val appliedFps = runtime?.appliedFrameRate?.collectAsState()?.value
-    val negotiatedFps = runtime?.negotiatedFrameRate?.collectAsState()?.value
-    val frameRate = if (running && appliedFps != null) appliedFps else CarPlayFrameRate.requested(draft.frameRate, negotiatedFps)
+    val appliedFps = settings.appliedFps
+    val negotiatedFps = settings.negotiatedFps
+    val frameRate = if (running) appliedFps else CarPlayFrameRate.requested(draft.frameRate, negotiatedFps)
     val errors = settingsErrors(draft, wireless(draft))
     val invalidPages = state.errorPages(wireless)
     val page = route.substringBefore('#')
     val target = route.substringAfter('#', "")
     var iphoneLocated by rememberSaveable { mutableStateOf(false) }
     var sharedWifiLocated by rememberSaveable { mutableStateOf(false) }
-    var models by remember { mutableStateOf<CarModels?>(null) }
-    LaunchedEffect(runtime) { models = withContext(Dispatchers.IO) { runtime?.carModels } }
+    val models = settings.models
     val carSummary = carSelectionSummary(draft.car, models, LocalConfiguration.current.locales[0],
         stringResource(R.string.car_none), stringResource(R.string.car_other))
     val ms = if (LocalRelayMotion.current) 220 else 0
@@ -118,18 +116,18 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
     DetailPage(stringResource(settingsPageTitle(page)), back) {
         when (page) {
-            "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, frameRate, open)
-            "settings/configFiles" -> if (runtime != null) ConfigFilesScreen(remember(runtime) {
-                org.openxplay.direlay.config.ConfigFiles(runtimeContext, runtime.settingsStore, runtime.publicName, runtime.tlsStore)
-            })
-            "settings/logs" -> if (runtime != null) LogsScreen(runtime.logs, remember(runtime) {
-                org.openxplay.direlay.logs.OpenXPlayLogUploader(org.openxplay.direlay.logs.InternetUploadConnection(
-                    runtimeContext.getSystemService(android.net.ConnectivityManager::class.java)),
-                    runtimeContext.packageManager.getPackageInfo(runtimeContext.packageName, 0).versionName.orEmpty(),
-                    org.openxplay.direlay.logs.PreferencesLogUploadStore(
-                        runtimeContext.getSharedPreferences("log-uploads", android.content.Context.MODE_PRIVATE)))
-            })
-            "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
+            "settings" -> {
+                val identityStatus by sources.identity.screenState()
+                val summary = stringResource(R.string.menu_access_summary,
+                    menuToggleSummary(settings.adminEnabled), menuToggleSummary(settings.publicNameEnabled))
+                SettingsMenu(draft, invalidPages, wireless(draft), summary, carSummary, identityStatus, frameRate, open)
+            }
+            "settings/configFiles" -> ConfigFilesScreen(support.config)
+            "settings/logs" -> LogsScreen(support.logs, support.upload)
+            "settings/identity" -> {
+                val identityView by sources.developer.screenState()
+                IdentitySettings(state, identityView, copy, import, remove)
+            }
             "settings/output" -> {
                 SettingsGroup("output", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.ui_output), outputSummary(draft),
                     initiallyExpanded = true, targeted = target == "output",
@@ -163,10 +161,14 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         }
                     }
                 }
-                WirelessDisplaySettings(draft, runtime, state, openCarScreen = { open("settings/car") }) { draft = it }
+                if (draft.dlnaOutput || draft.miracastOutput) {
+                    val picture by sources.wirelessPicture.screenState()
+                    WirelessDisplaySettings(draft, picture, actions.searchRenderers, state, openCarScreen = { open("settings/car") }) { draft = it }
+                }
             }
             "settings/car" -> {
-                if (runtime != null) CarScreenSettings(draft, runtime,
+                val view by sources.car.screenState()
+                CarScreenSettings(draft, view, wireless, actions.clearHeadUnit,
                     openTrustedHttps = { open("settings/access/publicName") },
                     openOutput = { open("settings/output") }) { draft = it }
             }
@@ -260,8 +262,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     footer = stringResource(R.string.direlay_boot_hint)) { draft = draft.copy(autoStartOnBoot = it) }
             }
             "settings/access" -> {
-                val name = runtime?.publicName?.view?.collectAsState()?.value
-                adminPage()
+                val access by sources.admin.screenState()
+                val nameView by sources.name.screenState()
+                val name = nameView.view
+                AdminPageSettings(access.enabled, access.urls, actions.adminEnabled, copy, actions.resetPassword)
                 InsetGroup(footer = stringResource(R.string.public_name_summary)) {
                     SettingsMenuRow(R.string.public_name_title, name?.name?.takeIf { it.isNotEmpty() }
                         ?: menuToggleSummary(name?.enabled == true), R.drawable.symbol_globe) { open("settings/access/publicName") }
@@ -353,7 +357,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
     InsetDivider()
 }
-@Composable fun AboutScreen(back: () -> Unit, updates: org.openxplay.direlay.update.UpdateChecker) {
+@Composable fun AboutScreen(back: () -> Unit, updates: org.openxplay.direlay.presentation.UpdateActions) {
     val context = LocalContext.current
     fun link(url: String) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     DetailPage(stringResource(R.string.direlay_about), back) {
@@ -363,7 +367,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(64.dp))
                 Column(Modifier.weight(1f)) {
                     RelayBrand()
-                    Text(context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
+                    Text(LocalAppVersion.current,
                         style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

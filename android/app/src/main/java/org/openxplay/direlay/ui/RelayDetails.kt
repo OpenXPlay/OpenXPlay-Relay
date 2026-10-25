@@ -17,8 +17,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.pm.ApplicationInfo
-import android.os.Build
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
@@ -44,6 +42,7 @@ import org.openxplay.direlay.R
     val motion = LocalRelayMotion.current
     val state = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, relaySpatial(motion), label = "problem expansion")
+    val environment = LocalAppEnvironment.current
     val context = LocalContext.current
     val title = stringResource(problem.title)
     val explanation = problem.textResource?.let { stringResource(it, *problem.arguments.toTypedArray()) }
@@ -91,10 +90,6 @@ import org.openxplay.direlay.R
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 settingsAction()
                 TextButton(onClick = {
-                    val info = context.packageManager.getPackageInfo(context.packageName, 0)
-                    val versionCode = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-                    val buildType = if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) "debug" else "release"
-                    val environment = "${info.versionName} ($versionCode) $buildType\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}"
                     val copy = listOfNotNull(title, explanation, text.takeIf { it.isNotBlank() }, time,
                         problem.detail?.takeIf { it.isNotBlank() }?.let { "$detailsLabel\n$it" }, environment).joinToString("\n\n")
                     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(title, copy))

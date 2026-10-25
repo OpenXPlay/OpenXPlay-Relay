@@ -31,11 +31,11 @@ import org.openxplay.direlay.ui.Symbol
         border = BorderStroke(1.dp, color.copy(alpha = .35f))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatusGlyph(step.state, 40.dp)
+                StatusGlyph(step.state, 40.dp, stateKey = step.id to step.sinceMillis)
                 Text(stringResource(step.title), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title)
                 IconButton(onDetails) { Symbol(R.drawable.symbol_info, stringResource(R.string.design_details)) }
             }
-            step.detail?.let { Text(stepText(it), style = RelayTokens.body) }
+            step.detail?.let { StepDetail(step, style = RelayTokens.body) }
             if (step.state == StepState.WORKING || step.state == StepState.WAITING) ElapsedTime(step.sinceMillis)
             step.evidence?.let { EvidenceRow(stepText(it)) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -64,7 +64,6 @@ import org.openxplay.direlay.ui.Symbol
 @OptIn(ExperimentalLayoutApi::class)
 @Composable fun LiveCard(live: LiveSummary, path: ConnectionPath, onStop: () -> Unit, compact: Boolean = false) {
     if (compact) { CompactLiveCard(live, path, onStop); return }
-    val seconds = rememberElapsedSeconds(live.sinceMillis)
     val haptic = LocalHapticFeedback.current
     Card(Modifier.fillMaxWidth(), shape = RelayTokens.card,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -73,7 +72,7 @@ import org.openxplay.direlay.ui.Symbol
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 StatusGlyph(StepState.OK, 40.dp)
                 Text(stringResource(R.string.design_live), Modifier.weight(1f).semantics { heading() }, style = RelayTokens.title)
-                Text(sessionTime(seconds), style = RelayTokens.mono)
+                SessionTime(live.sinceMillis)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 live.chips.forEach { chip -> Surface(shape = RelayTokens.chip, color = LocalStatusColors.current.container(StepState.OK)) {
@@ -100,10 +99,10 @@ import org.openxplay.direlay.ui.Symbol
             border = BorderStroke(1.dp, color.copy(alpha = .35f))) {
             Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatusGlyph(step.state, 32.dp)
+                    StatusGlyph(step.state, 32.dp, stateKey = step.id to step.sinceMillis)
                     Column(Modifier.weight(1f)) {
                         Text(stringResource(step.title), style = RelayTokens.headline)
-                        step.detail?.let { Text(stepText(it), style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        step.detail?.let { StepDetail(step, style = RelayTokens.caption, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
                     IconButton(onDetails, Modifier.size(40.dp)) { Symbol(R.drawable.symbol_info, stringResource(R.string.design_details)) }
                 }
@@ -133,7 +132,6 @@ import org.openxplay.direlay.ui.Symbol
 }
 
 @Composable private fun CompactLiveCard(live: LiveSummary, path: ConnectionPath, onStop: () -> Unit) {
-    val seconds = rememberElapsedSeconds(live.sinceMillis)
     val haptic = LocalHapticFeedback.current
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 40.dp) {
         Card(Modifier.fillMaxWidth(), shape = RelayTokens.card,
@@ -144,7 +142,7 @@ import org.openxplay.direlay.ui.Symbol
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatusGlyph(StepState.OK, 32.dp)
                     Text(stringResource(R.string.design_live), Modifier.weight(1f), style = RelayTokens.headline)
-                    Text(sessionTime(seconds), style = RelayTokens.mono)
+                    SessionTime(live.sinceMillis)
                 }
                 val evidence = live.chips.joinToString(" · ")
                 Text(evidence, style = if (evidenceUsesMonospace(evidence)) RelayTokens.mono else RelayTokens.caption)

@@ -53,7 +53,7 @@ fun presentPath(input: PathInput, zone: ZoneId = ZoneId.systemDefault()): Connec
         PathNodes(input.iphone.name, input.relay.bluetoothName,
             input.car.carlink.carName ?: input.car.screen
                 ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name ?: input.car.miracast.name),
-        diagnostic(sections, input, zone))
+        diagnostic(sections, input, zone), input.version)
 }
 
 private fun PathInput.stepIds(): List<StepId> = buildList {
@@ -218,7 +218,7 @@ private fun PathInput.webServerStep() = when (car.web.phase) {
     WebPhase.OFF, WebPhase.STARTING -> pathStep(WEB_SERVER, WORKING, text(R.string.path_starting))
     WebPhase.FAILED -> pathStep(WEB_SERVER, FAILED, if (car.web.code == "web_port_busy")
         text(R.string.path_port_busy, car.web.port?.toString().orEmpty()) else text(R.string.path_could_not_start),
-        code = car.web.code ?: "web_failed")
+        code = car.web.code ?: "web_failed", since = car.web.sinceMillis)
 }
 
 private fun PathInput.carPageStep() = if (car.pages > 0)
@@ -367,10 +367,8 @@ private fun PathInput.linkProgress(id: StepId, state: StepState, detail: StepTex
 
 private fun PathInput.carplayStartStep(canStart: Boolean): PathStep {
     iphone.carWaitUntilMillis?.let { until ->
-        val remaining = (until - nowMillis).coerceAtLeast(0)
-        val seconds = remaining / 1000 + if (remaining % 1000 > 0) 1 else 0
-        return pathStep(CARPLAY_START, WAITING, text(R.string.path_car_screen_wait, seconds.toString()),
-            action = START_NOW, since = iphone.stepSinceMillis)
+        return pathStep(CARPLAY_START, WAITING, text(R.string.path_car_screen_wait),
+            action = START_NOW, since = iphone.stepSinceMillis).copy(carWaitUntilMillis = until)
     }
     if (iphone.armed) return pathStep(CARPLAY_START, BLOCKED, text(R.string.path_start_armed))
     if (iphone.step == LinkStep.IDLE && !iphone.started && iphone.failure == null)
@@ -418,8 +416,7 @@ private fun diagnostic(sections: List<PathSectionView>, input: PathInput, zone: 
     val parts = sections.map { section -> section.section.code + " " +
         section.steps.joinToString(" ") { it.id.code + it.state.glyph } }.toMutableList()
     sections.flatMap { it.steps }.firstOrNull { it.state == FAILED && it.code != null }?.let { failure ->
-        parts.add("E ${failure.code} ${clock.format(Instant.ofEpochMilli(failure.sinceMillis ?: input.nowMillis))}")
+        parts.add("E ${failure.code} ${clock.format(Instant.ofEpochMilli(failure.sinceMillis ?: 0L))}")
     }
-    parts.add("${input.version} ${clock.format(Instant.ofEpochMilli(input.nowMillis))}")
     return parts.joinToString(" | ")
 }

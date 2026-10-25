@@ -17,39 +17,21 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.*
 import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
+import org.openxplay.direlay.presentation.CarScreenView
 import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 
-private data class DetectedCarScreen(val screen: ScreenDataKey, val records: List<WindowSizeRecord>, val receiver: org.json.JSONObject?)
-@Composable fun CarScreenSettings(draft: RelaySettings, runtime: RelayRuntime,
-    openTrustedHttps: () -> Unit = {}, openOutput: () -> Unit = {}, change: (RelaySettings) -> Unit) {
+@Composable fun CarScreenSettings(draft: RelaySettings, view: CarScreenView, wireless: (RelaySettings) -> Boolean,
+    clearHeadUnit: () -> Unit, openTrustedHttps: () -> Unit = {}, openOutput: () -> Unit = {}, change: (RelaySettings) -> Unit) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
-    var models by remember { mutableStateOf<CarModels?>(null) }
-    var detected by remember { mutableStateOf<DetectedCarScreen?>(null) }
-    var savedCanvas by remember { mutableStateOf<CarPlayScreen?>(null) }
-    var version by remember { mutableStateOf("") }
-    LaunchedEffect(runtime) {
-        val loaded = withContext(Dispatchers.IO) {
-            runtime.carModels to context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
-        }
-        models = loaded.first; version = loaded.second
-        while (true) {
-            savedCanvas = withContext(Dispatchers.IO) { runtime.savedCanvas }
-            detected = withContext(Dispatchers.IO) {
-                val rows = runtime.windowRecords.snapshot()
-                rows.firstOrNull()?.let { latest ->
-                    val screen = ScreenDataKey(latest.screenWidth, latest.screenHeight, latest.densityDpi)
-                    DetectedCarScreen(screen, rows.filter(screen::matches), runtime.status.receivers.latestInfo(screen))
-                }
-            }
-            delay(500)
-        }
-    }
+    val models = view.models
+    val detected = view.detected
+    val savedCanvas = view.savedCanvas
+    val version = view.version
     SettingsToggleGroup(stringResource(R.string.car_view_areas), draft.viewAreas, R.drawable.symbol_monitor, IconHue.CAR,
         footer = stringResource(R.string.car_view_areas_hint)) { change(draft.copy(viewAreas = it)) }
     val none = stringResource(R.string.car_none)
@@ -95,7 +77,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         }
     }
     if (car.brand == "tesla" || draft.teslaBrowser != TeslaBrowserMode.OFF)
-        TeslaBrowserSettings(draft, runtime, openTrustedHttps, openOutput, change)
+        TeslaBrowserSettings(draft, view, wireless, openTrustedHttps, openOutput, change)
     SettingsGroup("canvas", R.drawable.symbol_monitor, IconHue.CAR, stringResource(R.string.car_saved_canvas), savedCanvas?.let { "${it.profile.width} × ${it.profile.height}" } ?: none) {
         savedCanvas?.let { saved ->
             Text(stringResource(R.string.car_canvas_size, saved.profile.width, saved.profile.height, saved.profile.density))
@@ -105,7 +87,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
                 else -> R.string.car_canvas_default
             }))
         }
-        OutlinedButton(onClick = { runtime.clearSavedHeadUnit() }, modifier = Modifier.heightIn(min = 48.dp)) {
+        OutlinedButton(onClick = clearHeadUnit, modifier = Modifier.heightIn(min = 48.dp)) {
             Text(stringResource(R.string.car_clear_screen))
         }
     }
@@ -138,7 +120,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
         val copied = stringResource(R.string.car_copied)
         OutlinedButton(enabled = data != null && version.isNotEmpty(), onClick = {
             if (data != null) {
-                val text = CarScreenShare.text(title, carLine, version, cleaned, data.screen, data.records, data.receiver)
+                val text = CarScreenShare.text(title, carLine, version, cleaned, data.screen, data.records, data.receiver?.let { org.json.JSONObject(it) })
                 context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(title, text))
                 Toast.makeText(context, copied, Toast.LENGTH_SHORT).show()
             }
@@ -146,9 +128,9 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
     }
 }
 
-@Composable private fun TeslaBrowserSettings(draft: RelaySettings, runtime: RelayRuntime,
+@Composable private fun TeslaBrowserSettings(draft: RelaySettings, view: CarScreenView, wireless: (RelaySettings) -> Boolean,
     openTrustedHttps: () -> Unit, openOutput: () -> Unit, change: (RelaySettings) -> Unit) {
-    val name by runtime.publicName.view.collectAsState()
+    val name = view.publicName
     val options = listOf(
         TeslaBrowserMode.OFF to RadioOption(R.string.tesla_off, R.string.tesla_intro),
         TeslaBrowserMode.VIRTUAL_NAME to RadioOption(R.string.tesla_virtual_name, R.string.tesla_virtual_name_hint),
@@ -172,7 +154,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
             if (TeslaAddressPolicy.needsAndroid13Warning(Build.VERSION.SDK_INT, address))
                 Hint(stringResource(R.string.tesla_address_android13))
             SettingsGroup("teslaAddress", R.drawable.symbol_globe, IconHue.NETWORK, stringResource(R.string.tesla_address), address) {
-                val phoneAddresses = runtime.ipv4 - listOfNotNull(runtime.teslaAddress?.address).toSet()
+                val phoneAddresses = view.phoneAddresses
                 SettingField(stringResource(R.string.tesla_address), address,
                     R.string.tesla_address_invalid.takeUnless { TeslaAddressPolicy.valid(address, phoneAddresses) }) {
                     change(when (draft.teslaBrowser) {
@@ -191,7 +173,7 @@ private data class DetectedCarScreen(val screen: ScreenDataKey, val records: Lis
                     Text(stringResource(R.string.tesla_open_output))
                 }
             }
-            if (!runtime.settingsStore.wireless(draft)) Hint(stringResource(R.string.tesla_needs_wireless))
+            if (!wireless(draft)) Hint(stringResource(R.string.tesla_needs_wireless))
             if (draft.wirelessNetwork.choice == WirelessNetworkChoice.EXISTING_WIFI)
                 Hint(stringResource(R.string.tesla_needs_phone_network))
             if (draft.teslaBrowser.usesTrustedName && !name.hasTrustedNameConfiguration()) {

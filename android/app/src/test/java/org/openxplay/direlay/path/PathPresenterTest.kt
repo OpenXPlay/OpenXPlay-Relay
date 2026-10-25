@@ -281,7 +281,9 @@ class PathPresenterTest {
             val waiting = ready.copy(iphone = ready.iphone.copy(started = true, carWaitUntilMillis = now + left,
                 stepSinceMillis = now - 1000)).step(CARPLAY_START)
             assertEquals(WAITING, waiting.state)
-            assertEquals(StepText.of(R.string.path_car_screen_wait, label), waiting.detail)
+            assertEquals(StepText.of(R.string.path_car_screen_wait), waiting.detail)
+            assertEquals(now + left, waiting.carWaitUntilMillis)
+            assertEquals(label.toLong(), countdownSeconds(checkNotNull(waiting.carWaitUntilMillis), now))
             assertEquals(START_NOW, waiting.action)
             assertEquals(R.string.path_action_start_now, waiting.actionLabel)
             assertEquals(now - 1000, waiting.sinceMillis)
@@ -581,19 +583,19 @@ class PathPresenterTest {
         assertNull(path(noScreen.copy(setup = noScreen.setup.copy(outputs = emptySet()))).nodes.car)
     }
 
-    @Test fun threeFullDiagnosticLinesAreExact() {
-        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP· RF· IAP· JOIN· SES· | P LIVE· | 0.1.6 14:32:05", path().diagnostic)
-        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN✗ SES· | P LIVE· | E first_tcp_timeout 14:31:58 | 0.1.6 14:32:05",
+    @Test fun threeStableDiagnosticLinesAreExact() {
+        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP· RF· IAP· JOIN· SES· | P LIVE·", path().diagnostic)
+        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN✗ SES· | P LIVE· | E first_tcp_timeout 14:31:58",
             path(failed("first_tcp_timeout", LinkStep.JOINING)).diagnostic)
         val wired = phone(LinkStep.VIDEO, ready.copy(setup = ready.setup.copy(network = NetworkPlan.USB)))
             .copy(live = LiveInput(pictureOnCar = true))
-        assertEquals("R MODE✓ ID✓ PERM✓ | C NET✓ WEB✓ PAGE✓ | I USB✓ CP✓ DEV✓ TRUST✓ CTRL✓ SES✓ | P LIVE✓ | 0.1.6 14:32:05", path(wired).diagnostic)
+        assertEquals("R MODE✓ ID✓ PERM✓ | C NET✓ WEB✓ PAGE✓ | I USB✓ CP✓ DEV✓ TRUST✓ CTRL✓ SES✓ | P LIVE✓", path(wired).diagnostic)
         val retrying = failed("first_tcp_timeout", LinkStep.JOINING, true)
-        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN~ SES· | P LIVE· | 0.1.6 14:32:05", path(retrying).diagnostic)
+        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN~ SES· | P LIVE·", path(retrying).diagnostic)
         val twoFailures = failed("first_tcp_timeout", LinkStep.JOINING).copy(car = ready.car.copy(
             web = WebServerInput(WebPhase.FAILED, code = "web_failed")))
-        assertTrue(path(twoFailures).diagnostic.endsWith(" | E web_failed 14:32:05 | 0.1.6 14:32:05"))
-        assertTrue(presentPath(ready, ZoneId.of("Asia/Shanghai")).diagnostic.endsWith("0.1.6 22:32:05"))
+        assertTrue(path(twoFailures).diagnostic.endsWith(" | E web_failed 00:00:00"))
+        assertTrue(presentPath(ready, ZoneId.of("Asia/Shanghai")).let { it.version == "0.1.6" && !it.diagnostic.contains("22:32:05") })
     }
 
     @Test fun everyStateNamedInTheStepTableIsReachable() {
