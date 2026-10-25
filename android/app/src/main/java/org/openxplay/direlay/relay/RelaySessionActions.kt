@@ -39,6 +39,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
     val networkStart = ManualNetworkStart()
     private var manualRestart = false
     val carFirst = CarFirstPolicy()
+    val carlinkFirst = CarlinkStartGate()
     private val recovery = RecoverOncePolicy()
     private var userStopped = false
     private var pendingManual = true
@@ -50,6 +51,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             userStopped = true
             networkStart.cancel()
             carFirst.cancel()
+            carlinkFirst.cancel()
             runtime.startRequest.finish()
             restarting = false
             generation++
@@ -57,7 +59,8 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             stop(if (manual) "manual" else "auto"); null
         }
         "startNow" -> {
-            if (carFirst.untilMillis == null) "error.conflict" else { carFirst.cancel(); null }
+            if (carFirst.untilMillis == null && carlinkFirst.untilMillis == null) "error.conflict"
+            else { carFirst.cancel(); carlinkFirst.cancel(); null }
         }
         "restart", "retry" -> {
             if (runtime.startRequest.pending || restarting || networkStart.pending != null) "error.conflict" else {
@@ -126,6 +129,8 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
 
     @Synchronized private fun startFailed(failure: Throwable) {
         carFirst.cancel()
+        carlinkFirst.cancel()
+        runtime.startRequest.finish()
         networkStart.cancel()
         runtime.status.inputFailed(failure)
     }
@@ -203,6 +208,8 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         runtime.iphoneLink.reset()
         runtime.status.clearFailure()
         runtime.carPlayDiagnostics.clear()
+        carlinkFirst.request(System.currentTimeMillis(), wireless && CarlinkConnectionPolicy.enabled(settings) &&
+            settings.experimental.effective().waitForCarlink)
         if (!carWaitSatisfied) carFirst.request(System.currentTimeMillis(), settings.displayMode == org.openxplay.direlay.settings.DisplayMode.AUTOMATIC,
             !settings.carlinkOutput || settings.bothOutputs, settings.carlinkOutput || settings.bothOutputs,
             runtime.carScreenReported, runtime.savedCarScreen(settings) != null)
@@ -212,6 +219,15 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
 
     @Synchronized private fun continueStart(launchGeneration: Long, source: String, networkAccepted: Boolean) {
         if (closed || launchGeneration != generation) return
+        try {
+            val settings = runtime.settingsStore.awaitSnapshot()
+            if (!carlinkFirst.ready(System.currentTimeMillis(),
+                    runtime.carlinkReadyForCarPlay,
+                    CarlinkConnectionPolicy.enabled(settings))) {
+                worker.schedule({ continueStart(launchGeneration, source, networkAccepted) }, 100, TimeUnit.MILLISECONDS)
+                return
+            }
+        } catch (failure: Exception) { startFailed(failure); return }
         if (!carFirst.ready(System.currentTimeMillis(), runtime.carScreenReported)) {
             worker.schedule({ continueStart(launchGeneration, source, networkAccepted) }, 100, TimeUnit.MILLISECONDS)
             return
@@ -249,5 +265,5 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             runtime.startRequest.finish(); startFailed(failure)
         }
     }
-    @Synchronized override fun close() { closed = true; generation++; restarting = false; networkStart.cancel(); carFirst.cancel(); runtime.startRequest.finish(); worker.shutdownNow() }
+    @Synchronized override fun close() { closed = true; generation++; restarting = false; networkStart.cancel(); carFirst.cancel(); carlinkFirst.cancel(); runtime.startRequest.finish(); worker.shutdownNow() }
 }

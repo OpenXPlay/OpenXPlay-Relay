@@ -755,7 +755,7 @@
     <string name="experimental_title">Experimental</string>
     <string name="experimental_summary">On · %1$d options</string>
     <string name="experimental_use_options">Use experimental options</string>
-    <string name="experimental_use_options_hint">Off: Carlink connects exactly as it does without these options. Your choices are kept for next time.</string>
+    <string name="experimental_use_options_hint">Controls all experimental options below and keeps your choices when off. Changes take effect on the next connection indicated by each option; a running session stays connected.</string>
     <string name="experimental_carlink">Carlink quick connect</string>
     <string name="experimental_carlink_hint">For finding out why a paired car connects only while it shows the six-digit code. Changes apply to the next Carlink connection.</string>
     <string name="experimental_remember_subscription">Remember the Bluetooth subscription method</string>
@@ -771,4 +771,14 @@
     <string name="network_bluetooth_reminder">Make sure Bluetooth is on.</string>
     <string name="network_bluetooth_problem">Turn on Bluetooth</string>
     <string name="network_open_bluetooth">Open Bluetooth settings</string>
+    <string name="experimental_iphone_group">Relay ↔ iPhone</string>
+    <string name="experimental_head_unit_group">Relay ↔ Head unit</string>
+    <string name="experimental_scope_both">Affects wireless CarPlay input for browser and Carlink outputs.</string>
+    <string name="experimental_scope_carlink">Affects the Carlink connection to the head unit.</string>
+    <string name="experimental_isolate_network">Isolate the Carlink network</string>
+    <string name="experimental_isolate_network_hint">Keep the head-unit network specific to Carlink, reducing interference with the iPhone connection. With both outputs enabled, this also changes network selection for browser connections. Takes effect on the next Carlink connection.</string>
+    <string name="experimental_wait_for_carlink">Wait for Carlink before connecting the iPhone</string>
+    <string name="experimental_wait_for_carlink_hint">For wireless CarPlay with Carlink output. Wait up to one minute for the head unit to be ready, then connect the iPhone. With both outputs enabled, this also delays the browser picture. Takes effect on the next CarPlay start.</string>
+    <string name="experimental_wireless_recovery">Check and recover the iPhone Wi-Fi connection</string>
+    <string name="experimental_wireless_recovery_hint">Try this when Wi-Fi connects but CarPlay does not start. Check for network changes and retry an incomplete wireless session while keeping the output connection. Applies to browser and Carlink outputs on the next CarPlay connection.</string>
 </resources>

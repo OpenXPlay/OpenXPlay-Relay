@@ -48,8 +48,9 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   physicalWidthOverrideMm is 0 or 100–400 in steps of 25; carlinkDeviceModel uses the name rule.
  * - Legacy fps is ignored. Without frameRate, developer.fpsEnabled=true and a valid
  *   developer.fps migrate to frameRate; otherwise both developer keys are ignored.
- * - experimental: active, rememberSubscription, keepScanning, recordAdvertisements and
- *   sendBluetoothAddress are booleans; bluetoothAddress is a user-entered unicast Bluetooth address.
+ * - experimental: active, rememberSubscription, keepScanning, recordAdvertisements,
+ *   sendBluetoothAddress, isolateCarlinkNetwork, waitForCarlink and recoverWirelessNetwork are
+ *   booleans; bluetoothAddress is a user-entered unicast Bluetooth address.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
  * Android aliases: iphoneConnection, mfiI2cPath, mfiRemoteServer and hotspot*.
  * All other keys match Kotlin properties; developer contains every remembered override.
@@ -167,6 +168,9 @@ object UserConfigCodec {
         .put("recordAdvertisements", e.recordAdvertisements)
         .put("sendBluetoothAddress", e.sendBluetoothAddress)
         .put("bluetoothAddress", e.bluetoothAddress)
+        .put("isolateCarlinkNetwork", e.isolateCarlinkNetwork)
+        .put("waitForCarlink", e.waitForCarlink)
+        .put("recoverWirelessNetwork", e.recoverWirelessNetwork)
 
     private fun developerValues(d: DeveloperOverrides): JSONObject = JSONObject()
         .put("active", d.active)
@@ -282,6 +286,9 @@ object UserConfigCodec {
                             "recordAdvertisements" -> e.copy(recordAdvertisements = objectValue.bool(field))
                             "sendBluetoothAddress" -> e.copy(sendBluetoothAddress = objectValue.bool(field))
                             "bluetoothAddress" -> e.copy(bluetoothAddress = objectValue.string(field))
+                            "isolateCarlinkNetwork" -> e.copy(isolateCarlinkNetwork = objectValue.bool(field))
+                            "waitForCarlink" -> e.copy(waitForCarlink = objectValue.bool(field))
+                            "recoverWirelessNetwork" -> e.copy(recoverWirelessNetwork = objectValue.bool(field))
                             else -> { ignored.add("experimental.$field"); e }
                         }
                     } catch (_: Exception) { errors.putIfAbsent("experimental.$field", "invalid") }

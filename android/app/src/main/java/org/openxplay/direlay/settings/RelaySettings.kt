@@ -418,6 +418,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         recordAdvertisements = relay.getBoolean("experimental.recordAdvertisements", false),
         sendBluetoothAddress = relay.getBoolean("experimental.sendBluetoothAddress", false),
         bluetoothAddress = relay.getString("experimental.bluetoothAddress", "").orEmpty(),
+        isolateCarlinkNetwork = relay.getBoolean("experimental.isolateCarlinkNetwork", false),
+        waitForCarlink = relay.getBoolean("experimental.waitForCarlink", false),
+        recoverWirelessNetwork = relay.getBoolean("experimental.recoverWirelessNetwork", false),
     )
 
     private fun writeExperimentalOptions(edit: android.content.SharedPreferences.Editor, value: ExperimentalOptions) {
@@ -427,6 +430,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("experimental.recordAdvertisements", value.recordAdvertisements)
             .putBoolean("experimental.sendBluetoothAddress", value.sendBluetoothAddress)
             .putString("experimental.bluetoothAddress", value.bluetoothAddress)
+            .putBoolean("experimental.isolateCarlinkNetwork", value.isolateCarlinkNetwork)
+            .putBoolean("experimental.waitForCarlink", value.waitForCarlink)
+            .putBoolean("experimental.recoverWirelessNetwork", value.recoverWirelessNetwork)
     }
 
     private fun loadDeveloperOverrides(stored: RelaySettings): DeveloperOverrides {

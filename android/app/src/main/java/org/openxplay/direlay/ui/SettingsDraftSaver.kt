@@ -81,6 +81,9 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBoolean("experimental.recordAdvertisements", value.experimental.recordAdvertisements)
         putBoolean("experimental.sendBluetoothAddress", value.experimental.sendBluetoothAddress)
         putString("experimental.bluetoothAddress", value.experimental.bluetoothAddress)
+        putBoolean("experimental.isolateCarlinkNetwork", value.experimental.isolateCarlinkNetwork)
+        putBoolean("experimental.waitForCarlink", value.experimental.waitForCarlink)
+        putBoolean("experimental.recoverWirelessNetwork", value.experimental.recoverWirelessNetwork)
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkReconnectOnResize", value.carlinkReconnectOnResize)
         putBoolean("carlinkTrace", value.carlinkTrace)
@@ -112,7 +115,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         keepScanning = bundle.getBoolean("experimental.keepScanning", base.experimental.keepScanning),
         recordAdvertisements = bundle.getBoolean("experimental.recordAdvertisements", base.experimental.recordAdvertisements),
         sendBluetoothAddress = bundle.getBoolean("experimental.sendBluetoothAddress", base.experimental.sendBluetoothAddress),
-        bluetoothAddress = bundle.getString("experimental.bluetoothAddress") ?: base.experimental.bluetoothAddress),
+        bluetoothAddress = bundle.getString("experimental.bluetoothAddress") ?: base.experimental.bluetoothAddress,
+        isolateCarlinkNetwork = bundle.getBoolean("experimental.isolateCarlinkNetwork", base.experimental.isolateCarlinkNetwork),
+        waitForCarlink = bundle.getBoolean("experimental.waitForCarlink", base.experimental.waitForCarlink),
+        recoverWirelessNetwork = bundle.getBoolean("experimental.recoverWirelessNetwork", base.experimental.recoverWirelessNetwork)),
         connectionMode = ConnectionMode.valueOf(text[0]), mfiTarget = MfiTarget.valueOf(text[1]),
         i2cPath = text[2], remoteServer = text[3], remoteToken = text[4], carlinkDeviceName = text[5], carlinkDeviceModel = text[6],
         microphoneSource = MicrophoneSource.valueOf(text[7]),
