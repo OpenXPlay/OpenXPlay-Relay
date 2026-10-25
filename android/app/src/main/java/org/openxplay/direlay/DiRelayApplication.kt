@@ -62,10 +62,14 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             override fun onActivityDestroyed(activity: Activity) { if (foreground === activity) foreground = null }
         })
         connectionLog.event("relay", "app_ready")
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads().detectDiskWrites().detectCustomSlowCalls().penaltyLog().build())
+        }
     }
 
     override fun carPlayHostOverlay(activity: androidx.activity.ComponentActivity): android.view.View? =
-        org.openxplay.direlay.ui.createCarPlayHostOverlay(activity, runtime)
+        org.openxplay.direlay.presentation.createCarPlayHostOverlay(activity, runtime)
 
     override fun carPlayPhoneAddress(): String? {
         val settings = runtime.settingsStore.awaitSnapshot()

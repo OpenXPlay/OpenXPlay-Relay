@@ -70,6 +70,10 @@ import org.openxplay.direlay.ui.Symbol
 }
 
 @Composable fun StatusCapsule(tone: PathTone, text: String) {
+    StatusCapsule(tone) { Text(text, style = RelayTokens.caption.copy(fontFeatureSettings = "tnum")) }
+}
+
+@Composable fun StatusCapsule(tone: PathTone, content: @Composable () -> Unit) {
     val motion = LocalRelayMotion.current
     val color = LocalStatusColors.current.color(tone)
     val breath = rememberRelayBreath(tone == PathTone.PROGRESS)
@@ -87,7 +91,7 @@ import org.openxplay.direlay.ui.Symbol
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.size(8.dp).graphicsLayer { alpha = if (tone == PathTone.PROGRESS) (breath.value - .84f) / .16f else 1f }
                 .background(color, RelayTokens.pill))
-            Text(text, style = RelayTokens.caption.copy(fontFeatureSettings = "tnum"))
+            content()
         }
     }
 }
@@ -105,7 +109,11 @@ internal fun diagnosticSections(text: String): List<String> = text.split(" | ").
 }
 
 @OptIn(ExperimentalLayoutApi::class)
-@Composable fun DiagnosticLine(text: String, onCopy: (String) -> Unit) {
+@Composable fun DiagnosticLine(line: String, onCopy: (String) -> Unit, version: String = "") {
+    val now by produceState(System.currentTimeMillis(), line, version) {
+        while (true) { value = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) }
+    }
+    val text = org.openxplay.direlay.path.formatDiagnostic(line, version, now)
     val haptic = LocalHapticFeedback.current
     val label = stringResource(R.string.design_copy_diagnostic)
     val sections = remember(text) { diagnosticSections(text) }

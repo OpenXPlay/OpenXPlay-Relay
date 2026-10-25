@@ -17,19 +17,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.openxplay.direlay.R
-import org.openxplay.direlay.relay.RelayRuntime
-import org.openxplay.direlay.relay.CarModels
+import org.openxplay.direlay.presentation.*
 import org.openxplay.direlay.path.StepAction
 import org.openxplay.direlay.path.PathStep
 import org.openxplay.direlay.settings.*
 
-private data class AppliedSettings(val before: RelaySettings, val after: RelaySettings, val feedback: SettingsFeedback?)
-
 @OptIn(ExperimentalSharedTransitionApi::class)
-@Composable fun RelayApp(value: HomeContent, store: RelaySettingsStore, runtime: RelayRuntime,
+@Composable fun RelayApp(value: HomeContent, sources: ScreenSources, actions: ScreenActions, support: SupportActions,
+    shareTrace: (java.io.File) -> Unit,
     onStartStop: () -> Unit, onRestart: () -> Unit, onAutomatic: (Boolean) -> Unit, onSetup: (SetupAction) -> Unit,
     onCopy: (String) -> Unit, onReconnect: () -> Unit,
     onStepAction: (StepAction, PathStep) -> Unit, onRecheck: () -> Unit,
@@ -37,35 +33,30 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
     importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit, importPublicName: () -> Unit = {},
     openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {},
     onGuideVisible: (Boolean) -> Unit = {}) {
+    val running = value.presentation.running
     val context = LocalContext.current
-    val motion = rememberRelayMotion()
+    val motion by sources.motion.screenState()
     var entries by rememberSaveable { mutableStateOf(when {
-        openSetup -> listOf("home", "setup")
+        openSetup && sources.settings.value?.setupCompleted == false -> listOf("home", "setup")
         openLaunch -> listOf("home", "launch")
         else -> listOf("home")
     }) }
-    var setupCompleted by remember { mutableStateOf(store.setupCompleted) }
-    val snapshot by store.snapshot.collectAsState()
-    val overrides by store.developerOverrides.collectAsState()
-    val publicNameView by runtime.publicName.view.collectAsState()
-    val publicNameStatus by runtime.publicName.status.collectAsState()
-    val initial = checkNotNull(snapshot)
-    val carModels by produceState<CarModels?>(null, runtime) {
-        this.value = withContext(Dispatchers.IO) { runtime.carModels }
+    val common by sources.settings.screenState()
+    val settings = common ?: return
+    var setupCompleted by remember { mutableStateOf(settings.setupCompleted) }
+    val initial = settings.settings
+    val overrides = settings.overrides
+    val wireless: (RelaySettings) -> Boolean = remember(settings.lastWireless) {
+        { it.connectionMode.wireless(settings.lastWireless) }
     }
     val savedStates = rememberSaveableStateHolder()
-    var diagnostics by remember { mutableStateOf(DeveloperView()) }
-    var identityStatus by remember { mutableIntStateOf(R.string.direlay_missing) }
-    var adminEnabled by remember { mutableStateOf(runtime.adminService.enabled) }
-    var adminUrls by remember { mutableStateOf(runtime.adminService.urls) }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val snackbar = remember { SnackbarHostState() }
     var rendererPicker by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val navigationState = remember { SeekableTransitionState(entries) }
     val navigationTransition = rememberTransition(navigationState, label = "relay navigation")
     LaunchedEffect(entries) { navigationState.animateTo(entries) }
-    fun back() { entries = RelayBackStack(entries).back().entries }
+    val back: () -> Unit = remember { { entries = RelayBackStack(entries).back().entries } }
     var retained by remember { mutableStateOf(entries) }
     LaunchedEffect(entries) {
         retained.forEachIndexed { index, route ->
@@ -73,15 +64,15 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
         }
         retained = entries
     }
-    fun open(route: String) {
-        scope.launch {
-            entries = RelayBackStack(entries).open(route).entries
-        }
-    }
-    fun copy(text: String) {
+    val open: (String) -> Unit = remember(scope) { { route ->
+        scope.launch { entries = RelayBackStack(entries).open(route).entries }
+        Unit
+    } }
+    val copy: (String) -> Unit = remember(onCopy, scope, snackbar, context) { { text ->
         onCopy(text)
         scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_copied)) }
-    }
+        Unit
+    } }
     BackHandler(entries.size > 1 && Build.VERSION.SDK_INT < 34) { back() }
     PredictiveBackHandler(entries.size > 1 && Build.VERSION.SDK_INT >= 34) { events ->
         val previous = RelayBackStack(entries).back().entries
@@ -93,52 +84,21 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
             withContext(NonCancellable) { navigationState.animateTo(entries) }
         }
     }
-    LaunchedEffect(entries.last()) {
-        if (showsIdentityStatus(entries.last())) identityStatus = withContext(Dispatchers.IO) { identityStatusKey(runtime.identityStore.status()) }
-        while (isActive) {
-            now = System.currentTimeMillis()
-            adminEnabled = runtime.adminService.enabled
-            adminUrls = runtime.adminService.urls
-            if (showsDeveloperDiagnostics(entries.last())) {
-                diagnostics = withContext(Dispatchers.IO) { developerView(runtime) }
-                identityStatus = diagnostics.identity
-            }
-            delay(500)
-        }
-    }
     // Auto start waits while the launch choice or the guide is open, so CarPlay starts only from their buttons.
     LaunchedEffect(entries.last()) { onGuideVisible(entries.last() == "launch" || entries.last().startsWith("setup")) }
     fun completeSetup() {
         if (setupCompleted) return
         setupCompleted = true
-        scope.launch { withContext(Dispatchers.IO) { store.setupCompleted = true } }
+        actions.completeSetup()
     }
     // Starting CarPlay from Home also counts as set up, and a running relay needs no launch choice.
-    LaunchedEffect(value.presentation.running) {
-        if (!value.presentation.running) return@LaunchedEffect
+    LaunchedEffect(running) {
+        if (!running) return@LaunchedEffect
         completeSetup()
         if (entries.last() == "launch") entries = listOf("home")
     }
-    val saveLock = remember { Mutex() }
-    suspend fun persistChange(change: () -> Unit): AppliedSettings? = withContext(NonCancellable + Dispatchers.IO) {
-        saveLock.withLock {
-            runCatching {
-                val appliedBefore = store.awaitSnapshot()
-                val widthBefore = store.physicalWidthOverrideMm
-                change()
-                runtime.reloadSettings()
-                val appliedAfter = checkNotNull(store.snapshot.value)
-                AppliedSettings(appliedBefore, appliedAfter, settingsFeedback(appliedBefore, appliedAfter,
-                    runtime.carlinkConnected, value.presentation.running, widthBefore, store.physicalWidthOverrideMm))
-            }.getOrNull()
-        }
-    }
-    suspend fun persist(after: RelaySettings): AppliedSettings? = persistChange {
-        val controller = SettingsAutoSave(checkNotNull(store.snapshot.value), store::save)
-        controller.apply(after, store.wireless(after))
-    }
     fun feedback(applied: AppliedSettings?): Boolean {
-        if (applied != null && applied.before.wirelessNetwork.choice != applied.after.wirelessNetwork.choice && value.presentation.running) {
+        if (applied != null && applied.before.wirelessNetwork.choice != applied.after.wirelessNetwork.choice && running) {
             onRestart()
         } else if (applied != null) {
             val feedback = applied.feedback
@@ -153,15 +113,16 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
         }
         return applied != null
     }
-    val save: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after -> feedback(persist(after)) }
+    val save: suspend (RelaySettings, RelaySettings) -> Boolean = { _, after -> feedback(actions.save(after)) }
     val saveEditor: suspend (RelaySettings, RelaySettings, DeveloperOverrides) -> Boolean = { _, after, choices ->
-        feedback(persistChange { store.save(after, choices) })
+        feedback(actions.saveDeveloper(after, choices))
     }
-    val settingsEditor = rememberSettingsEditorState(initial, settingsSessionActive(entries), store::wireless, save,
+    val settingsEditor = rememberSettingsEditorState(initial, settingsSessionActive(entries), wireless, save,
         initialDeveloper = overrides, saveDeveloper = saveEditor)
+    LaunchedEffect(settingsEditor.draft.value) { actions.draft(settingsEditor.draft.value) }
     LaunchedEffect(stepNavigation) {
         val destination = when (stepNavigation) {
-            StepAction.FIX_SETTINGS -> firstSettingsErrorPage(settingsEditor.errorPages(store::wireless))
+            StepAction.FIX_SETTINGS -> firstSettingsErrorPage(settingsEditor.errorPages(wireless))
             StepAction.CHOOSE_IPHONE -> "settings:iphone"
             StepAction.CHOOSE_SHARED_WIFI -> "settings:sharedWifi"
             StepAction.CHOOSE_RENDERER -> { rendererPicker = true; "settings:output" }
@@ -173,7 +134,8 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
         onStepAction(action, step)
         if (action == StepAction.COPY_PAGE_ADDRESS) scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_copied)) }
     }
-    CompositionLocalProvider(LocalRelayMotion provides motion, LocalUpdateChecker provides runtime.updates) {
+    CompositionLocalProvider(LocalRelayMotion provides motion, LocalUpdateChecker provides support.updates, LocalAppVersion provides settings.version,
+        LocalAppEnvironment provides settings.environment) {
         Box(Modifier.fillMaxSize()) {
             SharedTransitionLayout {
                 navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), contentKey = { "${it.lastIndex}:${it.last()}" }, transitionSpec = {
@@ -188,56 +150,55 @@ private data class AppliedSettings(val before: RelaySettings, val after: RelaySe
                     savedStates.SaveableStateProvider("${stack.lastIndex}:$route") {
                         when {
                             route == "home" -> HomeScreen(value, { open("settings:$it") }, onStartStop, onAutomatic,
-                                ::copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
+                                copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
                                 setupCompleted, carRequired = homeCarRowVisible(initial.car)) { open("setup") }
                             route == "launch" -> LaunchScreen(value, onContinue = {
                                 // Missing preparation opens the guide where it is finished, then Start.
                                 if (value.presentation.canStart) {
                                     entries = listOf("home")
-                                    if (!value.presentation.running) onStartStop()
+                                    if (!running) onStartStop()
                                 } else open("setup:${SetupStep.PREPARE.key}")
                             }, onNewSetup = { open("setup") }) { onLater(); entries = listOf("home") }
-                            route.startsWith("setup") -> SetupScreen(initial, store::wireless, value,
-                                setupStep(route.substringAfter(':', "")), runtime.bondedDevices, { runtime.sharedWifiSelection.use(it) },
-                                { _, after -> persist(after) != null }, onSetup, ::back, carModels = carModels, onStepAction = ::stepAction) { changed ->
+                            route.startsWith("setup") -> SetupScreen(initial, wireless, value,
+                                setupStep(route.substringAfter(':', "")), actions.readIphones, actions.useSharedWifi,
+                                { _, after -> actions.save(after) != null }, onSetup, back, carModels = settings.models, onStepAction = ::stepAction) { changed ->
                                 completeSetup()
                                 entries = listOf("home")
-                                if (!value.presentation.running) onStartStop() else if (changed) onRestart()
+                                if (!running) onStartStop() else if (changed) onRestart()
                             }
-                            route.startsWith("settings") && route != "settings/about" && route != "settings/access/publicName" -> SettingsScreen(settingsEditor, store::wireless,
-                                route, ::back, ::open, identityStatus, diagnostics, ::copy, importMaterial, removeMaterial,
-                                value.currentWifi, runtime.bondedDevices, runtime = runtime, running = value.presentation.running,
-                                accessSummary = androidx.compose.ui.res.stringResource(R.string.menu_access_summary,
-                                    menuToggleSummary(adminEnabled), menuToggleSummary(publicNameView.enabled)), useSharedWifi = { runtime.sharedWifiSelection.use(it) }, adminPage = {
-                                    AdminPageSettings(adminEnabled, adminUrls, { enabled ->
-                                        runtime.adminService.setEnabled(enabled); adminEnabled = enabled
-                                    }, ::copy, { withContext(Dispatchers.IO) { runtime.adminService.resetPassword() } })
-                                })
-                            route == "settings/about" -> AboutScreen(::back, runtime.updates)
-                            route == "settings/access/publicName" -> PublicNameScreen(publicNameView, publicNameStatus,
-                                remember(publicNameStatus) { runtime.publicNameUrl() }, ::back,
-                                { edit -> withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.save(edit) }.getOrNull() } },
-                                importPublicName, runtime.publicName::renewNow,
-                                { withContext(NonCancellable + Dispatchers.IO) { runCatching { runtime.publicName.remove() }.isSuccess } })
-                            route == "developer/design" -> org.openxplay.direlay.ui.design.DesignGalleryScreen(::back)
-                            route == "experimental" -> ExperimentalScreen(settingsEditor, ::back, store::wireless)
-                            route.startsWith("developer") -> DeveloperScreen(settingsEditor, diagnostics, route, ::back, ::open, ::copy,
+                            route.startsWith("settings") && route != "settings/about" && route != "settings/access/publicName" -> {
+                                SettingsScreen(settingsEditor, wireless, route, back, open, copy, importMaterial, removeMaterial,
+                                    value.currentWifi, actions.readIphones, actions.useSharedWifi, sources, actions, support,
+                                    running = running)
+                            }
+                            route == "settings/about" -> AboutScreen(back, support.updates)
+                            route == "settings/access/publicName" -> {
+                                val name by sources.name.screenState()
+                                PublicNameScreen(name.view, name.status, name.url, back,
+                                    actions.saveName, importPublicName, actions.renewName, actions.removeName)
+                            }
+                            route == "developer/design" -> org.openxplay.direlay.ui.design.DesignGalleryScreen(back)
+                            route == "experimental" -> ExperimentalScreen(settingsEditor, back, wireless)
+                            route.startsWith("developer") -> {
+                                val diagnostics = if (showsDeveloperDiagnostics(route)) sources.developer.screenState().value else DeveloperView()
+                                DeveloperScreen(settingsEditor, diagnostics, route, back, open, copy,
                                 onReconnect,
-                                runtime.sampleVehicleData, runtime::setSampleVehicleData, { open("vehicle") }, store::wireless, runtime)
+                                settings.sampleVehicle, actions.sampleVehicle, { open("vehicle") }, wireless, sources, actions, shareTrace)
+                            }
                             route == "vehicle" || route.startsWith("snapshot:") -> {
                                 val time = route.substringAfter(':', "").toLongOrNull()
-                                VehicleScreen(value.vehicle, now, value.vehicle.history.firstOrNull { it.id == time },
-                                    route.startsWith("snapshot:"), ::back, { open("snapshot:$it") }, {
+                                VehiclePage(value.vehicle, value.vehicle.history.firstOrNull { it.id == time },
+                                    route.startsWith("snapshot:"), back, { open("snapshot:$it") }, {
                                         scope.launch { save(initial, initial.copy(vehicleInformation = true)) }
                                     },
-                                    runtime::clearVehicleHistory, if (route == "vehicle") shared else Modifier,
+                                    actions.clearVehicleHistory, if (route == "vehicle") shared else Modifier,
                                     if (route == "vehicle") sharedContent else Modifier)
                             }
                         }
                     }
                 }
             }
-            if (rendererPicker) DlnaReceiverPicker(settingsEditor.draft.value.dlnaRenderer, runtime,
+            if (rendererPicker) DlnaReceiverPicker(settingsEditor.draft.value.dlnaRenderer, actions.searchRenderers,
                 dismiss = { rendererPicker = false }) {
                 settingsEditor.draft.value = settingsEditor.draft.value.copy(dlnaRenderer = DlnaRendererChoice(it.udn, it.friendlyName))
                 rendererPicker = false

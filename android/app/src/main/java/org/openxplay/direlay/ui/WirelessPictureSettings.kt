@@ -13,32 +13,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
-import org.openxplay.stream.core.Viewport
 
-@Composable fun WirelessPictureSettings(editor: SettingsEditorState, runtime: RelayRuntime?, openCarScreen: () -> Unit) {
+@Composable fun WirelessPictureSettings(editor: SettingsEditorState, view: org.openxplay.direlay.presentation.WirelessPictureView, openCarScreen: () -> Unit) {
     val draft by editor.draft
-    var automatic by remember(runtime, draft.car, draft.dlnaPicture, draft.carplayResolution, draft.viewAreas) {
-        mutableStateOf<WirelessPictureResolution?>(null)
-    }
-    var negotiated by remember(runtime) { mutableStateOf<Viewport?>(null) }
-    LaunchedEffect(runtime, draft) {
-        while (true) {
-            val settings = draft.copy(wirelessPicture = WirelessPictureMode.AUTO)
-            val preview = withContext(Dispatchers.IO) {
-                (runtime?.wirelessPicture(settings) ?: WirelessPicturePolicy.resolve(settings)) to
-                    runtime?.miracastDisplay?.let { Viewport(it.width, it.height) }
-            }
-            automatic = preview.first; negotiated = preview.second
-            delay(500)
-        }
-    }
+    val automatic = view.automatic
+    val negotiated = view.negotiated
     InsetGroup(footer = stringResource(R.string.wireless_picture_priority)) {
         InsetRow(R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.wireless_picture))
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

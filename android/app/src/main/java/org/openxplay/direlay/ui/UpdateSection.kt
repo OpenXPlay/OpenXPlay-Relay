@@ -22,17 +22,17 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
-internal val LocalUpdateChecker = staticCompositionLocalOf<UpdateChecker?> { null }
+internal val LocalUpdateChecker = staticCompositionLocalOf<org.openxplay.direlay.presentation.UpdateActions?> { null }
 
 @Composable internal fun updateMenuVersion(version: String): String {
     val checker = LocalUpdateChecker.current ?: return version
-    val state by checker.state.collectAsState()
+    val state by checker.state.screenState()
     val update = state.result as? UpdateResult.Available ?: return version
     return stringResource(R.string.update_menu_version, version, update.release.version.value)
 }
 
-@Composable internal fun UpdateSection(checker: UpdateChecker) {
-    val state by checker.state.collectAsState()
+@Composable internal fun UpdateSection(checker: org.openxplay.direlay.presentation.UpdateActions) {
+    val state by checker.state.screenState()
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     val checking = stringResource(R.string.update_checking)
@@ -46,7 +46,7 @@ internal val LocalUpdateChecker = staticCompositionLocalOf<UpdateChecker?> { nul
     }
     InsetGroup(footer = stringResource(R.string.update_channel_hint)) {
         InsetRow(R.drawable.symbol_sync, IconHue.DEVELOPER, stringResource(R.string.update_check), value,
-            onClick = checker::check, trailing = {
+            onClick = checker.check, trailing = {
                 if (state.checking) CircularProgressIndicator(Modifier.size(20.dp).semantics { contentDescription = checking }, strokeWidth = 2.dp)
             })
         state.failure?.let { Text(updateFailureText(it), Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),

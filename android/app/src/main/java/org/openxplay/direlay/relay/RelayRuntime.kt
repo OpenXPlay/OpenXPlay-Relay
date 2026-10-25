@@ -407,6 +407,8 @@ class RelayRuntime(private val context: Context,
         private set
     @Volatile var serverState = "Starting web receiver…"
         private set
+    @Volatile var serverFailureSinceMillis: Long? = null
+        private set
     @Volatile var serverReason: WebStartReason? = null
         private set
     @Volatile var ipv4: Set<String> = emptySet()
@@ -601,7 +603,7 @@ class RelayRuntime(private val context: Context,
     private var carlinkLink: ClinkLink? = null
     @Volatile private var carlinkEnded = false
     private var carlinkRetiring = false
-    private var carlinkRestartPending = false
+    @Volatile private var carlinkRestartPending = false
     private val carlinkResizePolicy = CarlinkResizePolicy()
 
     private var webStarting = false
@@ -1321,6 +1323,7 @@ class RelayRuntime(private val context: Context,
         } catch (failure: Exception) {
             pluginContext.configure(false)
             webPhase = org.openxplay.direlay.path.WebPhase.FAILED
+            serverFailureSinceMillis = System.currentTimeMillis()
             serverReason = webStartReason(failure, port)
             connectionLog.event("relay", "web_failed", "reason=$serverReason exception=${failure.javaClass.simpleName}")
             val root = generateSequence<Throwable>(failure) { it.cause }.last()

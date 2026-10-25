@@ -17,13 +17,13 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
-import org.openxplay.direlay.config.ConfigFiles
+import org.openxplay.direlay.presentation.ConfigActions
 import org.openxplay.direlay.config.ConfigFileResult
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@Composable fun ConfigFilesScreen(files: ConfigFiles) {
+@Composable fun ConfigFilesScreen(files: ConfigActions) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var privateData by rememberSaveable { mutableStateOf(false) }
