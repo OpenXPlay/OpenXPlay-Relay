@@ -6,13 +6,55 @@ package org.openxplay.direlay.bridge
 import com.shilapi.xcertplay.airplay.AirPlayContact
 import com.shilapi.xcertplay.airplay.MediaSink
 import com.shilapi.xcertplay.airplay.SessionControl
+import com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.openxplay.direlay.DiRelayApplication
 import org.openxplay.stream.core.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class DiPlayInputTest {
+    @Test fun hostUiRequestsReachOnlyTheCurrentSink() {
+        DiPlayInput().use { input ->
+            var first = 0
+            var second = 0
+            input.start(configuration, object : InputSink by CapturingInputSink() {
+                override fun hostUiRequested() { first++ }
+            })
+            input.hostUiRequested()
+            assertEquals(1, first)
+            input.start(configuration, object : InputSink by CapturingInputSink() {
+                override fun hostUiRequested() { second++ }
+            })
+            input.hostUiRequested()
+            assertEquals(1, first)
+            assertEquals(1, second)
+        }
+    }
+
+    @Test fun hostUiRequestsWithoutASinkAreNotReplayed() {
+        DiPlayInput().use { input ->
+            var requests = 0
+            val sink = object : InputSink by CapturingInputSink() {
+                override fun hostUiRequested() { requests++ }
+            }
+            input.hostUiRequested()
+            input.start(configuration, sink)
+            assertEquals(0, requests)
+            input.hostUiRequested()
+            input.stop()
+            input.hostUiRequested()
+            input.start(configuration, sink)
+            assertEquals(1, requests)
+        }
+    }
+
+    @Test fun applicationHandlesHostUiRequestsBeforeTheRuntimeExists() {
+        val handler: CarPlayHostUiHandler = DiRelayApplication()
+        assertTrue(handler.onHostUiRequested())
+    }
+
     @Test fun recoverySendsThePendingRequestWhenTheWindowOpensAndCancelsItOnAKeyframe() {
         for (codec in VideoCodec.entries) {
             val now = java.util.concurrent.atomic.AtomicLong(0)
