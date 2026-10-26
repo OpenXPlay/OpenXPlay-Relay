@@ -7,7 +7,7 @@
     <string name="logs_privacy_title">隐私说明</string>
     <string name="logs_privacy_purpose">日志仅用于帮助排查连接失败等问题。</string>
     <string name="logs_privacy_local">日志默认只保存在这部手机上，保留最近约 24 小时。只有你选择“联网上传并显示二维码”并确认同意后，日志才会上传。</string>
-    <string name="logs_privacy_server">OpenXPlay 是完全开源、免费的项目，日志服务器取决于作者当时有哪些空闲的计算资源，地址以后可能会变化。目前上传的日志经 Cloudflare 转发（不保存），存放在 Instabox 提供的免费服务上，机房可能位于美国（AWS）。</string>
+    <string name="logs_privacy_server">OpenXPlay 是完全开源、免费的项目，日志服务器取决于作者当时有哪些空闲的计算资源，地址以后可能会变化。目前上传的日志经 Cloudflare 转发（不保存），服务器可能位于美国的 AWS 数据中心。</string>
     <string name="logs_privacy_link">这个 App 上传的日志会通过一个随机标识自动关联。这个标识与你的 iPhone、车机和手机硬件无关，卸载 App 或清除数据后会重新生成。</string>
     <string name="logs_privacy_content">密码、密钥、电话号码、姓名、消息和精确位置在存储前就会被替换。手机型号、系统版本、蓝牙和 Wi-Fi 地址、IP 地址、Wi-Fi 名称等技术信息会保留，用于定位问题。</string>
     <string name="logs_privacy_retention">上传后 48 小时内可以查看回执。上传的日志不提供公开下载，最多保存 72 小时，到期后自动从我们的服务器永久删除。如需提前删除，请把日志 ID 发到 support@openxplay.org。</string>
