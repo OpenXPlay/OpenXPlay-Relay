@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.relay
 
+import org.openxplay.stream.core.FrameRatePreference
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.junit.Assert.*
 import org.junit.Test
@@ -12,7 +13,7 @@ import org.openxplay.direlay.settings.*
 
 class TeslaAddressSessionTest {
     private val settings = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null, teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS)
+        FrameRatePreference.AUTO, false, true, false, null, teslaBrowser = TeslaBrowserMode.PUBLIC_ADDRESS)
     private class Vpn : TeslaAddressVpn {
         val started = mutableListOf<String>()
         var stopped = 0
@@ -51,9 +52,8 @@ class TeslaAddressSessionTest {
         session.prepare(settings, wireless = true)
         tick()
         for (mode in TeslaBrowserMode.entries.filter { it != TeslaBrowserMode.OFF }) {
-            val next = settings.copy(teslaBrowser = mode, connectionMode = ConnectionMode.USB,
-                wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.EXISTING_WIFI),
-                carlinkOutput = true, bothOutputs = false)
+            val next = settings.copy(outputs = setOf(RelayOutput.CARLINK), teslaBrowser = mode, connectionMode = ConnectionMode.USB,
+                wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.EXISTING_WIFI))
             val starts = vpn.started.size
             val stops = vpn.stopped
             tick(value = next, wireless = false)
@@ -184,7 +184,7 @@ class TeslaAddressSessionTest {
         for (mode in TeslaBrowserMode.entries.filter { it != TeslaBrowserMode.OFF })
             for ((carlink, both, browser) in listOf(Triple(false, false, true), Triple(false, true, true),
                 Triple(true, false, false), Triple(true, true, true))) {
-                val chosen = settings.copy(teslaBrowser = mode, carlinkOutput = carlink, bothOutputs = both)
+                val chosen = settings.copy(outputs = OutputSelection.legacy(carlink, both, false, false), teslaBrowser = mode)
                 val controller = Vpn()
                 TeslaAddressSession(controller).use { candidate ->
                     candidate.prepare(chosen, wireless = true)

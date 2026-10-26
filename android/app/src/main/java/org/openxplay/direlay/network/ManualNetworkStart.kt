@@ -15,7 +15,7 @@ class ManualNetworkStart {
         if (pending != null) return false
         sessionSeen = false
         reminders = emptySet()
-        if (manual && readiness.problems.isNotEmpty()) {
+        if (readiness.problems.isNotEmpty()) {
             pending = readiness
             return false
         }

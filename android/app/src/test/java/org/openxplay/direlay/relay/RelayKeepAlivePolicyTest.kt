@@ -13,10 +13,11 @@ class RelayKeepAlivePolicyTest {
     private val policy = RelayKeepAlivePolicy(start = { starts++; accepted }, stop = { stops++ })
 
     @Test fun eachOutputCombinationNeedsAnOpenRuntime() {
-        for (web in listOf(false, true)) for (carlink in listOf(false, true)) {
-            assertEquals(web || carlink, RelayKeepAlivePolicy.needed(true, web, carlink))
-            assertFalse(RelayKeepAlivePolicy.needed(false, web, carlink))
-        }
+        for (web in listOf(false, true)) for (carlink in listOf(false, true))
+            for (dlna in listOf(false, true)) for (miracast in listOf(false, true)) {
+                assertEquals(web || carlink || dlna || miracast, RelayKeepAlivePolicy.needed(true, web, carlink, dlna, miracast))
+                assertFalse(RelayKeepAlivePolicy.needed(false, web, carlink, dlna, miracast))
+            }
     }
 
     @Test fun repeatedDecisionsAndVisibleSignalsDoNotChurn() {
@@ -123,5 +124,19 @@ class RelayKeepAlivePolicyTest {
         assertEquals(0, stops)
         policy.update(false)
         assertEquals(1, stops)
+    }
+    @Test fun publishedStateDistinguishesPendingForegroundRefusedAndNotNeeded() {
+        assertEquals(org.openxplay.direlay.path.KeepAliveState.NOT_NEEDED, policy.state)
+        assertEquals(org.openxplay.direlay.path.KeepAliveState.NOT_NEEDED, RelayKeepAlive.None.state)
+        policy.update(true)
+        assertEquals(org.openxplay.direlay.path.KeepAliveState.PENDING, policy.state)
+        policy.foregroundStarted()
+        assertEquals(org.openxplay.direlay.path.KeepAliveState.FOREGROUND, policy.state)
+        policy.foregroundRefused()
+        assertEquals(org.openxplay.direlay.path.KeepAliveState.REFUSED, policy.state)
+        policy.uiVisible()
+        assertEquals(org.openxplay.direlay.path.KeepAliveState.PENDING, policy.state)
+        policy.update(false)
+        assertEquals(org.openxplay.direlay.path.KeepAliveState.NOT_NEEDED, policy.state)
     }
 }

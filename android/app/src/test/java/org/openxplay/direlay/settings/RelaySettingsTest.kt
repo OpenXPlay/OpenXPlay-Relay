@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-14
 package org.openxplay.direlay.settings
 
+import org.openxplay.stream.core.FrameRatePreference
 import android.app.Application
 import android.os.Looper
 import org.robolectric.Shadows.shadowOf
@@ -24,8 +25,109 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 33], manifest = Config.NONE, application = Application::class)
 class RelaySettingsTest {
+    @Test fun frameRateMigratesOnlyAnEnabledValidDeveloperChoiceAndDropsBothKeys() {
+        store.use { store ->
+            val prefs = context.getSharedPreferences("direlay", 0)
+            for (enabled in listOf(false, true)) for (fps in listOf(29, 30, 35, 40, 45, 50, 55, 60, 61)) {
+                prefs.edit().remove("frameRate").putBoolean("developer.fps.enabled", enabled).putInt("developer.fps", fps).commit()
+                val expected = if (enabled) FrameRatePreference.entries.firstOrNull { it.name == "FPS_$fps" } ?: FrameRatePreference.AUTO
+                    else FrameRatePreference.AUTO
+                assertEquals(expected, store.load().frameRate)
+                assertEquals(expected.name, prefs.getString("frameRate", null))
+                assertFalse(prefs.contains("developer.fps.enabled"))
+                assertFalse(prefs.contains("developer.fps"))
+                assertEquals(expected, RelaySettingsStore(context).use { it.load().frameRate })
+            }
+            for (stored in listOf("AUTO", "FPS_45", "future")) {
+                prefs.edit().putString("frameRate", stored).putBoolean("developer.fps.enabled", true).putInt("developer.fps", 55).commit()
+                val expected = FrameRatePreference.entries.firstOrNull { it.name == stored } ?: FrameRatePreference.AUTO
+                assertEquals(expected, store.load().frameRate)
+                assertFalse(prefs.contains("developer.fps"))
+            }
+        }
+    }
+
+    @Test fun frameRateIsAUserSettingSharedWithTheDisplayPortWithoutOverwritingSessionFps() {
+        store.use { store ->
+            val notifications = mutableListOf<org.openxplay.stream.web.DisplaySettings>()
+            store.awaitSnapshot()
+            AirPlayPersistence.saveFps(context, 40)
+            store.listen { notifications.add(it) }.use {
+                for (frameRate in FrameRatePreference.entries) {
+                    store.save(store.load().copy(frameRate = frameRate))
+                    assertEquals(frameRate, store.current().frameRate)
+                    assertEquals(frameRate, store.snapshot.value!!.frameRate)
+                    assertEquals(frameRate, store.load().frameRate)
+                    assertEquals(40, AirPlayPersistence.loadFps(context))
+                }
+                store.set(store.current().copy(frameRate = FrameRatePreference.FPS_45), org.openxplay.stream.core.Origin("web", "primary"))
+                assertEquals(FrameRatePreference.FPS_45, store.snapshot.value!!.frameRate)
+                assertEquals(store.current(), notifications.last())
+                assertEquals(FrameRatePreference.entries.size, notifications.size)
+                store.saveDeveloperOverrides(store.developerOverrides.value.copy(active = false))
+                assertEquals(FrameRatePreference.FPS_45, store.load().frameRate)
+                assertEquals(40, AirPlayPersistence.loadFps(context))
+            }
+        }
+    }
+
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
+
+    @Test fun wirelessPictureDefaultsAndParkedCustomSizeRoundTripAndInvalidSizesAreRejected() {
+        store.use { store ->
+            val initial = store.load()
+            assertEquals(WirelessPictureMode.AUTO, initial.wirelessPicture)
+            assertEquals(WirelessPictureSize(1280, 720), initial.wirelessPictureSize)
+            assertFalse(initial.miracastStretch)
+            for (mode in WirelessPictureMode.entries) for (stretch in listOf(false, true))
+                for (size in listOf(WirelessPictureSize(1920, 720), WirelessPictureSize(720, 1280))) {
+                    val chosen = initial.copy(wirelessPicture = mode, wirelessPictureSize = size, miracastStretch = stretch)
+                    store.save(chosen)
+                    RelaySettingsStore(context).use { assertEquals(chosen, it.load()) }
+                    val prefs = context.getSharedPreferences("direlay", 0)
+                    assertEquals(mode.name, prefs.getString("wirelessPicture", null))
+                    assertEquals(size.width, prefs.getInt("wirelessPictureWidth", 0))
+                    assertEquals(size.height, prefs.getInt("wirelessPictureHeight", 0))
+                    assertEquals(stretch, prefs.getBoolean("miracastStretch", !stretch))
+                }
+            for (mode in WirelessPictureMode.entries) {
+                val before = store.load()
+                assertThrows(IllegalArgumentException::class.java) {
+                    store.save(before.copy(wirelessPicture = mode, wirelessPictureSize = WirelessPictureSize(1281, 720)))
+                }
+                assertEquals(before, store.load())
+            }
+            context.getSharedPreferences("direlay", 0).edit().putString("wirelessPicture", "future")
+                .putInt("wirelessPictureWidth", 0).commit()
+            assertEquals(WirelessPictureMode.AUTO, store.load().wirelessPicture)
+            assertEquals(WirelessPictureSize(), store.load().wirelessPictureSize)
+        }
+    }
+
+    @Test fun wirelessDisplaysDefaultOffAndPersistIndependentlyWithParkedReceiverAndPicture() {
+        store.use { store ->
+            val initial = store.load()
+            assertFalse(initial.dlnaOutput); assertFalse(initial.miracastOutput)
+            assertNull(initial.dlnaRenderer); assertEquals(DlnaPicture.P720, initial.dlnaPicture)
+            for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
+                for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                    val value = initial.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
+                    value.validate(wireless = false)
+                    store.save(value)
+                    assertEquals(value, store.load())
+                    RelaySettingsStore(context).use { assertEquals(value, it.load()) }
+                    val prefs = context.getSharedPreferences("direlay", 0)
+                    assertEquals(RelayOutput.entries.filter { it in value.outputs }.joinToString(",") { it.wire }, prefs.getString("outputs", null))
+                    for (key in listOf("carlinkOutput", "bothOutputs", "dlnaOutput", "miracastOutput")) assertFalse(prefs.contains(key))
+                    assertEquals(receiver?.udn, prefs.getString("dlnaRendererUdn", null))
+                    assertEquals(receiver?.name, prefs.getString("dlnaRendererName", null))
+                    assertEquals(picture.name, prefs.getString("dlnaPicture", null))
+                }
+            context.getSharedPreferences("direlay", 0).edit().putString("dlnaPicture", "future").commit()
+            assertEquals(DlnaPicture.P720, store.load().dlnaPicture)
+        }
+    }
 
     @Test fun teslaDefaultsAndEveryModeAndAddressRoundTripInRelayPreferences() {
         RelaySettingsStore(context).use { store ->
@@ -42,7 +144,7 @@ class RelaySettingsTest {
             for (mode in TeslaBrowserMode.entries) {
                 val chosen = initial.copy(teslaBrowser = mode, teslaVirtualAddress = "100.88.0.2", teslaPublicAddress = "3.3.3.2",
                     teslaMirrorAddress = "100.88.0.3", teslaAndroidAddress = "3.3.3.3",
-                    car = CarSelection("tesla", model = "model-y-2025"))
+                    car = CarSelection("tesla", model = "model-y", year = "model-y-2025"))
                 store.save(chosen)
                 assertEquals(chosen, store.load())
                 val preferences = context.getSharedPreferences("direlay", 0)
@@ -105,14 +207,32 @@ class RelaySettingsTest {
     @Test fun carSelectionPersistsAndNormalizesOnlyOtherTexts() {
         assertEquals(CarSelection(), store.load().car)
         val original = store.load()
-        for (car in listOf(CarSelection("xpeng", model = "g6-2023"), CarSelection("xpeng", model = "other", modelText = " Custom "),
+        for (car in listOf(CarSelection("xpeng", model = "g6", year = "g6-2023"), CarSelection("xpeng", model = "other", modelText = " Custom "),
             CarSelection("other", " My brand\n", "other", " My car\t "), CarSelection())) {
             store.save(original.copy(car = car))
             assertEquals(original.copy(car = car.normalized()), store.load())
         }
         store.save(original.copy(car = CarSelection("other", "x".repeat(60), modelText = "y".repeat(60))))
-        assertEquals(CarSelection("other", "x".repeat(40), "other", "y".repeat(40)), store.load().car)
+        assertEquals(CarSelection("other", "x".repeat(40), "other", "y".repeat(40), "other"), store.load().car)
         assertEquals(CarSelection(), CarSelection("unknown", "ignored", "other", "ignored").normalized())
+    }
+
+    @Test fun legacyCarPreferencesLoadAsModelAndYearAndNextSaveWritesNewKeys() {
+        val preferences = context.getSharedPreferences("direlay", 0)
+        for ((brand, leaf, model) in listOf(Triple("xpeng", "g6-2023", "g6"), Triple("tesla", "model-3-2017", "model-3"))) {
+            preferences.edit().putString("carBrand", brand).putString("carModel", leaf).remove("carYear").remove("carYearText").commit()
+            val loaded = store.load()
+            assertEquals(CarSelection(brand, model = model, year = leaf), loaded.car)
+            assertEquals(leaf, preferences.getString("carModel", null))
+            store.save(loaded)
+            assertEquals(model, preferences.getString("carModel", null))
+            assertEquals(leaf, preferences.getString("carYear", null))
+            assertEquals("", preferences.getString("carYearText", null))
+        }
+        val custom = CarSelection("other", "Brand", "other", "Model", "other", "2026")
+        store.save(store.load().copy(car = custom))
+        assertEquals(custom, store.load().car)
+        assertEquals("2026", preferences.getString("carYearText", null))
     }
 
     @Before fun clear() {
@@ -265,7 +385,7 @@ class RelaySettingsTest {
 
     @Test fun guidedSetupStaysOpenAfterTheGuidesOwnSavesButExistingInstallsCountAsSetUp() {
         val fresh = RelaySettingsStore(context)
-        fresh.save(fresh.load().copy(carlinkOutput = true))
+        fresh.save(fresh.load().copy(outputs = setOf(RelayOutput.CARLINK)))
         assertFalse(RelaySettingsStore(context).setupCompleted)
         fresh.setupCompleted = true
         assertTrue(RelaySettingsStore(context).setupCompleted)
@@ -304,7 +424,7 @@ class RelaySettingsTest {
     @Test fun vehicleInformationIsOptInAndPersistsIndependentlyOfOutput() {
         val store = RelaySettingsStore(context)
         assertFalse(store.load().vehicleInformation)
-        store.save(store.load().copy(carlinkOutput = true, vehicleInformation = true))
+        store.save(store.load().copy(outputs = setOf(RelayOutput.CARLINK), vehicleInformation = true))
         assertTrue(RelaySettingsStore(context).load().vehicleInformation)
         store.save(store.load().copy(vehicleInformation = false))
         assertFalse(store.load().vehicleInformation)
@@ -317,15 +437,51 @@ class RelaySettingsTest {
         assertFalse(RelaySettingsStore(context).load().autoStartWhenReady)
     }
 
-    @Test fun bothOutputsIgnoreLegacyDeveloperModeAndLeaveItsStoredKeyUntouched() {
+    @Test fun outputCombinationsIgnoreLegacyDeveloperModeAndLeaveItsStoredKeyUntouched() {
         val preferences = context.getSharedPreferences("direlay", 0)
         for (legacy in listOf(false, true)) {
             preferences.edit().putBoolean("developerMode", legacy).commit()
-            for (carlink in listOf(false, true)) {
-                store.save(store.load().copy(carlinkOutput = carlink, bothOutputs = true))
-                assertTrue(RelaySettingsStore(context).load().bothOutputs)
-                assertEquals(carlink, store.load().carlinkOutput)
+            RelaySettingsStore(context).use { store ->
+                store.save(store.load().copy(outputs = RelayOutput.entries.toSet()))
+                assertEquals(RelayOutput.entries.toSet(), store.load().outputs)
                 assertEquals(legacy, preferences.getBoolean("developerMode", !legacy))
+            }
+        }
+    }
+
+    @Test fun allLegacyOutputKeysMigrateBeforePersistAndSetupCompletionIsKept() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        for (mask in 0..15) {
+            clear()
+            prefs.edit().putBoolean("carlinkOutput", mask and 1 != 0).putBoolean("bothOutputs", mask and 2 != 0)
+                .putBoolean("dlnaOutput", mask and 4 != 0).putBoolean("miracastOutput", mask and 8 != 0).commit()
+            RelaySettingsStore(context).use { store ->
+                val expected = OutputSelection.legacy(mask and 1 != 0, mask and 2 != 0, mask and 4 != 0, mask and 8 != 0)
+                val settings = store.load()
+                assertEquals(expected, settings.outputs)
+                assertTrue(store.setupCompleted)
+                store.save(settings)
+                assertEquals(RelayOutput.entries.filter { it in expected }.joinToString(",") { it.wire }, prefs.getString("outputs", null))
+                for (key in listOf("carlinkOutput", "bothOutputs", "dlnaOutput", "miracastOutput")) assertFalse(prefs.contains(key))
+                assertEquals(expected, store.load().outputs)
+                assertTrue(store.setupCompleted)
+            }
+        }
+    }
+
+    @Test fun newStoredOutputsWinDropUnknownValuesAndEmptySetsCannotBeSaved() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        for ((wire, expected) in listOf("future,miracast,web" to setOf(RelayOutput.BROWSER, RelayOutput.MIRACAST),
+            "dlna,dlna" to setOf(RelayOutput.DLNA), "future" to setOf(RelayOutput.BROWSER), "" to setOf(RelayOutput.BROWSER))) {
+            clear()
+            prefs.edit().putString("outputs", wire).putBoolean("bothOutputs", true).commit()
+            RelaySettingsStore(context).use { store ->
+                val settings = store.load()
+                assertEquals(expected, settings.outputs)
+                assertTrue(store.setupCompleted)
+                assertThrows(IllegalArgumentException::class.java) { settings.copy(outputs = emptySet()).validate(false) }
+                assertThrows(IllegalArgumentException::class.java) { store.save(settings.copy(outputs = emptySet())) }
+                assertEquals(expected, store.load().outputs)
             }
         }
     }
@@ -420,19 +576,18 @@ class RelaySettingsTest {
     }
 
     @Test fun sharedValuesAreWrittenThroughAirPlayPersistenceAndReadBack() {
-        developerOptions { it.copy(fpsEnabled = true) }
         for (target in MfiTarget.entries) {
             val settings = store.load().copy(
                 mfiTarget = target, i2cPath = " /dev/i2c-3 ",
                 remoteServer = " https://mfi.example.test ", remoteToken = "private-token",
-                fps = 55, autoStartOnBoot = true,
+                frameRate = FrameRatePreference.FPS_55, autoStartOnBoot = true,
             )
             store.save(settings)
             assertEquals(target, AirPlayPersistence.loadMfiTarget(context))
             assertEquals("/dev/i2c-3", AirPlayPersistence.loadMfiI2cPath(context))
             assertEquals("https://mfi.example.test", AirPlayPersistence.loadRemoteMfiServer(context))
             assertEquals("private-token", AirPlayPersistence.loadRemoteMfiToken(context))
-            assertEquals(55, AirPlayPersistence.loadFps(context))
+            assertEquals(30, AirPlayPersistence.loadFps(context))
             assertTrue(AirPlayPersistence.loadAutoStartOnBoot(context))
             assertEquals(settings.copy(i2cPath = "/dev/i2c-3", remoteServer = "https://mfi.example.test"), store.load())
         }
@@ -450,7 +605,7 @@ class RelaySettingsTest {
         assertEquals("/dev/i2c-7", loaded.i2cPath)
         assertEquals("http://mfi.example.test", loaded.remoteServer)
         assertEquals("changed", loaded.remoteToken)
-        assertEquals(40, loaded.fps)
+        assertEquals(FrameRatePreference.AUTO, loaded.frameRate)
         assertTrue(loaded.autoStartOnBoot)
     }
 
@@ -525,11 +680,11 @@ class RelaySettingsTest {
     }
 
     @Test fun invalidInputsCannotPartiallyOverwriteSettings() {
-        developerOptions { it.copy(fpsEnabled = true, webPortEnabled = true) }
+        developerOptions { it.copy(webPortEnabled = true) }
         val original = store.load()
         val invalid = listOf(
             original.copy(displayMode = DisplayMode.FIXED, display = null),
-            original.copy(webPort = 80), original.copy(webPort = 65536), original.copy(fps = 31),
+            original.copy(webPort = 80), original.copy(webPort = 65536),
             original.copy(display = DisplayProfile(801, 480, 160)),
             original.copy(display = DisplayProfile(1280, 720, 0)),
             original.copy(mfiTarget = MfiTarget.I2C, i2cPath = ""),
@@ -551,7 +706,7 @@ class RelaySettingsTest {
     }
 
     @Test fun cachedSnapshotIsStableOnReadsAndPublishesSavesAndExternalChanges() {
-        developerOptions { it.copy(fpsEnabled = true, webPortEnabled = true) }
+        developerOptions { it.copy(webPortEnabled = true) }
         val observed = RelaySettingsStore(context)
         try {
             // Production initializes on the settings worker; reads below only inspect memory.
@@ -563,14 +718,14 @@ class RelaySettingsTest {
             assertEquals(saved, observed.load())
             context.getSharedPreferences("direlay", 0).edit().putBoolean("vehicleInformation", true).commit()
             context.getSharedPreferences("diplay", 0).edit().putBoolean("auto_connect", false).commit()
-            AirPlayPersistence.saveFps(context, 55)
+            context.getSharedPreferences("direlay", 0).edit().putString("frameRate", "FPS_55").commit()
             shadowOf(Looper.getMainLooper()).idle()
             val external = runBlocking {
                 withTimeout(5_000) { observed.snapshot.filterNotNull().first {
-                    it.vehicleInformation && !it.autoStartWhenReady && it.fps == 55
+                    it.vehicleInformation && !it.autoStartWhenReady && it.frameRate == FrameRatePreference.FPS_55
                 } }
             }
-            assertEquals(saved.copy(vehicleInformation = true, autoStartWhenReady = false, fps = 55), external)
+            assertEquals(saved.copy(vehicleInformation = true, autoStartWhenReady = false, frameRate = FrameRatePreference.FPS_55), external)
             repeat(100) { assertSame(external, observed.snapshot.value) }
         } finally { observed.close() }
     }
@@ -580,4 +735,32 @@ class RelaySettingsTest {
         context.getSharedPreferences("direlay", android.content.Context.MODE_PRIVATE).edit().putBoolean("requirePairingCode", true).commit()
         assertEquals(before, RelaySettingsStore(context).load())
     }
+    @Test fun experimentalDefaultsDoNotWritePreferencesAndParkedChoicesPersistUnderTheirOwnKeys() {
+        store.use { store ->
+            val initial = store.load()
+            val prefs = context.getSharedPreferences("direlay", 0)
+            assertEquals(ExperimentalOptions(), initial.experimental)
+            assertTrue(prefs.all.keys.none { it.startsWith("experimental.") })
+            store.save(initial.copy(autoStartOnBoot = !initial.autoStartOnBoot))
+            assertTrue(prefs.all.keys.none { it.startsWith("experimental.") })
+            val choices = ExperimentalOptions(active = false, rememberSubscription = true, keepScanning = true,
+                recordAdvertisements = true, sendBluetoothAddress = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
+            store.save(store.load().copy(experimental = choices))
+            RelaySettingsStore(context).use { assertEquals(choices, it.load().experimental) }
+            assertEquals(false, prefs.getBoolean("experimental.active", true))
+            assertEquals(true, prefs.getBoolean("experimental.rememberSubscription", false))
+            assertEquals(true, prefs.getBoolean("experimental.keepScanning", false))
+            assertEquals(true, prefs.getBoolean("experimental.recordAdvertisements", false))
+            assertEquals(true, prefs.getBoolean("experimental.sendBluetoothAddress", false))
+            assertEquals(choices.bluetoothAddress, prefs.getString("experimental.bluetoothAddress", null))
+            val writes = mutableListOf<String>()
+            val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key -> key?.let(writes::add) }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            try {
+                store.save(store.load().copy(autoStartOnBoot = initial.autoStartOnBoot))
+                assertTrue(writes.none { it.startsWith("experimental.") })
+            } finally { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+    }
+
 }

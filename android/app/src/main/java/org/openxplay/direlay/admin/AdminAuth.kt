@@ -15,13 +15,17 @@ interface AdminAuthStore {
     fun write(state: AdminAuthState)
 }
 data class AdminPasswordHash(val salt: String, val hash: String)
-data class AdminAuthState(val password: AdminPasswordHash? = null, val sessions: Map<String, Long> = emptyMap())
+data class AdminAuthState(val password: AdminPasswordHash? = null, val sessions: Map<String, Long> = emptyMap()) {
+    override fun toString() = "AdminAuthState(password=[redacted], sessions=[redacted])"
+}
 fun interface AdminClock { fun millis(): Long }
 
 class AdminAuth(private val store: AdminAuthStore, private val clock: AdminClock = AdminClock(System::currentTimeMillis),
     private val random: SecureRandom = SecureRandom()) {
     enum class Failure { PASSWORD, RATE_LIMIT, FORMAT }
-    data class Login(val token: String? = null, val failure: Failure? = null)
+    data class Login(val token: String? = null, val failure: Failure? = null) {
+        override fun toString() = "Login(token=[redacted], failure=$failure)"
+    }
     private val failures = mutableMapOf<String, MutableList<Long>>()
     val defaultPassword: Boolean @Synchronized get() = store.read().password == null
 

@@ -35,6 +35,19 @@ enum class ClinkStage(val code: String) : ClinkDiagnostic {
 
 sealed interface ClinkDiagnostic {
     fun line(): String
+    data class Experiments(val names: List<String>) : ClinkDiagnostic {
+        override fun line() = "experiments ${names.joinToString(",")}"
+    }
+    data class Auth(val message: String) : ClinkDiagnostic {
+        init { require(message.startsWith("auth ")) }
+        override fun line() = message
+    }
+    data class Peer(val name: String) : ClinkDiagnostic {
+        override fun line() = "car_name ${name.filterNot { it.isISOControl() }.take(80)}"
+    }
+    data class Trusted(val trusted: Boolean) : ClinkDiagnostic {
+        override fun line() = "car_trusted=$trusted"
+    }
     data class Retry(val delayMs: Long) : ClinkDiagnostic {
         override fun line() = "link_retry delayMs=$delayMs"
     }

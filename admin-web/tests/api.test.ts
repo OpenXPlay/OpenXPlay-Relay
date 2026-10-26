@@ -101,3 +101,17 @@ it('sends hotspot credentials once and never retries output changes', async () =
   await expect(api.save({ output: 'carlink' })).rejects.toBeInstanceOf(NetworkError);
   expect(fetcher).toHaveBeenCalledOnce();
 });
+it('sends an optional Linux hotspot band with the credentials', async () => {
+  const fetcher = respond({ ok: true });
+  await api.hotspot('Relay car', 'newpass123', '2.4');
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ ssid: 'Relay car', password: 'newpass123', band: '2.4' });
+});
+it('previews and saves roles through authenticated CSRF requests without retrying', async () => {
+  const fetcher = respond({ plan: {}, checks: [], changes: [] });
+  await api.previewRoles({ mode: 'auto' }); await api.saveRoles({ mode: 'auto' });
+  expect(fetcher.mock.calls[0]).toEqual(['/api/v0/network-roles/preview', expect.objectContaining({ method: 'POST', body: '{"networkRoles":{"mode":"auto"}}', headers: { 'Content-Type': 'application/json', 'X-OpenXPlay-Admin': '1' } })]);
+  expect(fetcher.mock.calls[1][0]).toBe('/api/v0/network-roles');
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('disconnected')));
+  await expect(api.saveRoles({ mode: 'auto' })).rejects.toBeInstanceOf(NetworkError);
+  expect(fetch).toHaveBeenCalledOnce();
+});

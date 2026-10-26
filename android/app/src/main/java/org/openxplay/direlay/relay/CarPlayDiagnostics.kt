@@ -12,7 +12,8 @@ data class CarPlayError(val text: String, val code: String?, val trail: List<Str
 /** Store only filtered facts; credentials are fetched at redaction time, never retained here. */
 class CarPlayDiagnostics(private val secrets: () -> Collection<String> = { emptyList() },
     private val trail: StepTrail = StepTrail(), private val wallClock: () -> Long = System::currentTimeMillis,
-    private val nanoClock: () -> Long = System::nanoTime) : CarPlayEventObserver {
+    private val nanoClock: () -> Long = System::nanoTime,
+    private val timeline: org.openxplay.direlay.logs.ConnectionLog? = null) : CarPlayEventObserver {
     @Volatile var error: CarPlayError? = null
         private set
 
@@ -23,6 +24,7 @@ class CarPlayDiagnostics(private val secrets: () -> Collection<String> = { empty
             is CarPlayStatus.HotspotReady -> "status=HotspotReady backend=${fact(status.backend)} band=${fact(status.band)} channel=${status.channel}"
             else -> "status=${status.javaClass.simpleName}"
         }
+        runCatching { timeline?.phoneStatus(status.javaClass.simpleName, line.substringAfter(" ", "")) }
         trail.record(line, status == CarPlayStatus.DiscoveringMfi, wall, nanoClock())
         if (status is CarPlayStatus.Failed) error = CarPlayError(redactFailureText(status.message, secrets()),
             status.startupFailure?.name?.lowercase(Locale.ROOT), trail.snapshot(), wall)
@@ -32,9 +34,10 @@ class CarPlayDiagnostics(private val secrets: () -> Collection<String> = { empty
         val filtered = redactFailureText(message, secrets())
         if (filtered.length > 160 || filtered.any { it !in ' '..'~' } || hexRun.containsMatchIn(filtered)) return
         record("progress $filtered")
+        runCatching { timeline?.phone("progress", filtered) }
     }
-    @Synchronized override fun onSessionActive() { record("session_active"); clear() }
-    @Synchronized override fun onSessionEnded() { record("session_ended") }
+    @Synchronized override fun onSessionActive() { record("session_active"); runCatching { timeline?.phone("session_active") }; clear() }
+    @Synchronized override fun onSessionEnded() { record("session_ended"); runCatching { timeline?.phone("session_ended") } }
     @Synchronized override fun onCommand(type: String, params: Map<String, Any?>) {
         record("command type=${fact(type)}")
     }

@@ -53,7 +53,13 @@ pub struct AdminStatus {
     pub host_profile: Option<AdminHostProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_capabilities: Option<crate::host_capabilities::HostCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_hotspot: Option<AdminHotspotStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wireless: Option<AdminWireless>,
     pub admin_url: String,
+    #[serde(default)]
+    pub admin_urls: Vec<String>,
     pub receiver_urls: Vec<String>,
     pub state: String,
     pub running: bool,
@@ -70,6 +76,19 @@ pub struct AdminStatus {
     /// Trusted HTTPS with a free domain name; absent where the relay has no such feature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_name: Option<crate::public_name::PublicNameStatus>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdminHotspotStatus {
+    pub state: String,
+    pub reason: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminWireless {
+    pub preset: crate::device_preset::PresetSelection,
+    #[serde(flatten)]
+    pub summary: crate::wifi_capabilities::WifiSummary,
+    pub hotspot: crate::device_preset::HotspotResolution,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,6 +147,8 @@ pub struct AdminIphone {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminNetwork {
+    #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
+    pub planned: Option<crate::network_roles::NetworkStatus>,
     #[serde(default)]
     pub following_carlink: bool,
     pub mode: String,
@@ -146,6 +167,9 @@ pub struct AdminCarlink {
     pub head_unit: Option<CarlinkHeadUnit>,
     pub network: Option<CarlinkNetwork>,
     pub trusted: bool,
+    pub view_size: Option<CarlinkViewSize>,
+    pub stats: Option<Value>,
+    pub pin_incorrect: bool,
     #[serde(skip)]
     pub attempt_requested_pin: bool,
     pub pin_requested: bool,
@@ -157,6 +181,11 @@ pub struct AdminCarlink {
     pub pin_deadline: Option<u64>,
     /// Seconds left at response time, so browsers with a wrong clock still count down correctly.
     pub pin_remaining: Option<u64>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarlinkViewSize {
+    pub width: u32,
+    pub height: u32,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CarlinkHeadUnit {
@@ -207,6 +236,23 @@ impl AdminCarlink {
             return;
         }
         match event["type"].as_str().unwrap_or("") {
+            "receiver-starting" => {
+                self.view_size = None;
+                self.stats = None;
+            }
+            "clink-view-size" => {
+                if let Ok(size) = serde_json::from_value::<CarlinkViewSize>(event.clone()) {
+                    if size.width > 0 && size.height > 0 {
+                        self.view_size = Some(size);
+                    }
+                }
+            }
+            "media-stats" => {
+                self.stats = Some(event.clone());
+            }
+            "clink-pin" if event["result"] == "incorrect" => {
+                self.pin_incorrect = true;
+            }
             "link" => {
                 if event["state"] != "lost" {
                     self.next_attempt = None;
@@ -255,6 +301,12 @@ impl AdminCarlink {
                         }
                     }
                 }
+            }
+            "carlink-paused" => {
+                self.state = "paused".into();
+                self.detail = "carlink.manualHint".into();
+                self.next_attempt = None;
+                self.clear_pin();
             }
             "carlink-unpaired" => {
                 self.state = "unpaired".into();
@@ -419,15 +471,37 @@ pub enum AdminUpdate {
 pub type AdminResult = Result<(), String>;
 /// The shell implements this seam; the HTTP server never accesses receiver internals.
 pub trait RelayAdmin: Send + Sync + 'static {
+    /// Linux recorder support; absent on other platforms.
+    fn carlink_trace(&self) -> Option<(bool, bool, Value)> {
+        None
+    }
+    fn carlink_trace_control(&self, _clear: bool, _action: &str) -> AdminResult {
+        Err("error.carlinkTraceOff".into())
+    }
+
     /// Called on the request worker after the response has been flushed.
     fn response_sent(&self) {}
     /// Discard deferred actions if delivery of the response fails.
     fn response_failed(&self) {}
 
+    fn network_roles_preview(&self, _values: Values) -> Option<crate::network_roles::SaveResult> {
+        None
+    }
+
+    fn network_roles_update(&self, _values: Values) -> Option<crate::network_roles::SaveResult> {
+        None
+    }
+
     fn status(&self) -> AdminStatus;
     fn settings(&self) -> AdminSettings;
     fn update(&self, values: Values) -> AdminUpdate;
     fn action(&self, name: &str) -> AdminResult;
+    fn public_name_import(
+        &self,
+        _content: &str,
+    ) -> Result<(String, String), crate::public_name::service::ImportError> {
+        Err(crate::public_name::service::ImportError::Storage)
+    }
     fn carlink_connect(&self, _pin: Option<&str>) -> AdminResult {
         Err("error.action".into())
     }
@@ -435,7 +509,7 @@ pub trait RelayAdmin: Send + Sync + 'static {
         Err("error.action".into())
     }
     fn phones(&self) -> Vec<AdminPhone>;
-    fn hotspot_update(&self, _ssid: &str, _password: &str) -> AdminResult {
+    fn hotspot_update(&self, _ssid: &str, _password: &str, _band: Option<&str>) -> AdminResult {
         Err("error.action".into())
     }
     /// Latest receiver-info and recent stats per browser, as `[{client, idleSeconds, info, stats}]`.

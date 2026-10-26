@@ -72,8 +72,13 @@ Distributed builds combine this project with:
   are trademarks of Apple Inc., used only to identify CarPlay. No affiliation
   or endorsement is implied.
 
+- AndroidX ProfileInstaller 1.4.1, licensed under the Apache License 2.0
+  (https://www.apache.org/licenses/LICENSE-2.0). Source:
+  https://android.googlesource.com/platform/frameworks/support/+/androidx-main/profileinstaller/.
 - JmDNS 3.6.3, licensed under the Apache License 2.0
   (https://www.apache.org/licenses/LICENSE-2.0). Source: https://github.com/jmdns/jmdns.
+- ZXing core 3.5.3, licensed under the Apache License 2.0
+  (https://www.apache.org/licenses/LICENSE-2.0). Source: https://github.com/zxing/zxing.
 - Lucide icons, Copyright (c) Lucide Icons and Contributors, licensed under
   the ISC License; icons derived from Feather are Copyright (c) 2013-present
   Cole Bemis, licensed under the MIT License.

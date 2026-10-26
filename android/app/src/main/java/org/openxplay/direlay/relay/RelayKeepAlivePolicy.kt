@@ -8,6 +8,13 @@ class RelayKeepAlivePolicy(private val start: () -> Boolean, private val stop: (
     private var needed = false
     private var starting = false
     private var started = false
+    private var refused = false
+    override val state: org.openxplay.direlay.path.KeepAliveState get() = when {
+        !needed -> org.openxplay.direlay.path.KeepAliveState.NOT_NEEDED
+        started -> org.openxplay.direlay.path.KeepAliveState.FOREGROUND
+        refused -> org.openxplay.direlay.path.KeepAliveState.REFUSED
+        else -> org.openxplay.direlay.path.KeepAliveState.PENDING
+    }
     val pending: Boolean get() = needed && !starting && !started
 
     override fun update(needed: Boolean) {
@@ -23,6 +30,7 @@ class RelayKeepAlivePolicy(private val start: () -> Boolean, private val stop: (
 
     private fun attemptStart() {
         if (starting || started) return
+        refused = false
         starting = true
         if (!start()) foregroundRefused()
     }
@@ -35,12 +43,13 @@ class RelayKeepAlivePolicy(private val start: () -> Boolean, private val stop: (
     }
 
     fun foregroundRefused() {
+        refused = true
         starting = false
         started = false
     }
 
     companion object {
-        fun needed(open: Boolean, webEnabled: Boolean, carlinkEnabled: Boolean) =
-            open && (webEnabled || carlinkEnabled)
+        fun needed(open: Boolean, webEnabled: Boolean, carlinkEnabled: Boolean, dlnaOutput: Boolean = false,
+            miracastOutput: Boolean = false) = open && (webEnabled || carlinkEnabled || dlnaOutput || miracastOutput)
     }
 }

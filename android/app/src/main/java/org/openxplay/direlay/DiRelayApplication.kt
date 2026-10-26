@@ -30,14 +30,26 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
         get() = if (::runtime.isInitialized) org.openxplay.direlay.relay.CompositeCarPlayObserver(
             runtime.carPlayDiagnostics,
             runtime.pluginContext.takeIf { runtime.settingsStore.snapshot.value?.plugins == true },
+            stage = runtime.carPlayStage,
+            link = runtime.iphoneLink,
         ) else null
 
+    private var networkTimeline: org.openxplay.direlay.logs.NetworkTimeline? = null
     override fun onCreate() {
+        val connectionLog = org.openxplay.direlay.logs.ConnectionLog()
+        connectionLog.event("relay", "process_start")
         super.onCreate()
         installOutOfMemoryDump()
         keepAlive = AndroidRelayKeepAlive(this)
         runtime = RelayRuntime(this, pairing = PairingWindow(AndroidBluetoothVisibility(this, ::showRelayScreen)),
-            keepAlive = keepAlive)
+            keepAlive = keepAlive, connectionLog = connectionLog)
+        // Log recording must never stop the relay itself.
+        if (android.os.Build.VERSION.SDK_INT < 28 || Application.getProcessName() == packageName) runCatching {
+            runtime.logs.start()
+            connectionLog.event("relay", "recorder_start")
+            networkTimeline = org.openxplay.direlay.logs.NetworkTimeline(this, connectionLog).also { it.start() }
+        }
+            .onFailure { android.util.Log.e("OXP-Logs", "Log recorder unavailable", it) }
         runtime.carlinkPins.onPending = { showPendingPin() }
         runtime.carlinkPins.onCancel = runtime::cancelCarlinkPairing
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
@@ -49,10 +61,15 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) = Unit
             override fun onActivityDestroyed(activity: Activity) { if (foreground === activity) foreground = null }
         })
+        connectionLog.event("relay", "app_ready")
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads().detectDiskWrites().detectCustomSlowCalls().penaltyLog().build())
+        }
     }
 
     override fun carPlayHostOverlay(activity: androidx.activity.ComponentActivity): android.view.View? =
-        org.openxplay.direlay.ui.createCarPlayHostOverlay(activity, runtime)
+        org.openxplay.direlay.presentation.createCarPlayHostOverlay(activity, runtime)
 
     override fun carPlayPhoneAddress(): String? {
         val settings = runtime.settingsStore.awaitSnapshot()
@@ -98,12 +115,14 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             playAudioLocally = { runtime.playCarPlayAudio },
             microphoneSource = { runtime.microphoneSource },
             localPreview = { runtime.localPreview },
-            fpsHint = AirPlayPersistence.loadFps(this).toDouble(),
+            fpsHint = { runtime.appliedFrameRate.value.toDouble() },
             reportInvalid = runtime::reportInvalidVideo,
         )
     }
 
     override fun onTerminate() {
+        if (android.os.Build.VERSION.SDK_INT < 28 || Application.getProcessName() == packageName) runCatching { runtime.logs.recorder.close() }
+        runCatching { networkTimeline?.close() }
         runtime.close()
         super.onTerminate()
     }

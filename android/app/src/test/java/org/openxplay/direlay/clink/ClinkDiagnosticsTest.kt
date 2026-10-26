@@ -36,7 +36,7 @@ class ClinkDiagnosticsTest {
         assertEquals(listOf(
             ClinkDiagnostic.State(ClinkState.CONNECTING), ClinkStage.OUTPUT_START,
             ClinkDiagnostic.State(ClinkState.AUTHENTICATING), ClinkStage.TCP_CONNECT,
-            ClinkStage.TCP_CONNECTED, ClinkStage.AUTH_PIN, ClinkStage.AUTH_CONFIRM,
+            ClinkStage.TCP_CONNECTED, ClinkDiagnostic.Trusted(false), ClinkStage.AUTH_PIN, ClinkStage.AUTH_CONFIRM,
             ClinkDiagnostic.State(ClinkState.NEGOTIATING), ClinkStage.AUTH_SUCCESS,
             ClinkDiagnostic.State(ClinkState.PLAYING), ClinkDiagnostic.State(ClinkState.ENDED),
             ClinkStage.OUTPUT_STOP), events)
@@ -51,11 +51,13 @@ class ClinkDiagnosticsTest {
         val session = ClinkSessionDiagnostics(PinProvider { null }, trust, ClinkDiagnostics { events.add(it) })
         assertSame(key, session.trustStore.loadPeerKey("secret-peer"))
         assertNull(session.pinProvider.requestPin("secret-peer"))
-        assertEquals(listOf(ClinkStage.TCP_CONNECTED, ClinkStage.AUTH_PINNED, ClinkStage.AUTH_PIN), events)
+        assertEquals(listOf(ClinkStage.TCP_CONNECTED, ClinkDiagnostic.Trusted(true), ClinkStage.AUTH_PINNED, ClinkStage.AUTH_PIN), events)
         session.trustStore.forgetPeer("secret-peer")
         assertNull(trust.key)
+        assertEquals(ClinkDiagnostic.Trusted(false), events.last())
         session.trustStore.savePeerKey("secret-peer", key)
         assertSame(key, trust.key)
+        assertEquals(ClinkDiagnostic.Trusted(true), events.last())
     }
     @Test fun distinguishesTcpFailureAndAuthenticationRejection() {
         val events = mutableListOf<ClinkDiagnostic>()
@@ -159,4 +161,10 @@ class ClinkDiagnosticsTest {
         }
     }
 
+    @Test fun publishedPeerAndTrustFactsContainOnlyPresentationValues() {
+        assertEquals("car_name My car", ClinkDiagnostic.Peer("My car\n").line())
+        assertEquals("car_name " + "a".repeat(80), ClinkDiagnostic.Peer("a".repeat(100)).line())
+        assertEquals("car_trusted=true", ClinkDiagnostic.Trusted(true).line())
+        assertEquals("car_trusted=false", ClinkDiagnostic.Trusted(false).line())
+    }
 }

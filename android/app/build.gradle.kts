@@ -53,6 +53,10 @@ android {
     }
 }
 
+composeCompiler {
+    stabilityConfigurationFiles.add(layout.projectDirectory.file("compose-stability.conf"))
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
@@ -67,15 +71,18 @@ dependencies {
     implementation("org.openxplay.stream:core")
     implementation("org.openxplay.stream:web-server")
     implementation("org.openxplay.stream:clink")
+    implementation("org.openxplay.stream:cast")
     // mDNS host name for the admin page (openxplay-android.local).
     implementation("org.jmdns:jmdns:3.6.3")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.androidx.compose.material3)
     implementation("androidx.compose.animation:animation")
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.bouncycastle)
+    implementation(libs.zxing.core)
     testImplementation(libs.junit)
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation(testFixtures("org.openxplay.stream:core"))

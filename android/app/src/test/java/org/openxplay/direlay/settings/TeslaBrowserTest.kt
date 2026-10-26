@@ -70,7 +70,7 @@ class TeslaBrowserTest {
                         else -> TeslaBrowserActivation.READY
                     }
                     assertEquals("$mode carlink=$carlink both=$both wireless=$wireless network=$network name=$name", expected,
-                        teslaBrowserActivation(mode, wireless, network, name, carlink, both))
+                        teslaBrowserActivation(mode, wireless, network, name, browserOutput = true))
                 }
     }
 
@@ -81,7 +81,7 @@ class TeslaBrowserTest {
         for ((mode, expected) in expectedByMode) for (wireless in listOf(false, true))
             for (network in WirelessNetworkChoice.entries) for (name in listOf(false, true)) {
                 assertEquals("$mode wireless=$wireless network=$network name=$name", expected,
-                    teslaBrowserActivation(mode, wireless, network, name, carlinkOutput = true, bothOutputs = false))
+                    teslaBrowserActivation(mode, wireless, network, name, browserOutput = false))
             }
     }
 

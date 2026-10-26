@@ -13,9 +13,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
+import org.openxplay.direlay.ui.design.*
 
 @Composable fun UsbConnectionDialog(confirm: () -> Unit, dismiss: () -> Unit) {
     AlertDialog(onDismissRequest = dismiss,
+        shape = RelayTokens.card, containerColor = MaterialTheme.colorScheme.surface,
+        icon = { IconTile(R.drawable.symbol_usb, IconHue.IPHONE) },
         title = { Text(stringResource(R.string.usb_confirm_title)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {

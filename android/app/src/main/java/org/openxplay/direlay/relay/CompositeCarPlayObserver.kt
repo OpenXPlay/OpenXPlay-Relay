@@ -7,11 +7,15 @@ import com.shilapi.xcertplay.iap2.wire.Iap2Frame
 import com.shilapi.xcertplay.orchestration.CarPlayEventObserver
 import com.shilapi.xcertplay.orchestration.CarPlayStatus
 
-/** Optional plugins observe the same events independently of diagnostics. */
+/** Each observer receives the same events independently of the others. */
 internal class CompositeCarPlayObserver(private val diagnostics: CarPlayEventObserver,
-    private val plugins: CarPlayEventObserver? = null) : CarPlayEventObserver {
+    private val plugins: CarPlayEventObserver? = null,
+    private val stage: CarPlayEventObserver? = null,
+    private val link: CarPlayEventObserver? = null) : CarPlayEventObserver {
     private inline fun forward(call: CarPlayEventObserver.() -> Unit) {
         runCatching { diagnostics.call() }
+        runCatching { stage?.call() }
+        runCatching { link?.call() }
         runCatching { plugins?.call() }
     }
     override fun onStatus(status: CarPlayStatus) = forward { onStatus(status) }

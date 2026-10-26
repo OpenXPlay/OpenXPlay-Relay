@@ -8,7 +8,7 @@ import type { SavedNetwork } from './src/schema';
 import { randomUUID } from 'node:crypto';
 import type { Plugin } from 'vite';
 import type { Field, Section, Settings, Value } from './src/schema';
-import type { PublicNameStatus, ReceiverReport, Status, WifiClient } from './src/api';
+import type { PublicNameStatus, ReceiverReport, Status, WifiClient, Wireless } from './src/api';
 
 function field(key: string, type: Field['type'], extra: Partial<Field> = {}): Field {
   return { key, type, labelKey: `field.${key}`, ...extra };
@@ -18,7 +18,7 @@ function choice(key: string, values: string[], extra: Partial<Field> = {}): Fiel
 }
 const when = (key: string, ...equals: Value[]) => ({ key, equals });
 // Trusted HTTPS as the Linux relay describes it (public-name.json); the token never comes back.
-const PUBLIC_NAME_OFF = { publicNameEnabled: false, publicNameProvider: '', publicName: '', publicNameToken: '', publicNameTokenSet: false, publicNameAgreeTerms: false };
+const PUBLIC_NAME_OFF = { publicNameEnabled: false, publicNameProvider: '', publicName: '', publicNameToken: '', publicNameTokenSet: false, publicNameAgreeTerms: false, publicNameProviders: { duckdns: { name: '', tokenSet: false }, dynv6: { name: '', tokenSet: false } } };
 function publicNameSection(): Section {
   const shown = { visibleWhen: when('publicNameEnabled', true) };
   return { id: 'publicName', titleKey: 'publicName.title', fields: [
@@ -28,6 +28,22 @@ function publicNameSection(): Section {
     field('publicNameToken', 'secret', { labelKey: 'publicName.token', hintKey: 'publicName.tokenHint', ...shown }),
     field('publicNameAgreeTerms', 'bool', { labelKey: 'publicName.terms', ...shown }),
   ] };
+}
+function mockWireless(values: Settings['values']): Wireless {
+  const id = String(values.devicePreset === 'auto' ? 'phicomm-n1' : values.devicePreset);
+  const labels: Record<string, string> = { 'phicomm-n1': 'Phicomm N1', msm8916: 'Qualcomm Snapdragon 410 (MSM8916)', generic: 'Generic Linux device' };
+  const configuredBand = values.hotspotBand as Wireless['hotspot']['configuredBand'];
+  const band = configuredBand === 'auto' ? id === 'msm8916' ? '2.4' : '5' : configuredBand;
+  const configuredChannel = Number(values.hotspotChannel);
+  const ap5Channels = [36, 40, 44, 48, 149, 153, 157, 161, 165];
+  const inBand = band === '2.4' ? configuredChannel >= 1 && configuredChannel <= 14 : configuredChannel >= 32;
+  const capable = band === '2.4' ? configuredChannel <= 11 : ap5Channels.includes(configuredChannel);
+  return {
+    preset: { id, label: labels[id], source: values.devicePreset === 'auto' ? 'detected' : 'settings', detected: 'phicomm-n1' },
+    mode: 'concurrent', station24: true, ap24: true, station5: true, ap5: true, apStation: true, apStationChannels: 1, p2pClient: true, ap5Channels,
+    hotspot: { band, autoBand: id === 'msm8916' ? '2.4' : '5', channel: inBand && capable ? configuredChannel : band === '2.4' ? 6 : 36, configuredBand, configuredChannel,
+      reason: configuredChannel && !(inBand && capable) ? inBand ? 'channel-not-ap-capable' : 'channel-not-in-band' : null },
+  };
 }
 /** The mock's trusted-HTTPS status: ready once complete; `fail.duckdns.org` shows an error. */
 export function mockPublicName(values: Settings['values'], now = Date.now() / 1000): PublicNameStatus {
@@ -39,16 +55,25 @@ export function mockPublicName(values: Settings['values'], now = Date.now() / 10
 }
 export function mockSettings(linux = false): Settings {
   if (linux) return { schema: [
-    { id: 'connection', titleKey: 'section.connection', fields: [field('iphone', 'phone'), choice('output', ['web', 'carlink', 'both']), field('requirePairingCode', 'bool')] },
+    { id: 'connection', titleKey: 'section.connection', fields: [choice('devicePreset', ['auto', 'msm8916', 'phicomm-n1', 'generic']), choice('hotspotBand', ['auto', '2.4', '5'], { visibleWhen: when('networkMode', 'device-hotspot') }), field('iphone', 'phone'), choice('output', ['web', 'carlink', 'both']), field('requirePairingCode', 'bool'), field('autoStart', 'bool', { hintKey: 'hint.field.linuxAutoStart' })] },
+    { id: 'carlink', titleKey: 'section.carlink', fields: [
+      field('carlinkName', 'text', { visibleWhen: when('output', 'carlink', 'both') }),
+      field('carlinkModel', 'text', { visibleWhen: when('output', 'carlink', 'both') }),
+      field('carlinkAutoReconnect', 'bool', { hintKey: 'hint.field.carlinkAutoReconnect', visibleWhen: when('output', 'carlink', 'both') }),
+      field('carlinkReconnectOnResize', 'bool', { hintKey: 'hint.field.carlinkReconnectOnResize', visibleWhen: when('output', 'carlink', 'both') }),
+      choice('carlinkHevc', ['auto', 'off'], { hintKey: 'hint.field.carlinkHevc', visibleWhen: when('output', 'carlink', 'both') }),
+      choice('videoStats', ['off', '5', '15']), choice('carlinkTrace', ['off', 'on']), field('carPlayViewAreas', 'bool'),
+      field('receiverPort', 'number', { min: 1, max: 65535 }),
+    ] },
     { id: 'audio', titleKey: 'section.audio', fields: [field('carBluetoothAudio', 'bool', { hintKey: 'hint.field.carBluetoothAudio' })] },
     publicNameSection(),
     { id: 'plugins', titleKey: 'section.plugins', fields: [field('plugins', 'bool', { hintKey: 'hint.plugins' }), field('pluginsEnabled', 'plugins')] },
     { id: 'wifi', titleKey: 'section.wifi', fields: [] },
     { id: 'network', titleKey: 'section.network', fields: [choice('networkMode', ['shared-wifi', 'device-hotspot'], { options: ['shared-wifi', 'device-hotspot'].map(value => ({ value, labelKey: `option.networkMode.${value}`, hintKey: `hint.option.networkMode.${value}`, illustration: value as 'shared-wifi' | 'device-hotspot' })) }), field('sharedWifiNetworks', 'networks')] },
-    { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('wifiChannel', 'number', { min: 1, max: 14 }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
+    { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('hotspotChannel', 'number', { min: 0, max: 177, labelKey: 'field.wifiChannel', hintKey: 'hint.field.hotspotChannel' }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
   ], installedPlugins: [{ id: 'org.openxplay.clock', name: { en: 'Clock', 'zh-CN': '时钟' }, version: '1.0.0', license: 'Apache-2.0 OR MIT', icon: null, nonCommercialAssets: false },
     { id: 'org.openxplay.pet', name: { en: 'Pet', 'zh-CN': '宠物' }, version: '1.0.0', license: '(Apache-2.0 OR MIT) AND CC-BY-NC-SA-4.0', icon: null, nonCommercialAssets: true }],
-  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', wifiChannel: 6, rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: false, ...PUBLIC_NAME_OFF } };
+  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', hotspotChannel: 0, hotspotBand: 'auto', devicePreset: 'auto', rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: true, autoStart: true, carlinkName: 'OpenXPlay Linux', carlinkModel: 'OpenXPlay Relay Linux', carlinkAutoReconnect: true, carlinkReconnectOnResize: false, carlinkHevc: 'auto', carlinkTrace: 'on', videoStats: 'off', carPlayViewAreas: true, receiverPort: 8443, ...PUBLIC_NAME_OFF } };
   const schema: Section[] = [
     { id: 'connection', titleKey: 'section.connection', fields: [
       field('iphone', 'phone', { hintKey: 'hint.iphone' }), choice('transport', ['wireless', 'usb']),
@@ -113,6 +138,20 @@ export function previewStatus(base: Status, state: string): Status {
   if (state === 'error') { status.state = 'reconnecting'; status.notices = ['wifi.joinFailed.timeout']; status.carlink = { state: 'error', detail: '', trusted: false, lastError: 'error.request' }; }
   return status;
 }
+// Synthetic recorder events use only private addresses and a fictional head unit.
+const traceSamples = [
+  { type: 'Link', stage: 'link_joined', fields: { address: '02:00:00:00:00:01', name: 'Demo Aurora', ssid: 'Demo Aurora', interface: 'wlan0', headUnitIp: '192.168.49.1', localIp: '192.168.49.2' } },
+  { type: 'Socket', service: 'RTSP', event: 'connect', remoteAddress: '192.168.49.1', port: 7236, errorClass: null },
+  { type: 'Rtsp', direction: 'RX', startLine: 'OPTIONS * RTSP/1.0', headers: { CSeq: '1', 'User-Agent': 'Demo Aurora' }, body: '' },
+  { type: 'Frame', direction: 'TX', port: 7237, service: 'control', category: 1, method: 4, kind: 0, sequence: 2, bodySize: 0, fields: {} },
+  { type: 'Negotiation', mode: '1280x720@30', decoders: ['avc1.42E01F', 'hvc1.1.6.L120.B0'], audio: false, rtpPort: 19000, display: '1280x720' },
+  { type: 'Video', event: 'format', source: 'input_session', codec: 'H264', width: 1280, height: 720, sps: ['6742001f'], pps: ['68ce3c80'] },
+  { type: 'Media', liveFrames: 1800, placeholderFrames: 2, droppedFrames: 3, keyframes: 30, videoBytes: 2400000, rtpPackets: 1900, rtpBytes: 2523200, sendStalls: 1, audioFrames: 0, queueOverflows: 0 },
+  { type: 'Input', kind: 'touch_down', coordinates: [[0.5, 0.5]], rawCoordinates: [[640, 360]], streamSize: [1280, 720], viewSize: [1280, 720] },
+  { type: 'Error', code: 'session_failed', exceptionClass: 'ConnectionReset', location: 'rtsp' },
+  { type: 'Link', stage: 'link_lost', fields: { reason: 'head unit disconnected' } },
+].map((event, index) => JSON.stringify({ ...event, atNanos: 1000000000 + index * 100000000, session: 1 }));
+
 export function mockApi(linux = false): Plugin {
   const preview = process.env.DIRELAY_PREVIEW_STATES === '1';
   let outageUntil = 0;
@@ -133,6 +172,13 @@ export function mockApi(linux = false): Plugin {
   const sessions = new Set<string>();
   const attempts = new Map<string, { count: number; until: number }>();
   const settings = mockSettings(linux);
+  let traceLines = [...traceSamples];
+  let capturing = false;
+  const traceName = 'trace-00000001-1792695600000-00000001.jsonl';
+  const mediaName = 'media-00000001-00000001-1792695600000.ts';
+  const mediaBody = Buffer.alloc(188, 0xff); mediaBody.set([0x47, 0x1f, 0xff, 0x10]);
+  let mediaAvailable = true;
+  const publicProviders = new Map<string, { name: string; token: string }>();
   const currentSsid = () => String(settings.values.networkMode) === 'shared-wifi' ? wifiClient.ssid : null;
   const redactNetworks = () => {
     settings.values.sharedWifiNetworks = (settings.values.sharedWifiNetworks as SavedNetwork[]).map(item => ({ ssid: item.ssid, hasPassword: !!sharedPasswords.get(item.ssid), current: item.ssid === currentSsid() }));
@@ -169,7 +215,7 @@ export function mockApi(linux = false): Plugin {
       if (method !== 'GET') {
         try {
           let raw = '';
-          for await (const chunk of req) { raw += chunk.toString(); if (raw.length > 16384) return send(413, { error: 'error.request' }); }
+          for await (const chunk of req) { raw += chunk.toString(); if (Buffer.byteLength(raw) > (linux && path === '/public-name/import' ? 16384 * 6 + 1024 : 16384)) return send(413, { error: 'error.request' }); }
           body = JSON.parse(raw || '{}');
           if (!body || Array.isArray(body) || typeof body !== 'object') throw new Error();
         } catch { return send(400, { error: 'error.request' }); }
@@ -194,11 +240,56 @@ export function mockApi(linux = false): Plugin {
         if (typeof body.new !== 'string' || body.new.length < 8) return send(422, { error: 'error.passwordFormat' });
         password = body.new; defaultPassword = password === 'openxplay'; return send(200, { ok: true });
       }
+      if (linux && (path === '/carlink-trace' || path.startsWith('/carlink-trace/'))) {
+        const enabled = settings.values.carlinkTrace === 'on';
+        const traceRunning = enabled && (preview || running);
+        const traceBody = traceLines.length ? traceLines.join('\n') + '\n' : '';
+        const files = [
+          ...(traceLines.length ? [{ name: traceName, kind: 'trace', size: Buffer.byteLength(traceBody), modified: 1792695600 }] : []),
+          ...(mediaAvailable ? [{ name: mediaName, kind: 'media', size: mediaBody.length, modified: 1792695600 }] : []),
+        ];
+        if (path === '/carlink-trace' && method === 'GET') return send(200, { enabled, running: traceRunning,
+          status: { type: 'clink-trace', lines: traceLines.length, bytes: Buffer.byteLength(traceBody), dropped: 3, failure: null,
+            capture: { state: capturing ? 'capturing' : 'idle', bytes: capturing ? 1880 : 188, file: capturing ? mediaName + '.part' : null, reason: null } }, files });
+        if (path === '/carlink-trace/tail' && method === 'GET') {
+          const type = url.searchParams.get('type');
+          const limit = Number(url.searchParams.get('limit') ?? 200);
+          if (!Number.isInteger(limit) || limit < 0 || limit > 500 || (type !== null && !['Rtsp', 'Frame', 'Socket', 'Negotiation', 'Media', 'Video', 'Input', 'Error', 'Link'].includes(type))) return send(422, { error: 'error.invalid' });
+          return send(200, { lines: traceLines.filter(line => !type || JSON.parse(line).type === type).slice().reverse().slice(0, limit) });
+        }
+        if (method === 'GET' && (path === '/carlink-trace/download' || path.startsWith('/carlink-trace/files/'))) {
+          const bundle = path === '/carlink-trace/download';
+          const name = path.slice('/carlink-trace/files/'.length);
+          if (!bundle && !files.some(file => file.name === name)) return send(404, { error: 'error.request' });
+          const media = !bundle && name === mediaName;
+          const data = media ? mediaBody : Buffer.from(traceBody);
+          res.statusCode = 200;
+          res.setHeader('Content-Type', media ? 'video/mp2t' : 'application/x-ndjson');
+          res.setHeader('Content-Disposition', `attachment; filename="${bundle ? 'carlink-trace-demo.jsonl' : name}"`);
+          res.setHeader('Content-Length', data.length);
+          res.setHeader('Cache-Control', 'no-store');
+          return res.end(data);
+        }
+        if (path === '/carlink-trace/clear' && method === 'POST') {
+          capturing = false; traceLines = []; mediaAvailable = false;
+          return send(200, { ok: true });
+        }
+        if (path === '/carlink-trace/capture' && method === 'POST') {
+          if (!['start', 'stop'].includes(String(body.action))) return send(422, { error: 'error.invalid' });
+          if (!traceRunning) return send(409, { error: 'error.carlinkTraceOff' });
+          capturing = body.action === 'start';
+          if (!capturing) mediaAvailable = true;
+          return send(200, { ok: true });
+        }
+        return send(404, { error: 'error.request' });
+      }
       if (linux && path === '/hotspot' && method === 'PUT') {
         if (typeof body.ssid !== 'string' || typeof body.password !== 'string') return send(422, { error: 'error.invalid' });
+        if (body.band !== undefined && !['auto', '2.4', '5'].includes(body.band)) return send(422, { error: 'error.invalid' });
         const error = validateHotspot(body.ssid, body.password);
         if (error) return send(422, { error });
         settings.values.hotspotSsid = body.ssid; settings.values.hotspotPassword = body.password;
+        if (body.band !== undefined) settings.values.hotspotBand = body.band;
         networkChanged = true;
         if (settings.values.networkMode === 'device-hotspot') outageUntil = Date.now() + 2000;
         return send(200, { ok: true });
@@ -231,6 +322,33 @@ export function mockApi(linux = false): Plugin {
       if (path === '/logout' && method === 'POST') {
         if (token) sessions.delete(token); res.setHeader('Set-Cookie', 'direlay=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return send(200, { ok: true });
       }
+      if (linux && path === '/public-name/import' && method === 'POST') {
+        const content = body.content;
+        const errors: Record<string, string> = {};
+        let config: Record<string, unknown> = {};
+        if (typeof content !== 'string') errors.file = 'not-json';
+        else if (Buffer.byteLength(content) > 16384) errors.file = 'too-large';
+        else try {
+          config = JSON.parse(content);
+          if (!config || Array.isArray(config) || typeof config !== 'object') throw new Error();
+        } catch { errors.file = 'not-json'; }
+        if (!errors.file) {
+          for (const key of Object.keys(config)) if (!['version', 'enabled', 'provider', 'name', 'token', 'agreeLetsEncryptTerms', 'acme'].includes(key)) errors[key] = 'unknown-key';
+          for (const key of ['version', 'provider', 'name', 'token']) if (!(key in config)) errors[key] = 'missing';
+          if ('version' in config && config.version !== 1) errors.version = 'bad-version';
+          if ('provider' in config && !['duckdns', 'dynv6'].includes(String(config.provider))) errors.provider = 'invalid';
+          if ('name' in config && (typeof config.name !== 'string' || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(config.name) || (config.provider === 'duckdns' && !/^[a-z0-9-]+\.duckdns\.org$/i.test(config.name)))) errors.name = 'invalid';
+          if ('token' in config && (typeof config.token !== 'string' || !/^[!-~]{1,256}$/.test(config.token) || (config.provider === 'duckdns' && !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(config.token)))) errors.token = 'invalid';
+          for (const key of ['enabled', 'agreeLetsEncryptTerms']) if (key in config && typeof config[key] !== 'boolean') errors[key] = 'invalid';
+          if ('acme' in config && !['production', 'staging'].includes(String(config.acme))) errors.acme = 'invalid';
+        }
+        if (Object.keys(errors).length) return send(422, { errors });
+        const provider = String(config.provider); const name = String(config.name).toLowerCase();
+        publicProviders.set(provider, { name, token: String(config.token) });
+        Object.assign(settings.values, { publicNameProvider: provider, publicName: name, publicNameToken: '', publicNameTokenSet: true, publicNameEnabled: config.enabled ?? true, publicNameAgreeTerms: config.agreeLetsEncryptTerms ?? false });
+        settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name, tokenSet: true } };
+        return send(200, { ok: true, provider, name });
+      }
       if (path === '/settings' && method === 'GET') return send(200, settings);
       if (path === '/phones' && method === 'GET') return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id })));
       if (path === '/settings' && method === 'PUT') {
@@ -249,7 +367,7 @@ export function mockApi(linux = false): Plugin {
           if (linux && field.type === 'number' && value === '') continue;
           if (field.type === 'bool' ? typeof value !== 'boolean' : field.type === 'number' ? typeof value !== 'number' : typeof value !== 'string') errors[key] = 'error.invalid';
           else if (field.type === 'number' && (Number(value) < field.min! || Number(value) > field.max!)) errors[key] = 'error.range';
-          else if (field.type === 'choice' && !field.options?.some(option => option.value === value)) errors[key] = 'error.invalid';
+          else if (field.type === 'choice' && !(key === 'publicNameProvider' && value === '') && !field.options?.some(option => option.value === value)) errors[key] = 'error.invalid';
           else if (field.type === 'phone' && value !== 'auto' && !phones.some(phone => phone.id === value)) errors[key] = 'error.invalid';
           else if (key === 'hotspotPassword' && String(value).length < 8) errors[key] = 'error.invalid';
           else if (['hotspotSsid', 'carlinkName'].includes(key) && !String(value).trim()) errors[key] = 'error.required';
@@ -267,6 +385,17 @@ export function mockApi(linux = false): Plugin {
           }
           sharedPasswords = new Map(next.map(item => [item.ssid, item.password ?? sharedPasswords.get(item.ssid) ?? '']));
           body.sharedWifiNetworks = next.map(item => ({ ssid: item.ssid, hasPassword: !!sharedPasswords.get(item.ssid), current: item.ssid === (preview && !networkChanged ? wifiClient.ssid : currentSsid()) }));
+        }
+        if (linux && typeof body.publicNameProvider === 'string' && body.publicNameProvider !== settings.values.publicNameProvider) {
+          const saved = publicProviders.get(body.publicNameProvider);
+          settings.values.publicName = saved?.name ?? ''; settings.values.publicNameTokenSet = !!saved?.token;
+        }
+        const provider = String(body.publicNameProvider ?? settings.values.publicNameProvider ?? '');
+        if (linux && provider && Object.keys(body).some(key => key.startsWith('publicName'))) {
+          const saved = publicProviders.get(provider);
+          const setup = { name: String(body.publicName ?? settings.values.publicName ?? '').trim().toLowerCase(), token: String(body.publicNameToken || saved?.token || '') };
+          publicProviders.set(provider, setup);
+          settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name: setup.name, tokenSet: !!setup.token } };
         }
         // An empty token keeps the saved one; a token is never stored where GET /settings returns it.
         if (typeof body.publicNameToken === 'string') { if (body.publicNameToken !== '') settings.values.publicNameTokenSet = true; body.publicNameToken = ''; }
@@ -297,9 +426,10 @@ export function mockApi(linux = false): Plugin {
           iphone: { name: phone.name, reason: running ? 'connected' : settings.values.iphone === 'auto' ? 'onlyCandidate' : 'selected' },
           network: { mode: String(settings.values.networkMode), wifi: currentSsid() },
           output: String(settings.values.output), carlink: { state: running ? 'connected' : 'idle', detail: '' }, notices,
-          ...(linux ? { publicName: mockPublicName(settings.values) } : {}),
+          ...(linux ? { publicName: mockPublicName(settings.values), wireless: mockWireless(settings.values) } : {}),
         };
         if (status.publicName?.state === 'ready') status.receiverUrls = [`https://${status.publicName.name}:8443/`, ...status.receiverUrls];
+        if (linux) status.adminUrls = [...(status.publicName?.trustedName ? [`https://${status.publicName.trustedName}:6975/`] : []), `https://${status.hostAddresses![0].ipv4}:6975/`, status.adminUrl];
         const result = preview ? previewStatus(status, previewState) : status;
         if (preview && networkChanged) {
           result.network = status.network; result.hotspot = status.hotspot; result.wifiClient = wifiClient; result.hostAddresses = status.hostAddresses;
@@ -313,7 +443,7 @@ export function mockApi(linux = false): Plugin {
       if (path === '/actions/pair-iphone' && method === 'POST') { if (!pairingDeadline || pairingDeadline <= Date.now() / 1000) pairingDeadline = Date.now() / 1000 + 600; return send(200, { ok: true }); }
       if (linux && path === '/actions/cancel-pairing' && method === 'POST') { pairingDeadline = null; return send(200, { ok: true }); }
       if (linux && path === '/actions/public-name-renew' && method === 'POST') return send(200, { ok: true });
-      if (linux && path === '/actions/public-name-remove' && method === 'POST') { Object.assign(settings.values, PUBLIC_NAME_OFF); return send(200, { ok: true }); }
+      if (linux && path === '/actions/public-name-remove' && method === 'POST') { publicProviders.clear(); Object.assign(settings.values, PUBLIC_NAME_OFF); return send(200, { ok: true }); }
       if (path.startsWith('/actions/') && method === 'POST') {
         const name = path.split('/').pop();
         if (!['start', 'stop', 'restart', 'regenerate-pairing-code'].includes(name!)) return send(404, { error: 'error.request' });

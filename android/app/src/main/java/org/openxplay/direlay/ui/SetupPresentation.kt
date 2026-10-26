@@ -3,12 +3,14 @@
 // Created by riko chen on 2026-10-17
 package org.openxplay.direlay.ui
 
+import androidx.compose.runtime.Immutable
 import org.openxplay.direlay.R
+import org.openxplay.direlay.path.*
 import org.openxplay.direlay.settings.*
 
 /** The guided setup's pages, in order. The network page exists only for wireless CarPlay. */
 enum class SetupStep(val key: String) {
-    OUTPUT("output"), CONNECTION("connection"), NETWORK("network"), PREPARE("prepare"), START("start")
+    CAR("car"), OUTPUT("output"), CONNECTION("connection"), NETWORK("network"), PREPARE("prepare"), START("start")
 }
 fun setupSteps(wireless: Boolean) = SetupStep.entries.filter { wireless || it != SetupStep.NETWORK }
 fun setupStep(key: String) = SetupStep.entries.firstOrNull { it.key == key }
@@ -21,13 +23,30 @@ fun recommendedConnection(settings: RelaySettings) = ConnectionMode.WIRELESS
 fun needsUsbConfirmation(before: ConnectionMode, after: ConnectionMode, lastUsedWireless: Boolean): Boolean =
     after == ConnectionMode.USB && before.wireless(lastUsedWireless)
 
-/** Wi-Fi Direct is the fastest link for the browser; Carlink can replace the Wi-Fi Direct group. */
+/** Carlink and Miracast need Wi-Fi Direct's radio for their link to the car. */
 fun recommendedNetwork(settings: RelaySettings) =
-    if (CarlinkConnectionPolicy.enabled(settings)) WirelessNetworkChoice.PHONE_HOTSPOT else WirelessNetworkChoice.WIFI_DIRECT
+    if (CarlinkConnectionPolicy.usesWifiDirect(settings)) WirelessNetworkChoice.PHONE_HOTSPOT else WirelessNetworkChoice.WIFI_DIRECT
 
 /** The guide marks the recommended network with a badge, so Wi-Fi Direct drops "(recommended)" from its name. */
 fun setupNetworkLabel(choice: WirelessNetworkChoice) =
     if (choice == WirelessNetworkChoice.WIFI_DIRECT) R.string.direlay_wifi_direct else choice.label
+
+enum class SetupChoiceTag(val label: Int, val warning: Boolean = false) {
+    RECOMMENDED(R.string.setup_recommended), EXPERIMENTAL(R.string.setup_experimental, true),
+    PICTURE_ONLY(R.string.setup_picture_only, true), NOT_RECOMMENDED(R.string.setup_not_recommended, true)
+}
+fun setupOutputTag(choice: OutputChoice) = when (choice) {
+    OutputChoice.BROWSER -> SetupChoiceTag.RECOMMENDED
+    OutputChoice.CARLINK -> SetupChoiceTag.EXPERIMENTAL
+    OutputChoice.WIRELESS -> SetupChoiceTag.PICTURE_ONLY
+}
+fun setupConnectionTag(settings: RelaySettings, wireless: Boolean): SetupChoiceTag? = when {
+    !wireless -> SetupChoiceTag.NOT_RECOMMENDED
+    recommendedConnection(settings) == ConnectionMode.WIRELESS -> SetupChoiceTag.RECOMMENDED
+    else -> null
+}
+fun setupNetworkTag(settings: RelaySettings, choice: WirelessNetworkChoice): SetupChoiceTag? =
+    SetupChoiceTag.RECOMMENDED.takeIf { choice == recommendedNetwork(settings) }
 
 /** The guide edits an explicit transport; LAST_USED resolves to the transport it would use now. */
 fun setupDraft(settings: RelaySettings, wireless: Boolean) =
@@ -37,33 +56,34 @@ fun setupDraft(settings: RelaySettings, wireless: Boolean) =
 /** One line of the chosen mode: what it is, the current choice, and the guide step that changes it. */
 data class ModeRow(val title: Int, val value: Int, val icon: Int, val step: SetupStep)
 fun modeRows(settings: RelaySettings, wireless: Boolean): List<ModeRow> = listOfNotNull(
-    ModeRow(R.string.setup_summary_output, when {
-        settings.bothOutputs -> R.string.dev_both
-        settings.carlinkOutput -> R.string.ui_carlink
-        else -> R.string.ui_browser
-    }, if (settings.carlinkOutput && !settings.bothOutputs) R.drawable.symbol_car else R.drawable.symbol_link, SetupStep.OUTPUT),
+    ModeRow(R.string.setup_summary_output, when (OutputSelection.choice(settings.outputs)) {
+        OutputChoice.BROWSER -> R.string.ui_browser
+        OutputChoice.CARLINK -> R.string.ui_carlink
+        OutputChoice.WIRELESS -> if (OutputSelection.wirelessKind(settings.outputs) == WirelessDisplayKind.MIRACAST)
+            R.string.wireless_miracast else R.string.wireless_dlna
+        null -> R.string.output_multiple
+    }, when (OutputSelection.choice(settings.outputs)) {
+        OutputChoice.BROWSER -> R.drawable.symbol_monitor
+        OutputChoice.CARLINK -> R.drawable.symbol_car_front
+        OutputChoice.WIRELESS -> R.drawable.symbol_cast
+        null -> R.drawable.symbol_link
+    }, SetupStep.OUTPUT),
     ModeRow(R.string.ui_iphone_connection, if (wireless) R.string.direlay_wireless else R.string.ui_usb,
         if (wireless) R.drawable.symbol_wifi else R.drawable.symbol_phone, SetupStep.CONNECTION),
     if (!wireless) null else ModeRow(R.string.setup_summary_network, setupNetworkLabel(settings.wirelessNetwork.choice),
         R.drawable.symbol_router, SetupStep.NETWORK),
 )
 
-/**
- * Choosing an output replaces both outputs, a developer option, with the single chosen one. Carlink
- * can move the network to a hotspot nobody has named yet; leaving Carlink then returns that unset
- * hotspot to the recommended Wi-Fi Direct instead of leaving a network the user never filled in.
- */
-fun chooseOutput(settings: RelaySettings, carlink: Boolean, wireless: Boolean): RelaySettings {
-    val chosen = CarlinkConnectionPolicy.enabling(settings, settings.copy(carlinkOutput = carlink, bothOutputs = false), wireless)
-    val network = chosen.wirelessNetwork
-    return if (carlink || network.choice != WirelessNetworkChoice.PHONE_HOTSPOT || network.manualSsid.isNotEmpty()) chosen
-    else chosen.copy(wirelessNetwork = network.copy(choice = WirelessNetworkChoice.WIFI_DIRECT))
-}
+fun chooseOutput(settings: RelaySettings, choice: OutputChoice, kind: WirelessDisplayKind, wireless: Boolean): RelaySettings =
+    OutputSelection.choose(settings, choice, kind, wireless)
 
 /** The hotspot and shared Wi-Fi fields belong to the network page; they never block the other pages. */
 private val networkFields = setOf("ssid", "password")
-fun setupStepErrors(step: SetupStep, errors: Map<String, Int>) =
-    if (step == SetupStep.NETWORK) errors else errors - networkFields
+fun setupStepErrors(step: SetupStep, errors: Map<String, Int>, car: CarSelection = CarSelection()) = when (step) {
+    SetupStep.CAR -> carSelectionErrors(car)
+    SetupStep.NETWORK -> errors
+    else -> errors - networkFields
+}
 fun chooseConnection(settings: RelaySettings, wireless: Boolean): RelaySettings {
     val candidate = settings.copy(connectionMode = if (wireless) ConnectionMode.WIRELESS else ConnectionMode.USB)
     return CarlinkConnectionPolicy.enabling(settings, candidate, wireless)
@@ -97,6 +117,28 @@ fun setupChecks(home: HomePresentation, wireless: Boolean, network: WirelessNetw
 }
 
 fun compactSetup(heightDp: Int): Boolean = heightDp < 480
+
+/** Preparation shows this phone's live checks and the iPhone prerequisite, before a session is started. */
+fun setupPrepareSections(path: ConnectionPath) = listOfNotNull(
+    path.section(PathSection.RELAY),
+    path.section(PathSection.IPHONE)?.let { section ->
+        section.copy(steps = section.steps.filter { it.id == StepId.IPHONE_PAIRED || it.id == StepId.USB_HOST })
+    },
+).filter { it.steps.isNotEmpty() }
+
+@Immutable data class SetupPrepareSteps(val open: List<PathStep>, val done: List<PathStep>)
+fun setupPrepareSteps(steps: List<PathStep>) = SetupPrepareSteps(
+    steps.filter { it.state != StepState.OK }, steps.filter { it.state == StepState.OK })
+
+@Immutable data class SetupPrepareChecks(val open: List<SetupCheck>, val done: List<SetupCheck>)
+fun setupPrepareChecks(checks: List<SetupCheck>) = SetupPrepareChecks(
+    checks.filter { it.state != SetupCheckState.DONE }, checks.filter { it.state == SetupCheckState.DONE })
+
+fun setupPrepareComplete(path: ConnectionPath?, checks: List<SetupCheck>): Boolean = if (path != null) {
+    val steps = setupPrepareSections(path).flatMap { it.steps }
+    steps.isNotEmpty() && setupPrepareSteps(steps).open.isEmpty()
+} else checks.isNotEmpty() && setupPrepareChecks(checks).open.isEmpty()
+
 fun revealHotspotFields(network: WirelessNetworkSettings, errors: Map<String, Int>): Boolean =
     network.choice == WirelessNetworkChoice.PHONE_HOTSPOT &&
         (network.manualSsid.isBlank() || network.manualPassphrase.isBlank() || errors.keys.any { it in networkFields })

@@ -9,7 +9,7 @@ import org.junit.Test
 class SettingsRoutesTest {
     @Test fun everyLegacyFieldLinkOpensItsPageAndParents() {
         val routes = mapOf(
-            "" to "settings", "output" to "settings/output#output", "car" to "settings/car",
+            "" to "settings", "output" to "settings/output#output", "car" to "settings/car#car",
             "picture" to "settings/picture", "audio" to "settings/audio",
             "connection" to "settings/connection#connection", "iphone" to "settings/connection#iphone",
             "network" to "settings/connection/network", "sharedWifi" to "settings/connection/network#sharedWifi",
@@ -82,4 +82,15 @@ class SettingsRoutesTest {
             assertEquals(page, firstSettingsErrorPage(order.drop(index).reversed().toSet()))
         }
     }
+    @Test fun experimentalIsASettingsSessionWithOneParentAndAnErrorDestination() {
+        val stack = RelayBackStack().open("settings:experimental")
+        assertEquals(listOf("home", "settings", "experimental"), stack.entries)
+        assertEquals(stack, stack.open("experimental"))
+        assertTrue(settingsSessionActive(listOf("experimental")))
+        assertEquals("settings", stack.back().current)
+        assertEquals(listOf("home", "settings", "developer", "developer/video"), stack.open("developer/video").entries)
+        assertEquals("experimental", firstSettingsErrorPage(setOf("experimental")))
+        assertFalse(showsDeveloperDiagnostics("experimental"))
+    }
+
 }

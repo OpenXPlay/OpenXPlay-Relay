@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.Snapshot
@@ -16,7 +17,7 @@ import org.openxplay.stream.clink.ClinkPictureSize
 /** Drive the same collector launched by rememberSettingsEditorState, without a second autosave controller. */
 class SettingsEditorCollectorTest {
     private val initial = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(
+        FrameRatePreference.AUTO, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(
             choice = WirelessNetworkChoice.PHONE_HOTSPOT, manualSsid = "Car", manualPassphrase = "12345678"))
     private fun editor() = SettingsEditorState(mutableStateOf(initial), mutableStateOf(initial),
         mutableStateOf(false), mutableStateMapOf(), mutableStateMapOf())
@@ -134,4 +135,26 @@ class SettingsEditorCollectorTest {
             assertEquals(published.single(), state.lastSaved.value)
         } finally { collector.cancelAndJoin() }
     }
+    @Test fun experimentalDraftUsesTheSharedCollectorAndInvalidAddressStaysUnpublished() = runBlocking {
+        val state = editor()
+        state.synchronize(initial, true)
+        val published = mutableListOf<RelaySettings>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+            state.collectChanges({ true }) { _, after -> published.add(after); true }
+        }
+        try {
+            state.changeExperimental { it.copy(keepScanning = true) }
+            awaitPublications(published, 1)
+            assertTrue(published.last().experimental.keepScanning)
+            assertFalse(published.last().experimental.active)
+            state.changeExperimental { it.copy(active = true, sendBluetoothAddress = true, bluetoothAddress = "bad") }
+            flushSnapshots()
+            assertEquals(1, published.size)
+            state.changeExperimental { it.copy(bluetoothAddress = "A0:B1:C2:D3:E4:F5") }
+            awaitPublications(published, 2)
+            assertTrue(published.last().experimental.effective().sendBluetoothAddress)
+            assertEquals(state.draft.value, state.lastSaved.value)
+        } finally { collector.cancelAndJoin() }
+    }
+
 }

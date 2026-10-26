@@ -462,6 +462,8 @@ impl Run {
                 .unwrap()
                 .push(serde_json::from_str(&s).unwrap())
         })));
+        // Production records relay startup before the controller can begin its first attempt.
+        json.milestone(Milestone::RelayStart);
         let controller = Arc::new(
             LinuxCarPlayController::new(Arc::new(Platform(fake)), json.clone(), timeout)
                 .with_retry_delay(retry.0, retry.1)
@@ -1227,7 +1229,6 @@ fn the_first_active_session_logs_the_attempts_boot_timing() {
     });
     *f.join_on_bootstrap.lock().unwrap() = Some(IPHONE.into());
     let mut run = Run::new(f.clone(), Duration::from_secs(2));
-    run.json.milestone(Milestone::RelayStart);
     wait_for(|| run.controller.stage() == "WirelessActive");
     // Read before the credentials went out and once the session started.
     wait_for(|| f.station_reads.load(Ordering::SeqCst) >= 2);

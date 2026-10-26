@@ -31,8 +31,10 @@ impl AccessPointFactory for Backend {
         Ok(false)
     }
     fn access_point(&self, config: AccessPointConfig) -> Arc<dyn WirelessHotspotManager> {
-        self.0
-            .record(format!("ap:{}:{}", config.interface, config.channel));
+        self.0.record(format!(
+            "ap:{}:{}",
+            config.interface, config.hotspot.channel
+        ));
         Arc::new(Ap(self.0.clone()))
     }
     fn stations(&self, interface: &str) -> Result<Vec<String>> {

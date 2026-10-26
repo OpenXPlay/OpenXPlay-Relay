@@ -37,7 +37,7 @@ Android 构建以 Gradle 复合构建（composite build）的方式引入 DiPlay
 | Linux 中继 | Rust 稳定版 | `cd rust && cargo test` |
 | 面向 aarch64 的 Linux 中继 | `rustup target add aarch64-unknown-linux-musl`、`llvm-tools`、clang | `rust/scripts/build-aarch64.sh` |
 
-发布构建使用 `stream.lock` 中记录的 Stream 提交；本地 Stream 检出不是该提交或有未提交改动时，Android 构建会给出警告。要升级到新的 Stream，请先推送该 Stream 提交，再提交 `git -C ../OpenXPlay-Stream rev-parse HEAD > stream.lock`。
+所有构建都使用 `stream.lock` 和 `diplay.lock` 中记录的 Stream 与 DiPlay 提交；本地检出不是该提交或有未提交改动时，Android 构建会给出警告（加 `-Prelay.strictSources=true` 则直接报错）。要升级锁定的提交，请先把新提交推送到该仓库的 `main`，再运行 `scripts/sources.sh bump stream`（或 `diplay`）并提交锁文件。
 
 ## 参与贡献
 

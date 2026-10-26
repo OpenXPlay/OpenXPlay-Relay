@@ -13,6 +13,23 @@ import java.lang.reflect.Proxy
 import java.net.InetAddress
 
 class StreamBridgeSinkTest {
+    @Test fun readsTheAppliedRateWhenCreatingEachFormatInsteadOfAtSinkConstruction() {
+        DiPlayInput().use { input ->
+            val capture = CapturingInputSink()
+            input.start(configuration, capture)
+            var fps = 30.0
+            val bridge = StreamBridgeSink(input, object : MediaSink {}, SessionControl { true }, fpsHint = { fps })
+            fps = 45.0
+            bridge.onVideoCodec(110, VideoCodec.H264)
+            bridge.onVideoConfig(110, avcConfig)
+            assertEquals(45.0, capture.formats.mapNotNull { it.second }.last().fpsHint)
+            fps = 60.0
+            bridge.onVideoCodec(111, VideoCodec.H265)
+            bridge.onVideoConfig(111, hevcConfig)
+            assertEquals(60.0, capture.formats.mapNotNull { it.second }.last().fpsHint)
+        }
+    }
+
     @Test fun anEngineThatNeverSawAnIphoneLeavesNoSessionBehind() {
         DiPlayInput().use { input ->
             val capture = CapturingInputSink()
@@ -29,7 +46,7 @@ class StreamBridgeSinkTest {
         DiPlayInput().use { input ->
             val capture = CapturingInputSink()
             input.start(configuration, capture)
-            val bridge = StreamBridgeSink(input, object : MediaSink {}, SessionControl { true }, fpsHint = 60.0)
+            val bridge = StreamBridgeSink(input, object : MediaSink {}, SessionControl { true }, fpsHint = { 60.0 })
             assertTrue(capture.states.isEmpty())
             bridge.onVideoCodec(110, VideoCodec.H264)
             assertEquals(listOf(SessionPhase.CONNECTING), capture.states.map { it.phase })

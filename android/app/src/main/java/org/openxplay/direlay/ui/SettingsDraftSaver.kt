@@ -9,6 +9,7 @@ import com.shilapi.xcertplay.orchestration.ManualHotspotBand
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import org.openxplay.direlay.settings.*
+import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.stream.clink.ClinkHevcMode
 import org.openxplay.stream.clink.ClinkPictureSize
 
@@ -23,8 +24,6 @@ fun developerOverridesSaver(base: DeveloperOverrides) = Saver<DeveloperOverrides
         putString("carlinkPictureSize", value.carlinkPictureSize.name)
         putBoolean("physicalWidthEnabled", value.physicalWidthEnabled)
         putInt("physicalWidthOverrideMm", value.physicalWidthOverrideMm)
-        putBoolean("fpsEnabled", value.fpsEnabled)
-        putInt("fps", value.fps)
         putBoolean("localPreview", value.localPreview)
         putBoolean("playCarPlayAudio", value.playCarPlayAudio)
         putBoolean("microphoneSourceEnabled", value.microphoneSourceEnabled)
@@ -44,7 +43,6 @@ fun developerOverridesSaver(base: DeveloperOverrides) = Saver<DeveloperOverrides
         carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == bundle.getString("carlinkPictureSize") } ?: base.carlinkPictureSize,
         physicalWidthEnabled = bundle.getBoolean("physicalWidthEnabled", base.physicalWidthEnabled),
         physicalWidthOverrideMm = bundle.getInt("physicalWidthOverrideMm", base.physicalWidthOverrideMm),
-        fpsEnabled = bundle.getBoolean("fpsEnabled", base.fpsEnabled), fps = bundle.getInt("fps", base.fps),
         localPreview = bundle.getBoolean("localPreview", base.localPreview),
         playCarPlayAudio = bundle.getBoolean("playCarPlayAudio", base.playCarPlayAudio),
         microphoneSourceEnabled = bundle.getBoolean("microphoneSourceEnabled", base.microphoneSourceEnabled),
@@ -64,9 +62,27 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
             value.microphoneSource.name, value.wirelessNetwork.choice.name, value.wirelessNetwork.manualSsid,
             value.wirelessNetwork.manualPassphrase, value.wirelessNetwork.band.name, value.wirelessNetwork.security.name,
             SharedWifiNetworks.encode(value.wirelessNetwork.sharedWifiNetworks)))
+        // Slots 3 and 5 stay reserved so older bundles keep the other flag indices.
         putBooleanArray("flags", booleanArrayOf(value.autoStartOnBoot, value.autoStartWhenReady,
-            value.localPreview, value.carlinkOutput, value.playCarPlayAudio, value.bothOutputs, value.vehicleInformation))
-        putIntArray("numbers", intArrayOf(value.fps, value.webPort ?: 0, value.wirelessNetwork.channel))
+            value.localPreview, false, value.playCarPlayAudio, false, value.vehicleInformation))
+        putString("frameRate", value.frameRate.name)
+        putIntArray("numbers", intArrayOf(0, value.webPort ?: 0, value.wirelessNetwork.channel))
+        putStringArray("outputs", RelayOutput.entries.filter { it in value.outputs }.map { it.wire }.toTypedArray())
+        putString("dlnaRendererUdn", value.dlnaRenderer?.udn)
+        putString("dlnaRendererName", value.dlnaRenderer?.name)
+        putString("dlnaPicture", value.dlnaPicture.name)
+        putString("wirelessPicture", value.wirelessPicture.name)
+        putInt("wirelessPictureWidth", value.wirelessPictureSize.width)
+        putInt("wirelessPictureHeight", value.wirelessPictureSize.height)
+        putString("carlinkPictureSizes", CarlinkPictureSizes.savedJson(value.carlinkPictureSizes).toString())
+        putString("carlinkPictureDefault", value.carlinkPictureDefault?.let { CarlinkPictureSizes.json(it).toString() })
+        putBoolean("miracastStretch", value.miracastStretch)
+        putBoolean("experimental.active", value.experimental.active)
+        putBoolean("experimental.rememberSubscription", value.experimental.rememberSubscription)
+        putBoolean("experimental.keepScanning", value.experimental.keepScanning)
+        putBoolean("experimental.recordAdvertisements", value.experimental.recordAdvertisements)
+        putBoolean("experimental.sendBluetoothAddress", value.experimental.sendBluetoothAddress)
+        putString("experimental.bluetoothAddress", value.experimental.bluetoothAddress)
         putBoolean("carlinkAutoReconnect", value.carlinkAutoReconnect)
         putBoolean("carlinkReconnectOnResize", value.carlinkReconnectOnResize)
         putBoolean("carlinkTrace", value.carlinkTrace)
@@ -74,7 +90,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("carlinkPictureSize", value.carlinkPictureSize.name)
         putBoolean("carPlayViewAreas", value.viewAreas)
         putBoolean("carBluetoothAudio", value.carBluetoothAudio)
-        putStringArrayList("car", arrayListOf(value.car.brand, value.car.brandText, value.car.model, value.car.modelText))
+        putStringArrayList("car", arrayListOf(value.car.brand, value.car.brandText, value.car.model, value.car.modelText, value.car.year, value.car.yearText))
         putString("iphoneAddress", value.iphoneAddress)
         putString("displayMode", value.displayMode.name)
         putString("videoCodec", value.videoCodec.name)
@@ -92,17 +108,39 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
     val text = requireNotNull(bundle.getStringArrayList("text"))
     val flags = requireNotNull(bundle.getBooleanArray("flags"))
     val numbers = requireNotNull(bundle.getIntArray("numbers"))
-    base.copy(connectionMode = ConnectionMode.valueOf(text[0]), mfiTarget = MfiTarget.valueOf(text[1]),
+    base.copy(experimental = ExperimentalOptions(
+        active = bundle.getBoolean("experimental.active", base.experimental.active),
+        rememberSubscription = bundle.getBoolean("experimental.rememberSubscription", base.experimental.rememberSubscription),
+        keepScanning = bundle.getBoolean("experimental.keepScanning", base.experimental.keepScanning),
+        recordAdvertisements = bundle.getBoolean("experimental.recordAdvertisements", base.experimental.recordAdvertisements),
+        sendBluetoothAddress = bundle.getBoolean("experimental.sendBluetoothAddress", base.experimental.sendBluetoothAddress),
+        bluetoothAddress = bundle.getString("experimental.bluetoothAddress") ?: base.experimental.bluetoothAddress),
+        connectionMode = ConnectionMode.valueOf(text[0]), mfiTarget = MfiTarget.valueOf(text[1]),
         i2cPath = text[2], remoteServer = text[3], remoteToken = text[4], carlinkDeviceName = text[5], carlinkDeviceModel = text[6],
         microphoneSource = MicrophoneSource.valueOf(text[7]),
-        autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],
-        playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), fps = numbers[0], webPort = numbers[1].takeIf { it != 0 },
+        autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2],
+        playCarPlayAudio = flags[4], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), webPort = numbers[1].takeIf { it != 0 },
+        frameRate = FrameRatePreference.entries.firstOrNull { it.name == bundle.getString("frameRate") } ?: base.frameRate,
         videoStats = if (bundle.containsKey("videoStats")) VideoStatsWindow.fromStored(bundle.getString("videoStats")) else base.videoStats,
         teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == bundle.getString("teslaBrowser") } ?: base.teslaBrowser,
         teslaVirtualAddress = bundle.getString("teslaVirtualAddress") ?: base.teslaVirtualAddress,
         teslaPublicAddress = bundle.getString("teslaPublicAddress") ?: base.teslaPublicAddress,
         teslaMirrorAddress = bundle.getString("teslaMirrorAddress") ?: base.teslaMirrorAddress,
         teslaAndroidAddress = bundle.getString("teslaAndroidAddress") ?: base.teslaAndroidAddress,
+        outputs = bundle.getStringArray("outputs")?.takeIf { wires -> wires.isNotEmpty() &&
+            wires.all { wire -> RelayOutput.entries.any { it.wire == wire } } }
+            ?.map { wire -> RelayOutput.entries.first { it.wire == wire } }?.toSet() ?: base.outputs,
+        dlnaRenderer = if (bundle.containsKey("dlnaRendererUdn")) bundle.getString("dlnaRendererUdn")?.let {
+            DlnaRendererChoice(it, bundle.getString("dlnaRendererName").orEmpty()) } else base.dlnaRenderer,
+        dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == bundle.getString("dlnaPicture") } ?: base.dlnaPicture,
+        wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == bundle.getString("wirelessPicture") } ?: base.wirelessPicture,
+        wirelessPictureSize = WirelessPictureSize(bundle.getInt("wirelessPictureWidth", base.wirelessPictureSize.width),
+            bundle.getInt("wirelessPictureHeight", base.wirelessPictureSize.height)),
+        carlinkPictureSizes = if (bundle.containsKey("carlinkPictureSizes"))
+            CarlinkPictureSizes.decodeSaved(bundle.getString("carlinkPictureSizes").orEmpty()) else base.carlinkPictureSizes,
+        carlinkPictureDefault = if (bundle.containsKey("carlinkPictureDefault"))
+            CarlinkPictureSizes.decodeDefault(bundle.getString("carlinkPictureDefault")) else base.carlinkPictureDefault,
+        miracastStretch = bundle.getBoolean("miracastStretch", base.miracastStretch),
         carlinkReconnectOnResize = bundle.getBoolean("carlinkReconnectOnResize", base.carlinkReconnectOnResize),
         videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == bundle.getString("videoCodec") } ?: base.videoCodec,
         carplayResolution = CarPlayResolution.entries.firstOrNull { it.name == bundle.getString("carplayResolution") } ?: base.carplayResolution,
@@ -112,7 +150,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.entries.firstOrNull { it.name == bundle.getString("carlinkPictureSize") } ?: base.carlinkPictureSize,
         viewAreas = bundle.getBoolean("carPlayViewAreas", base.viewAreas),
         carBluetoothAudio = bundle.getBoolean("carBluetoothAudio", base.carBluetoothAudio),
-        car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 }?.let { CarSelection(it[0], it[1], it[2], it[3]) } ?: base.car,
+        car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 || it.size == 6 }?.let {
+            if (it.size == 4) CarSelection(it[0], it[1], it[2], it[3]).normalized()
+            else CarSelection(it[0], it[1], it[2], it[3], it[4], it[5])
+        } ?: base.car,
         iphoneAddress = bundle.getString("iphoneAddress"),
         displayMode = migratedDisplayMode(bundle.getString("displayMode"), bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) }),
         display = bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) },

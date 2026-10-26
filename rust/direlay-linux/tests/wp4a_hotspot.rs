@@ -11,10 +11,13 @@ use std::{
 #[derive(Default)]
 struct Fake {
     calls: Mutex<Vec<Vec<String>>>,
+    profiles: Mutex<Vec<String>>,
     attempts: Mutex<usize>,
     fail_5g: bool,
     fail_all: bool,
     iw_missing: bool,
+    phy: Option<&'static str>,
+    report24: bool,
     /// What NetworkManager reports for the Wi-Fi device's state, one answer per query; `None`
     /// when it does not list the device yet.
     device_states: Mutex<Vec<Option<&'static str>>>,
@@ -23,6 +26,12 @@ impl CommandRunner for Fake {
     fn run(&self, a: &[String], timeout: Duration) -> openxplay_relay::Result<CommandResult> {
         assert!(!timeout.is_zero());
         self.calls.lock().unwrap().push(a.to_vec());
+        if a.get(2).is_some_and(|s| s == "load") {
+            self.profiles
+                .lock()
+                .unwrap()
+                .push(std::fs::read_to_string(&a[3]).unwrap());
+        }
         let output = if a.starts_with(&["nmcli".into(), "connection".into(), "up".into()]) {
             let mut n = self.attempts.lock().unwrap();
             *n += 1;
@@ -40,10 +49,18 @@ impl CommandRunner for Fake {
                     output: "missing".into(),
                 });
             }
-            include_str!("fixtures/iw-info.txt").replace(
-                "36 (5180",
-                if self.fail_5g { "6 (2437" } else { "36 (5180" },
-            )
+            if a[1] == "phy" {
+                self.phy.unwrap_or("").into()
+            } else {
+                include_str!("fixtures/iw-info.txt").replace(
+                    "36 (5180",
+                    if self.fail_5g || self.report24 {
+                        "6 (2437"
+                    } else {
+                        "36 (5180"
+                    },
+                )
+            }
         } else if a.iter().any(|s| s == "GENERAL.STATE")
             && !self.device_states.lock().unwrap().is_empty()
         {
@@ -78,7 +95,10 @@ fn temp() -> PathBuf {
     p
 }
 fn manager(p: &std::path::Path, runner: Arc<Fake>) -> LinuxHotspot {
-    LinuxHotspot::new(p.into(), runner, "wlan0".into(), 36)
+    LinuxHotspot::new(p.into(), runner, "wlan0".into(), 36).with_runtime_dirs(
+        p.join("nm-keyfiles"),
+        openxplay_relay::public_name::local_dns::Paths::in_dir(p.join("dnsmasq-shared.d")),
+    )
 }
 #[test]
 fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_ap() {
@@ -106,14 +126,14 @@ fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_
     let add = calls
         .iter()
         .position(|a| {
-            a.get(1).is_some_and(|s| s == "connection") && a.get(2).is_some_and(|s| s == "add")
+            a.get(1).is_some_and(|s| s == "connection") && a.get(2).is_some_and(|s| s == "load")
         })
         .unwrap();
     assert!(calls_before <= add);
-    let subnet = calls[add]
-        .windows(2)
-        .find(|w| w[0] == "ipv4.addresses")
-        .map(|w| w[1].clone())
+    let profiles = runner.profiles.lock().unwrap();
+    let subnet = profiles[0]
+        .lines()
+        .find_map(|l| l.strip_prefix("address1="))
         .unwrap();
     assert_eq!(subnet, format!("{address}/24"));
     drop(calls);
@@ -140,11 +160,24 @@ fn hotspot_persists_credentials_and_deletes_owned_connection() {
     assert_eq!(calls[calls.len() - 1][2], "delete");
     let add = calls
         .iter()
-        .find(|a| a.get(2).is_some_and(|s| s == "add"))
+        .find(|a| a.get(2).is_some_and(|s| s == "load"))
         .unwrap();
-    for v in ["ap", "rsn", "ccmp", "shared", "no"] {
-        assert!(add.iter().any(|s| s == v));
+    assert_eq!(&add[..3], ["nmcli", "connection", "load"]);
+    let profiles = runner.profiles.lock().unwrap();
+    for setting in [
+        "mode=ap",
+        "proto=rsn;",
+        "pairwise=ccmp;",
+        "group=ccmp;",
+        "method=shared",
+        "autoconnect=false",
+    ] {
+        assert!(profiles[0].contains(setting));
     }
+    assert!(calls
+        .iter()
+        .flatten()
+        .all(|a| !a.contains(&info.passphrase)));
     assert!(calls.iter().all(|a| a[0] != "ip"));
     drop(calls);
     let second = manager(&p, Arc::new(Fake::default()));
@@ -212,11 +245,17 @@ fn hotspot_failure_cleans_up_and_close_prevents_restart() {
 
 #[test]
 fn channel_selection_respects_radio_capabilities() {
-    use openxplay_relay::linux_hotspot::hotspot_channel;
-    assert_eq!(hotspot_channel(36, false), 6);
-    assert_eq!(hotspot_channel(36, true), 36);
-    assert_eq!(hotspot_channel(11, false), 11);
-    assert_eq!(hotspot_channel(14, true), 14);
+    use openxplay_relay::device_preset::resolve_hotspot;
+    let phy = wifi_capabilities::parse_phy(include_str!("fixtures/iw-phy-ufi003.txt"));
+    assert_eq!(
+        resolve_hotspot("auto", 36, "msm8916", Some(&phy)).channel,
+        6
+    );
+    assert_eq!(resolve_hotspot("auto", 36, "generic", None).channel, 36);
+    assert_eq!(
+        resolve_hotspot("2.4", 11, "generic", Some(&phy)).channel,
+        11
+    );
 }
 
 #[test]
@@ -291,9 +330,9 @@ fn shared_wifi_restart_recreates_attachment_without_disconnect() {
     let platform = || {
         LinuxWirelessPlatform::new(
             options.clone(),
-            openxplay_relay::host_backends::HostBackends::linux(
+            openxplay_relay::host_backends::HostBackends::linux_with_runtime_paths(
                 &options,
-                runner.clone(),
+                openxplay_relay::runtime_paths::RuntimePaths::in_state_dir(&p, runner.clone()),
                 events.clone(),
             ),
             state.identity().unwrap(),
@@ -437,7 +476,7 @@ fn access_point_starts_once_networkmanager_can_use_the_wifi_device() {
     h.start(Duration::from_secs(60)).unwrap();
     let calls = runner.calls.lock().unwrap();
     let position = |test: &dyn Fn(&Vec<String>) -> bool| calls.iter().position(test).unwrap();
-    let add = position(&|a| a.get(2).is_some_and(|s| s == "add"));
+    let add = position(&|a| a.get(2).is_some_and(|s| s == "load"));
     let up = position(&|a| a.get(2).is_some_and(|s| s == "up"));
     let states: Vec<_> = calls
         .iter()
@@ -477,7 +516,7 @@ fn activation_waits_for_the_wifi_provisioning_but_the_profile_does_not() {
             .any(|a| a.get(2).is_some_and(|s| s == verb))
     };
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
-    while !called("add") {
+    while !called("load") {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -508,7 +547,10 @@ fn the_provisioning_gate_opens_with_its_last_hold() {
 
 #[test]
 fn ap_channel_rejects_no_ir_radar_and_missing_while_station_can_join() {
-    use openxplay_relay::{linux_hotspot::access_point_channel, wifi_capabilities::parse_phy};
+    use openxplay_relay::{device_preset::resolve_hotspot, wifi_capabilities::parse_phy};
+    fn access_point_channel(channel: u8, phy: Option<&wifi_capabilities::PhyCapabilities>) -> u8 {
+        resolve_hotspot("auto", channel, "generic", phy).channel
+    }
     for flags in ["(disabled)", "(no IR)", "(radar detection)"] {
         let phy = parse_phy(&format!(" * 5180 MHz [36] (20.0 dBm) {flags}"));
         assert_eq!(access_point_channel(36, Some(&phy)), 6);
@@ -516,11 +558,96 @@ fn ap_channel_rejects_no_ir_radar_and_missing_while_station_can_join() {
     }
     let country_set = parse_phy(" * 5180 MHz [36] (20.0 dBm)");
     assert_eq!(access_point_channel(36, Some(&country_set)), 36);
-    assert_eq!(access_point_channel(44, Some(&country_set)), 6);
+    assert_eq!(access_point_channel(44, Some(&country_set)), 36);
     let ufi = parse_phy(" * 2437 MHz [6] (20.0 dBm)");
     assert_eq!(access_point_channel(36, Some(&ufi)), 6);
-    assert_eq!(access_point_channel(11, Some(&ufi)), 11);
-    assert_eq!(access_point_channel(36, None), 6);
+    assert_eq!(access_point_channel(11, Some(&ufi)), 6);
+    assert_eq!(access_point_channel(36, None), 36);
+}
+
+#[test]
+fn ufi003_resolves_before_activation_without_attempting_five_ghz() {
+    use host_backends::{AccessPointConfig, HostBackends};
+    let p = temp();
+    let runner = Arc::new(Fake {
+        phy: Some(include_str!("fixtures/iw-phy-ufi003.txt")),
+        report24: true,
+        ..Default::default()
+    });
+    let cache = Arc::new(host_capabilities::CapabilityCache::new(
+        runner.clone(),
+        p.clone(),
+        Default::default(),
+    ));
+    let wifi = cache.wifi("wlan0");
+    let hotspot = device_preset::resolve_hotspot("auto", 36, "msm8916", wifi.capabilities.as_ref());
+    let options = Options::parse(&["--state-dir".into(), p.to_str().unwrap().into()]).unwrap();
+    let backends = HostBackends::linux_with_runtime_paths(
+        &options,
+        openxplay_relay::runtime_paths::RuntimePaths::in_state_dir(&p, runner.clone()),
+        Arc::new(JsonEvents::new(Arc::new(|_| {}))),
+    );
+    let manager = backends.access_point.access_point(AccessPointConfig {
+        state_dir: p.clone(),
+        interface: "wlan0".into(),
+        hotspot,
+        capabilities: Some(cache.clone()),
+        provisioning: None,
+        before_activation: None,
+    });
+    assert_eq!(manager.start(Duration::from_secs(60)).unwrap().channel, 6);
+    let calls = runner.calls.lock().unwrap();
+    let add = calls
+        .iter()
+        .find(|a| a.get(2).is_some_and(|s| s == "load"))
+        .unwrap();
+    assert_eq!(&add[..3], ["nmcli", "connection", "load"]);
+    let profiles = runner.profiles.lock().unwrap();
+    assert!(profiles[0].contains("band=bg\n") && profiles[0].contains("channel=6\n"));
+    assert!(!calls
+        .iter()
+        .any(|a| a.windows(2).any(|w| w == ["802-11-wireless.band", "a"])));
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|a| a[0] == "iw" && a[1] == "phy")
+            .count(),
+        1
+    );
+    let resolved = cache.hotspot("wlan0").unwrap();
+    assert_eq!((resolved.band.as_str(), resolved.channel), ("2.4", 6));
+    drop(calls);
+    manager.close().unwrap();
+    std::fs::remove_dir_all(p).unwrap();
+}
+
+#[test]
+fn activation_fallback_records_its_band_channel_and_reason() {
+    let p = temp();
+    let runner = Arc::new(Fake {
+        fail_5g: true,
+        ..Default::default()
+    });
+    let cache = Arc::new(host_capabilities::CapabilityCache::new(
+        runner.clone(),
+        p.clone(),
+        Default::default(),
+    ));
+    let resolved = device_preset::resolve_hotspot("auto", 0, "generic", None);
+    let h = manager(&p, runner.clone()).with_resolution(cache.clone(), resolved);
+    h.start(Duration::from_secs(60)).unwrap();
+    let resolved = cache.hotspot("wlan0").unwrap();
+    assert_eq!(
+        (
+            resolved.band.as_str(),
+            resolved.channel,
+            resolved.reason.as_deref()
+        ),
+        ("2.4", 6, Some("ap-start-failed"))
+    );
+    assert_eq!(*runner.attempts.lock().unwrap(), 2);
+    h.close().unwrap();
+    std::fs::remove_dir_all(p).unwrap();
 }
 
 #[test]
@@ -548,16 +675,19 @@ fn semantic_access_point_request_supplies_credentials_band_and_channel() {
     let calls = runner.calls.lock().unwrap();
     let add = calls
         .iter()
-        .find(|args| args.get(2).is_some_and(|s| s == "add"))
+        .find(|args| args.get(2).is_some_and(|s| s == "load"))
         .unwrap();
-    for pair in [
-        ["ssid", "Semantic AP"],
-        ["802-11-wireless-security.psk", "password123"],
-        ["802-11-wireless.band", "bg"],
-        ["802-11-wireless.channel", "11"],
-    ] {
-        assert!(add.windows(2).any(|w| w == pair));
+    assert_eq!(&add[..3], ["nmcli", "connection", "load"]);
+    let profiles = runner.profiles.lock().unwrap();
+    for setting in ["psk=password123\n", "band=bg\n", "channel=11\n"] {
+        assert!(profiles[0].contains(setting));
     }
+    let ssid = "Semantic AP"
+        .bytes()
+        .map(|b| format!("{b};"))
+        .collect::<String>();
+    assert!(profiles[0].contains(&format!("ssid={ssid}\n")));
+    assert!(calls.iter().flatten().all(|a| !a.contains("password123")));
     assert!(!root.join("hotspot.credentials").exists());
     std::fs::remove_dir_all(root).unwrap();
 }

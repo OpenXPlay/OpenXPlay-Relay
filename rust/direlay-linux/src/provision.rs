@@ -184,6 +184,8 @@ pub fn parse_networks(output: &str, known: &BTreeSet<String>) -> Vec<WifiNetwork
 struct Profile {
     uuid: String,
     ssid: String,
+    #[serde(default)]
+    interface: Option<String>,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct OwnedProfiles {
@@ -203,6 +205,7 @@ pub struct WifiProvisioner<C: NetworkManagerCli> {
     cached_networks: Vec<WifiNetwork>,
     saved: Vec<SharedWifiNetwork>,
     carlink_held: bool,
+    local_dns: Option<crate::public_name::local_dns::Paths>,
 }
 impl<C: NetworkManagerCli> WifiProvisioner<C> {
     pub fn new(cli: C, interface: String, mac: &str, state_dir: &Path) -> io::Result<Self> {
@@ -228,21 +231,28 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             ));
         }
         let state_file = state_dir.join("wifi-owned.json");
-        let owned = match fs::read(&state_file) {
+        let owned: OwnedProfiles = match fs::read(&state_file) {
             Ok(b) => serde_json::from_slice(&b)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => OwnedProfiles::default(),
             Err(e) => return Err(e),
         };
         Ok(Self {
+            local_dns: crate::runtime_paths::RuntimePaths::new(state_dir).managed_dns(),
             carlink_held: false,
             cli,
             interface,
-            setup_ssid: format!(
-                "{}{}{}",
-                crate::branding::SETUP_SSID_PREFIX,
-                octets[4].to_uppercase(),
-                octets[5].to_uppercase()
-            ),
+            setup_ssid: owned
+                .ap
+                .as_ref()
+                .map(|ap| ap.ssid.clone())
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}{}{}",
+                        crate::branding::SETUP_SSID_PREFIX,
+                        octets[4].to_uppercase(),
+                        octets[5].to_uppercase()
+                    )
+                }),
             state_file,
             owned,
             status: WifiClient::default(),
@@ -250,6 +260,59 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             cached_networks: Vec::new(),
             saved: Vec::new(),
         })
+    }
+    pub fn with_local_dns(mut self, paths: Option<crate::public_name::local_dns::Paths>) -> Self {
+        self.local_dns = paths;
+        self
+    }
+    /// Only manifest UUIDs belong to the relay. Persist each successful move so retries are safe.
+    fn repoint_owned(&mut self) -> io::Result<()> {
+        let profiles: Vec<_> = self
+            .owned
+            .clients
+            .iter()
+            .chain(self.owned.ap.iter())
+            .cloned()
+            .collect();
+        for profile in profiles {
+            if profile.interface.as_deref() == Some(&self.interface) {
+                continue;
+            }
+            // Missing NM profiles are recreated by sync/start_ap, never adopted by name.
+            if self
+                .command(
+                    &["-t", "connection", "show", "uuid", &profile.uuid],
+                    COMMAND_TIMEOUT,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            self.command(
+                &[
+                    "-t",
+                    "connection",
+                    "modify",
+                    "uuid",
+                    &profile.uuid,
+                    "connection.interface-name",
+                    &self.interface,
+                ],
+                COMMAND_TIMEOUT,
+            )?;
+            for owned in self
+                .owned
+                .clients
+                .iter_mut()
+                .chain(self.owned.ap.iter_mut())
+            {
+                if owned.uuid == profile.uuid {
+                    owned.interface = Some(self.interface.clone());
+                }
+            }
+            self.save()?;
+        }
+        Ok(())
     }
     fn command(&self, args: &[&str], timeout: Duration) -> io::Result<String> {
         self.cli.run(
@@ -360,6 +423,13 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             }
         }
         self.status.setup_hotspot = false;
+        if let Some(paths) = &self.local_dns {
+            crate::public_name::local_dns::hotspot(
+                paths,
+                &format!("setup-{}", self.interface),
+                None,
+            )?;
+        }
         Ok(())
     }
     pub fn stop(&mut self) -> io::Result<()> {
@@ -398,6 +468,7 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             ..Default::default()
         };
         settings.validate()?;
+        self.repoint_owned()?;
         let mut seen = BTreeSet::new();
         for profile in self.owned.clients.clone() {
             if !networks.iter().any(|n| n.ssid == profile.ssid)
@@ -471,6 +542,7 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
                             io::Error::other("nmcli did not report the new connection UUID")
                         })?,
                         ssid: network.ssid.clone(),
+                        interface: Some(self.interface.clone()),
                     };
                     self.owned.clients.push(profile.clone());
                     self.save()?;
@@ -560,6 +632,7 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
         self.start_ap()
     }
     fn start_ap(&mut self) -> io::Result<()> {
+        self.repoint_owned()?;
         // Scan while still a station: once the AP is up, the radio only reports the AP itself.
         if !self.status.setup_hotspot {
             let _ = self.scan();
@@ -607,10 +680,31 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             )?;
             let uuid = added_uuid(&output)
                 .ok_or_else(|| io::Error::other("nmcli did not report the new connection UUID"))?;
-            self.owned.ap = Some(Profile { uuid, ssid });
+            self.owned.ap = Some(Profile {
+                uuid,
+                ssid,
+                interface: Some(self.interface.clone()),
+            });
             self.save()?;
         }
-        self.up(&self.owned.ap.as_ref().unwrap().uuid)?;
+        if let Some(paths) = &self.local_dns {
+            crate::public_name::local_dns::hotspot(
+                paths,
+                &format!("setup-{}", self.interface),
+                Some(std::net::Ipv4Addr::new(10, 78, 0, 1)),
+            )?;
+        }
+        let activation = self.up(&self.owned.ap.as_ref().unwrap().uuid);
+        if activation.is_err() {
+            if let Some(paths) = &self.local_dns {
+                let _ = crate::public_name::local_dns::hotspot(
+                    paths,
+                    &format!("setup-{}", self.interface),
+                    None,
+                );
+            }
+        }
+        activation?;
         self.status = WifiClient {
             ssid: None,
             ip: Some("10.78.0.1".into()),
@@ -816,4 +910,64 @@ fn added_uuid(output: &str) -> Option<String> {
     let uuid = &output[start..end];
     (uuid.len() == 36 && uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
         .then(|| uuid.to_string())
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone, Default)]
+    struct Fake(Arc<Mutex<Vec<Vec<String>>>>);
+    impl NetworkManagerCli for Fake {
+        fn run(&self, args: &[String], _: Duration) -> io::Result<String> {
+            self.0.lock().unwrap().push(args.to_vec());
+            Ok(String::new())
+        }
+    }
+    #[test]
+    fn repoints_only_manifest_profiles_and_migrates_old_format() {
+        let dir = std::env::temp_dir().join(format!("wifi-repoint-{}", random_hex(8).unwrap()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("wifi-owned.json");
+        fs::write(&file, br#"{"ap":{"uuid":"setup-owned","ssid":"Test Setup"},"clients":[{"uuid":"client-owned","ssid":"Test Saved"}]}"#).unwrap();
+        let cli = Fake::default();
+        let mut provisioner =
+            WifiProvisioner::new(cli.clone(), "wlan2".into(), "02:00:00:00:00:02", &dir).unwrap();
+        provisioner.repoint_owned().unwrap();
+        for uuid in ["setup-owned", "client-owned"] {
+            assert!(cli.0.lock().unwrap().iter().any(|args| args
+                == &[
+                    "-t",
+                    "connection",
+                    "modify",
+                    "uuid",
+                    uuid,
+                    "connection.interface-name",
+                    "wlan2"
+                ]));
+        }
+        assert_eq!(cli.0.lock().unwrap().len(), 4);
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        assert_eq!(manifest["ap"]["interface"], "wlan2");
+        assert_eq!(manifest["clients"][0]["interface"], "wlan2");
+        drop(provisioner);
+        cli.0.lock().unwrap().clear();
+        let mut same =
+            WifiProvisioner::new(cli.clone(), "wlan2".into(), "02:00:00:00:00:02", &dir).unwrap();
+        same.repoint_owned().unwrap();
+        assert!(cli.0.lock().unwrap().is_empty());
+        let mut moved =
+            WifiProvisioner::new(cli.clone(), "wlan3".into(), "02:00:00:00:00:03", &dir).unwrap();
+        moved.repoint_owned().unwrap();
+        assert_eq!(cli.0.lock().unwrap().len(), 4);
+        assert!(!cli
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .flatten()
+            .any(|arg| arg == "delete" || arg == "down"));
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

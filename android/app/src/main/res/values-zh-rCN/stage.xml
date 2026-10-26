@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-25 -->
+<resources>
+    <string name="stage_not_now">暂不</string>
+    <string name="stage_steps">全部步骤</string>
+    <string name="stage_auto_in">%1$d 秒后自动连接</string>
+    <string name="stage_notice_display">车机屏幕变了 · 重新连接</string>
+    <string name="stage_notice_car">选择你的车型</string>
+    <string name="stage_gallery">连接舞台</string>
+    <string name="stage_countdown">倒计时</string>
+    <string name="stage_busy">忙碌</string>
+    <string name="stage_drawer_open">展开步骤</string>
+</resources>

@@ -30,11 +30,11 @@ class ManualNetworkStartTest {
         assertTrue(gate.reminders.isEmpty())
     }
 
-    @Test fun onlyManualProblemsOpenADialogAndUnknownNeverBlocks() {
+    @Test fun manualAndAutomaticProblemsArmTheStartAndUnknownNeverBlocks() {
         for (manual in listOf(false, true)) for (wifi in Readiness.entries) for (hotspot in Readiness.entries) {
             val gate = ManualNetworkStart()
             val state = NetworkReadiness(wifi, hotspot)
-            val blocked = manual && state.problems.isNotEmpty()
+            val blocked = state.problems.isNotEmpty()
             assertEquals(!blocked, gate.request(manual, state))
             assertEquals(if (blocked) state else null, gate.pending)
             assertEquals(if (manual && !blocked) state.unknown else emptySet<NetworkRequirement>(), gate.reminders)
@@ -61,7 +61,7 @@ class ManualNetworkStartTest {
         assertTrue(gate.accept())
         assertNull(gate.pending)
         assertEquals(setOf(NetworkRequirement.HOTSPOT), gate.reminders)
-        assertTrue(gate.request(false, state))
+        assertFalse(gate.request(false, state))
         assertTrue(gate.reminders.isEmpty())
         assertFalse(gate.request(true, state))
         gate.cancel()
@@ -69,5 +69,20 @@ class ManualNetworkStartTest {
         assertTrue(gate.reminders.isEmpty())
         assertFalse(gate.recheck(NetworkReadiness()))
         assertFalse(gate.accept())
+    }
+    @Test fun bluetoothCanArmAndResolveWithOtherRadiosStillUnknown() {
+        val gate = ManualNetworkStart()
+        assertFalse(gate.request(true, NetworkReadiness(bluetooth = Readiness.PROBLEM)))
+        assertEquals(setOf(NetworkRequirement.BLUETOOTH), gate.pending!!.problems)
+        assertFalse(gate.recheck(NetworkReadiness(bluetooth = Readiness.PROBLEM)))
+        assertTrue(gate.recheck(NetworkReadiness(bluetooth = Readiness.UNKNOWN)))
+        assertEquals(setOf(NetworkRequirement.BLUETOOTH), gate.reminders)
+    }
+    @Test fun sharedWifiWaitContinuesOnlyAfterJoiningASavedNetwork() {
+        val gate = ManualNetworkStart()
+        assertFalse(gate.request(false, NetworkReadiness(sharedWifi = Readiness.PROBLEM)))
+        assertFalse(gate.recheck(NetworkReadiness(sharedWifi = Readiness.PROBLEM)))
+        assertTrue(gate.recheck(NetworkReadiness()))
+        assertNull(gate.pending)
     }
 }

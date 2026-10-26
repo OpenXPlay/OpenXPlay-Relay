@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import android.app.Application
 import android.os.Bundle
 import android.os.Parcel
@@ -18,10 +19,93 @@ import org.openxplay.direlay.settings.*
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE, application = Application::class)
 class SettingsDraftSaverTest {
+    @Test fun everyFrameRateSurvivesAParcelRoundTripAndOlderDraftsKeepTheBaseChoice() {
+        for (rate in FrameRatePreference.entries) {
+            val chosen = base.copy(frameRate = rate)
+            val saved = bundle(chosen)
+            assertEquals(rate.name, saved.getString("frameRate"))
+            val parcel = Parcel.obtain()
+            try {
+                parcel.writeBundle(saved); parcel.setDataPosition(0)
+                assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+            } finally { parcel.recycle() }
+        }
+        val chosen = base.copy(frameRate = FrameRatePreference.FPS_45)
+        val legacy = bundle(base).apply { remove("frameRate") }
+        assertEquals(chosen, relaySettingsSaver(chosen).restore(legacy))
+        legacy.putString("frameRate", "future")
+        assertEquals(chosen, relaySettingsSaver(chosen).restore(legacy))
+    }
+
     private val base = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null)
+        FrameRatePreference.AUTO, false, true, false, null)
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
+
+    @Test fun wirelessPictureChoicesUseOwnKeysAndSurviveParcelRoundTrip() {
+        for (mode in WirelessPictureMode.entries) for (stretch in listOf(false, true)) {
+            val chosen = base.copy(wirelessPicture = mode, wirelessPictureSize = WirelessPictureSize(1920, 720), miracastStretch = stretch)
+            val saved = bundle(chosen)
+            assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
+            val parcel = Parcel.obtain()
+            try {
+                parcel.writeBundle(saved); parcel.setDataPosition(0)
+                assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+            } finally { parcel.recycle() }
+        }
+        val old = bundle(base).apply {
+            listOf("wirelessPicture", "wirelessPictureWidth", "wirelessPictureHeight", "miracastStretch").forEach { remove(it) }
+        }
+        val remembered = base.copy(wirelessPicture = WirelessPictureMode.CUSTOM, wirelessPictureSize = WirelessPictureSize(720, 1280), miracastStretch = true)
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        old.putString("wirelessPicture", "future")
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
+
+    @Test fun wirelessDisplaysSurviveParcelRoundTripWithoutExtendingLegacyFlags() {
+        for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
+            for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                val value = base.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
+                val saved = bundle(value)
+                assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
+                val parcel = Parcel.obtain()
+                try {
+                    parcel.writeBundle(saved); parcel.setDataPosition(0)
+                    assertEquals(value, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+                } finally { parcel.recycle() }
+            }
+        val old = bundle(base).apply {
+            listOf("outputs", "dlnaRendererUdn", "dlnaRendererName", "dlnaPicture").forEach { remove(it) }
+        }
+        val remembered = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.DLNA, RelayOutput.MIRACAST),
+            dlnaPicture = DlnaPicture.P1080, dlnaRenderer = DlnaRendererChoice("uuid:remembered", "Remembered"))
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        old.putString("dlnaPicture", "future")
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+        assertEquals(base, relaySettingsSaver(remembered).restore(bundle(base)))
+    }
+
+    @Test fun outputsRoundTripAndMissingOrUnknownArraysKeepTheBaseWithoutReadingOldFlags() {
+        for (mask in 1..15) {
+            val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
+            val value = base.copy(outputs = outputs, playCarPlayAudio = true, vehicleInformation = true)
+            val saved = bundle(value)
+            assertEquals(RelayOutput.entries.filter { it in outputs }.map { it.wire }, saved.getStringArray("outputs")!!.toList())
+            assertEquals(value, relaySettingsSaver(base).restore(saved))
+        }
+        val remembered = base.copy(outputs = setOf(RelayOutput.MIRACAST))
+        val old = bundle(base).apply {
+            remove("outputs")
+            putBooleanArray("flags", booleanArrayOf(false, true, false, true, false, true, false))
+            putBoolean("dlnaOutput", true)
+            putBoolean("miracastOutput", false)
+        }
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        for (wires in listOf(emptyArray<String>(), arrayOf("future"), arrayOf("web", "future"))) {
+            old.putStringArray("outputs", wires)
+            assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        }
+    }
 
     @Test fun teslaModeAndAllAddressesSurviveRotationAndOlderDraftsKeepDefaults() {
         for (mode in TeslaBrowserMode.entries) {
@@ -44,7 +128,7 @@ class SettingsDraftSaverTest {
         val chosen = DeveloperOverrides(carlinkTrace = true,
             carlinkHevcEnabled = true, carlinkHevc = org.openxplay.stream.clink.ClinkHevcMode.OFF,
             carlinkPictureSizeEnabled = true, carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.MODE,
-            physicalWidthEnabled = true, physicalWidthOverrideMm = 225, fpsEnabled = true, fps = 55,
+            physicalWidthEnabled = true, physicalWidthOverrideMm = 225,
             localPreview = true, playCarPlayAudio = true, microphoneSourceEnabled = true,
             microphoneSource = MicrophoneSource.THIS_DEVICE, webPortEnabled = true, webPort = 9443,
             carlinkDeviceModelEnabled = true, carlinkDeviceModel = "Test relay")
@@ -142,14 +226,19 @@ class SettingsDraftSaverTest {
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
     @Test fun carAndViewAreasDraftRoundTripAndOldExperimentalKeyIsIgnored() {
-        for (areas in listOf(false, true)) for (car in listOf(CarSelection(), CarSelection("xpeng", model = "g6-2023"),
-            CarSelection("other", "My brand ", "other", "My model "))) {
+        for (areas in listOf(false, true)) for (car in listOf(CarSelection(), CarSelection("xpeng", model = "g6", year = "g6-2023"),
+            CarSelection("other", "My brand ", "other", "My model ", "other", "My year "))) {
             val value = base.copy(viewAreas = areas, car = car)
             assertEquals(value, relaySettingsSaver(base).restore(bundle(value)))
         }
         val old = bundle(base)
         old.remove("carPlayViewAreas"); old.remove("car"); old.putBoolean("viewAreas", false)
         assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
+    @Test fun legacyFourFieldCarDraftRestoresAsModelAndYear() {
+        val old = bundle(base)
+        old.putStringArrayList("car", arrayListOf("xpeng", "", "g6-2023", ""))
+        assertEquals(CarSelection("xpeng", model = "g6", year = "g6-2023"), relaySettingsSaver(base).restore(old)?.car)
     }
     @Test fun everyNetworkChoiceAndPhoneSelectionRoundTripWithCredentials() {
         for (choice in WirelessNetworkChoice.entries) for (selected in listOf(false, true)) {
@@ -185,4 +274,17 @@ class SettingsDraftSaverTest {
         assertEquals(listOf(SharedWifiNetwork("Legacy", "legacy-password")),
             requireNotNull(relaySettingsSaver(base).restore(bundle)).wirelessNetwork.sharedWifiNetworks)
     }
+    @Test fun experimentalChoicesAndIncompleteAddressSurviveParcelRoundTrip() {
+        val options = ExperimentalOptions(active = false, rememberSubscription = true, keepScanning = true,
+            recordAdvertisements = true, sendBluetoothAddress = true, bluetoothAddress = "A0:B1:")
+        val chosen = base.copy(experimental = options)
+        val parcel = Parcel.obtain()
+        try {
+            parcel.writeBundle(bundle(chosen)); parcel.setDataPosition(0)
+            assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+        } finally { parcel.recycle() }
+        val old = bundle(base).apply { keySet().toList().filter { it.startsWith("experimental.") }.forEach { remove(it) } }
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+    }
+
 }

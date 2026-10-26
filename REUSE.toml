@@ -13,6 +13,7 @@ path = [
     "NOTICE",
     "README.md",
     "README-zh.md",
+    "diplay.lock",
     "stream.lock",
     "admin-web/.gitignore",
     "admin-web/package.json",

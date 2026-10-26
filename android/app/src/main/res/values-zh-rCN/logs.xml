@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-22 -->
+<resources>
+    <string name="logs_title">日志</string>
+    <string name="logs_privacy_title">隐私说明</string>
+    <string name="logs_privacy_purpose">日志仅用于帮助排查连接失败等问题。</string>
+    <string name="logs_privacy_local">日志默认只保存在这部手机上，保留最近约 24 小时。只有你选择“联网上传并显示二维码”并确认同意后，日志才会上传。</string>
+    <string name="logs_privacy_server">OpenXPlay 是完全开源、免费的项目，日志服务器取决于作者当时有哪些空闲的计算资源，地址以后可能会变化。目前上传的日志经 Cloudflare 转发（不保存），服务器可能位于美国的 AWS 数据中心。</string>
+    <string name="logs_privacy_link">这个 App 上传的日志会通过一个随机标识自动关联。这个标识与你的 iPhone、车机和手机硬件无关，卸载 App 或清除数据后会重新生成。</string>
+    <string name="logs_privacy_content">密码、密钥、电话号码、姓名、消息和精确位置在存储前就会被替换。手机型号、系统版本、蓝牙和 Wi-Fi 地址、IP 地址、Wi-Fi 名称等技术信息会保留，用于定位问题。</string>
+    <string name="logs_privacy_retention">上传后 48 小时内可以查看回执。上传的日志不提供公开下载，最多保存 72 小时，到期后自动从我们的服务器永久删除。如需提前删除，请把日志 ID 发到 support@openxplay.org。</string>
+    <string name="logs_privacy_alternative">如果你介意上传到这些服务器，可以选择“保存到本机文件”：ZIP 文件只保存在你选择的位置，App 不会联网；再通过社区群私聊或邮件 support@openxplay.org 发给作者帮忙排查。</string>
+    <string name="logs_export">导出日志</string>
+    <string name="logs_choose_period">选择时间段</string>
+    <string name="logs_10_minutes">过去 10 分钟</string>
+    <string name="logs_30_minutes">过去 30 分钟</string>
+    <string name="logs_24_hours">过去 24 小时</string>
+    <string name="logs_export_confirm">导出日志</string>
+    <string name="logs_compressing">正在压缩日志…</string>
+    <string name="logs_ready">日志已就绪</string>
+    <string name="logs_save">保存到本机文件</string>
+    <string name="logs_saving">正在保存…</string>
+    <string name="logs_upload">联网上传并显示二维码</string>
+    <string name="logs_upload_hint">保存到本机文件：只在你选择的位置生成 ZIP 文件，App 不会联网。\n联网上传：把文件发送到日志服务器，上传前会请你确认隐私说明。</string>
+    <string name="logs_consent_title">上传前请确认</string>
+    <string name="logs_consent_destination">日志将上传到 logs.openxplay.org，仅用于帮助排查连接失败等问题，不提供公开下载。</string>
+    <string name="logs_consent_retention">上传后 48 小时内可以查看回执；日志最多保存 72 小时，到期后自动从我们的服务器永久删除。这个 App 上传的日志会通过随机标识自动关联。</string>
+    <string name="logs_consent_alternative">如果介意，可以改选“保存到本机文件”：App 不会联网，再由你私下发给作者。</string>
+    <string name="logs_consent_agree">同意并上传</string>
+    <string name="logs_uploading">正在上传…</string>
+    <string name="logs_connecting">正在连接服务…</string>
+    <string name="logs_confirming">等待收件确认…</string>
+    <string name="logs_preparing_receipt">正在准备回执…</string>
+    <string name="logs_connecting_detail">正在连接日志服务，ZIP 文件仍保留在这部手机上。</string>
+    <string name="logs_sending_detail">正在发送 ZIP 文件，服务器确认接收后会显示回执。</string>
+    <string name="logs_confirming_detail">文件已发送，正在等待服务器确认接收并返回日志 ID。</string>
+    <string name="logs_saving_detail">正在将 ZIP 文件复制到你选择的位置。</string>
+    <string name="logs_preparing_receipt_detail">正在为日志 ID 生成二维码。</string>
+    <string name="logs_bytes_sent">已发送 %1$d%% · %2$s / %3$s</string>
+    <string name="logs_elapsed">已用时 %1$d:%2$02d</string>
+    <string name="logs_upload_wait">服务响应可能较慢，ZIP 文件仍保留在手机上，请等待收件确认。</string>
+    <string name="logs_upload_cancelled">已停止上传。服务器可能已经收到文件，请保留 ZIP 并在重试前检查上次回执，重试可能产生另一份上传。</string>
+    <string name="logs_qr_unavailable">暂时无法生成二维码，你仍可复制回执链接或分享下方的日志 ID。</string>
+    <string name="logs_qr_title">已收到日志</string>
+    <string name="logs_qr_description">日志收件回执的二维码</string>
+    <string name="logs_scan">反馈问题时，请附上这个 ID 或二维码。扫码查看收件回执，不会下载日志。</string>
+    <string name="logs_latest_receipt">上次上传回执</string>
+    <string name="logs_receipt_id">日志 ID：%1$s</string>
+    <string name="logs_receipt_expires">回执有效期至：%1$s</string>
+    <string name="logs_retry_after">请至少等待 %1$d 秒后再重试。</string>
+    <string name="logs_copy">复制链接</string>
+    <string name="logs_copied">链接已复制</string>
+    <string name="logs_done">完成</string>
+    <string name="logs_saved">日志已保存。</string>
+    <string name="logs_empty">这段时间没有记录到日志。</string>
+    <string name="logs_no_internet">没有可用的互联网连接。</string>
+    <string name="logs_too_large">文件超过 50 MiB。请选择更短的时间段或保存文件。</string>
+    <string name="logs_io_error">无法读取或写入日志文件。</string>
+    <string name="logs_upload_error">暂时无法确认上传结果。请保留文件并检查上次回执，重试可能产生另一份上传。</string>
+    <string name="logs_upload_http">上传尚未确认（HTTP %1$d）。请保留文件，重试可能产生另一份上传。</string>
+</resources>

@@ -8,8 +8,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
 import com.shilapi.xcertplay.orchestration.MfiTarget
+import org.openxplay.direlay.ui.design.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.storage.MaterialStatus
 
@@ -25,24 +27,24 @@ fun IdentitySettings(state: SettingsEditorState, view: DeveloperView, copy: (Str
     var draft by state.draft
     var confirm by remember { mutableStateOf<Boolean?>(null) }
     val ms = if (LocalRelayMotion.current) 220 else 0
-    CollapsibleCard("tls", stringResource(R.string.direlay_tls), view.fingerprint, initiallyExpanded = true) {
+    SettingsGroup("tls", R.drawable.symbol_shield_check, IconHue.IDENTITY, stringResource(R.string.direlay_tls), initiallyExpanded = true, footer = stringResource(R.string.dev_tls_hint)) {
         KeyValue(stringResource(R.string.dev_fingerprint), view.fingerprint, copy)
-        Hint(stringResource(R.string.dev_tls_hint))
+
         OutlinedButton(onClick = { import(false) }) { Text(stringResource(R.string.dev_import_tls)) }
         TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.dev_remove_tls)) }
     }
-    CollapsibleCard("identity", stringResource(R.string.direlay_identity), stringResource(view.identity), initiallyExpanded = false) {
-        Hint(stringResource(R.string.direlay_identity_hint))
-        KeyValue(stringResource(R.string.direlay_identity), stringResource(view.identity))
+    SettingsGroup("identity", R.drawable.symbol_file_key_2, IconHue.IDENTITY, stringResource(R.string.direlay_identity), stringResource(view.identity), initiallyExpanded = false, footer = stringResource(R.string.direlay_identity_hint)) {
+
+        InsetRow(R.drawable.symbol_file_key_2, IconHue.IDENTITY, stringResource(R.string.direlay_identity), stringResource(view.identity))
         OutlinedButton(onClick = { import(true) }) { Text(stringResource(R.string.direlay_manage_identity)) }
         TextButton(onClick = { confirm = true }) { Text(stringResource(R.string.dev_remove_identity)) }
     }
-    CollapsibleCard("mfi", stringResource(R.string.direlay_mfi_target), mfiTargetSummary(draft), initiallyExpanded = false) {
+    SettingsGroup("mfi", R.drawable.symbol_key_round, IconHue.IDENTITY, stringResource(R.string.direlay_mfi_target), mfiTargetSummary(draft), initiallyExpanded = false) {
         Options(MfiTarget.entries.map { stringResource(when (it) { MfiTarget.LOCAL -> R.string.dev_local; MfiTarget.REMOTE -> R.string.dev_remote; MfiTarget.USB_CH341 -> R.string.dev_usb_i2c; MfiTarget.I2C -> R.string.dev_linux_i2c }) }, MfiTarget.entries.indexOf(draft.mfiTarget)) { draft = draft.copy(mfiTarget = MfiTarget.entries[it]) }
-        AnimatedVisibility(draft.mfiTarget == MfiTarget.I2C, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+        AnimatedVisibility(draft.mfiTarget == MfiTarget.I2C, enter = expandVertically(tween(ms), expandFrom = Alignment.Top), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) {
             SettingField(stringResource(R.string.direlay_i2c_path), draft.i2cPath) { draft = draft.copy(i2cPath = it) }
         }
-        AnimatedVisibility(draft.mfiTarget == MfiTarget.REMOTE, enter = expandVertically(tween(ms)), exit = shrinkVertically(tween(ms))) {
+        AnimatedVisibility(draft.mfiTarget == MfiTarget.REMOTE, enter = expandVertically(tween(ms), expandFrom = Alignment.Top), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) {
             Column {
                 SettingField(stringResource(R.string.direlay_remote_server), draft.remoteServer) { draft = draft.copy(remoteServer = it) }
                 SettingField(stringResource(R.string.direlay_remote_token), draft.remoteToken, secret = true) { draft = draft.copy(remoteToken = it) }

@@ -12,12 +12,15 @@
     <string name="menu_identity">Identity and certificates</string>
     <string name="menu_on">On</string>
     <string name="menu_off">Off</string>
+    <string name="menu_audio_summary">Car Bluetooth: %1$s</string>
     <string name="menu_startup_summary">Automatic: %1$s · Boot: %2$s</string>
     <string name="menu_access_summary">Admin: %1$s · Trusted HTTPS: %2$s</string>
-    <string name="menu_both_outputs">Browser and Carlink</string>
-    <string name="menu_developer_summary">Video: %1$d fps · Web port: %2$s</string>
     <string name="menu_selected_summary">Selected · %1$s</string>
-    <string name="menu_fps_summary">%1$d fps</string>
     <string name="menu_outputs_summary">%1$s · Web port: %2$s</string>
     <string name="menu_diagnostics_summary">%1$d runtime values · %2$d URLs</string>
+    <string name="option_wireless_display_hint">Picture only, through the car’s DLNA or Miracast receiver.</string>
+    <string name="output_multiple">Several outputs</string>
+    <string name="output_multiple_hint">Set in Developer settings. Choosing an output above replaces them.</string>
+    <string name="dev_outputs_combine">Combine outputs</string>
+    <string name="dev_outputs_combine_hint">Every output that is on runs at once. One must stay on.</string>
 </resources>

@@ -67,6 +67,10 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
         draft.value = next.effectiveSettings(draft.value)
     }
 
+    fun changeExperimental(change: (ExperimentalOptions) -> ExperimentalOptions) {
+        draft.value = draft.value.copy(experimental = change(draft.value.experimental))
+    }
+
     /** Field text errors belong to that field; the typed draft contains only parsed values. */
     fun editNumber(key: String, text: String, valid: (String) -> Boolean, change: (String) -> Unit) {
         numberText[key] = text
@@ -99,7 +103,50 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
     }
 
     fun errorPages(wireless: (RelaySettings) -> Boolean): Set<String> = settingsInvalidPages(draft.value, lastSaved.value, wireless) +
-        invalidNumbers.keys.map { if (it in listOf("width", "height", "density")) "developer/video" else "developer/connection" }
+        invalidNumbers.keys.map { when (it) {
+            in wirelessPictureNumberKeys -> "settings/output"
+            "width", "height", "density" -> "developer/video"
+            else -> "developer/connection"
+        } }
+    fun chooseWirelessPicture(mode: WirelessPictureMode, automatic: WirelessPictureSize) {
+        wirelessPictureNumberKeys.forEach { invalidNumbers.remove(it); numberText.remove(it) }
+        draft.value = org.openxplay.direlay.relay.WirelessPicturePolicy.choose(draft.value, mode, automatic)
+    }
+    fun updateWirelessPicture(key: String, text: String) {
+        require(key in wirelessPictureNumberKeys)
+        numberText[key] = text
+        val current = draft.value.wirelessPictureSize
+        val size = parseWirelessPictureSize(numberText["wirelessPictureWidth"] ?: current.width.toString(),
+            numberText["wirelessPictureHeight"] ?: current.height.toString())
+        wirelessPictureNumberKeys.forEach { if (size == null) invalidNumbers[it] = true else invalidNumbers.remove(it) }
+        if (size != null) draft.value = draft.value.copy(wirelessPictureSize = size)
+    }
+    fun presetWirelessPicture(size: WirelessPictureSize) {
+        wirelessPictureNumberKeys.forEach { invalidNumbers.remove(it); numberText.remove(it) }
+        draft.value = draft.value.copy(wirelessPictureSize = size)
+    }
+    /** Typing never selects: choosing a size can restart CarPlay, so only a row tap or Save does. */
+    fun updateCarlinkPicture(key: String, text: String) {
+        require(key in listOf("carlinkPictureWidth", "carlinkPictureHeight"))
+        numberText[key] = text
+    }
+    /** Saves a new size, or selects the listed one it equals; either way the fields are cleared. */
+    fun saveCarlinkPicture(select: (PictureSize?) -> Unit) {
+        val model = carlinkPictureUiModel(draft.value, null, width = numberText["carlinkPictureWidth"].orEmpty(),
+            height = numberText["carlinkPictureHeight"].orEmpty())
+        val size = model.custom ?: return
+        when (model.save) {
+            CarlinkPictureSave.READY -> draft.value = draft.value.copy(carlinkPictureSizes = draft.value.carlinkPictureSizes + size)
+            CarlinkPictureSave.DUPLICATE -> Unit
+            else -> return
+        }
+        numberText.remove("carlinkPictureWidth"); numberText.remove("carlinkPictureHeight")
+        select(size)
+    }
+    fun deleteCarlinkPicture(size: PictureSize, trial: CarlinkPictureTrial?, clearTrial: () -> Unit) {
+        if (draft.value.effectiveCarlinkPicture(trial) == size) clearTrial()
+        draft.value = draft.value.deleteCarlinkPicture(size)
+    }
     fun clearDisplayErrors() {
         listOf("width", "height", "density").forEach { invalidNumbers.remove(it) }
     }
@@ -116,6 +163,13 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
             draft.value = draft.value.copy(displayMode = DisplayMode.FIXED, display = DisplayProfile(width, height, density))
     }
 }
+
+internal val wirelessPictureNumberKeys = listOf("wirelessPictureWidth", "wirelessPictureHeight")
+
+internal fun parseWirelessPictureSize(width: String, height: String): WirelessPictureSize? =
+    width.toIntOrNull()?.let { w -> height.toIntOrNull()?.let { h ->
+        WirelessPictureSize(w, h).takeIf { runCatching { it.validate() }.isSuccess }
+    } }
 
 internal fun displayNumberValid(key: String, text: String): Boolean {
     val number = text.toIntOrNull() ?: return false

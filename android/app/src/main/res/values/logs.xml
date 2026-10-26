@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-22 -->
+<resources>
+    <string name="logs_title">Logs</string>
+    <string name="logs_privacy_title">Privacy</string>
+    <string name="logs_privacy_purpose">Logs are used only to help diagnose problems such as failed connections.</string>
+    <string name="logs_privacy_local">Logs stay on this phone by default, covering about the last 24 hours. They are uploaded only after you choose “Upload online and show QR code” and agree.</string>
+    <string name="logs_privacy_server">OpenXPlay is a fully open-source, free project, so the log server depends on which spare computing resources the author has, and its address may change. Uploaded logs currently pass through Cloudflare, which forwards them without storing them, and the server may be in an AWS data center in the United States.</string>
+    <string name="logs_privacy_link">Logs uploaded from this app are linked automatically through a random ID. The ID is not derived from your iPhone, car or phone hardware, and a new one is created if you uninstall the app or clear its data.</string>
+    <string name="logs_privacy_content">Passwords, keys, phone numbers, names, messages and precise location are replaced before anything is stored. Technical details such as the phone model, Android version, Bluetooth and Wi-Fi addresses, IP addresses and Wi-Fi network names are kept to locate problems.</string>
+    <string name="logs_privacy_retention">You can view the receipt for 48 hours after uploading. Uploaded logs cannot be downloaded publicly; they are kept for at most 72 hours and then permanently deleted from our server automatically. To have one deleted sooner, send its log ID to support@openxplay.org.</string>
+    <string name="logs_privacy_alternative">If you would rather not upload to these servers, choose “Save to a file on this phone”: the ZIP file is written only to the place you pick and the app does not use the network. Then send it to the author in a private message in the community groups or by email to support@openxplay.org.</string>
+    <string name="logs_export">Export logs</string>
+    <string name="logs_choose_period">Choose period</string>
+    <string name="logs_10_minutes">Past 10 minutes</string>
+    <string name="logs_30_minutes">Past 30 minutes</string>
+    <string name="logs_24_hours">Past 24 hours</string>
+    <string name="logs_export_confirm">Export</string>
+    <string name="logs_compressing">Compressing logs…</string>
+    <string name="logs_ready">Logs ready</string>
+    <string name="logs_save">Save to a file on this phone</string>
+    <string name="logs_saving">Saving…</string>
+    <string name="logs_upload">Upload online and show QR code</string>
+    <string name="logs_upload_hint">Save to a file on this phone: writes the ZIP file only to the place you pick; the app does not use the network.\nUpload online: sends the file to the log server after you agree to the privacy notice.</string>
+    <string name="logs_consent_title">Before you upload</string>
+    <string name="logs_consent_destination">The logs will be uploaded to logs.openxplay.org, used only to help diagnose problems such as failed connections, and cannot be downloaded publicly.</string>
+    <string name="logs_consent_retention">You can view the receipt for 48 hours after uploading. Logs are kept for at most 72 hours, then permanently deleted from our server automatically. Logs uploaded from this app are linked by a random ID.</string>
+    <string name="logs_consent_alternative">If you mind, choose “Save to a file on this phone” instead: the app does not use the network, and you can send the file to the author privately.</string>
+    <string name="logs_consent_agree">Agree and upload</string>
+    <string name="logs_uploading">Uploading…</string>
+    <string name="logs_connecting">Connecting…</string>
+    <string name="logs_confirming">Waiting for receipt…</string>
+    <string name="logs_preparing_receipt">Preparing receipt…</string>
+    <string name="logs_connecting_detail">Connecting to the log service. Your ZIP file stays on this phone.</string>
+    <string name="logs_sending_detail">Sending the ZIP file. A receipt will appear after the server confirms it.</string>
+    <string name="logs_confirming_detail">The file has been sent. Waiting for the server to confirm it and return a log ID.</string>
+    <string name="logs_saving_detail">Copying the ZIP file to your selected location.</string>
+    <string name="logs_preparing_receipt_detail">Creating a QR code for your log ID.</string>
+    <string name="logs_bytes_sent">Sent %1$d%% · %2$s / %3$s</string>
+    <string name="logs_elapsed">Elapsed: %1$d:%2$02d</string>
+    <string name="logs_upload_wait">The service may take longer to respond. Your ZIP file stays on this phone. Please wait for a confirmed receipt.</string>
+    <string name="logs_upload_cancelled">Upload stopped. The server may already have received the file. Keep the ZIP and check the last receipt before retrying; another upload may be created.</string>
+    <string name="logs_qr_unavailable">The QR code could not be created. You can still copy the receipt link or share the log ID below.</string>
+    <string name="logs_qr_title">Logs received</string>
+    <string name="logs_qr_description">QR code for the upload receipt</string>
+    <string name="logs_scan">Include this ID or QR code in your bug report. Scanning opens the receipt, without downloading the logs.</string>
+    <string name="logs_latest_receipt">Last upload receipt</string>
+    <string name="logs_receipt_id">Log ID: %1$s</string>
+    <string name="logs_receipt_expires">Receipt available until: %1$s</string>
+    <string name="logs_retry_after">Wait at least %1$d seconds before retrying.</string>
+    <string name="logs_copy">Copy link</string>
+    <string name="logs_copied">Link copied</string>
+    <string name="logs_done">Done</string>
+    <string name="logs_saved">Logs saved.</string>
+    <string name="logs_empty">No logs were recorded in this period.</string>
+    <string name="logs_no_internet">No internet connection</string>
+    <string name="logs_too_large">The file is larger than 50 MiB. Choose a shorter period or save it.</string>
+    <string name="logs_io_error">Unable to read or write the log file.</string>
+    <string name="logs_upload_error">The upload result could not be confirmed. Keep the file and check the last receipt. Retrying may create another upload.</string>
+    <string name="logs_upload_http">Upload not confirmed (HTTP %1$d). Keep the file. Retrying may create another upload.</string>
+</resources>

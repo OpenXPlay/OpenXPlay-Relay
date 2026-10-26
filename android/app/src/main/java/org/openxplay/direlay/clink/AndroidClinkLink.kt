@@ -14,6 +14,7 @@ import android.os.*
 import org.openxplay.stream.clink.*
 import org.openxplay.stream.clink.ble.*
 import org.openxplay.direlay.network.readWifiEnabled
+import org.openxplay.direlay.settings.ExperimentalOptions
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.UUID
@@ -25,7 +26,9 @@ import java.util.concurrent.TimeUnit
 class AndroidClinkLink(context: Context, private val deviceId: String,
     private val deviceName: String, private val deviceModel: String,
     private val diagnostics: ClinkDiagnostics = ClinkDiagnostics.NONE,
-    private val p2pReservation: P2pReservation = P2pReservation { false }) : ClinkLink {
+    private val p2pReservation: P2pReservation = P2pReservation { false },
+    private val onSecret: (String) -> Unit = {},
+    experimental: ExperimentalOptions = ExperimentalOptions()) : ClinkLink {
     private val context = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
     private val bluetooth = context.getSystemService(BluetoothManager::class.java)
@@ -34,14 +37,36 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     companion object {
         private val reconnect = LinkReconnect()
         internal val retryBackoff = LinkBackoff()
+        private val scanStartBudget = BleScanStartBudget()
     }
-    private val peers = BlePeerPolicy(object : BlePeerPolicy.Store {
+    private val peerStore = object : BlePeerPolicy.Store, BlePeerPolicy.SubscriptionStore {
         private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkPeers", Context.MODE_PRIVATE)
         override fun read(key: String): Int? = preferences.getInt(key, 0).takeIf { it != 0 }
         override fun write(key: String, type: Int) {
             if (!preferences.edit().putInt(key, type).commit()) cleanupFailure(IllegalStateException("peer_store_failed"))
         }
-    })
+        override fun readLegacy(key: String) = preferences.getBoolean("$key.legacy", false)
+        override fun writeLegacy(key: String) {
+            if (!preferences.edit().putBoolean("$key.legacy", true).commit()) cleanupFailure(IllegalStateException("peer_store_failed"))
+        }
+        override fun removeLegacy(key: String) {
+            if (!preferences.edit().remove("$key.legacy").commit()) cleanupFailure(IllegalStateException("peer_store_failed"))
+        }
+    }
+    private val peers = BlePeerPolicy(peerStore, if (experimental.rememberSubscription) peerStore else null)
+    private val scanPolicy = BleScanPolicy.forAttempt(experimental.keepScanning)
+    private val phoneAddress: () -> String = if (experimental.sendBluetoothAddress) ({ experimental.bluetoothAddress }) else ::phoneMac
+    private val experimentNames = experimental.names()
+    private val advertisements = if (experimental.recordAdvertisements) BleAdvertisementTrace(diagnostics, object : BleAdvertisementTrace.Store {
+        private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkAdvertisementSerials", Context.MODE_PRIVATE)
+        private fun key(carId: String) = peers.key(carId, "")
+        override fun readSerial(carId: String): Int? = key(carId).let { if (preferences.contains(it)) preferences.getInt(it, 0) else null }
+        override fun writeSerial(carId: String, serial: Int) {
+            if (!preferences.edit().putInt(key(carId), serial).commit()) cleanupFailure(IllegalStateException("serial_store_failed"))
+        }
+    }) else null
+    fun authenticated() { advertisements?.connected() }
+    fun sessionDiagnostic(message: String) { advertisements?.sessionDiagnostic(message) }
     private val backoff = retryBackoff
     private fun retry(run: Run) {
         val delay = backoff.next()
@@ -62,6 +87,9 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         var peerChoice: BlePeerPolicy.Choice? = null
         var scan: ScanCallback? = null
         var scanner: BluetoothLeScanner? = null
+        var scanRenewal: Runnable? = null
+        var rawScan: ScanCallback? = null
+        var rawCapture: BleAdvertisementTrace.Scan? = null
         var gatt: BluetoothGatt? = null
         var closingGatt: BluetoothGatt? = null
         var bleClosed = CompletableFuture.completedFuture(Unit)
@@ -89,6 +117,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         synchronized(this) { check(current == null); current = run }
         failurePassphrase = ""
         diagnostics.emit(ClinkStage.LINK_START)
+        if (experimentNames.isNotEmpty()) diagnostics.emit(ClinkDiagnostic.Experiments(experimentNames))
         try {
             diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) {
                 WifiJoinPolicy.withWifi(readWifiEnabled(context)) { Unit }
@@ -113,6 +142,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             }
             val (carId, reply) = checkNotNull(handoff)
             failurePassphrase = reply.psk
+            onSecret(reply.psk)
             diagnostics.handoff(reply.ssid, reply.psk.length)
             // No PIN/UI pause here; return immediately after DHCP so clink can start AUTH.
             val endpoints = diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) { join(run, reply) }
@@ -139,11 +169,11 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             throw failure
         }
     }
-    private fun <T> await(run: Run, future: CompletableFuture<T>, seconds: Long): T {
+    private fun <T> await(run: Run, future: CompletableFuture<T>, seconds: Long?): T {
         run.waits.add(future)
         try {
             check(!run.cancelled) { "Link cancelled" }
-            return future.get(seconds, TimeUnit.SECONDS)
+            return if (seconds == null) future.get() else future.get(seconds, TimeUnit.SECONDS)
         } finally { run.waits.remove(future) }
     }
     private fun scan(run: Run): Pair<BluetoothDevice, String> {
@@ -159,11 +189,13 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                         val identity = record.getServiceData(ParcelUuid(UUID.fromString(BleCodec.IDENTITY_SERVICE))) ?: return
                         val name = record.getServiceData(ParcelUuid(UUID.fromString(BleCodec.NAME_SERVICE))) ?: byteArrayOf()
                         val advertisement = BleCodec.advertisement(identity, name)
+                        advertisements?.selected(advertisement)
                         diagnostics.traceLink("ble_advertisement", mapOf(
                             "major" to advertisement.major.toString(), "minor" to advertisement.minor.toString(),
                             "serial" to advertisement.serial.toString(), "carId" to advertisement.carId,
                             "modelId" to advertisement.modelId, "vendorData" to advertisement.vendorData,
-                            "name" to advertisement.name))
+                            "name" to advertisement.name) + (advertisements?.serialFields(advertisement) ?: emptyMap()))
+                        diagnostics.emit(ClinkDiagnostic.Peer(advertisement.name))
                         diagnostics.emit(ClinkStage.BLE_PEER)
                         result.complete(scan.device to advertisement.carId)
                     } catch (_: IllegalArgumentException) { /* Ignore malformed advertisements. */ }
@@ -173,19 +205,76 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                 }
             }
             run.scanner = scanner; run.scan = callback
-            scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(
-                ParcelUuid(UUID.fromString(BleCodec.ADVERTISEMENT_SERVICE))).build()),
-                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+            val filters = listOf(ScanFilter.Builder().setServiceUuid(
+                ParcelUuid(UUID.fromString(BleCodec.ADVERTISEMENT_SERVICE))).build())
+            val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+            if (advertisements != null) scanStartBudget.recordStart(SystemClock.elapsedRealtime())
+            scanner.startScan(filters, settings, callback)
+            fun startRawScan(raw: ScanCallback) {
+                val now = SystemClock.elapsedRealtime()
+                if (scanStartBudget.tryStart(now, reserve = 2)) {
+                    run.rawScan = raw
+                    scanner.startScan(emptyList(), settings, raw)
+                } else diagnostics.traceLink("ble_raw_skipped", mapOf(
+                    "reason" to "scan_budget", "count" to scanStartBudget.count(now).toString()))
+            }
+            val rawCallback = advertisements?.scan()?.let { capture ->
+                run.rawCapture = capture
+                val rawCallback = object : ScanCallback() {
+                    override fun onScanResult(type: Int, scan: ScanResult) {
+                        if (!run.cancelled && !result.isDone && run.rawScan === this) try {
+                            capture.record(BleRawAdvertisement.from(scan), SystemClock.elapsedRealtime())
+                        } catch (_: Exception) { capture.failed(-1) }
+                    }
+                    override fun onBatchScanResults(results: MutableList<ScanResult>) {
+                        results.forEach { onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, it) }
+                    }
+                    override fun onScanFailed(errorCode: Int) { capture.failed(errorCode) }
+                }
+                try { startRawScan(rawCallback) }
+                catch (_: Exception) { capture.failed(-1) }
+                rawCallback
+            }
+            scanPolicy.restartMs?.let { interval ->
+                val renewal = object : Runnable {
+                    override fun run() {
+                        if (run.cancelled || result.isDone || run.scan !== callback) return
+                        try {
+                            scanner.stopScan(callback)
+                            if (advertisements != null) scanStartBudget.recordStart(SystemClock.elapsedRealtime())
+                            scanner.startScan(filters, settings, callback)
+                            rawCallback?.let { raw ->
+                                try {
+                                    run.rawScan?.let { scanner.stopScan(it) }; run.rawScan = null
+                                    startRawScan(raw)
+                                }
+                                catch (_: Exception) { run.rawCapture?.failed(-1) }
+                            }
+                            handler.postDelayed(this, interval)
+                        } catch (failure: Exception) { result.completeExceptionally(failure) }
+                    }
+                }
+                run.scanRenewal = renewal
+                handler.postDelayed(renewal, interval)
+            }
             diagnostics.emit(ClinkStage.BLE_SCAN)
         }
-        try { return await(run, result, 8) }
+        try { return await(run, result, scanPolicy.timeoutSeconds) }
         finally { main { stopScan(run) } }
     }
     private fun exchange(run: Run, device: BluetoothDevice, carId: String): HeadUnitReply {
         val key = peers.key(carId, device.address)
         val choice = peers.choice(key)
+        try {
+            return exchange(run, device, key, choice)
+        } catch (failure: Exception) {
+            if (!run.cancelled) peers.exchangeFailed(key)
+            throw failure
+        }
+    }
+    private fun exchange(run: Run, device: BluetoothDevice, key: String, choice: BlePeerPolicy.Choice): HeadUnitReply {
         val result = CompletableFuture<HeadUnitReply>()
-        val phone = BleCodec.phoneRequest(PhoneRequest(deviceId, deviceName, deviceModel, 1, phoneMac(), choice.requestType))
+        val phone = BleCodec.phoneRequest(PhoneRequest(deviceId, deviceName, deviceModel, 1, phoneAddress(), choice.requestType))
         main {
             check(!run.cancelled)
             var phoneCharacteristic: BluetoothGattCharacteristic? = null
@@ -282,9 +371,11 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                 cancelCccdTimer()
                 cancelVerifyTimer()
                 if (reply != null) {
+                    peers.exchanged(key, choice)
                     run.peerKey = key
                     run.peerChoice = choice
                     diagnostics.traceLink("ble_reply_name", mapOf("name" to reply.name))
+                    diagnostics.emit(ClinkDiagnostic.Peer(reply.name))
                     diagnostics.emit(ClinkDiagnostic.Reply(reply.type))
                     diagnostics.emit(ClinkDiagnostic.Exchange(reply.freq))
                     result.complete(reply)
@@ -657,6 +748,11 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         diagnostics.emit(ClinkFailures.describe(ClinkStage.LINK_STOP, error))
     }
     private fun stopScan(run: Run) {
+        run.scanRenewal?.let(handler::removeCallbacks); run.scanRenewal = null
+        val raw = run.rawScan
+        run.rawScan = null
+        raw?.let { callback -> runCatching { run.scanner?.stopScan(callback) }.onFailure(::cleanupFailure) }
+        run.rawCapture?.finish(); run.rawCapture = null
         run.scan?.let { callback -> runCatching { run.scanner?.stopScan(callback) }.onFailure(::cleanupFailure) }
         run.scan = null; run.scanner = null
     }

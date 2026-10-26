@@ -6,6 +6,7 @@ package org.openxplay.direlay.config
 import org.json.JSONObject
 import org.openxplay.direlay.settings.*
 import com.shilapi.xcertplay.orchestration.*
+import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.stream.clink.ClinkHevcMode
 import org.openxplay.stream.clink.ClinkPictureSize
 
@@ -16,27 +17,41 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 
 /**
  * Version-1 key catalogue (enum strings are pinned in enumWires below):
- * - output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
+ * - outputs: non-empty unique array of web/carlink/dlna/miracast; wins over legacy output keys.
+ * - Legacy output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
+ * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string};
+ *   dlnaPicture: 720p/1080p.
+ * - wirelessPicture: auto/custom; wirelessPictureSize: {width, height}, even pixels in
+ *   landscape 640–1920 × 360–1080 (portrait bounds reversed); miracastStretch: boolean.
+ * - carlinkPictureSizes: up to five unique valid custom sizes; carlinkPictureDefault: a preset, saved size or null.
  * - sharedWifiNetworks: up to ten {ssid: 1–32 UTF-8 bytes, password: empty or 8–63 chars}.
  * - iphone: Bluetooth address or null; receiverPort: 1024–65535 or null.
  * - iphoneConnection, mfiTarget, hotspotBand, hotspotSecurity, displayMode, microphoneSource,
  *   carlinkHevc, carlinkPictureSize, carplayResolution, carplayScreenWidth, videoCodec, videoStats:
  *   the explicit enumWires values for their corresponding types.
  * - mfiI2cPath: NUL-free path (nonblank for i2c); mfiRemoteServer: NUL-free URL (HTTP(S) for remote).
- * - fps: 30–60 in steps of five; display: null or {width: even 320–3840, height: even 240–2160,
+ * - frameRate: auto/30/35/40/45/50/55/60; display: null or {width: even 320–3840, height: even 240–2160,
  *   density: 120–640}; fixed displayMode requires a profile.
  * - autoStartOnBoot, autoStartWhenReady, localPreview, playCarPlayAudio, vehicleInformation,
  *   carlinkAutoReconnect, carlinkReconnectOnResize, plugins, carlinkTrace, viewAreas,
  *   carBluetoothAudio: booleans; pluginsEnabled: unique valid plugin IDs.
  * - carlinkDeviceName, carlinkDeviceModel: nonblank 1–128 UTF-8 bytes without controls.
- * - car: {brand, brandText, model, modelText}, using CarSelection's normalized values.
+ * - car: {brand, brandText, model, modelText, year, yearText}, using CarSelection's normalized
+ *   values. Year fields are optional on import; legacy leaf model IDs migrate to model + year.
+ * - teslaBrowser: off/virtual-name/public-address/teslamirror/tesla-android; teslaVirtualAddress,
+ *   teslaPublicAddress, teslaMirrorAddress, teslaAndroidAddress: strings; the active address must
+ *   satisfy TeslaAddressPolicy and, when changed, must not collide with a phone IPv4 address.
  * - hotspotSsid: SSID; hotspotPassphrase: empty or 8–63 chars; hotspotChannel: 0 (automatic),
  *   1–14 or 32–177, compatible with hotspotBand. Other integer channels are ignored.
  * - developer: active, carlinkTrace, carlinkHevcEnabled, carlinkPictureSizeEnabled,
- *   physicalWidthEnabled, fpsEnabled, localPreview, playCarPlayAudio, microphoneSourceEnabled,
+ *   physicalWidthEnabled, localPreview, playCarPlayAudio, microphoneSourceEnabled,
  *   webPortEnabled, carlinkDeviceModelEnabled are booleans; carlinkHevc, carlinkPictureSize,
- *   microphoneSource use enumWires; fps and webPort use the ranges above;
+ *   microphoneSource use enumWires; webPort uses the receiverPort range;
  *   physicalWidthOverrideMm is 0 or 100–400 in steps of 25; carlinkDeviceModel uses the name rule.
+ * - Legacy fps is ignored. Without frameRate, developer.fpsEnabled=true and a valid
+ *   developer.fps migrate to frameRate; otherwise both developer keys are ignored.
+ * - experimental: active, rememberSubscription, keepScanning, recordAdvertisements and
+ *   sendBluetoothAddress are booleans; bluetoothAddress is a user-entered unicast Bluetooth address.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
  * Android aliases: iphoneConnection, mfiI2cPath, mfiRemoteServer and hotspot*.
  * All other keys match Kotlin properties; developer contains every remembered override.
@@ -45,18 +60,25 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 object UserConfigCodec {
     const val FORMAT = "openxplay-user-config"
     private val enumWires: Map<Enum<*>, String> = mapOf(
+        FrameRatePreference.AUTO to "auto", FrameRatePreference.FPS_30 to "30", FrameRatePreference.FPS_35 to "35",
+        FrameRatePreference.FPS_40 to "40", FrameRatePreference.FPS_45 to "45", FrameRatePreference.FPS_50 to "50",
+        FrameRatePreference.FPS_55 to "55", FrameRatePreference.FPS_60 to "60",
         ConnectionMode.USB to "usb", ConnectionMode.WIRELESS to "wireless", ConnectionMode.LAST_USED to "last-used",
         MfiTarget.LOCAL to "local", MfiTarget.USB_CH341 to "usb-ch341", MfiTarget.I2C to "i2c", MfiTarget.REMOTE to "remote",
         ManualHotspotBand.AUTO to "auto", ManualHotspotBand.GHZ_2_4 to "ghz-2-4", ManualHotspotBand.GHZ_5 to "ghz-5",
         ManualHotspotSecurity.OPEN to "open", ManualHotspotSecurity.WPA2 to "wpa2", ManualHotspotSecurity.WPA3_TRANSITION to "wpa3-transition", ManualHotspotSecurity.WPA3 to "wpa3",
         ClinkHevcMode.STREAM_ONLY to "stream-only", ClinkHevcMode.OFF to "off", ClinkHevcMode.SIGNAL to "signal",
         ClinkPictureSize.WINDOW to "window", ClinkPictureSize.MODE to "mode",
+        DlnaPicture.P720 to "720p", DlnaPicture.P1080 to "1080p",
+        WirelessPictureMode.AUTO to "auto", WirelessPictureMode.CUSTOM to "custom",
         DisplayMode.AUTOMATIC to "automatic", DisplayMode.RELAY_SCREEN to "relay-screen", DisplayMode.FIXED to "fixed",
         MicrophoneSource.HEAD_UNIT to "head-unit", MicrophoneSource.THIS_DEVICE to "this-device",
         CarPlayResolution.AUTO to "auto", CarPlayResolution.NATIVE to "native", CarPlayResolution.P1080 to "1080p", CarPlayResolution.P720 to "720p", CarPlayResolution.SCREEN to "screen",
         CarPlayScreenWidth.MM125 to "mm125", CarPlayScreenWidth.MM200 to "mm200", CarPlayScreenWidth.MM250 to "mm250", CarPlayScreenWidth.MM300 to "mm300",
         VideoCodecSetting.AUTO to "auto", VideoCodecSetting.H265 to "h265", VideoCodecSetting.H264 to "h264",
         VideoStatsWindow.OFF to "off", VideoStatsWindow.SECONDS_5 to "seconds-5", VideoStatsWindow.SECONDS_15 to "seconds-15",
+        TeslaBrowserMode.OFF to "off", TeslaBrowserMode.VIRTUAL_NAME to "virtual-name", TeslaBrowserMode.PUBLIC_ADDRESS to "public-address",
+        TeslaBrowserMode.TESLAMIRROR to "teslamirror", TeslaBrowserMode.TESLA_ANDROID to "tesla-android",
     )
     private fun wire(value: Enum<*>): String = enumWires.getValue(value)
     private inline fun <reified T : Enum<T>> enumValue(value: String): T =
@@ -70,14 +92,24 @@ object UserConfigCodec {
         ConfigEnvelope.finish(ConfigEnvelope.create(FORMAT, meta).put("settings", values(settings, developer)))
 
     private fun values(s: RelaySettings, d: DeveloperOverrides): JSONObject = JSONObject()
-        .put("output", if (s.bothOutputs) "both" else if (s.carlinkOutput) "carlink" else "web")
+        .put("outputs", org.json.JSONArray(RelayOutput.entries.filter { it in s.outputs }.map { it.wire }))
+        .put("output", when { s.browserOutput && s.carlinkOutput -> "both"; s.carlinkOutput -> "carlink"; s.browserOutput -> "web"; else -> null })
+        .put("dlnaOutput", s.dlnaOutput)
+        .put("dlnaRenderer", s.dlnaRenderer?.let { JSONObject().put("udn", it.udn).put("name", it.name) } ?: JSONObject.NULL)
+        .put("dlnaPicture", wire(s.dlnaPicture))
+        .put("miracastOutput", s.miracastOutput)
+        .put("wirelessPicture", wire(s.wirelessPicture))
+        .put("wirelessPictureSize", JSONObject().put("width", s.wirelessPictureSize.width).put("height", s.wirelessPictureSize.height))
+        .put("carlinkPictureSizes", CarlinkPictureSizes.savedJson(s.carlinkPictureSizes))
+        .put("carlinkPictureDefault", s.carlinkPictureDefault?.let(CarlinkPictureSizes::json) ?: JSONObject.NULL)
+        .put("miracastStretch", s.miracastStretch)
         .put("networkMode", networkWire(s.wirelessNetwork.choice))
         .put("sharedWifiNetworks", org.json.JSONArray().also { a -> s.wirelessNetwork.sharedWifiNetworks.forEach { a.put(JSONObject().put("ssid", it.ssid).put("password", it.passphrase)) } })
         .put("iphoneConnection", wire(s.connectionMode))
         .put("mfiTarget", wire(s.mfiTarget))
         .put("mfiI2cPath", s.i2cPath)
         .put("mfiRemoteServer", s.remoteServer)
-        .put("fps", s.fps)
+        .put("frameRate", wire(s.frameRate))
         .put("receiverPort", s.webPort ?: JSONObject.NULL)
         .put("iphone", s.iphoneAddress ?: JSONObject.NULL)
         .put("autoStartOnBoot", s.autoStartOnBoot)
@@ -101,15 +133,45 @@ object UserConfigCodec {
         .put("carplayScreenWidth", wire(s.carplayScreenWidth))
         .put("videoCodec", wire(s.videoCodec))
         .put("videoStats", wire(s.videoStats))
+        .put("teslaBrowser", wire(s.teslaBrowser))
+        .put("teslaVirtualAddress", s.teslaVirtualAddress)
+        .put("teslaPublicAddress", s.teslaPublicAddress)
+        .put("teslaMirrorAddress", s.teslaMirrorAddress)
+        .put("teslaAndroidAddress", s.teslaAndroidAddress)
         .put("pluginsEnabled", org.json.JSONArray(s.pluginsEnabled))
         .put("display", s.display?.let { JSONObject().put("width", it.width).put("height", it.height).put("density", it.density) } ?: JSONObject.NULL)
-        .put("car", JSONObject().put("brand", s.car.brand).put("brandText", s.car.brandText).put("model", s.car.model).put("modelText", s.car.modelText))
+        .put("car", carValues(s.car))
         .put("hotspotSsid", s.wirelessNetwork.manualSsid)
         .put("hotspotPassphrase", s.wirelessNetwork.manualPassphrase)
         .put("hotspotBand", wire(s.wirelessNetwork.band))
         .put("hotspotChannel", s.wirelessNetwork.channel)
         .put("hotspotSecurity", wire(s.wirelessNetwork.security))
         .put("developer", developerValues(d))
+        .put("experimental", experimentalValues(s.experimental))
+
+    private fun carValues(selection: CarSelection): JSONObject = selection.normalized().let { car ->
+        JSONObject().put("brand", car.brand).put("brandText", car.brandText).put("model", car.model).put("modelText", car.modelText)
+            .put("year", car.year).put("yearText", car.yearText)
+    }
+
+    private fun carValue(json: JSONObject): CarSelection {
+        val car = CarSelection(json.string("brand"), json.string("brandText"), json.string("model"), json.string("modelText"),
+            if (json.has("year")) json.string("year") else "", if (json.has("yearText")) json.string("yearText") else "")
+        val normalized = car.normalized()
+        val legacy = car.year.isEmpty() && car.model == normalized.year && normalized.model != car.model
+        val expected = car.copy(model = if (legacy) normalized.model else car.model,
+            year = if (legacy || car.year.isEmpty() && normalized.year == "other") normalized.year else car.year)
+        require(expected == normalized)
+        return normalized
+    }
+
+    private fun experimentalValues(e: ExperimentalOptions): JSONObject = JSONObject()
+        .put("active", e.active)
+        .put("rememberSubscription", e.rememberSubscription)
+        .put("keepScanning", e.keepScanning)
+        .put("recordAdvertisements", e.recordAdvertisements)
+        .put("sendBluetoothAddress", e.sendBluetoothAddress)
+        .put("bluetoothAddress", e.bluetoothAddress)
 
     private fun developerValues(d: DeveloperOverrides): JSONObject = JSONObject()
         .put("active", d.active)
@@ -120,8 +182,6 @@ object UserConfigCodec {
         .put("carlinkPictureSize", wire(d.carlinkPictureSize))
         .put("physicalWidthEnabled", d.physicalWidthEnabled)
         .put("physicalWidthOverrideMm", d.physicalWidthOverrideMm)
-        .put("fpsEnabled", d.fpsEnabled)
-        .put("fps", d.fps)
         .put("localPreview", d.localPreview)
         .put("playCarPlayAudio", d.playCarPlayAudio)
         .put("microphoneSourceEnabled", d.microphoneSourceEnabled)
@@ -132,13 +192,13 @@ object UserConfigCodec {
         .put("carlinkDeviceModel", d.carlinkDeviceModel)
 
     fun decode(bytes: ByteArray, current: RelaySettings, choices: DeveloperOverrides = DeveloperOverrides(),
-        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS): UserConfigImport = try {
-        decode(ConfigEnvelope.text(bytes), current, choices, wireless)
+        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS, phoneAddresses: Set<String> = emptySet()): UserConfigImport = try {
+        decode(ConfigEnvelope.text(bytes), current, choices, wireless, phoneAddresses)
     } catch (e: ConfigFailure) { UserConfigImport(current, choices, 0, emptyList(), mapOf(e.key to e.code)) }
 
     fun decode(text: String, current: RelaySettings, choices: DeveloperOverrides = DeveloperOverrides(),
-        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS): UserConfigImport {
-        var s = current
+        wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS, phoneAddresses: Set<String> = emptySet()): UserConfigImport {
+        var s = current.copy(experimental = ExperimentalOptions())
         var d = choices
         val errors = linkedMapOf<String, String>()
         val ignored = mutableListOf<String>()
@@ -150,22 +210,49 @@ object UserConfigCodec {
         fun unknown(objectValue: JSONObject, known: Set<String>, prefix: String) {
             objectValue.keys().asSequence().filter { it !in known }.forEach { ignored.add("$prefix.$it") }
         }
+        j.optJSONObject("wirelessPictureSize")?.let { unknown(it, setOf("width", "height"), "wirelessPictureSize") }
+        j.optJSONObject("carlinkPictureDefault")?.let { unknown(it, setOf("width", "height"), "carlinkPictureDefault") }
+        j.optJSONArray("carlinkPictureSizes")?.let { array -> for (index in 0 until array.length())
+            array.optJSONObject(index)?.let { unknown(it, setOf("width", "height"), "carlinkPictureSizes[$index]") }
+        }
+        j.optJSONObject("dlnaRenderer")?.let { unknown(it, setOf("udn", "name"), "dlnaRenderer") }
         j.optJSONObject("display")?.let { unknown(it, setOf("width", "height", "density"), "display") }
-        j.optJSONObject("car")?.let { unknown(it, setOf("brand", "brandText", "model", "modelText"), "car") }
+        j.optJSONObject("car")?.let { unknown(it, setOf("brand", "brandText", "model", "modelText", "year", "yearText"), "car") }
         j.optJSONArray("sharedWifiNetworks")?.let { array -> for (index in 0 until array.length())
             array.optJSONObject(index)?.let { unknown(it, setOf("ssid", "password"), "sharedWifiNetworks[$index]") }
         }
         val before = values(current, choices)
-        for (key in j.keys().asSequence().toList()) try {
+        val legacyOutputs = setOf("output", "dlnaOutput", "miracastOutput")
+        for (key in j.keys().asSequence().toList().filterNot { j.has("outputs") && it in legacyOutputs }) try {
             when (key) {
-                "output" -> { val value = j.string(key).also { require(it in listOf("web", "carlink", "both")) }; s = s.copy(carlinkOutput = value != "web", bothOutputs = value == "both") }
+                "outputs" -> {
+                    val array = j.getJSONArray(key)
+                    val wires = (0 until array.length()).map { require(array.get(it) is String); array.getString(it) }
+                    require(wires.isNotEmpty() && wires.distinct().size == wires.size)
+                    s = s.copy(outputs = wires.map { wire -> RelayOutput.entries.first { it.wire == wire } }.toSet())
+                }
+                "output" -> {
+                    val value = j.string(key).also { require(it in listOf("web", "carlink", "both")) }
+                    s = s.copy(outputs = s.outputs - setOf(RelayOutput.BROWSER, RelayOutput.CARLINK) +
+                        OutputSelection.legacy(value != "web", value == "both", false, false))
+                }
+                "dlnaOutput" -> { s = s.copy(outputs = if (j.bool(key)) s.outputs + RelayOutput.DLNA else s.outputs - RelayOutput.DLNA) }
+                "dlnaRenderer" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DlnaRendererChoice(it.string("udn"), it.string("name")) }; s = s.copy(dlnaRenderer = value) }
+                "dlnaPicture" -> { val value = enumValue<DlnaPicture>(j.string(key)); s = s.copy(dlnaPicture = value) }
+                "wirelessPicture" -> { val value = enumValue<WirelessPictureMode>(j.string(key)); s = s.copy(wirelessPicture = value) }
+                "wirelessPictureSize" -> { val value = j.getJSONObject(key).let { WirelessPictureSize(it.integer("width"), it.integer("height")).also(WirelessPictureSize::validate) }; s = s.copy(wirelessPictureSize = value) }
+                "carlinkPictureSizes" -> { s = s.copy(carlinkPictureSizes = CarlinkPictureSizes.readSaved(j.getJSONArray(key))) }
+                "carlinkPictureDefault" -> { s = s.copy(carlinkPictureDefault = CarlinkPictureSizes.read(j.opt(key))) }
+                "miracastStretch" -> { val value = j.bool(key); s = s.copy(miracastStretch = value) }
+                "miracastOutput" -> { s = s.copy(outputs = if (j.bool(key)) s.outputs + RelayOutput.MIRACAST else s.outputs - RelayOutput.MIRACAST) }
                 "networkMode" -> { val value = when (j.string(key)) { "device-hotspot" -> WirelessNetworkChoice.PHONE_HOTSPOT; "shared-wifi" -> WirelessNetworkChoice.EXISTING_WIFI; "wifi-direct" -> WirelessNetworkChoice.WIFI_DIRECT; else -> error("invalid") }; s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(choice = value)) }
                 "sharedWifiNetworks" -> { val value = j.getJSONArray(key).let { a -> (0 until a.length()).map { a.getJSONObject(it).let { o -> SharedWifiNetwork(o.string("ssid"), o.string("password")) } } }.also(SharedWifiNetworks::validate); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(sharedWifiNetworks = value)) }
                 "iphoneConnection" -> { val value = enumValue<ConnectionMode>(j.string(key)); s = s.copy(connectionMode = value) }
                 "mfiTarget" -> { val value = enumValue<MfiTarget>(j.string(key)); s = s.copy(mfiTarget = value) }
                 "mfiI2cPath" -> { val value = j.string(key); s = s.copy(i2cPath = value) }
                 "mfiRemoteServer" -> { val value = j.string(key); s = s.copy(remoteServer = value) }
-                "fps" -> { val value = j.integer(key); s = s.copy(fps = value) }
+                "frameRate" -> { val value = enumValue<FrameRatePreference>(j.string(key)); s = s.copy(frameRate = value) }
+                "fps" -> ignored.add(key)
                 "receiverPort" -> { val value = j.nullableInt(key); s = s.copy(webPort = value) }
                 "iphone" -> { val value = j.nullableString(key); s = s.copy(iphoneAddress = value) }
                 "autoStartOnBoot" -> { val value = j.bool(key); s = s.copy(autoStartOnBoot = value) }
@@ -189,9 +276,14 @@ object UserConfigCodec {
                 "carplayScreenWidth" -> { val value = enumValue<CarPlayScreenWidth>(j.string(key)); s = s.copy(carplayScreenWidth = value) }
                 "videoCodec" -> { val value = enumValue<VideoCodecSetting>(j.string(key)); s = s.copy(videoCodec = value) }
                 "videoStats" -> { val value = enumValue<VideoStatsWindow>(j.string(key)); s = s.copy(videoStats = value) }
+                "teslaBrowser" -> { val value = enumValue<TeslaBrowserMode>(j.string(key)); s = s.copy(teslaBrowser = value) }
+                "teslaVirtualAddress" -> { val value = j.string(key); s = s.copy(teslaVirtualAddress = value) }
+                "teslaPublicAddress" -> { val value = j.string(key); s = s.copy(teslaPublicAddress = value) }
+                "teslaMirrorAddress" -> { val value = j.string(key); s = s.copy(teslaMirrorAddress = value) }
+                "teslaAndroidAddress" -> { val value = j.string(key); s = s.copy(teslaAndroidAddress = value) }
                 "pluginsEnabled" -> { val value = j.getJSONArray(key).let { a -> (0 until a.length()).map { require(a.get(it) is String); a.getString(it) } }; s = s.copy(pluginsEnabled = value) }
                 "display" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DisplayProfile(it.integer("width"), it.integer("height"), it.integer("density")).also(DisplayProfile::validate) }; s = s.copy(display = value) }
-                "car" -> { val value = j.getJSONObject(key).let { CarSelection(it.string("brand"), it.string("brandText"), it.string("model"), it.string("modelText")).also { c -> require(c == c.normalized()) } }; s = s.copy(car = value) }
+                "car" -> { val value = carValue(j.getJSONObject(key)); s = s.copy(car = value) }
                 "hotspotSsid" -> { val value = j.string(key); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(manualSsid = value)) }
                 "hotspotPassphrase" -> { val value = j.string(key); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(manualPassphrase = value)) }
                 "hotspotBand" -> { val value = enumValue<ManualHotspotBand>(j.string(key)); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(band = value)) }
@@ -201,6 +293,22 @@ object UserConfigCodec {
                     else s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(channel = value))
                 }
                 "hotspotSecurity" -> { val value = enumValue<ManualHotspotSecurity>(j.string(key)); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(security = value)) }
+                "experimental" -> {
+                    val objectValue = j.getJSONObject(key)
+                    var e = ExperimentalOptions()
+                    for (field in objectValue.keys().asSequence().toList()) try {
+                        e = when (field) {
+                            "active" -> e.copy(active = objectValue.bool(field))
+                            "rememberSubscription" -> e.copy(rememberSubscription = objectValue.bool(field))
+                            "keepScanning" -> e.copy(keepScanning = objectValue.bool(field))
+                            "recordAdvertisements" -> e.copy(recordAdvertisements = objectValue.bool(field))
+                            "sendBluetoothAddress" -> e.copy(sendBluetoothAddress = objectValue.bool(field))
+                            "bluetoothAddress" -> e.copy(bluetoothAddress = objectValue.string(field))
+                            else -> { ignored.add("experimental.$field"); e }
+                        }
+                    } catch (_: Exception) { errors.putIfAbsent("experimental.$field", "invalid") }
+                    s = s.copy(experimental = e)
+                }
                 "developer" -> {
                     val j = j.getJSONObject(key)
                     for (key in j.keys().asSequence().toList()) try {
@@ -213,8 +321,7 @@ object UserConfigCodec {
                             "carlinkPictureSize" -> { val value = enumValue<ClinkPictureSize>(j.string(key)); d = d.copy(carlinkPictureSize = value) }
                             "physicalWidthEnabled" -> { val value = j.bool(key); d = d.copy(physicalWidthEnabled = value) }
                             "physicalWidthOverrideMm" -> { val value = j.integer(key); d = d.copy(physicalWidthOverrideMm = value) }
-                            "fpsEnabled" -> { val value = j.bool(key); d = d.copy(fpsEnabled = value) }
-                            "fps" -> { val value = j.integer(key); d = d.copy(fps = value) }
+                            "fpsEnabled", "fps" -> Unit
                             "localPreview" -> { val value = j.bool(key); d = d.copy(localPreview = value) }
                             "playCarPlayAudio" -> { val value = j.bool(key); d = d.copy(playCarPlayAudio = value) }
                             "microphoneSourceEnabled" -> { val value = j.bool(key); d = d.copy(microphoneSourceEnabled = value) }
@@ -230,8 +337,29 @@ object UserConfigCodec {
                 else -> ignored.add(key)
             }
         } catch (_: Exception) { errors.putIfAbsent(key, "invalid") }
+        j.optJSONObject("developer")?.let { legacy ->
+            val migrated = if (!j.has("frameRate") && legacy.opt("fpsEnabled") == true) {
+                runCatching { legacy.integer("fps") }.getOrNull()?.let { fps ->
+                    FrameRatePreference.entries.firstOrNull { it.name == "FPS_$fps" }
+                }
+            } else null
+            if (migrated != null) s = s.copy(frameRate = migrated)
+            else listOf("fpsEnabled", "fps").filter(legacy::has).forEach { ignored.add("developer.$it") }
+        }
+        s = s.normalizedCarlinkPictures()
         fun check(key: String, test: () -> Unit) { try { test() } catch (_: Exception) { errors.putIfAbsent(key, "invalid") } }
-        check("fps") { require(s.fps in 30..60 && s.fps % 5 == 0) }
+        check("experimental.bluetoothAddress") { require(!s.experimental.invalidAddress) }
+        val teslaKey = when (s.teslaBrowser) {
+            TeslaBrowserMode.OFF -> null
+            TeslaBrowserMode.VIRTUAL_NAME -> "teslaVirtualAddress"
+            TeslaBrowserMode.PUBLIC_ADDRESS -> "teslaPublicAddress"
+            TeslaBrowserMode.TESLAMIRROR -> "teslaMirrorAddress"
+            TeslaBrowserMode.TESLA_ANDROID -> "teslaAndroidAddress"
+        }
+        if (teslaKey != null) check(teslaKey) {
+            val address = checkNotNull(s.teslaAddress())
+            require(TeslaAddressPolicy.valid(address, if (address != current.teslaAddress()) phoneAddresses else emptySet()))
+        }
         check("receiverPort") { require(s.webPort?.let { it in 1024..65535 } != false) }
         check("iphone") { require(s.iphoneAddress == null || Regex("[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}").matches(s.iphoneAddress!!)) }
         check("pluginsEnabled") { require(org.openxplay.direlay.plugins.RelayPlugins.validIds(s.pluginsEnabled)) }
@@ -243,30 +371,35 @@ object UserConfigCodec {
         if (useWireless && s.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT) {
             val network = s.wirelessNetwork
             check("hotspotSsid") {
-                require(network.manualSsid.isEmpty() && CarlinkConnectionPolicy.enabled(s) ||
+                require(network.manualSsid.isEmpty() && CarlinkConnectionPolicy.usesWifiDirect(s) ||
                     network.manualSsid.isNotBlank() && network.manualSsid.toByteArray(Charsets.UTF_8).size in 1..32 && '\u0000' !in network.manualSsid)
             }
             check("hotspotPassphrase") { require((network.manualPassphrase.isEmpty() || network.manualPassphrase.length in 8..63) && '\u0000' !in network.manualPassphrase) }
             check("hotspotChannel") { require(network.channel == 0 || isManualHotspotChannelCompatible(network.band, network.channel)) }
             check("hotspotSecurity") { require(network.security == ManualHotspotSecurity.OPEN || network.manualPassphrase.length in 8..63) }
         }
-        if (useWireless && errors.isEmpty()) check("networkMode") { s.wirelessNetwork.validate(true, CarlinkConnectionPolicy.enabled(s)) }
+        if (useWireless && errors.isEmpty()) check("networkMode") { s.wirelessNetwork.validate(true, CarlinkConnectionPolicy.usesWifiDirect(s)) }
         check("mfiI2cPath") { require('\u0000' !in s.i2cPath && (s.mfiTarget != MfiTarget.I2C || s.i2cPath.isNotBlank())) }
         check("mfiRemoteServer") {
             require('\u0000' !in s.remoteServer)
             if (s.mfiTarget == MfiTarget.REMOTE) java.net.URI(s.remoteServer.trim()).also { require(it.scheme in listOf("http", "https") && !it.host.isNullOrBlank()) }
         }
-        check("developer.fps") { require(d.fps in 30..60 && d.fps % 5 == 0) }
         check("developer.webPort") { require(d.webPort?.let { it in 1024..65535 } != false) }
         check("developer.physicalWidthOverrideMm") { require(d.physicalWidthOverrideMm == 0 || d.physicalWidthOverrideMm in 100..400 && d.physicalWidthOverrideMm % 25 == 0) }
         check("developer.carlinkDeviceModel") { require(d.carlinkDeviceModel.isNotBlank() && d.carlinkDeviceModel.toByteArray(Charsets.UTF_8).size <= 128 && d.carlinkDeviceModel.none(Character::isISOControl)) }
+        check("outputs") { require(s.outputs.isNotEmpty()) }
         // Run the same full validation and incomplete-network allowance as the editor.
         if (errors.isEmpty()) check("settings") { s.validate(useWireless, allowEmptySharedWifi = true); d.effectiveSettings(s).validate(useWireless, allowEmptySharedWifi = true) }
         val after = values(s, d)
-        var changed = before.keys().asSequence().filter { it != "developer" }.count { before.get(it).toString() != after.get(it).toString() }
+        var changed = (before.keys().asSequence().toSet() + after.keys().asSequence().toSet())
+            .filter { it !in setOf("developer", "experimental") && it !in legacyOutputs }
+            .count { before.opt(it).toString() != after.opt(it).toString() }
         val oldDev = before.getJSONObject("developer")
         val newDev = after.getJSONObject("developer")
         changed += oldDev.keys().asSequence().count { oldDev.get(it).toString() != newDev.get(it).toString() }
+        val oldExperimental = before.getJSONObject("experimental")
+        val newExperimental = after.getJSONObject("experimental")
+        changed += oldExperimental.keys().asSequence().count { oldExperimental.get(it).toString() != newExperimental.get(it).toString() }
         return if (errors.isEmpty()) UserConfigImport(s, d, changed, ignored.sorted(), errors)
         else UserConfigImport(current, choices, 0, ignored.sorted(), errors)
     }

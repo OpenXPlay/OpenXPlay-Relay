@@ -27,6 +27,7 @@ class AndroidRelayKeepAlive(context: Context) : RelayKeepAlive {
         }
     }, stop = { this.context.stopService(intent()); Unit })
 
+    override val state get() = synchronized(this) { policy.state }
     @Synchronized override fun update(needed: Boolean) { policy.update(needed) }
     @Synchronized override fun uiVisible() { policy.uiVisible() }
     @Synchronized fun foregroundStarted() { policy.foregroundStarted() }

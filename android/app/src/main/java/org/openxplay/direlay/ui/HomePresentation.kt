@@ -3,38 +3,38 @@
 // Created by riko chen on 2026-10-14
 package org.openxplay.direlay.ui
 
-import org.openxplay.direlay.bluetooth.IphoneSelection
 import org.openxplay.direlay.R
+import org.openxplay.direlay.settings.CarSelection
 import org.openxplay.direlay.settings.RelaySettings
 import org.openxplay.direlay.relay.WebStartReason
-import org.openxplay.direlay.relay.WebStartFailure
 import org.openxplay.direlay.relay.RelayFailure
 import org.openxplay.direlay.relay.CarPlayError
 import org.openxplay.direlay.network.*
 import org.openxplay.direlay.clink.ClinkFailureReason
-import org.openxplay.stream.core.SessionPhase
+import org.openxplay.direlay.path.*
 import org.openxplay.direlay.vehicle.VehicleTileState
 import org.openxplay.direlay.vehicle.VehicleView
 import org.openxplay.direlay.vehicle.vehicleGlance
 import org.openxplay.direlay.vehicle.vehicleTileState
 
 /** No Android services or mutable runtime references enter the presentation mapper. */
-enum class StatusTone { IDLE, PROGRESS, ATTENTION, RUNNING, ERROR }
 enum class SetupAction { PERMISSIONS, IDENTITY, IPHONE, SETTINGS, SHARED_WIFI, CHOOSE_IPHONE }
 internal fun NetworkRequirement.reminder() = when (this) {
+    NetworkRequirement.SHARED_WIFI -> R.string.shared_wifi_unreadable
+    NetworkRequirement.BLUETOOTH -> R.string.network_bluetooth_reminder
     NetworkRequirement.WIFI -> R.string.network_wifi_reminder
     NetworkRequirement.HOTSPOT -> R.string.network_hotspot_reminder
 }
-internal fun NetworkRequirement.problem() = when (this) {
-    NetworkRequirement.WIFI -> R.string.network_wifi_problem
-    NetworkRequirement.HOTSPOT -> R.string.network_hotspot_problem
-}
 internal fun NetworkRequirement.settingsLabel() = when (this) {
+    NetworkRequirement.SHARED_WIFI -> R.string.network_open_wifi
+    NetworkRequirement.BLUETOOTH -> R.string.network_open_bluetooth
     NetworkRequirement.WIFI -> R.string.network_open_wifi
     NetworkRequirement.HOTSPOT -> R.string.network_open_hotspot
 }
 internal fun networkChoiceReminder(requirement: NetworkRequirement, readings: NetworkReadings): Int? =
     requirement.reminder().takeIf { when (requirement) {
+        NetworkRequirement.SHARED_WIFI -> false
+        NetworkRequirement.BLUETOOTH -> readings.bluetooth == null
         NetworkRequirement.WIFI -> readings.wifi == null
         NetworkRequirement.HOTSPOT -> readings.hotspot == null
     } }
@@ -43,32 +43,93 @@ data class SetupItem(val text: Int, val actionLabel: Int, val action: SetupActio
 data class HomeProblem(val title: Int, val text: String? = null, val detail: String? = null,
     val textResource: Int? = null, val action: NetworkRequirement? = null, val arguments: List<String> = emptyList(),
     val atMillis: Long? = null)
-data class HomePresentation(val headline: Int, val subline: Int, val tone: StatusTone,
-    val mode: List<ModeRow>, val checklist: List<SetupItem>, val canStart: Boolean, val running: Boolean,
-    val checking: Boolean = false, val sublineArguments: List<String> = emptyList(),
-    val problems: List<HomeProblem> = emptyList(), val hints: List<HomeProblem> = emptyList(),
-    val reminders: List<Int> = emptyList())
-data class HomeSnapshot(
-    val settings: RelaySettings, val wireless: Boolean, val permissionsReady: Boolean,
-    val identityReady: Boolean, val checking: Boolean = false, val validSettings: Boolean = true,
-    val phase: SessionPhase? = null, val started: Boolean = false, val failure: Boolean = false,
-    val iphoneSelection: IphoneSelection = IphoneSelection.NoIphone, val autoStartPaused: Boolean = false,
-    val sharedWifiReady: Boolean = true, val currentWifi: String? = null,
-    val webReason: WebStartReason? = null, val webListening: Boolean = false, val carNetworkAvailable: Boolean = true,
-    val problems: List<HomeProblem> = emptyList(),
-    val networkReadiness: NetworkReadiness = NetworkReadiness(),
-    val manualNetworkReminders: Set<NetworkRequirement> = emptySet(), val usbRoleProblem: Boolean = false,
-)
+/** Compatibility for the existing setup screens; readiness comes only from the path. */
+data class HomePresentation(val mode: List<ModeRow>, val checklist: List<SetupItem>,
+    val canStart: Boolean, val running: Boolean, val checking: Boolean = false)
 
-fun connectionSummary(mode: List<ModeRow>, carlinkState: Int?, label: (Int) -> String): String =
-    listOfNotNull(mode.firstOrNull { it.step == SetupStep.CONNECTION }?.value,
-        mode.firstOrNull { it.step == SetupStep.OUTPUT }?.value, carlinkState)
-        .joinToString(" · ", transform = label)
+fun setupHomePresentation(input: PathInput, path: ConnectionPath, mode: List<ModeRow>): HomePresentation {
+    val checklist = buildList {
+        if (input.relay.permissionsGranted < input.relay.permissionsTotal || input.relay.vpnConsentNeeded || input.relay.overlayNeeded)
+            add(SetupItem(R.string.ui_permissions, R.string.ui_allow, SetupAction.PERMISSIONS))
+        if (input.relay.identity == IdentityState.MISSING)
+            add(SetupItem(R.string.direlay_identity_required, R.string.direlay_import, SetupAction.IDENTITY))
+        if (!input.setup.valid) add(SetupItem(R.string.ui_check_settings, R.string.direlay_settings, SetupAction.SETTINGS))
+        if (input.setup.network == NetworkPlan.SHARED_WIFI && input.relay.sharedWifiSsid == null)
+            add(SetupItem(if (input.relay.wifiSsid == null) R.string.shared_wifi_unreadable else R.string.shared_wifi_not_saved,
+                R.string.shared_wifi_use, SetupAction.SHARED_WIFI))
+        if (input.setup.wireless && input.iphone.pick != IphonePick.PICKED) {
+            val pair = input.iphone.pick == IphonePick.NONE
+            add(SetupItem(when (input.iphone.pick) {
+                IphonePick.NONE -> R.string.iphone_pair
+                IphonePick.UNPAIRED -> R.string.iphone_unpaired
+                else -> R.string.iphone_multiple
+            }, if (pair) R.string.ui_pair else R.string.iphone_choose,
+                if (pair) SetupAction.IPHONE else SetupAction.CHOOSE_IPHONE))
+        }
+    }
+    return HomePresentation(mode, checklist, path.canStart, path.running, input.relay.identity == IdentityState.CHECKING)
+}
 
-fun networkSummary(wifi: String, addresses: String): String =
-    listOfNotNull(wifi.trim().takeIf { it.isNotEmpty() },
-        addresses.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() })
-        .distinct().joinToString(" · ")
+/** Arrival is offered once, using the same readiness as an explicit Connect. */
+internal fun arrivalCountdown(pending: Boolean, automatic: Boolean, path: ConnectionPath, busy: Boolean): Boolean =
+    pending && automatic && path.canStart && !path.running && !busy
+
+enum class ArrivalEnd {
+    COMPLETE, CONNECT, NOT_NOW, BACK, DRAWER, SETTINGS, GUIDE, STEP, UNAVAILABLE;
+    val pauseAutomatic: Boolean get() = this != COMPLETE && this != CONNECT
+}
+
+internal fun homeCarRowVisible(car: CarSelection) = !car.complete
+
+internal sealed interface StageCommand {
+    data object Connect : StageCommand
+    data object Stop : StageCommand
+    data object CancelArrival : StageCommand
+    data class Step(val action: StepAction, val step: PathStep) : StageCommand
+}
+
+/** Resolve against the current path, including while an outgoing action animates away. */
+internal fun stageCommand(action: StageAction, path: ConnectionPath): StageCommand? = when (action) {
+    StageAction.Connect -> StageCommand.Connect.takeUnless { path.running }
+    StageAction.Stop -> StageCommand.Stop.takeIf { path.running }
+    StageAction.NotNow -> StageCommand.CancelArrival
+    is StageAction.Step -> path.steps.firstOrNull { it.id == action.step }?.let { StageCommand.Step(action.action, it) }
+}
+
+internal enum class StageNoticeTarget { RESTART, CAR_SETTINGS, GUIDE }
+internal fun stageNoticeTarget(notice: StageNotice): StageNoticeTarget = when (notice) {
+    StageNotice.DISPLAY_CHANGED -> StageNoticeTarget.RESTART
+    StageNotice.CHOOSE_CAR -> StageNoticeTarget.CAR_SETTINGS
+    StageNotice.SET_UP -> StageNoticeTarget.GUIDE
+}
+
+/** The armed car-screen wait needs its Start now action even while the car page also waits. */
+fun focusForPage(path: ConnectionPath): PathStep? = path.focus?.takeIf {
+    it.state == StepState.FAILED || it.state == StepState.ACTION
+} ?: path.steps.firstOrNull { it.action == StepAction.START_NOW } ?: path.focus
+
+/** Idle waits stay on the stage; disclosure is reserved for work and problems. */
+fun expandPathSection(section: PathSectionView, running: Boolean): Boolean = section.steps.any {
+    it.state in setOf(StepState.FAILED, StepState.ACTION, StepState.WORKING) || running && it.state == StepState.WAITING
+}
+
+/** Keep every address and the runtime's detailed failure evidence in the step sheet. */
+fun stepDetails(step: PathStep, addresses: List<String>, problems: List<HomeProblem> = emptyList()): PathStep {
+    val titles = when (step.id) {
+        StepId.WEB_SERVER -> setOf(R.string.home_problem_web_server)
+        StepId.DLNA -> setOf(R.string.home_problem_dlna)
+        StepId.MIRACAST -> setOf(R.string.home_problem_miracast)
+        StepId.TESLA -> setOf(R.string.tesla_title)
+        else -> when (step.id.section) {
+            PathSection.CAR -> setOf(R.string.home_problem_carlink, R.string.home_problem_browser)
+            PathSection.IPHONE -> setOf(R.string.home_problem_carplay, R.string.home_problem_usb)
+            else -> emptySet()
+        }
+    }
+    val extra = problems.filter { it.title in titles }.flatMap { listOfNotNull(it.text, it.detail) }
+    val urls = if (step.id == StepId.CAR_PAGE) addresses else emptyList()
+    return step.copy(trail = (urls + step.trail + extra).filter { it.isNotBlank() }.distinct())
+}
 
 fun vehicleSummary(value: VehicleView, label: (Int, List<String>) -> String): String = when (vehicleTileState(value)) {
     VehicleTileState.OFF -> label(R.string.vehicle_off_value, emptyList())
@@ -76,20 +137,18 @@ fun vehicleSummary(value: VehicleView, label: (Int, List<String>) -> String): St
     VehicleTileState.DATA -> label(R.string.vehicle_glance, vehicleGlance(value.reports))
 }
 
-fun carlinkStateLabel(state: String, failed: Boolean, awaitingPin: Boolean): Int = when {
-    awaitingPin -> R.string.ui_waiting_code
-    state in setOf("ACTIVE", "CONNECTED", "STREAMING", "PLAYING") -> R.string.ui_connected
-    state == "Requires Android 10+" -> R.string.ui_carlink_unsupported
-    failed || state == "ENDED" -> R.string.ui_carlink_failed
-    else -> R.string.ui_searching
+fun visibleHomeFailures(settings: RelaySettings, failures: List<RelayFailure>): List<RelayFailure> = failures.filterNot {
+    it.outputId == "cast" && !settings.dlnaOutput || it.outputId == "miracast" && !settings.miracastOutput
 }
 
-/** Runtime values are copied by the Activity; this mapper has no services or mutable runtime references. */
+/** Runtime values are copied by the producer; this mapper has no services or mutable runtime references. */
 fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDetail: String,
     carlinkError: String?, webReason: WebStartReason?, serverState: String,
     readiness: NetworkReadiness = NetworkReadiness(), teslaFailure: String? = null,
     carlinkTrail: List<String> = emptyList(), carlinkErrorAt: Long? = null,
-    carPlayError: CarPlayError? = null): List<HomeProblem> = buildList {
+    carPlayError: CarPlayError? = null,
+    dlnaFailure: org.openxplay.direlay.relay.WirelessDisplayFailure? = null,
+    miracastFailure: org.openxplay.direlay.relay.WirelessDisplayFailure? = null): List<HomeProblem> = buildList {
     if (teslaFailure != null) add(HomeProblem(R.string.tesla_title,
         textResource = R.string.tesla_address_failed, arguments = listOf(teslaFailure)))
     carPlayError?.let { add(HomeProblem(R.string.home_problem_carplay, it.text,
@@ -97,13 +156,18 @@ fun homeProblems(failures: List<RelayFailure>, carlinkFailed: Boolean, carlinkDe
     val joinCodes = ClinkFailureReason.entries.filter { it.name.startsWith("P2P_") || it.name.startsWith("WIFI_") }.map { it.code }
     val carlinkFailure = carlinkFailed || failures.any { it.outputId in setOf("clink", "carlink") }
     val wifiProblem = carlinkFailure && (readiness.wifi == Readiness.PROBLEM || carlinkFailed && carlinkDetail in joinCodes)
+    dlnaFailure?.let { add(wirelessDisplayProblem("cast", it)) }
+    miracastFailure?.let { add(wirelessDisplayProblem("miracast", it)) }
     failures.forEach { failure ->
+        if (failure.outputId == "cast" && dlnaFailure != null || failure.outputId == "miracast" && miracastFailure != null) return@forEach
         if (failure.outputId in setOf("clink", "carlink")) return@forEach
         if (failure.outputId == null && failure.text == carPlayError?.text) return@forEach
         add(HomeProblem(when (failure.outputId) {
             null -> R.string.home_problem_carplay
             "clink", "carlink" -> R.string.home_problem_carlink
             "web" -> R.string.home_problem_browser
+            "cast" -> R.string.home_problem_dlna
+            "miracast" -> R.string.home_problem_miracast
             else -> R.string.home_problem_output
         }, failure.text, atMillis = failure.atMillis.takeIf { it != 0L }))
     }
@@ -142,66 +206,6 @@ fun carPlayFailureExplanation(code: String?): Int? = when (code) {
     "first_tcp_timeout" -> R.string.error_explain_first_tcp_timeout
     "bluetooth_unusable" -> R.string.error_explain_bluetooth_unusable
     else -> null
-}
-
-fun presentHome(value: HomeSnapshot): HomePresentation {
-    val browser = !value.settings.carlinkOutput || value.settings.bothOutputs
-    val webReason = value.webReason.takeIf { browser }
-    val iphoneReady = !value.wireless || value.iphoneSelection.address != null
-    val checklist = buildList {
-        if (!value.permissionsReady) add(SetupItem(R.string.ui_permissions, R.string.ui_allow, SetupAction.PERMISSIONS))
-        if (!value.identityReady && !value.checking) add(SetupItem(R.string.direlay_identity_required, R.string.direlay_import, SetupAction.IDENTITY))
-        if (!value.validSettings) add(SetupItem(R.string.ui_check_settings, R.string.direlay_settings, SetupAction.SETTINGS))
-        if (!value.sharedWifiReady) add(SetupItem(
-            if (value.currentWifi == null) R.string.shared_wifi_unreadable else R.string.shared_wifi_not_saved,
-            if (value.currentWifi == null) R.string.shared_wifi_use else R.string.shared_wifi_save_current, SetupAction.SHARED_WIFI))
-        if (!iphoneReady) {
-            val text = when (value.iphoneSelection) {
-                is IphoneSelection.SelectedUnpaired -> R.string.iphone_unpaired
-                is IphoneSelection.MultipleCandidates,
-                is IphoneSelection.MultipleConnected -> R.string.iphone_multiple
-                else -> R.string.iphone_pair
-            }
-            add(SetupItem(text, if (text == R.string.iphone_pair) R.string.ui_pair else R.string.iphone_choose,
-                if (text == R.string.iphone_pair) SetupAction.IPHONE else SetupAction.CHOOSE_IPHONE))
-        }
-    }
-    val ready = value.permissionsReady && value.identityReady && value.validSettings && value.sharedWifiReady && !value.checking
-    val active = value.phase == SessionPhase.ACTIVE
-    val running = active || value.phase in setOf(SessionPhase.CONNECTING, SessionPhase.RECONNECTING) || value.started
-    val (headline, tone) = when {
-        value.failure || webReason != null -> R.string.ui_error to StatusTone.ERROR
-        !ready -> R.string.ui_setup_needed to StatusTone.ATTENTION
-        active -> R.string.ui_running to StatusTone.RUNNING
-        value.phase in setOf(SessionPhase.CONNECTING, SessionPhase.RECONNECTING) -> R.string.ui_connecting to StatusTone.PROGRESS
-        value.started -> R.string.ui_waiting to StatusTone.PROGRESS
-        !iphoneReady -> R.string.ui_setup_needed to StatusTone.ATTENTION
-        else -> R.string.ui_ready to StatusTone.IDLE
-    }
-    val subline = when {
-        webReason?.failure == WebStartFailure.PORT_BUSY -> R.string.ui_web_port_busy
-        webReason != null -> R.string.ui_web_start_failed
-        value.failure -> R.string.ui_retry_hint
-        value.checking -> R.string.direlay_checking_identity
-        !ready -> R.string.ui_setup_hint
-        browser && value.webListening && !value.carNetworkAvailable -> R.string.ui_head_unit_network
-        active && value.settings.bothOutputs -> R.string.ui_showing_both
-        active && value.settings.carlinkOutput -> R.string.ui_showing_carlink
-        active -> R.string.ui_showing_browser
-        value.phase in setOf(SessionPhase.CONNECTING, SessionPhase.RECONNECTING) -> R.string.ui_connecting_hint
-        value.started -> if (value.wireless) R.string.ui_iphone_pairing else R.string.ui_usb_hint
-        value.settings.autoStartWhenReady && value.autoStartPaused && !running -> R.string.ui_automatic_paused
-        else -> R.string.ui_start_hint
-    }
-    return HomePresentation(headline, subline, tone, modeRows(value.settings, value.wireless),
-        checklist, ready && iphoneReady, running, value.checking,
-        if (webReason?.failure == WebStartFailure.PORT_BUSY) listOf(webReason.port.toString()) else emptyList(),
-        if (tone == StatusTone.ERROR) value.problems.ifEmpty { listOf(HomeProblem(R.string.home_problem_connection)) } else emptyList(),
-        (if (tone != StatusTone.ERROR) value.problems.filter { it.title == R.string.tesla_title } else emptyList()) +
-            (if (running && !active && !value.wireless && value.usbRoleProblem) listOf(HomeProblem(R.string.home_problem_usb,
-                detail = "USB_STATE: connected=true, host_connected=false; USB devices=[]", textResource = R.string.network_usb_role_problem)) else emptyList()),
-        if (tone == StatusTone.PROGRESS) (value.manualNetworkReminders intersect value.networkReadiness.unknown)
-            .map { it.reminder() } else emptyList())
 }
 
 fun carlinkFailureExplanation(code: String): Int? = when (code) {

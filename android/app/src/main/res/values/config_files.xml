@@ -6,13 +6,12 @@ Created by riko chen on 2026-10-22
 -->
 <resources>
     <string name="config_title">Configuration files</string>
-    <string name="config_summary">Export or import user and privacy configuration.</string>
     <string name="config_user">User configuration</string>
     <string name="config_privacy">Privacy configuration</string>
     <string name="config_user_hint">Connection, outputs, picture and the other settings. No passwords for accounts or keys.</string>
     <string name="config_privacy_hint">HTTPS domain, certificate and private keys. Keep this file private.</string>
-    <string name="config_export">Export…</string>
-    <string name="config_import">Import…</string>
+    <string name="config_export">Export</string>
+    <string name="config_import">Import</string>
     <string name="config_export_confirm">Export</string>
     <string name="config_privacy_warning">This file contains your domain token and the certificate\'s private key. Anyone with the file can use your HTTPS name.</string>
     <string name="config_replace">Replace the current settings with the file\'s values?</string>

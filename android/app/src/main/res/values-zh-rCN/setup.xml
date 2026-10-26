@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-24 -->
+<resources>
+    <string name="setup2_output_title">车机显示</string>
+    <string name="setup2_output_subtitle">选择车机已有的显示方式。</string>
+    <string name="setup2_connection_title">iPhone 连接</string>
+    <string name="setup2_connection_subtitle">选择 iPhone 与本机的连接方式。</string>
+    <string name="setup2_network_title">无线网络</string>
+    <string name="setup2_network_subtitle">选择 iPhone 使用的 Wi-Fi 网络。</string>
+    <string name="setup2_prepare_subtitle">检查本机，再检查 iPhone。</string>
+    <string name="setup2_start_subtitle">连接前确认所选方案。</string>
+    <string name="setup2_set_up_again">重新设置</string>
+    <string name="setup_wireless_display_hint">用车机的投屏接收功能显示。只有画面，不能在车机上触控。</string>
+    <string name="setup_picture_only">仅画面</string>
+    <string name="setup_dlna_hint">车机的投屏接收应用播放本机推送的画面，会延迟几秒。</string>
+    <string name="setup_miracast_hint">在本机系统投屏中选择车机，延迟更低，会占用 Wi-Fi 直连。</string>
+    <string name="setup_multiple_outputs">开发者选项里开着多种输出，在这里选一种会替换它们。</string>
+    <string name="setup_change">更改</string>
+    <string name="setup_hotspot_5ghz">建议用 5 GHz</string>
+    <string name="setup_hotspot_5ghz_details">5 GHz 建议详情</string>
+    <string name="setup_prepare_ready">全部就绪</string>
+</resources>

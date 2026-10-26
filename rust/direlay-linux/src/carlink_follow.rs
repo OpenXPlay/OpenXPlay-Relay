@@ -7,7 +7,7 @@ use super::*;
 /// The Carlink link left the head unit's network: it went down, its session ended (oxp-relay then
 /// leaves the network and exits) or the child stopped. Errors and PIN timeouts alone leave the link
 /// up; the status shows them, and a real departure follows when they end the session.
-fn carlink_link_left(event: &serde_json::Value) -> bool {
+pub(crate) fn carlink_link_left(event: &serde_json::Value) -> bool {
     (event["type"] == "link" && event["state"] == "lost")
         || event["type"] == "receiver-stopped"
         || (event["type"] == "state"
@@ -76,7 +76,16 @@ impl LinuxRelayAdmin {
         if !self.effective_options()?.shared_carlink_radio() {
             *self.follow.lock().unwrap() = CarlinkFollow::default();
             let following = self.network_override.lock().unwrap().take().is_some();
-            self.hotspot_lifetime.hold_for_carlink(false);
+            let status = self.network_status(&self.settings.lock().unwrap());
+            let same_phy = crate::network_roles::shared_radio(&status.inventory, &status.plan);
+            let carlink = self.carlink.lock().unwrap();
+            let holding = same_phy
+                && carlink
+                    .network
+                    .as_ref()
+                    .is_some_and(|n| Some(n.interface.as_str()) == status.plan.carlink.role.name());
+            drop(carlink);
+            self.hotspot_lifetime.hold_for_carlink(holding);
             let held = self
                 .provision
                 .lock()

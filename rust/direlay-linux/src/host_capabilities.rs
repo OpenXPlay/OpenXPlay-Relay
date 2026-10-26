@@ -211,6 +211,25 @@ pub fn probe(
     } else {
         probe_wifi(runner, root, carlink)
     };
+    probe_with_wifi(
+        runner,
+        root,
+        wifi,
+        carlink,
+        selection,
+        socket,
+        adapter_source,
+    )
+}
+fn probe_with_wifi(
+    runner: &dyn CommandRunner,
+    root: &Path,
+    wifi: WifiCapabilities,
+    carlink: WifiCapabilities,
+    selection: &crate::linux_bluetooth::AdapterSelection,
+    socket: &dyn Fn() -> std::io::Result<()>,
+    adapter_source: &dyn Fn() -> Option<Vec<AdapterInfo>>,
+) -> HostCapabilities {
     let adapters = adapter_source().map(|entries| {
         entries
             .into_iter()
@@ -269,6 +288,9 @@ struct CacheState {
 /// Starts only when a hotspot start is initiated. Later interface changes queue a fresh snapshot.
 pub struct CapabilityCache {
     state: Mutex<CacheState>,
+    wifi: Mutex<BTreeMap<String, WifiCapabilities>>,
+    hotspot: Mutex<Option<(String, crate::device_preset::HotspotResolution)>>,
+    hotspot_changes: Mutex<std::collections::BTreeSet<String>>,
     runner: Arc<dyn CommandRunner>,
     root: PathBuf,
     selection: crate::linux_bluetooth::AdapterSelection,
@@ -281,6 +303,9 @@ impl CapabilityCache {
     ) -> Self {
         Self {
             state: Mutex::default(),
+            wifi: Mutex::default(),
+            hotspot: Mutex::default(),
+            hotspot_changes: Mutex::default(),
             runner,
             root,
             selection,
@@ -291,6 +316,39 @@ impl CapabilityCache {
     }
     pub fn get(&self) -> Option<HostCapabilities> {
         self.state.lock().unwrap().result.clone()
+    }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    /// The AP start and diagnostics share one probe per interface until its fingerprint changes.
+    pub fn wifi(&self, interface: &str) -> WifiCapabilities {
+        let mut wifi = self.wifi.lock().unwrap();
+        wifi.entry(interface.into())
+            .or_insert_with(|| probe_wifi(self.runner.as_ref(), &self.root, interface))
+            .clone()
+    }
+    pub fn cached_wifi(&self, interface: &str) -> Option<WifiCapabilities> {
+        self.wifi.try_lock().ok()?.get(interface).cloned()
+    }
+    pub fn record_hotspot(
+        &self,
+        interface: &str,
+        hotspot: crate::device_preset::HotspotResolution,
+    ) {
+        if let Some(message) = hotspot.change_message() {
+            if self.hotspot_changes.lock().unwrap().insert(message.clone()) {
+                eprintln!("{message}");
+            }
+        }
+        *self.hotspot.lock().unwrap() = Some((interface.into(), hotspot));
+    }
+    pub fn hotspot(&self, interface: &str) -> Option<crate::device_preset::HotspotResolution> {
+        self.hotspot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|(name, _)| name == interface)
+            .map(|(_, hotspot)| hotspot.clone())
     }
     pub fn initiated(self: &Arc<Self>, wifi: &str, carlink: &str) {
         self.state.lock().unwrap().started = true;
@@ -320,6 +378,9 @@ impl CapabilityCache {
         if !state.started || state.fingerprint == fingerprint {
             return;
         }
+        if !state.fingerprint.is_empty() {
+            self.wifi.lock().unwrap().clear();
+        }
         state.fingerprint = fingerprint;
         state.requested = Some((wifi.into(), carlink.into()));
         if state.running {
@@ -340,11 +401,11 @@ impl CapabilityCache {
                     state.running = false;
                     break;
                 };
-                let result = probe(
+                let result = probe_with_wifi(
                     cache.runner.as_ref(),
                     &cache.root,
-                    &wifi,
-                    &carlink,
+                    cache.wifi(&wifi),
+                    cache.wifi(&carlink),
                     &cache.selection,
                     &rfcomm_socket,
                     &crate::linux_bluetooth::adapters,
@@ -414,6 +475,38 @@ mod tests {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         root
+    }
+    #[test]
+    fn hotspot_changes_are_logged_once_per_distinct_resolution() {
+        let root = root();
+        let cache = CapabilityCache::new(
+            Arc::new(Fake(AtomicUsize::new(0))),
+            root.clone(),
+            crate::linux_bluetooth::AdapterSelection::default(),
+        );
+        let phy = crate::wifi_capabilities::parse_phy(include_str!(
+            "../tests/fixtures/iw-phy-ufi003.txt"
+        ));
+        let replaced = crate::device_preset::resolve_hotspot("5", 36, "generic", Some(&phy));
+        let expected =
+            "Wi-Fi hotspot: configured 5 GHz channel 36 -> 2.4 GHz channel 6 (no-5ghz-ap)";
+        assert_eq!(replaced.change_message().as_deref(), Some(expected));
+        for _ in 0..3 {
+            cache.record_hotspot("wlan0", replaced.clone());
+        }
+        let mut fallback = replaced.clone();
+        fallback.reason = Some("ap-start-failed".into());
+        for _ in 0..2 {
+            cache.record_hotspot("wlan0", fallback.clone());
+        }
+        cache.record_hotspot("wlan0", replaced);
+        cache.record_hotspot(
+            "wlan0",
+            crate::device_preset::resolve_hotspot("auto", 0, "generic", None),
+        );
+        assert_eq!(cache.hotspot_changes.lock().unwrap().len(), 2);
+        assert!(cache.hotspot_changes.lock().unwrap().contains(expected));
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn regulatory_features_and_rfcomm_unknowns() {
@@ -599,6 +692,37 @@ mod tests {
         cache.refresh("wlan0", "wlan1");
         wait();
         assert_eq!(cache.get().unwrap().carlink.present, Some(true));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn ap_start_and_host_snapshot_reuse_the_same_wifi_probe() {
+        let root = root();
+        let runner = Arc::new(Recording::default());
+        let cache = Arc::new(CapabilityCache::new(
+            runner.clone(),
+            root.clone(),
+            Default::default(),
+        ));
+        assert!(cache.cached_wifi("wlan0").is_none());
+        assert!(cache.wifi("wlan0").capabilities.is_some());
+        cache.initiated("wlan0", "wlan0");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while cache.get().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        cache.wifi("wlan0");
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|a| a
+                    .iter()
+                    .map(String::as_str)
+                    .eq(["iw", "phy", "phy0", "info"]))
+                .count(),
+            1
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

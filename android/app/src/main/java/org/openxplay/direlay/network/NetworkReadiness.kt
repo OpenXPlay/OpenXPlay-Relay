@@ -4,30 +4,36 @@
 package org.openxplay.direlay.network
 
 enum class Readiness { OK, PROBLEM, UNKNOWN }
-enum class NetworkRequirement { WIFI, HOTSPOT }
+enum class NetworkRequirement { BLUETOOTH, WIFI, HOTSPOT, SHARED_WIFI }
 enum class UsbConnectionState { DEVICE, HOST, DISCONNECTED, UNKNOWN }
 
 interface NetworkStateReader {
+    fun bluetoothEnabled(): Boolean? = null
     fun wifiEnabled(): Boolean?
     fun hotspotEnabled(): Boolean?
 }
 
 data class NetworkReadings(val wifi: Boolean? = null, val hotspot: Boolean? = null,
-    val usb: UsbConnectionState = UsbConnectionState.UNKNOWN, val usbDevicesEmpty: Boolean? = null) : NetworkStateReader {
+    val usb: UsbConnectionState = UsbConnectionState.UNKNOWN, val usbDevicesEmpty: Boolean? = null, val bluetooth: Boolean? = null) : NetworkStateReader {
+    override fun bluetoothEnabled() = bluetooth
     override fun wifiEnabled() = wifi
     override fun hotspotEnabled() = hotspot
 }
 
 /** An irrelevant check is OK, even if Android cannot read that radio's state. */
-data class NetworkReadiness(val wifi: Readiness = Readiness.OK, val hotspot: Readiness = Readiness.OK) {
+data class NetworkReadiness(val wifi: Readiness = Readiness.OK, val hotspot: Readiness = Readiness.OK,
+    val bluetooth: Readiness = Readiness.OK, val sharedWifi: Readiness = Readiness.OK) {
     val problems: Set<NetworkRequirement> get() = matching(Readiness.PROBLEM)
     val unknown: Set<NetworkRequirement> get() = matching(Readiness.UNKNOWN)
     private fun matching(state: Readiness) = buildSet {
+        if (bluetooth == state) add(NetworkRequirement.BLUETOOTH)
         if (wifi == state) add(NetworkRequirement.WIFI)
         if (hotspot == state) add(NetworkRequirement.HOTSPOT)
+        if (sharedWifi == state) add(NetworkRequirement.SHARED_WIFI)
     }
     companion object {
-        fun read(carlink: Boolean, wireless: Boolean, phoneHotspot: Boolean, reader: NetworkStateReader): NetworkReadiness {
+        fun read(carlink: Boolean, wireless: Boolean, phoneHotspot: Boolean, reader: NetworkStateReader,
+            miracast: Boolean = false, wifiDirect: Boolean = false, sharedWifi: Boolean = false, sharedWifiJoined: Boolean = true): NetworkReadiness {
             fun check(required: Boolean, read: () -> Boolean?): Readiness {
                 if (!required) return Readiness.OK
                 return when (runCatching(read).getOrNull()) {
@@ -36,8 +42,10 @@ data class NetworkReadiness(val wifi: Readiness = Readiness.OK, val hotspot: Rea
                     null -> Readiness.UNKNOWN
                 }
             }
-            return NetworkReadiness(check(carlink, reader::wifiEnabled),
-                check(wireless && phoneHotspot, reader::hotspotEnabled))
+            return NetworkReadiness(check(carlink || miracast || wireless && (wifiDirect || sharedWifi), reader::wifiEnabled),
+                check(wireless && phoneHotspot, reader::hotspotEnabled),
+                check(wireless || carlink, reader::bluetoothEnabled),
+                check(wireless && sharedWifi) { sharedWifiJoined })
         }
     }
 }

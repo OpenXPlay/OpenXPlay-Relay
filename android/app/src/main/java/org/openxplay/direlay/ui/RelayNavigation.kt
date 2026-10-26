@@ -13,7 +13,7 @@ data class RelayBackStack(val entries: List<String> = listOf("home")) {
         val parents = relayRouteParents(route)
         if (parents.isEmpty() && route != "settings") return copy(entries = entries + route)
         // Replace the current menu branch while retaining the screen that opened Settings.
-        val root = entries.indexOfFirst { it == "settings" || it.startsWith("settings/") || it.startsWith("developer") }
+        val root = entries.indexOfFirst { it == "settings" || it.startsWith("settings/") || it.startsWith("developer") || it == "experimental" }
         val prefix = if (root >= 0) entries.take(root) else entries
         val retainedParents = parents.mapIndexed { index, parent ->
             entries.getOrNull(prefix.size + index)?.takeIf { it.substringBefore('#') == parent } ?: parent
@@ -22,18 +22,11 @@ data class RelayBackStack(val entries: List<String> = listOf("home")) {
     }
     fun back() = if (canBack) copy(entries = entries.dropLast(1)) else this
 }
-enum class WindowLayout { COMPACT, MEDIUM, EXPANDED }
-fun windowLayout(widthDp: Int) = when { widthDp < 600 -> WindowLayout.COMPACT; widthDp < 840 -> WindowLayout.MEDIUM; else -> WindowLayout.EXPANDED }
-
-/** Height is measured from this window, never the physical display or its orientation. */
-data class HomeWindow(val layout: WindowLayout, val inlineActions: Boolean)
-fun homeWindow(widthDp: Int, heightDp: Int) = HomeWindow(windowLayout(widthDp), heightDp < 480)
-
 /** Old field links resolve to a destination plus an optional card/picker target. */
 fun relayRoute(entry: String): String = when {
     entry.startsWith("settings:") -> when (entry.substringAfter(':')) {
         "output" -> "settings/output#output"
-        "car" -> "settings/car"
+        "car" -> "settings/car#car"
         "picture" -> "settings/picture"
         "audio" -> "settings/audio"
         "connection" -> "settings/connection#connection"
@@ -46,6 +39,7 @@ fun relayRoute(entry: String): String = when {
         "identity" -> "settings/identity"
         "about" -> "settings/about"
         "developer" -> "developer"
+        "experimental" -> "experimental"
         else -> "settings"
     }
     entry == "publicName" -> "settings/access/publicName"
@@ -58,7 +52,8 @@ fun relayRouteParents(route: String): List<String> = when (route.substringBefore
     "settings" -> emptyList()
     "settings/connection/network" -> listOf("settings", "settings/connection")
     "settings/access/publicName" -> listOf("settings", "settings/access")
-    "developer" -> listOf("settings")
+    "developer", "experimental" -> listOf("settings")
+    "developer/design" -> listOf("settings", "developer")
     else -> when {
         route.startsWith("developer/") -> listOf("settings", "developer")
         route.startsWith("settings/") -> listOf("settings")
@@ -66,10 +61,10 @@ fun relayRouteParents(route: String): List<String> = when (route.substringBefore
     }
 }
 
-fun settingsSessionActive(entries: List<String>) = entries.any { it.startsWith("settings") || it.startsWith("developer") }
+fun settingsSessionActive(entries: List<String>) = entries.any { it.startsWith("settings") || it.startsWith("developer") || it == "experimental" }
 
 fun firstSettingsErrorPage(errors: Set<String>) = listOf("settings/output", "settings/connection/network",
-    "settings/identity", "developer/video", "developer/connection").firstOrNull { it in errors } ?: "settings"
+    "settings/identity", "developer/video", "developer/connection", "experimental").firstOrNull { it in errors } ?: "settings"
 
 fun showsDeveloperDiagnostics(route: String) = route in setOf("developer", "developer/diagnostics", "developer/carlink", "settings/identity")
 

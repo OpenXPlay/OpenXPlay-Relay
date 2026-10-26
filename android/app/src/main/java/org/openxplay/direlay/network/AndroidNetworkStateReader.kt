@@ -12,6 +12,9 @@ import android.net.wifi.WifiManager
 /** Queries sticky system broadcasts without registering a receiver or using privileged APIs. */
 class AndroidNetworkStateReader(context: Context) : NetworkStateReader {
     private val context = context.applicationContext
+    override fun bluetoothEnabled(): Boolean? = runCatching {
+        context.getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter?.isEnabled
+    }.getOrNull()
     override fun wifiEnabled(): Boolean? = readWifiEnabled(context)
     override fun hotspotEnabled(): Boolean? = runCatching {
         val intent = sticky("android.net.conn.TETHER_STATE_CHANGED") ?: return@runCatching null
@@ -27,7 +30,7 @@ class AndroidNetworkStateReader(context: Context) : NetworkStateReader {
             usbConnectionState(extra("connected"), extra("host_connected"))
         }.getOrDefault(UsbConnectionState.UNKNOWN)
         val empty = runCatching { context.getSystemService(UsbManager::class.java)?.deviceList?.isEmpty() }.getOrNull()
-        return NetworkReadings(wifiEnabled(), hotspotEnabled(), usb, empty)
+        return NetworkReadings(wifiEnabled(), hotspotEnabled(), usb, empty, bluetoothEnabled())
     }
 
     private fun sticky(action: String): Intent? = context.registerReceiver(null, IntentFilter(action))

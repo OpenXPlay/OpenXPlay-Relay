@@ -11,9 +11,9 @@ enum class TeslaBrowserActivation { OFF, NEEDS_BROWSER, NEEDS_WIRELESS, NEEDS_PH
 
 /** A shared rule for the editor, VPN consent and session startup. */
 fun teslaBrowserActivation(mode: TeslaBrowserMode, wireless: Boolean, network: WirelessNetworkChoice,
-    trustedNameConfigured: Boolean, carlinkOutput: Boolean, bothOutputs: Boolean): TeslaBrowserActivation = when {
+    trustedNameConfigured: Boolean, browserOutput: Boolean): TeslaBrowserActivation = when {
     mode == TeslaBrowserMode.OFF -> TeslaBrowserActivation.OFF
-    carlinkOutput && !bothOutputs -> TeslaBrowserActivation.NEEDS_BROWSER
+    !browserOutput -> TeslaBrowserActivation.NEEDS_BROWSER
     !wireless -> TeslaBrowserActivation.NEEDS_WIRELESS
     network == WirelessNetworkChoice.EXISTING_WIFI -> TeslaBrowserActivation.NEEDS_PHONE_NETWORK
     mode.usesTrustedName && !trustedNameConfigured -> TeslaBrowserActivation.NEEDS_NAME

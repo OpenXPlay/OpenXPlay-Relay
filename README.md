@@ -37,7 +37,7 @@ The Android build includes DiPlay and Stream as Gradle composite builds. By defa
 | Linux relay | Rust stable | `cd rust && cargo test` |
 | Linux relay for aarch64 | `rustup target add aarch64-unknown-linux-musl`, `llvm-tools`, clang | `rust/scripts/build-aarch64.sh` |
 
-Releases build the Stream commit in `stream.lock`; the Android build warns when your Stream checkout is another commit or has uncommitted changes. To move to a newer Stream, commit `git -C ../OpenXPlay-Stream rev-parse HEAD > stream.lock` after that Stream commit is pushed.
+Every build uses the Stream and DiPlay commits in `stream.lock` and `diplay.lock`; the Android build warns when your checkout is another commit or has uncommitted changes (`-Prelay.strictSources=true` makes that an error). To move a lock, push the new commit to that repository's `main`, then run `scripts/sources.sh bump stream` (or `diplay`) and commit the lock file.
 
 ## Contributing
 

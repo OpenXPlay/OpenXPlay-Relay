@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
+import org.openxplay.stream.core.FrameRatePreference
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import com.shilapi.xcertplay.orchestration.MfiTarget
@@ -13,9 +14,37 @@ import org.openxplay.stream.clink.ClinkPictureSize
 
 class SettingsEditorStateTest {
     private val initial = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null,
-        30, false, true, false, null)
+        FrameRatePreference.AUTO, false, true, false, null)
     private fun editor() = SettingsEditorState(mutableStateOf(initial), mutableStateOf(initial),
         mutableStateOf(false), mutableStateMapOf(), mutableStateMapOf())
+
+    @Test fun wirelessCustomStartsFromAutoAndKeepsInvalidTextOffTheTypedDraftAndOnTheOutputPage() {
+        val state = editor()
+        state.chooseWirelessPicture(WirelessPictureMode.CUSTOM, WirelessPictureSize(1920, 720))
+        assertEquals(WirelessPictureSize(1920, 720), state.draft.value.wirelessPictureSize)
+        state.updateWirelessPicture("wirelessPictureWidth", "")
+        assertEquals("", state.numberText["wirelessPictureWidth"])
+        assertEquals(setOf("settings/output"), state.errorPages { false })
+        assertEquals(WirelessPictureSize(1920, 720), state.draft.value.wirelessPictureSize)
+        state.updateWirelessPicture("wirelessPictureWidth", "720")
+        state.updateWirelessPicture("wirelessPictureHeight", "1281")
+        assertEquals(setOf("settings/output"), state.errorPages { false })
+        state.updateWirelessPicture("wirelessPictureHeight", "1280")
+        assertEquals(WirelessPictureSize(720, 1280), state.draft.value.wirelessPictureSize)
+        assertTrue(state.invalidNumbers.isEmpty())
+        state.updateWirelessPicture("wirelessPictureWidth", "999999999999")
+        state.presetWirelessPicture(WirelessPictureSize(1280, 480))
+        assertTrue(state.invalidNumbers.isEmpty()); assertTrue(state.numberText.isEmpty())
+        assertEquals(WirelessPictureSize(1280, 480), state.draft.value.wirelessPictureSize)
+        state.updateWirelessPicture("wirelessPictureHeight", "bad")
+        state.chooseWirelessPicture(WirelessPictureMode.AUTO, WirelessPictureSize())
+        assertTrue(state.invalidNumbers.isEmpty()); assertTrue(state.numberText.isEmpty())
+        assertEquals(WirelessPictureMode.AUTO, state.draft.value.wirelessPicture)
+        state.draft.value = state.draft.value.copy(wirelessPictureSize = WirelessPictureSize(320, 240))
+        assertEquals(setOf("settings/output"), state.errorPages { false })
+        assertEquals(mapOf("wirelessPictureSize" to org.openxplay.direlay.R.string.settings_advanced_error),
+            settingsSaveErrors(state.draft.value, false))
+    }
 
     @Test fun parkedWindowFitChoicesSurviveMenuChangesAndApplyWhenEnabled() {
         val state = editor()
@@ -75,4 +104,23 @@ class SettingsEditorStateTest {
         assertTrue(state.draft.value.carBluetoothAudio)
         assertTrue(state.errorPages { false }.isEmpty())
     }
+    @Test fun experimentalAddressErrorsFollowThePageAndMasterOffRetainsChoices() {
+        val state = editor()
+        state.synchronize(initial, true)
+        state.changeExperimental { it.copy(active = true, keepScanning = true, sendBluetoothAddress = true, bluetoothAddress = "bad") }
+        assertEquals(setOf("experimental"), state.errorPages { false })
+        assertTrue(settingsSaveErrors(state.draft.value, false).containsKey("experimental.bluetoothAddress"))
+        val stack = RelayBackStack().open("experimental").open("settings/startup")
+        state.synchronize(initial, settingsSessionActive(stack.entries))
+        assertEquals("bad", state.draft.value.experimental.bluetoothAddress)
+        state.changeExperimental { it.copy(active = false) }
+        assertTrue(state.errorPages { false }.isEmpty())
+        assertTrue(state.draft.value.experimental.keepScanning)
+        assertTrue(state.draft.value.experimental.sendBluetoothAddress)
+        assertEquals(ExperimentalOptions(), state.draft.value.experimental.effective())
+        state.changeExperimental { it.copy(active = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5") }
+        assertTrue(state.errorPages { false }.isEmpty())
+        assertNull(settingsFeedback(initial, state.draft.value, carlinkConnected = true, running = true))
+    }
+
 }

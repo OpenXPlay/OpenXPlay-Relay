@@ -436,6 +436,7 @@ impl SwitchDebounce {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Target {
+    disable_view_areas: bool,
     canvas: Size,
     physical: u32,
     screen: Option<Screen>,
@@ -444,6 +445,8 @@ struct Target {
 #[derive(Default)]
 pub(crate) struct DisplayRuntime {
     pub saved: DisplayState,
+    pub resize: crate::carlink_resize::CarlinkResizePolicy,
+    pub disable_view_areas: bool,
     pub path: Option<PathBuf>,
     applied: Option<Target>,
     pending: Option<(Target, Instant)>,
@@ -459,6 +462,7 @@ impl DisplayRuntime {
     fn target(&self) -> Target {
         let canvas = self.saved.planned_canvas();
         Target {
+            disable_view_areas: self.disable_view_areas,
             canvas,
             physical: physical_width(canvas, self.saved.screen_width),
             screen: self.saved.head_unit.as_ref().map(|h| h.screen),
@@ -476,8 +480,15 @@ impl DisplayRuntime {
         self.saved.canvas = target.canvas;
         self.areas = plan_areas(
             target.canvas,
-            self.saved.head_unit.as_ref(),
-            &self.saved.records,
+            self.saved
+                .head_unit
+                .as_ref()
+                .filter(|_| !self.disable_view_areas),
+            if self.disable_view_areas {
+                &[]
+            } else {
+                &self.saved.records
+            },
         );
         self.applied = Some(target);
         self.active = 0;
@@ -525,7 +536,7 @@ impl DisplayRuntime {
         config.width_pixels = t.canvas.width;
         config.height_pixels = t.canvas.height;
         config.width_physical_mm = Some(t.physical);
-        config.view_areas = Some(
+        config.view_areas = (!self.disable_view_areas).then(|| {
             self.areas
                 .iter()
                 .map(|a| AirPlayViewArea {
@@ -535,8 +546,8 @@ impl DisplayRuntime {
                     origin_y: 0,
                     dock_edge: None,
                 })
-                .collect(),
-        );
+                .collect()
+        });
         config.initial_view_area = 0;
     }
     pub fn area_message(&self) -> oxp_wire::Message {
@@ -550,8 +561,7 @@ impl DisplayRuntime {
         oxp_wire::Message::Json(json!({"type":"view-area","screen":0,"area":area}))
     }
     pub fn switch_due(&mut self, now: Instant) -> Option<usize> {
-        let candidate = self
-            .connected
+        let candidate = (self.connected && !self.disable_view_areas)
             .then_some(())
             .and(self.saved.head_unit.as_ref())
             .and_then(|h| match_area(&self.areas, h))
@@ -587,6 +597,28 @@ mod tests {
             count,
             last_seen: 1,
         }
+    }
+    #[test]
+    fn disabling_view_areas_keeps_one_full_canvas_and_never_switches() {
+        let mut d = DisplayRuntime {
+            disable_view_areas: true,
+            ..Default::default()
+        };
+        d.saved.observe(head(), None, 1);
+        d.connected = true;
+        d.freeze();
+        assert_eq!(d.areas.len(), 1);
+        assert_eq!(d.areas[0].size, d.saved.planned_canvas());
+        let mut config = AirPlayDisplayConfig::new(1280, 720);
+        d.config(&mut config);
+        assert!(config.view_areas.is_none());
+        assert_eq!(config.width_pixels, d.saved.planned_canvas().width);
+        let now = Instant::now();
+        assert_eq!(d.switch_due(now), None);
+        assert_eq!(d.switch_due(now + Duration::from_secs(1)), None);
+        d.disable_view_areas = false;
+        assert!(!d.due(now));
+        assert!(d.due(now + Duration::from_secs(2)));
     }
     #[test]
     fn canvas_and_physical_width_tables() {

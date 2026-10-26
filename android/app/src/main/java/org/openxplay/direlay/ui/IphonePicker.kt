@@ -25,15 +25,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
 import org.openxplay.direlay.bluetooth.BondedDevice
-import org.openxplay.direlay.bluetooth.BondedDevices
 import org.openxplay.direlay.bluetooth.IphoneSelection
+import org.openxplay.direlay.ui.design.*
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun IphonePickerSetting(choice: String?, source: BondedDevices, initiallyOpen: Boolean,
+@Composable fun IphonePickerSetting(choice: String?, source: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, initiallyOpen: Boolean,
     choose: (String?) -> Unit) {
     val context = LocalContext.current
     var visible by rememberSaveable { mutableStateOf(initiallyOpen) }
@@ -41,9 +39,9 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
     var devices by remember { mutableStateOf(emptyList<BondedDevice>()) }
     var localName by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(source, visible, revision) {
-        val snapshot = withContext(Dispatchers.IO) { source.read() to source.localName() }
-        devices = snapshot.first
-        localName = snapshot.second
+        val snapshot = source()
+        devices = snapshot.devices
+        localName = snapshot.localName
     }
     DisposableEffect(context, visible) {
         val registered = visible
@@ -68,13 +66,11 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
         resolved?.let { stringResource(R.string.iphone_automatic_name, it.name?.takeIf(String::isNotBlank) ?: unnamed) }
             ?: stringResource(R.string.iphone_automatic)
     } else devices.firstOrNull { it.address.equals(choice, ignoreCase = true) }?.name?.takeIf(String::isNotBlank) ?: unnamed
-    SettingsRow(stringResource(R.string.iphone_title), stringResource(R.string.iphone_hint),
-        R.drawable.symbol_phone, { visible = true }, trailing = {
-            Text(value, Modifier.widthIn(max = 160.dp), style = MaterialTheme.typography.bodyMedium)
-            Symbol(R.drawable.symbol_chevron, null)
-        })
-    if (visible) ModalBottomSheet(onDismissRequest = { visible = false }) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).padding(horizontal = 16.dp)) {
+    InsetGroup(footer = stringResource(R.string.iphone_hint)) {
+        InsetRow(R.drawable.symbol_phone, IconHue.IPHONE, "iPhone", value, onClick = { visible = true })
+    }
+    if (visible) RelaySheet(onDismiss = { visible = false }) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
             Heading(stringResource(R.string.iphone_choose))
             LazyColumn(Modifier.weight(1f, fill = false).selectableGroup()) {
                 item {
@@ -96,7 +92,7 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
                     }
                 }
             }
-            HorizontalDivider()
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.iphone_pair_new)) }
             Text(stringResource(R.string.iphone_pair_hint, localName ?: stringResource(R.string.direlay_this_device)),
@@ -112,10 +108,10 @@ import org.openxplay.direlay.bluetooth.IphoneSelection
     Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}
         .selectable(selected, role = Role.RadioButton, onClick = select).padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Symbol(icon, null)
+        IconTile(icon, IconHue.IPHONE)
         Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-            Text(name, style = MaterialTheme.typography.bodyLarge)
-            if (labels.isNotEmpty()) Text(labels.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+            Text(name, style = RelayTokens.body)
+            if (labels.isNotEmpty()) Text(labels.joinToString(" · "), style = RelayTokens.footnote,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         RadioButton(selected, onClick = null)

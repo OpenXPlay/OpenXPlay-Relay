@@ -23,8 +23,8 @@ class SavedHeadUnitTest {
     private val canvas = DisplayProfile(1920, 960, 240)
     private val saved get() = SavedHeadUnit(canvas, report, CarPlayResolution.AUTO, true, 36864)
     private fun settings() = RelaySettingsStore(context).load()
-    private fun model() = checkNotNull(CarModels.parse(context.assets.open("car-models.json").bufferedReader().use { it.readText() })
-        .model(CarSelection("xpeng", model = "g6-2023")))
+    private fun year() = checkNotNull(CarModels.parse(context.assets.open("car-models.json").bufferedReader().use { it.readText() })
+        .year(CarSelection("xpeng", model = "g6", year = "g6-2023")))
     private fun store() = SavedHeadUnitStore(preferences)
 
     @Test fun screenWidthPresetsKeepStartupCanvasesAndUseTheirActualPixelWidth() {
@@ -32,9 +32,9 @@ class SavedHeadUnitTest {
         val native = DisplayProfile(2400, 1200, 300)
         for ((preset, declared) in CarPlayScreenWidth.entries.zip(listOf(175, 250, 325, 375))) {
             val next = settings.copy(carplayScreenWidth = preset)
-            for (selected in listOf(startupCarPlayScreen(next, native, saved, model()),
-                startupCarPlayScreen(next, null, saved, null), startupCarPlayScreen(next, null, null, model()),
-                startupCarPlayScreen(next.copy(displayMode = DisplayMode.FIXED, display = native), null, saved, model()))) {
+            for (selected in listOf(startupCarPlayScreen(next, native, saved, year()),
+                startupCarPlayScreen(next, null, saved, null), startupCarPlayScreen(next, null, null, year()),
+                startupCarPlayScreen(next.copy(displayMode = DisplayMode.FIXED, display = native), null, saved, year()))) {
                 val profile = checkNotNull(selected).profile
                 assertEquals(native, profile)
                 assertEquals(declared, physicalWidth(profile, preset))
@@ -51,10 +51,10 @@ class SavedHeadUnitTest {
         store().save(value); assertEquals(value, store().load())
         assertEquals(CarPlayScreen(native, "remembered"), startupCarPlayScreen(settings, null, store().load(), null))
         assertEquals(canvas, startupCarPlayScreen(settings.copy(carplayResolution = CarPlayResolution.AUTO, viewAreas = true), null, value, null)?.profile)
-        assertEquals(native, startupCarPlayScreen(settings, null, null, model())?.profile)
+        assertEquals(native, startupCarPlayScreen(settings, null, null, year())?.profile)
         val limited = checkNotNull(startupCarPlayScreen(settings, null, saved.copy(maxMacroblocks = 3600), null)).profile
         assertEquals(fitDisplay(report.display(), CarPlayResolution.NATIVE, 3600), limited)
-        val areas = planHeadUnitAreas(native.width, native.height, report, emptyList(), model())
+        val areas = planHeadUnitAreas(native.width, native.height, report, emptyList(), year())
         assertEquals(ViewAreaSize(2400, 1200), areas[0])
         assertTrue(areas.size > 2)
         assertTrue(areas.all { it.width <= native.width && it.height <= native.height })
@@ -101,7 +101,7 @@ class SavedHeadUnitTest {
         assertNull(ViewAreaPlanner.match(areas, 1533, 907, display?.fullscreen, display?.preferred))
     }
     @Test fun modelFallbackSuppliesScreenAndBothLibrariesWithResolutionCaps() {
-        val model = model()
+        val model = year()
         val display = planningDisplay(null, null, model)
         assertEquals(screen, display?.screen)
         assertEquals(true, display?.preferred)
@@ -121,25 +121,67 @@ class SavedHeadUnitTest {
         assertEquals(report.copy(screen = screen.copy(width = 2400)), planningDisplay(report.copy(screen = screen.copy(width = 2400)), saved, model))
     }
     @Test fun savedPlanningMergesBuiltInOnlyForExactScreenAndReFitsChangedSettingsWithinDecoderBudget() {
-        val areas = planHeadUnitAreas(1920, 960, report, emptyList(), model())
+        val areas = planHeadUnitAreas(1920, 960, report, emptyList(), year())
         assertTrue(areas.size > 2)
-        assertEquals(2, planHeadUnitAreas(1920, 960, report.copy(screen = screen.copy(densityDpi = 281)), emptyList(), model()).size)
+        assertEquals(2, planHeadUnitAreas(1920, 960, report.copy(screen = screen.copy(densityDpi = 281)), emptyList(), year()).size)
         val limited = saved.copy(maxMacroblocks = 3600)
         val settings = settings().copy(carplayResolution = CarPlayResolution.P720)
-        val selected = checkNotNull(startupCarPlayScreen(settings, null, limited, model()))
+        val selected = checkNotNull(startupCarPlayScreen(settings, null, limited, year()))
         assertEquals(fitDisplay(report.display(), CarPlayResolution.P720, 3600, true), selected.profile)
         assertTrue(CarDisplayFit.macroblocks(selected.profile.width, selected.profile.height) <= 3600)
         val live = DisplayProfile(800, 480, 160)
-        assertEquals(CarPlayScreen(live, "car screen"), startupCarPlayScreen(settings, live, saved, model()))
-        assertEquals(CarPlayScreen(live, "fixed"), startupCarPlayScreen(settings.copy(displayMode = DisplayMode.FIXED, display = live), null, saved, model()))
-        assertNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.RELAY_SCREEN), null, saved, model()))
+        assertEquals(CarPlayScreen(live, "car screen"), startupCarPlayScreen(settings, live, saved, year()))
+        assertEquals(CarPlayScreen(live, "fixed"), startupCarPlayScreen(settings.copy(displayMode = DisplayMode.FIXED, display = live), null, saved, year()))
+        assertNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.RELAY_SCREEN), null, saved, year()))
     }
     @Test fun clearingRemovesBothScreenAndCanvasAndFallsBackToModelOrDefault() {
         store().save(saved); store().clear()
         assertTrue(preferences.all.isEmpty()); assertNull(store().load())
         assertNull(planningDisplay(null, store().load(), null))
         assertEquals(CarPlayScreen(CarDisplayFit.default, "default"), startupCarPlayScreen(settings(), null, store().load(), null))
-        assertEquals("built-in model", startupCarPlayScreen(settings(), null, store().load(), model())?.source)
+        assertEquals("built-in model", startupCarPlayScreen(settings(), null, store().load(), year())?.source)
         store().save(saved); assertEquals(saved, store().load())
+    }
+    @Test fun legacyCarRecordsMatchMigratedSelectionsAndRewriteOnSave() {
+        val legacy = CarSelection("xpeng", model = "g6-2023")
+        val current = CarSelection("xpeng", model = "g6", year = "g6-2023")
+        val value = saved.copy(car = legacy)
+        assertEquals(value, savedHeadUnitForCar(value, current))
+        assertEquals(saved.copy(car = current), savedHeadUnitForCar(saved.copy(car = current), legacy))
+        store().save(saved)
+        preferences.edit().putString("carBrand", "xpeng").putString("carModel", "g6-2023").remove("carYear").remove("carYearText").apply()
+        val loaded = checkNotNull(store().load())
+        assertEquals(current, loaded.car)
+        assertEquals(loaded, savedHeadUnitForCar(loaded, current))
+        assertNull(savedHeadUnitForCar(loaded, current.copy(year = "g6-2024")))
+        assertNull(savedHeadUnitForCar(loaded, current.copy(year = "")))
+        store().save(value)
+        assertEquals("g6", preferences.getString("carModel", null))
+        assertEquals("g6-2023", preferences.getString("carYear", null))
+        val custom = CarSelection("other", "Brand", "other", "Model", "other", "Year")
+        store().save(saved.copy(car = custom)); assertEquals(custom, store().load()?.car)
+        assertEquals("Year", preferences.getString("carYearText", null))
+        store().save(saved)
+        assertFalse(preferences.contains("carYear")); assertFalse(preferences.contains("carYearText"))
+    }
+    @Test fun noSelectedYearNeverUsesBuiltInScreenData() {
+        val catalog = CarModels.parse(context.assets.open("car-models.json").bufferedReader().use { it.readText() })
+        val year = catalog.year(CarSelection("xpeng", model = "g6"))
+        assertNull(year)
+        assertNull(planningDisplay(null, null, year))
+        assertEquals("default", startupCarPlayScreen(settings(), null, null, year)?.source)
+        assertEquals(WirelessPictureSource.DEFAULT, WirelessPicturePolicy.resolve(settings(), null, year).source)
+        assertEquals(1, planHeadUnitAreas(1920, 960, null, emptyList(), year).size)
+    }
+    @Test fun rememberedScreensBelongToTheirCarConfiguration() {
+        val car = CarSelection("tesla", model = "model-y", year = "model-y-2025")
+        val value = saved.copy(car = car)
+        store().save(value)
+        assertEquals(value, store().load())
+        assertEquals(value, savedHeadUnitForCar(store().load(), car))
+        assertNull(savedHeadUnitForCar(store().load(), CarSelection()))
+        assertNull(savedHeadUnitForCar(null, car))
+        assertNull(savedHeadUnitForCar(saved, car))
+        assertEquals(saved, savedHeadUnitForCar(saved, CarSelection()))
     }
 }
