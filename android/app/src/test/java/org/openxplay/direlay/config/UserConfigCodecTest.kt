@@ -405,7 +405,7 @@ class UserConfigCodecTest {
             assertEquals(setOf("active", "rememberSubscription", "keepScanning", "recordAdvertisements", "sendBluetoothAddress", "bluetoothAddress",
                 "isolateCarlinkNetwork", "waitForCarlink", "recoverWirelessNetwork"),
                 json.keys().asSequence().toSet())
-            val result = UserConfigCodec.decode(text, base)
+            val result = UserConfigCodec.decode(text, base.copy(experimental = ExperimentalOptions.OFF))
             assertTrue(result.errors.toString(), result.errors.isEmpty())
             assertEquals(chosen, result.settings)
             assertTrue(result.ignoredKeys.isEmpty())

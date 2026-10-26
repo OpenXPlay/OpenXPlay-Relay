@@ -420,17 +420,17 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         edit.apply()
     }
 
-    private fun loadExperimentalOptions() = ExperimentalOptions(
-        active = relay.getBoolean("experimental.active", false),
-        rememberSubscription = relay.getBoolean("experimental.rememberSubscription", false),
-        keepScanning = relay.getBoolean("experimental.keepScanning", false),
-        recordAdvertisements = relay.getBoolean("experimental.recordAdvertisements", false),
-        sendBluetoothAddress = relay.getBoolean("experimental.sendBluetoothAddress", false),
-        bluetoothAddress = relay.getString("experimental.bluetoothAddress", "").orEmpty(),
-        isolateCarlinkNetwork = relay.getBoolean("experimental.isolateCarlinkNetwork", false),
-        waitForCarlink = relay.getBoolean("experimental.waitForCarlink", false),
-        recoverWirelessNetwork = relay.getBoolean("experimental.recoverWirelessNetwork", false),
-    )
+    private fun loadExperimentalOptions() = ExperimentalOptions().let { defaults -> ExperimentalOptions(
+        active = relay.getBoolean("experimental.active", defaults.active),
+        rememberSubscription = relay.getBoolean("experimental.rememberSubscription", defaults.rememberSubscription),
+        keepScanning = relay.getBoolean("experimental.keepScanning", defaults.keepScanning),
+        recordAdvertisements = relay.getBoolean("experimental.recordAdvertisements", defaults.recordAdvertisements),
+        sendBluetoothAddress = relay.getBoolean("experimental.sendBluetoothAddress", defaults.sendBluetoothAddress),
+        bluetoothAddress = relay.getString("experimental.bluetoothAddress", defaults.bluetoothAddress).orEmpty(),
+        isolateCarlinkNetwork = relay.getBoolean("experimental.isolateCarlinkNetwork", defaults.isolateCarlinkNetwork),
+        waitForCarlink = relay.getBoolean("experimental.waitForCarlink", defaults.waitForCarlink),
+        recoverWirelessNetwork = relay.getBoolean("experimental.recoverWirelessNetwork", defaults.recoverWirelessNetwork),
+    ) }
 
     private fun writeExperimentalOptions(edit: android.content.SharedPreferences.Editor, value: ExperimentalOptions) {
         edit.putBoolean("experimental.active", value.active)

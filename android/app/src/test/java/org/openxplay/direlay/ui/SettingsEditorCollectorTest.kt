@@ -143,9 +143,9 @@ class SettingsEditorCollectorTest {
             state.collectChanges({ true }) { _, after -> published.add(after); true }
         }
         try {
-            state.changeExperimental { it.copy(keepScanning = true) }
+            state.changeExperimental { it.copy(active = false, keepScanning = false) }
             awaitPublications(published, 1)
-            assertTrue(published.last().experimental.keepScanning)
+            assertFalse(published.last().experimental.keepScanning)
             assertFalse(published.last().experimental.active)
             state.changeExperimental { it.copy(active = true, sendBluetoothAddress = true, bluetoothAddress = "bad") }
             flushSnapshots()

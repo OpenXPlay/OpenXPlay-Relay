@@ -359,7 +359,7 @@ import org.openxplay.direlay.ui.design.*
     }
 }
 
-@Composable private fun ChoiceBadge(text: String, modifier: Modifier = Modifier, warning: Boolean = false) {
+@Composable fun ChoiceBadge(text: String, modifier: Modifier = Modifier, warning: Boolean = false) {
     val color = if (warning) LocalStatusColors.current.action else MaterialTheme.colorScheme.primary
     Surface(modifier, shape = RelayTokens.chip, color = color.copy(alpha = .14f), contentColor = color) {
         Text(text, Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = RelayTokens.caption)
@@ -380,19 +380,20 @@ import org.openxplay.direlay.ui.design.*
             if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10), order = 1,
             extra = { NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) { choose(OutputChoice.CARLINK, kind) }
         ChoiceCard(stringResource(R.string.wireless_display), stringResource(R.string.setup_wireless_display_hint), R.drawable.symbol_cast, IconHue.CAR,
-            selected == OutputChoice.WIRELESS, setupOutputTag(OutputChoice.WIRELESS), order = 2,
+            selected == OutputChoice.WIRELESS, setupOutputTag(OutputChoice.WIRELESS), outputOpen(OutputChoice.WIRELESS), order = 2,
             extra = {
                 Column(Modifier.selectableGroup()) {
                     WirelessDisplayKind.entries.forEach { option ->
                         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                            .selectable(kind == option, role = Role.RadioButton, onClick = { choose(OutputChoice.WIRELESS, option) })
+                            .selectable(kind == option, enabled = outputOpen(OutputChoice.WIRELESS), role = Role.RadioButton,
+                                onClick = { choose(OutputChoice.WIRELESS, option) })
                             .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(if (option == WirelessDisplayKind.DLNA) "DLNA" else "Miracast", style = RelayTokens.headline)
                                 Hint(stringResource(if (option == WirelessDisplayKind.DLNA) R.string.setup_dlna_hint else R.string.setup_miracast_hint))
                             }
-                            RadioButton(kind == option, onClick = null)
+                            RadioButton(kind == option, onClick = null, enabled = outputOpen(OutputChoice.WIRELESS))
                         }
                     }
                 }

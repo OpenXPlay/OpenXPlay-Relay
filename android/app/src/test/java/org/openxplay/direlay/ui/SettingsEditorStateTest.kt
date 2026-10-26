@@ -117,7 +117,7 @@ class SettingsEditorStateTest {
         assertTrue(state.errorPages { false }.isEmpty())
         assertTrue(state.draft.value.experimental.keepScanning)
         assertTrue(state.draft.value.experimental.sendBluetoothAddress)
-        assertEquals(ExperimentalOptions(), state.draft.value.experimental.effective())
+        assertEquals(ExperimentalOptions.OFF, state.draft.value.experimental.effective())
         state.changeExperimental { it.copy(active = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5") }
         assertTrue(state.errorPages { false }.isEmpty())
         assertNull(settingsFeedback(initial, state.draft.value, carlinkConnected = true, running = true))

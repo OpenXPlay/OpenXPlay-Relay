@@ -12,7 +12,7 @@ class BleScanPolicyTest {
         val policy = BleScanPolicy.forAttempt(false)
         assertEquals(8L, policy.timeoutSeconds)
         assertNull(policy.restartMs)
-        val disabled = ExperimentalOptions(keepScanning = true).effective()
+        val disabled = ExperimentalOptions(active = false, keepScanning = true).effective()
         assertEquals(policy, BleScanPolicy.forAttempt(disabled.keepScanning))
     }
 

@@ -215,8 +215,9 @@ class SetupPresentationTest {
     }
 
     @Test fun choicesHaveAtMostOneTagAndOnlyRecommendationsUseThePrimaryHue() {
-        assertEquals(listOf(SetupChoiceTag.RECOMMENDED, SetupChoiceTag.EXPERIMENTAL, SetupChoiceTag.PICTURE_ONLY),
+        assertEquals(listOf(SetupChoiceTag.RECOMMENDED, SetupChoiceTag.EXPERIMENTAL, SetupChoiceTag.COMING_SOON),
             OutputChoice.entries.map(::setupOutputTag))
+        assertEquals(listOf(true, true, false), OutputChoice.entries.map(::outputOpen))
         assertEquals(SetupChoiceTag.RECOMMENDED, setupConnectionTag(settings, true))
         assertEquals(SetupChoiceTag.NOT_RECOMMENDED, setupConnectionTag(settings, false))
         SetupChoiceTag.entries.forEach { assertEquals(it != SetupChoiceTag.RECOMMENDED, it.warning) }

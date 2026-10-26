@@ -142,10 +142,11 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                             RadioOptionRow(option, selected == choice, extra = when {
                                 choice == OutputChoice.CARLINK -> ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) })
                                 choice == OutputChoice.WIRELESS && selected == choice -> ({
-                                    Options(listOf("DLNA", "Miracast"), kind.ordinal) { selectOutput(choice, WirelessDisplayKind.entries[it]) }
+                                    Options(listOf("DLNA", "Miracast"), kind.ordinal, outputOpen(choice)) { selectOutput(choice, WirelessDisplayKind.entries[it]) }
                                 })
                                 else -> null
-                            }) { selectOutput(choice, kind) }
+                            }, enabled = outputOpen(choice),
+                                badge = setupOutputTag(choice).takeUnless { outputOpen(choice) }) { selectOutput(choice, kind) }
                         }
                     }
                     if (selected == null) InsetRow(R.drawable.symbol_link, IconHue.DEVELOPER,
@@ -343,7 +344,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
 }
 @Composable fun RadioOptionRow(option: RadioOption, selected: Boolean, extra: @Composable (() -> Unit)? = null,
-    enabled: Boolean = true, supportingText: String? = null, select: () -> Unit) {
+    enabled: Boolean = true, supportingText: String? = null, badge: SetupChoiceTag? = null, select: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
         .clip(RelayTokens.group).background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .14f) else MaterialTheme.colorScheme.surface)
         .selectable(enabled = enabled, selected = selected, role = Role.RadioButton, onClick = select).padding(vertical = 12.dp, horizontal = 4.dp),
@@ -351,7 +352,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         verticalAlignment = if (extra == null) Alignment.CenterVertically else Alignment.Top) {
         RadioButton(selected = selected, enabled = enabled, onClick = null, modifier = Modifier.padding(horizontal = 12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(option.title), style = RelayTokens.headline)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(option.title), style = RelayTokens.headline)
+                badge?.let { ChoiceBadge(stringResource(it.label), warning = it.warning) }
+            }
             val supporting = supportingText ?: stringResource(option.supporting)
             if (supporting.isNotEmpty()) Text(supporting, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
