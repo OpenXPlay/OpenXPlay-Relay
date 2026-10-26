@@ -315,7 +315,11 @@ class PathPresenterTest {
         assertEquals(StepText.raw("Authentication accepted"), auth.step(IPHONE_AUTH).evidence)
         assertEquals(StepText.of(R.string.path_iphone_joining_wifi, "OpenXPlay"), phone(LinkStep.JOINING).step(IPHONE_WIFI).detail)
         assertEquals(StepText.of(R.string.path_iphone_joining_wifi, "Wi-Fi Direct"), phone(LinkStep.WIFI_SENT,
-            ready.copy(relay = ready.relay.copy(hotspotSsid = null))).step(IPHONE_WIFI).detail)
+            ready.copy(setup = ready.setup.copy(network = NetworkPlan.WIFI_DIRECT))).step(IPHONE_WIFI).detail)
+        val carHotspot = ready.copy(setup = ready.setup.copy(network = NetworkPlan.SHARED_WIFI))
+        assertEquals(StepText.of(R.string.path_iphone_joining_wifi, "Home"), phone(LinkStep.JOINING, carHotspot).step(IPHONE_WIFI).detail)
+        assertEquals(StepText.of(R.string.path_iphone_joining_car_hotspot), phone(LinkStep.JOINING,
+            carHotspot.copy(relay = carHotspot.relay.copy(sharedWifiSsid = null))).step(IPHONE_WIFI).detail)
         assertEquals(WAITING, phone(LinkStep.ENDED).step(SESSION).state)
         assertEquals(StepText.of(R.string.path_reconnecting), phone(LinkStep.ENDED).step(SESSION).detail)
         assertFalse(path(ready.copy(iphone = ready.iphone.copy(step = LinkStep.ENDED))).running)

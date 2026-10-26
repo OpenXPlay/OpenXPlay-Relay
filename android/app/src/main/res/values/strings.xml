@@ -74,13 +74,13 @@
     <string name="direlay_carlink_confirm_hint">The head unit requests confirmation to replace its saved peer. Approve pairing with %1$s?</string>
     <string name="direlay_wifi_direct">Wi-Fi Direct</string>
     <string name="direlay_car_hotspot">This phone\'s hotspot</string>
-    <string name="direlay_existing_wifi">Shared Wi-Fi</string>
+    <string name="direlay_existing_wifi">Use the car\'s hotspot</string>
     <string name="direlay_car_hotspot_hint">Use the same name and password as in Android\'s hotspot settings.</string>
     <string name="hotspot_5ghz_hint">Use the 5 GHz band: change it in Android\'s hotspot settings, because the picture often stutters on 2.4 GHz. If the head unit cannot join a 5 GHz hotspot, switch back to 2.4 GHz. Some phones offer only 2.4 GHz while connected to Wi-Fi; disconnect Wi-Fi first.</string>
-    <string name="direlay_existing_wifi_hint">This phone must already be connected to this Wi-Fi. The router must allow devices to reach each other.</string>
+    <string name="direlay_existing_wifi_hint">This phone must already be connected to the car\'s hotspot. The hotspot must allow devices to reach each other.</string>
     <string name="direlay_network_ssid">Wi-Fi name</string>
     <string name="direlay_network_passphrase">Wi-Fi password</string>
-    <string name="direlay_hotspot_band">Car-hotspot band</string>
+    <string name="direlay_hotspot_band">Hotspot band</string>
     <string name="direlay_band_auto">Automatic</string>
     <string name="direlay_band_24">2.4 GHz</string>
     <string name="direlay_band_5">5 GHz</string>
@@ -278,7 +278,7 @@
     <string name="usb_confirm_keep">Keep wireless</string>
     <string name="option_direct_hint">The iPhone connects straight to this phone. The car screen uses this phone\'s normal Wi-Fi, for example the car\'s hotspot.</string>
     <string name="option_hotspot_hint">Turn on this phone\'s hotspot. The iPhone and the car screen both join it.</string>
-    <string name="option_wifi_hint">The iPhone, this phone and the car screen join the same Wi-Fi, such as the car\'s hotspot or a travel router.</string>
+    <string name="option_wifi_hint">The iPhone and this phone both join the car\'s hotspot.</string>
     <string name="settings_restart">Restart now</string>
     <string name="about_project">Project website</string>
     <string name="about_source">Source code</string>
@@ -340,7 +340,7 @@
     <string name="network_hotspot">Hotspot</string>
     <string name="network_direct_description">iPhone connects to this phone over Wi-Fi Direct; the car connects to this phone over Wi-Fi.</string>
     <string name="network_hotspot_description">iPhone and the car connect to this phone\'s hotspot.</string>
-    <string name="network_wifi_description">iPhone, this phone and the car connect to the same Wi-Fi router.</string>
+    <string name="network_wifi_description">iPhone and this phone connect to the car\'s hotspot.</string>
     <string name="settings_hotspot_name_error">Enter a hotspot name of 1–32 UTF-8 bytes.</string>
     <string name="settings_hotspot_password_error">Use no password for an open hotspot, or enter 8–63 characters.</string>
 
@@ -391,7 +391,7 @@
     <string name="shared_wifi_hide">Hide password</string>
     <string name="shared_wifi_cancel">Cancel</string>
     <string name="shared_wifi_save">Save</string>
-    <string name="shared_wifi_empty">Save at least one Wi-Fi network.</string>
+    <string name="shared_wifi_empty">Save at least one car hotspot.</string>
     <string name="app_name">OpenXPlay Relay</string>
     <string name="relay_brand_first">OpenXPlay</string>
     <string name="relay_brand_second">Relay</string>
@@ -428,7 +428,7 @@
     <string name="setup_check_identity">Import the CarPlay identity</string>
     <string name="setup_check_identity_hint">Select identity.pk8 and certificate.p7b together or one after the other, in any order, or a ZIP containing them.</string>
     <string name="setup_check_settings">Check the settings</string>
-    <string name="setup_check_shared_wifi">Save the shared Wi-Fi</string>
+    <string name="setup_check_shared_wifi">Save the car\'s hotspot</string>
     <string name="setup_check_iphone">Pair the iPhone</string>
     <string name="setup_check_done">Done</string>
     <string name="setup_start_title">Ready to start</string>
@@ -680,7 +680,7 @@
     <string name="tesla_needs_browser">A Tesla shows CarPlay in its browser: choose Car browser in Settings → Output.</string>
     <string name="tesla_open_output">Open Output</string>
     <string name="tesla_needs_wireless">Tesla adaptation needs wireless CarPlay: the USB connection already uses Android’s only VPN.</string>
-    <string name="tesla_needs_phone_network">Tesla adaptation needs this phone’s hotspot or Wi-Fi Direct. A shared Wi-Fi router does not pass the address to this phone.</string>
+    <string name="tesla_needs_phone_network">Tesla adaptation needs this phone’s hotspot or Wi-Fi Direct. The car’s hotspot does not pass the address to this phone.</string>
     <string name="tesla_needs_name">Set up Trusted HTTPS first.</string>
     <string name="tesla_open_name">Open Trusted HTTPS</string>
     <string name="tesla_address_failed">The Tesla address could not be added: %1$s</string>

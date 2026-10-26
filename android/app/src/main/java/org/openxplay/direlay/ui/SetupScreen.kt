@@ -430,7 +430,7 @@ import org.openxplay.direlay.ui.design.*
             ChoiceCard(stringResource(setupNetworkLabel(choice)), stringResource(networkOption(choice).supporting), when (choice) {
                 WirelessNetworkChoice.WIFI_DIRECT -> R.drawable.symbol_link
                 WirelessNetworkChoice.PHONE_HOTSPOT -> R.drawable.symbol_hotspot
-                WirelessNetworkChoice.EXISTING_WIFI -> R.drawable.symbol_router
+                WirelessNetworkChoice.EXISTING_WIFI -> R.drawable.symbol_car_front
             }, IconHue.NETWORK, selected == choice, setupNetworkTag(draft, choice),
                 allowed, if (allowed) null else stringResource(if (draft.miracastOutput && !draft.carlinkOutput)
                     R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint),

@@ -52,10 +52,10 @@
     <string name="direlay_carlink_confirm_hint">车机请求替换已保存的配对设备。是否批准与 %1$s 配对？</string>
     <string name="direlay_wifi_direct">Wi-Fi 直连</string>
     <string name="direlay_car_hotspot">此手机的热点</string>
-    <string name="direlay_existing_wifi">共用 Wi-Fi</string>
+    <string name="direlay_existing_wifi">使用车机热点</string>
     <string name="direlay_network_ssid">Wi-Fi 名称</string>
     <string name="direlay_network_passphrase">Wi-Fi 密码</string>
-    <string name="direlay_hotspot_band">车机热点频段</string>
+    <string name="direlay_hotspot_band">热点频段</string>
     <string name="direlay_band_auto">自动</string>
     <string name="direlay_band_24">2.4 GHz</string>
     <string name="direlay_band_5">5 GHz</string>
@@ -247,7 +247,7 @@
     <string name="usb_confirm_keep">继续用无线</string>
     <string name="option_direct_hint">iPhone 直接连接此手机；车机屏幕通过此手机的普通 Wi-Fi 连接，例如车机热点。</string>
     <string name="option_hotspot_hint">打开此手机的个人热点，iPhone 和车机屏幕都连接到它。</string>
-    <string name="option_wifi_hint">iPhone、此手机和车机屏幕连接同一个 Wi-Fi，例如车机热点或随身 Wi-Fi。</string>
+    <string name="option_wifi_hint">iPhone 和此手机都连接车机的热点。</string>
     <string name="settings_restart">立即重启</string>
     <string name="about_project">项目网站</string>
     <string name="about_source">源代码</string>
@@ -321,7 +321,7 @@
     <string name="dev_screen_relay">%1$s（本机屏幕）</string>
     <string name="direlay_car_hotspot_hint">填写与 Android 热点设置中相同的名称和密码。</string>
     <string name="hotspot_5ghz_hint">建议使用 5 GHz 频段：在 Android 热点设置中把频段改为 5 GHz，2.4 GHz 下画面容易卡顿。车机连不上 5 GHz 热点时再改回 2.4 GHz。部分手机连着 Wi-Fi 时只能开 2.4 GHz 热点，请先断开 Wi-Fi。</string>
-    <string name="direlay_existing_wifi_hint">此手机需要已连接到这个 Wi-Fi，且路由器允许设备之间互相访问。</string>
+    <string name="direlay_existing_wifi_hint">此手机需要已连接到车机热点，且车机热点允许设备之间互相访问。</string>
     <string name="settings_hotspot_name">热点名称</string>
     <string name="settings_hotspot_password">热点密码</string>
     <string name="settings_open_hotspot">打开热点设置</string>
@@ -334,7 +334,7 @@
     <string name="network_hotspot">热点</string>
     <string name="network_direct_description">iPhone 通过 Wi-Fi 直连连接此手机；车机通过 Wi-Fi 连接此手机。</string>
     <string name="network_hotspot_description">iPhone 和车机都连接此手机的热点。</string>
-    <string name="network_wifi_description">iPhone、此手机和车机都连接同一个 Wi-Fi 路由器。</string>
+    <string name="network_wifi_description">iPhone 和此手机都连接车机的热点。</string>
     <string name="settings_hotspot_name_error">请输入占 1–32 个 UTF-8 字节的热点名称。</string>
     <string name="settings_hotspot_password_error">开放热点无需密码，其他热点请输入 8–63 个字符。</string>
 
@@ -385,7 +385,7 @@
     <string name="shared_wifi_hide">隐藏密码</string>
     <string name="shared_wifi_cancel">取消</string>
     <string name="shared_wifi_save">保存</string>
-    <string name="shared_wifi_empty">请至少保存一个 Wi-Fi 网络。</string>
+    <string name="shared_wifi_empty">请至少保存一个车机热点。</string>
     <string name="app_name">OpenXPlay Relay</string>
     <string name="relay_brand_first">OpenXPlay</string>
     <string name="relay_brand_second">Relay</string>
@@ -422,7 +422,7 @@
     <string name="setup_check_identity">导入 CarPlay 身份</string>
     <string name="setup_check_identity_hint">选择 identity.pk8 和 certificate.p7b，可同时选择或先后选择，顺序不限；也可选择包含它们的 ZIP。</string>
     <string name="setup_check_settings">检查设置</string>
-    <string name="setup_check_shared_wifi">保存共享 Wi-Fi</string>
+    <string name="setup_check_shared_wifi">保存车机热点</string>
     <string name="setup_check_iphone">配对 iPhone</string>
     <string name="setup_check_done">已完成</string>
     <string name="setup_start_title">准备开启</string>
@@ -671,7 +671,7 @@
     <string name="tesla_needs_browser">特斯拉通过浏览器显示 CarPlay：请在「设置 → 输出」中选择车载浏览器。</string>
     <string name="tesla_open_output">打开输出设置</string>
     <string name="tesla_needs_wireless">特斯拉适配需要使用无线 CarPlay：USB 连接已经占用了 Android 唯一的 VPN。</string>
-    <string name="tesla_needs_phone_network">特斯拉适配需要使用本机热点或 Wi-Fi 直连。共享 Wi-Fi 路由器不会把这个地址转给这台手机。</string>
+    <string name="tesla_needs_phone_network">特斯拉适配需要使用本机热点或 Wi-Fi 直连。车机热点不会把这个地址转给这台手机。</string>
     <string name="tesla_needs_name">请先设置可信 HTTPS。</string>
     <string name="tesla_open_name">打开可信 HTTPS</string>
     <string name="tesla_address_failed">无法添加特斯拉访问地址：%1$s</string>

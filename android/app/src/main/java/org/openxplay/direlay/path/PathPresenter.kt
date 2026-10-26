@@ -382,8 +382,12 @@ private fun PathInput.iphoneBluetoothStep() = linkProgress(IPHONE_BLUETOOTH,
     else text(R.string.path_connecting_iphone, iphone.name.orEmpty()))
 
 private fun PathInput.iphoneAuthStep() = linkProgress(IPHONE_AUTH, WORKING, evidence = raw(iphone.stepDetail))
-private fun PathInput.iphoneWifiStep() = linkProgress(IPHONE_WIFI, WORKING,
-    text(R.string.path_iphone_joining_wifi, relay.hotspotSsid ?: "Wi-Fi Direct"))
+private fun PathInput.iphoneWifiStep() = linkProgress(IPHONE_WIFI, WORKING, when (setup.network) {
+    NetworkPlan.PHONE_HOTSPOT -> text(R.string.path_iphone_joining_wifi, relay.hotspotSsid.orEmpty())
+    NetworkPlan.SHARED_WIFI -> relay.sharedWifiSsid?.let { text(R.string.path_iphone_joining_wifi, it) }
+        ?: text(R.string.path_iphone_joining_car_hotspot)
+    else -> text(R.string.path_iphone_joining_wifi, "Wi-Fi Direct")
+})
 private fun PathInput.usbIphoneStep() = linkProgress(USB_IPHONE,
     if (iphone.step == LinkStep.USB_PERMISSION) ACTION else WAITING,
     text(if (iphone.step == LinkStep.USB_PERMISSION) R.string.path_allow_usb else R.string.path_plug_unlock_iphone))

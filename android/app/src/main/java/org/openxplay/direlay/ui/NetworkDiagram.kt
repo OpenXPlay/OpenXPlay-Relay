@@ -33,17 +33,20 @@ fun networkDescription(choice: WirelessNetworkChoice): Int = when (choice) {
     val color = if (active) iconHue(IconHue.NETWORK) else MaterialTheme.colorScheme.onSurfaceVariant
     val track = MaterialTheme.colorScheme.outlineVariant
     val scale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+    // On the car's hotspot the car is the hub above the iPhone and this phone.
     val hub = choice == WirelessNetworkChoice.EXISTING_WIFI
     val motion = LocalRelayMotion.current
     val phase = rememberRelayPhase(active, choice, periodMillis = 1600, durationMillis = 3200)
-    BoxWithConstraints(Modifier.fillMaxWidth().height((if (hub) 174.dp else 140.dp) * scale)
+    val fractions = if (hub) listOf(.3f, .7f) else listOf(.16f, .5f, .84f)
+    BoxWithConstraints(Modifier.fillMaxWidth().height((if (hub) 184.dp else 140.dp) * scale)
         .clearAndSetSemantics { contentDescription = description }) {
         // Captions yield to icons before text could collide, including at 200% font scale.
         val captions = maxWidth.value / scale >= 240f
-        val y = if (hub) 100.dp * scale else 64.dp * scale
+        val y = if (hub) 110.dp * scale else 64.dp * scale
+        val hubTop = 12.dp * scale
         Canvas(Modifier.fillMaxSize()) {
-            val centers = listOf(.16f, .5f, .84f).map { Offset(size.width * it, y.toPx()) }
-            val pairs = if (hub) centers.map { Offset(size.width / 2, (22.dp * scale).toPx()) to it }
+            val centers = fractions.map { Offset(size.width * it, y.toPx()) }
+            val pairs = if (hub) centers.map { it to Offset(size.width / 2, (hubTop + 20.dp).toPx()) }
                 else if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
                     listOf(centers[0] to centers[1], centers[2] to centers[1])
                 else listOf(centers[0] to centers[1], centers[1] to centers[2])
@@ -54,7 +57,7 @@ fun networkDescription(choice: WirelessNetworkChoice): Int = when (choice) {
                 val end = to - unit * 25.dp.toPx()
                 drawLine(track, start, end, 4.dp.toPx(), StrokeCap.Round)
                 drawLine(color, start, end, 2.dp.toPx(), StrokeCap.Round)
-                if (choice == WirelessNetworkChoice.PHONE_HOTSPOT) {
+                if (hub || choice == WirelessNetworkChoice.PHONE_HOTSPOT) {
                     val normal = Offset(-unit.y, unit.x)
                     drawLine(color, end, end - unit * 5.dp.toPx() + normal * 3.dp.toPx(), 1.5.dp.toPx(), StrokeCap.Round)
                     drawLine(color, end, end - unit * 5.dp.toPx() - normal * 3.dp.toPx(), 1.5.dp.toPx(), StrokeCap.Round)
@@ -71,14 +74,14 @@ fun networkDescription(choice: WirelessNetworkChoice): Int = when (choice) {
             }
         }
         if (hub) {
-            // The hub caption sits beside the router so the links leaving it downwards never cross it.
-            DiagramNode(R.drawable.symbol_router, R.string.network_wifi, IconHue.NETWORK, false, false,
-                Modifier.absoluteOffset(x = maxWidth * .34f, y = 0.dp).width(maxWidth * .32f))
-            if (captions) Text(stringResource(R.string.network_wifi),
-                Modifier.absoluteOffset(x = maxWidth * .5f + 28.dp, y = 10.dp * scale),
-                style = RelayTokens.caption, maxLines = 1, color = color)
+            // The car's caption sits beside it, clear of its hotspot badge, so the links arriving from below never cross it.
+            DiagramNode(R.drawable.symbol_car_front, R.string.network_car, IconHue.CAR, true, false,
+                Modifier.absoluteOffset(x = maxWidth * .34f, y = hubTop).width(maxWidth * .32f))
+            if (captions) Text(stringResource(R.string.network_car),
+                Modifier.absoluteOffset(x = maxWidth * .5f + 36.dp, y = hubTop + 10.dp),
+                style = RelayTokens.caption, maxLines = 1)
         }
-        listOf(.16f, .5f, .84f).forEachIndexed { index, fraction ->
+        fractions.forEachIndexed { index, fraction ->
             DiagramNode(if (index == 2) R.drawable.symbol_car_front else R.drawable.symbol_smartphone,
                 when (index) { 0 -> R.string.network_iphone; 1 -> R.string.network_this_phone; else -> R.string.network_car },
                 when (index) { 0 -> IconHue.IPHONE; 1 -> IconHue.NETWORK; else -> IconHue.CAR },

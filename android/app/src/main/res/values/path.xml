@@ -10,7 +10,7 @@
     <string name="path_bluetooth">Bluetooth</string>
     <string name="path_wifi">Wi-Fi</string>
     <string name="path_hotspot">Hotspot</string>
-    <string name="path_shared_wifi">Shared Wi-Fi</string>
+    <string name="path_shared_wifi">Car\'s hotspot</string>
     <string name="path_car_network">Car network</string>
     <string name="path_web_server">Web server</string>
     <string name="path_car_page">Open on the car</string>
@@ -49,7 +49,7 @@
     <string name="path_radio_unknown">Can\'t read it; make sure it\'s on</string>
     <string name="path_turn_on_wifi">Turn on Wi-Fi</string>
     <string name="path_turn_on_hotspot">Turn on the hotspot %1$s</string>
-    <string name="path_join_shared_wifi">Join a saved Wi-Fi</string>
+    <string name="path_join_shared_wifi">Join the car\'s hotspot</string>
     <string name="path_car_network_wait">Waiting for a network the car can reach</string>
     <string name="path_starting">Starting</string>
     <string name="path_port_busy">Port %1$s is in use</string>
@@ -85,6 +85,7 @@
     <string name="path_iphone_near">Keep the iPhone near and unlocked</string>
     <string name="path_connecting_iphone">Connecting to %1$s</string>
     <string name="path_iphone_joining_wifi">Waiting for the iPhone to join %1$s</string>
+    <string name="path_iphone_joining_car_hotspot">Waiting for the iPhone to join the car\'s hotspot</string>
     <string name="path_iphone_did_not_join">The iPhone didn\'t join; check the hotspot password</string>
     <string name="path_plug_unlock_iphone">Plug in and unlock the iPhone</string>
     <string name="path_allow_usb">Allow USB access on this phone</string>
