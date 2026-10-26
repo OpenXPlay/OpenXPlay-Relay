@@ -744,7 +744,8 @@ class RelaySettingsTest {
             store.save(initial.copy(autoStartOnBoot = !initial.autoStartOnBoot))
             assertTrue(prefs.all.keys.none { it.startsWith("experimental.") })
             val choices = ExperimentalOptions(active = false, rememberSubscription = true, keepScanning = true,
-                recordAdvertisements = true, sendBluetoothAddress = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
+                recordAdvertisements = true, sendBluetoothAddress = true,
+                isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
             store.save(store.load().copy(experimental = choices))
             RelaySettingsStore(context).use { assertEquals(choices, it.load().experimental) }
             assertEquals(false, prefs.getBoolean("experimental.active", true))
@@ -752,6 +753,9 @@ class RelaySettingsTest {
             assertEquals(true, prefs.getBoolean("experimental.keepScanning", false))
             assertEquals(true, prefs.getBoolean("experimental.recordAdvertisements", false))
             assertEquals(true, prefs.getBoolean("experimental.sendBluetoothAddress", false))
+            assertEquals(true, prefs.getBoolean("experimental.isolateCarlinkNetwork", false))
+            assertEquals(true, prefs.getBoolean("experimental.waitForCarlink", false))
+            assertEquals(true, prefs.getBoolean("experimental.recoverWirelessNetwork", false))
             assertEquals(choices.bluetoothAddress, prefs.getString("experimental.bluetoothAddress", null))
             val writes = mutableListOf<String>()
             val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key -> key?.let(writes::add) }

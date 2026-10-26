@@ -662,7 +662,7 @@ class RelayRuntime(private val context: Context,
 
     private var carlinkLink: ClinkLink? = null
     @Volatile private var carlinkEnded = false
-    private var carlinkRetiring = false
+    @Volatile private var carlinkRetiring = false
     @Volatile private var carlinkRestartPending = false
     private val carlinkResizePolicy = CarlinkResizePolicy()
 
@@ -676,7 +676,9 @@ class RelayRuntime(private val context: Context,
     val tlsStore = TlsStore(context.noBackupFilesDir) { refreshWebTls(); adminService.restartTls() }
     private val sessionController = RelaySessionActions(context.applicationContext, this)
     val sessionActions: RelayActions get() = sessionController
-    val carWaitUntilMillis get() = sessionController.carFirst.untilMillis
+    val carWaitUntilMillis get() = sessionController.carlinkFirst.untilMillis ?: sessionController.carFirst.untilMillis
+    val carlinkReadyForCarPlay: Boolean get() = carlinkState == ClinkState.PLAYING.name &&
+        !carlinkRetiring && !carlinkRestartPending && !carlinkEnded
     private val pathVideoStats = VideoStats()
     @Synchronized internal fun pathVideoSnapshot(): VideoStatsSnapshot? {
         val settings = settingsStore.snapshot.value ?: return null
