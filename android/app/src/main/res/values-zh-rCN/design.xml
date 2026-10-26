@@ -78,7 +78,7 @@
     <string name="design_step_bluetooth">蓝牙</string>
     <string name="design_step_wifi">Wi-Fi</string>
     <string name="design_step_hotspot">热点</string>
-    <string name="design_step_shared_wifi">共享 Wi-Fi</string>
+    <string name="design_step_shared_wifi">车机热点</string>
     <string name="design_step_car_network">车机网络</string>
     <string name="design_step_web_server">网页服务</string>
     <string name="design_step_car_page">车机打开网页</string>
