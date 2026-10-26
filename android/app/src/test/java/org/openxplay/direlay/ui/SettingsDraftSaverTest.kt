@@ -276,7 +276,8 @@ class SettingsDraftSaverTest {
     }
     @Test fun experimentalChoicesAndIncompleteAddressSurviveParcelRoundTrip() {
         val options = ExperimentalOptions(active = false, rememberSubscription = true, keepScanning = true,
-            recordAdvertisements = true, sendBluetoothAddress = true, bluetoothAddress = "A0:B1:")
+            recordAdvertisements = true, sendBluetoothAddress = true,
+            isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:")
         val chosen = base.copy(experimental = options)
         val parcel = Parcel.obtain()
         try {

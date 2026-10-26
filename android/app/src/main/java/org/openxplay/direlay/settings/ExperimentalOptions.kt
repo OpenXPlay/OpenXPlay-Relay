@@ -10,6 +10,9 @@ data class ExperimentalOptions(
     val recordAdvertisements: Boolean = false,
     val sendBluetoothAddress: Boolean = false,
     val bluetoothAddress: String = "",
+    val isolateCarlinkNetwork: Boolean = false,
+    val waitForCarlink: Boolean = false,
+    val recoverWirelessNetwork: Boolean = false,
 ) {
     fun effective(carlinkTrace: Boolean = true): ExperimentalOptions {
         if (!active) return ExperimentalOptions()
@@ -20,10 +23,13 @@ data class ExperimentalOptions(
     }
 
     val invalidAddress: Boolean get() = active && sendBluetoothAddress && normalizedBluetoothAddress(bluetoothAddress) == null
-    val optionCount: Int get() = listOf(rememberSubscription, keepScanning, recordAdvertisements, sendBluetoothAddress).count { it }
+    val optionCount: Int get() = listOf(rememberSubscription, keepScanning, recordAdvertisements, sendBluetoothAddress,
+        isolateCarlinkNetwork, waitForCarlink, recoverWirelessNetwork).count { it }
 
     fun names(): List<String> = listOf(rememberSubscription to "remember_subscription", keepScanning to "keep_scanning",
-        recordAdvertisements to "record_advertisements", sendBluetoothAddress to "send_bluetooth_address")
+        recordAdvertisements to "record_advertisements", sendBluetoothAddress to "send_bluetooth_address",
+        isolateCarlinkNetwork to "isolate_carlink_network", waitForCarlink to "wait_for_carlink",
+        recoverWirelessNetwork to "recover_wireless_network")
         .filter { it.first }.map { it.second }
 
     companion object {

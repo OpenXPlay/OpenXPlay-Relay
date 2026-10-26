@@ -20,11 +20,14 @@ import org.openxplay.direlay.bridge.StreamBridgeSink
 import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.service.AndroidRelayKeepAlive
 
-class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider, com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler {
+class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, com.shilapi.xcertplay.orchestration.WirelessConnectionPolicyProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider, com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler {
     lateinit var runtime: RelayRuntime
         private set
     lateinit var keepAlive: AndroidRelayKeepAlive
         private set
+
+    override val wirelessNetworkRecoveryEnabled: Boolean
+        get() = ::runtime.isInitialized && runtime.settingsStore.snapshot.value?.experimental?.effective()?.recoverWirelessNetwork == true
 
     override val carPlayEventObserver: com.shilapi.xcertplay.orchestration.CarPlayEventObserver?
         get() = if (::runtime.isInitialized) org.openxplay.direlay.relay.CompositeCarPlayObserver(

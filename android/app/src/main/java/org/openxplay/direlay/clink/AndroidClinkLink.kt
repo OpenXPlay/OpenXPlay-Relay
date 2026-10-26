@@ -57,6 +57,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     private val scanPolicy = BleScanPolicy.forAttempt(experimental.keepScanning)
     private val phoneAddress: () -> String = if (experimental.sendBluetoothAddress) ({ experimental.bluetoothAddress }) else ::phoneMac
     private val experimentNames = experimental.names()
+    private val isolateNetwork = experimental.isolateCarlinkNetwork
     private val advertisements = if (experimental.recordAdvertisements) BleAdvertisementTrace(diagnostics, object : BleAdvertisementTrace.Store {
         private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkAdvertisementSerials", Context.MODE_PRIVATE)
         private fun key(carId: String) = peers.key(carId, "")
@@ -82,7 +83,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         @Volatile var cancelled = false
         @Volatile var ready = false
         var lossReported = false
-        var failure: Throwable? = null
+        @Volatile var failure: Throwable? = null
         var peerKey: String? = null
         var peerChoice: BlePeerPolicy.Choice? = null
         var scan: ScanCallback? = null
@@ -104,6 +105,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         var monitor: Runnable? = null
         var bound: Network? = null
         var previousBinding: Network? = null
+        @Volatile var selectedNetwork: Network? = null
         val waits = java.util.concurrent.CopyOnWriteArrayList<CompletableFuture<*>>()
     }
     @Volatile private var current: Run? = null
@@ -154,7 +156,13 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                 run.peerKey?.let { peers.succeeded(it, checkNotNull(run.peerChoice)) }
             }
             return ClinkAddresses(endpoints.first, endpoints.second,
-                reply.port.takeIf { it != 0 } ?: 57209, carId)
+                reply.port.takeIf { it != 0 } ?: 57209, carId,
+                socketBinding = if (!isolateNetwork) ClinkSocketBinding.SYSTEM else ClinkSocketBinding { socket ->
+                    synchronized(this) {
+                        check(current === run && !run.cancelled && run.failure == null) { "link_lost" }
+                        run.selectedNetwork?.bindSocket(socket)
+                    }
+                })
         } catch (failure: Exception) {
             disconnectRun(run)
             throw failure
@@ -578,6 +586,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         return await(run, result, 7)
     }
     private fun joinSpecifier(run: Run, reply: HeadUnitReply): Pair<String, String> {
+        primeScanCache(run, reply.ssid)
         val result = CompletableFuture<Pair<String, String>>()
         main {
             check(!run.cancelled)
@@ -604,11 +613,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                     if (expected != null && endpoints != expected) { lost(run); return }
                     if (endpoints == null) return
                     if (!result.isDone) {
-                        run.previousBinding = manager.boundNetworkForProcess
-                        if (!manager.bindProcessToNetwork(network)) {
-                            result.completeExceptionally(ClinkFailure(ClinkFailureReason.WIFI_BIND)); return
+                        if (!isolateNetwork) {
+                            run.previousBinding = manager.boundNetworkForProcess
+                            if (!manager.bindProcessToNetwork(network)) {
+                                result.completeExceptionally(ClinkFailure(ClinkFailureReason.WIFI_BIND)); return
+                            }
+                            run.bound = network
                         }
-                        run.bound = network
+                        run.selectedNetwork = network
                         expected = endpoints
                         result.complete(endpoints)
                     }
@@ -628,6 +640,31 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             manager.requestNetwork(request, callback, handler, 12000)
         }
         return await(run, result, 13)
+    }
+
+    /**
+     * Xiaomi on Android 10/11 raises a WifiNetworkSpecifier confirmation dialog whose window has no
+     * input channel, so it can never be answered and the request expires unfulfilled. When the
+     * target SSID already sits in the scan cache the framework matches silently instead. Ask for a
+     * fresh scan and wait a bounded moment so the request can match without the dialog.
+     *
+     * Gated to the combination observed failing: other vendors match silently on their own, and
+     * HyperOS ships Android 14+, where the framework handles the match itself.
+     */
+    @Suppress("DEPRECATION")
+    private fun primeScanCache(run: Run, ssid: String) {
+        if (!Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true) || Build.VERSION.SDK_INT > 30) return
+        val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return
+        if (!wifi.isWifiEnabled) return
+        val deadline = System.currentTimeMillis() + 2_500
+        while (!run.cancelled) {
+            // A null list means the location permission is missing; waiting would only add delay.
+            val results = wifi.scanResults ?: return
+            if (results.any { it.SSID == ssid }) return
+            wifi.startScan()
+            if (System.currentTimeMillis() >= deadline) return
+            try { Thread.sleep(350) } catch (_: InterruptedException) { return }
+        }
     }
     private fun lost(run: Run) {
         if (run.cancelled) return
@@ -676,6 +713,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         if (run.bound != null && connectivity?.boundNetworkForProcess == run.bound)
             check(connectivity.bindProcessToNetwork(run.previousBinding)) { "Network unbind failed" }
         run.bound = null
+        run.selectedNetwork = null
     }
     private fun leaveP2p(run: Run) {
         run.monitor?.let(handler::removeCallbacks); run.monitor = null
