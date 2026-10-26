@@ -15,8 +15,12 @@
     <string name="menu_audio_summary">车辆蓝牙：%1$s</string>
     <string name="menu_startup_summary">自动启动：%1$s · 开机启动：%2$s</string>
     <string name="menu_access_summary">管理页面：%1$s · 可信 HTTPS：%2$s</string>
-    <string name="menu_both_outputs">浏览器与 Carlink</string>
     <string name="menu_selected_summary">已选中 · %1$s</string>
     <string name="menu_outputs_summary">%1$s · 网页端口：%2$s</string>
     <string name="menu_diagnostics_summary">%1$d 项运行数据 · %2$d 个地址</string>
+    <string name="option_wireless_display_hint">仅画面，通过车机的 DLNA 或 Miracast 接收端显示。</string>
+    <string name="output_multiple">多种输出</string>
+    <string name="output_multiple_hint">在开发者选项中设置；选择上面的一种会替换它们。</string>
+    <string name="dev_outputs_combine">同时使用多种输出</string>
+    <string name="dev_outputs_combine_hint">开着的输出会同时运行，至少保留一个。</string>
 </resources>

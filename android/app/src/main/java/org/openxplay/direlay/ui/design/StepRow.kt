@@ -48,7 +48,7 @@ internal fun evidenceUsesMonospace(text: String): Boolean = text.none {
 
 @Composable fun StepRow(step: PathStep, onClick: () -> Unit, onAction: (StepAction) -> Unit, focused: Boolean = false) {
     val color = LocalStatusColors.current.color(step.state)
-    val detail = step.detail?.let { stepText(it) }
+    val detail = step.detail
     val evidence = step.evidence?.let { stepText(it) }
     val state = stringResource(stateLabel(step.state))
     BoxWithConstraints(Modifier.fillMaxWidth().alpha(if (step.state == StepState.BLOCKED) .5f else 1f)) {
@@ -57,12 +57,12 @@ internal fun evidenceUsesMonospace(text: String): Boolean = text.none {
             .clickable(role = Role.Button, onClick = onClick).padding(end = 12.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.width(2.dp).height(36.dp).background(if (focused) color else androidx.compose.ui.graphics.Color.Transparent))
-            StatusGlyph(step.state, announce = false)
+            StatusGlyph(step.state, announce = false, stateKey = step.id to step.sinceMillis)
             Column(Modifier.weight(1f).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(step.title), style = RelayTokens.headline)
                 if (detail != null || step.state == StepState.WORKING || step.state == StepState.WAITING) Row(
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (detail != null) Text(detail, Modifier.weight(1f, fill = false), style = RelayTokens.footnote,
+                    if (detail != null) StepDetail(step, Modifier.weight(1f, fill = false), style = RelayTokens.footnote,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (step.state == StepState.WORKING || step.state == StepState.WAITING) ElapsedTime(step.sinceMillis)
                 }

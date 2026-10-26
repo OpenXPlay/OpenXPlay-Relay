@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-24
 package org.openxplay.direlay.ui
 
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
@@ -54,10 +54,12 @@ import org.openxplay.direlay.ui.design.*
                     Box(Modifier.rotate(angle)) { Symbol(R.drawable.symbol_chevron, null, Modifier.size(16.dp)) }
                 })
         }
-        AnimatedVisibility(expanded, enter = expandVertically(relaySpatial(motion)) + fadeIn(relayEffects(motion)),
-            exit = shrinkVertically(relaySpatial(motion)) + fadeOut(relayEffects(motion))) {
-            Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+        AnimatedVisibility(expanded, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+            Column {
+                InsetDivider()
+                Column(Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+            }
         }
     }
 }

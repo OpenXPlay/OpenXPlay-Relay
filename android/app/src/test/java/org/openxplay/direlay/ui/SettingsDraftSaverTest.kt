@@ -65,7 +65,7 @@ class SettingsDraftSaverTest {
     @Test fun wirelessDisplaysSurviveParcelRoundTripWithoutExtendingLegacyFlags() {
         for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
             for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
-                val value = base.copy(dlnaOutput = dlna, miracastOutput = miracast, dlnaPicture = picture, dlnaRenderer = receiver)
+                val value = base.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
                 val saved = bundle(value)
                 assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
                 val parcel = Parcel.obtain()
@@ -75,14 +75,36 @@ class SettingsDraftSaverTest {
                 } finally { parcel.recycle() }
             }
         val old = bundle(base).apply {
-            listOf("dlnaOutput", "dlnaRendererUdn", "dlnaRendererName", "dlnaPicture", "miracastOutput").forEach { remove(it) }
+            listOf("outputs", "dlnaRendererUdn", "dlnaRendererName", "dlnaPicture").forEach { remove(it) }
         }
-        val remembered = base.copy(dlnaOutput = true, miracastOutput = true,
+        val remembered = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.DLNA, RelayOutput.MIRACAST),
             dlnaPicture = DlnaPicture.P1080, dlnaRenderer = DlnaRendererChoice("uuid:remembered", "Remembered"))
         assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
         old.putString("dlnaPicture", "future")
         assertEquals(base, relaySettingsSaver(base).restore(old))
         assertEquals(base, relaySettingsSaver(remembered).restore(bundle(base)))
+    }
+
+    @Test fun outputsRoundTripAndMissingOrUnknownArraysKeepTheBaseWithoutReadingOldFlags() {
+        for (mask in 1..15) {
+            val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
+            val value = base.copy(outputs = outputs, playCarPlayAudio = true, vehicleInformation = true)
+            val saved = bundle(value)
+            assertEquals(RelayOutput.entries.filter { it in outputs }.map { it.wire }, saved.getStringArray("outputs")!!.toList())
+            assertEquals(value, relaySettingsSaver(base).restore(saved))
+        }
+        val remembered = base.copy(outputs = setOf(RelayOutput.MIRACAST))
+        val old = bundle(base).apply {
+            remove("outputs")
+            putBooleanArray("flags", booleanArrayOf(false, true, false, true, false, true, false))
+            putBoolean("dlnaOutput", true)
+            putBoolean("miracastOutput", false)
+        }
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        for (wires in listOf(emptyArray<String>(), arrayOf("future"), arrayOf("web", "future"))) {
+            old.putStringArray("outputs", wires)
+            assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+        }
     }
 
     @Test fun teslaModeAndAllAddressesSurviveRotationAndOlderDraftsKeepDefaults() {

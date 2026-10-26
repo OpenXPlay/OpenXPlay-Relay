@@ -6,12 +6,16 @@ package org.openxplay.direlay.ui
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.WirelessDisplayFailure
 import org.openxplay.direlay.settings.RelaySettings
+import org.openxplay.direlay.settings.RelayOutput
 
-fun outputSummaryLabels(settings: RelaySettings): List<Int> = buildList {
-    add(if (settings.bothOutputs) R.string.menu_both_outputs else if (settings.carlinkOutput) R.string.ui_carlink else R.string.ui_browser)
-    if (settings.dlnaOutput) add(R.string.wireless_dlna)
-    if (settings.miracastOutput) add(R.string.wireless_miracast)
+fun outputLabel(output: RelayOutput): Int = when (output) {
+    RelayOutput.BROWSER -> R.string.ui_browser
+    RelayOutput.CARLINK -> R.string.ui_carlink
+    RelayOutput.DLNA -> R.string.wireless_dlna
+    RelayOutput.MIRACAST -> R.string.wireless_miracast
 }
+fun outputSummaryLabels(settings: RelaySettings): List<Int> =
+    RelayOutput.entries.filter { it in settings.outputs }.map(::outputLabel)
 
 fun outputSummary(settings: RelaySettings, label: (Int) -> String): String =
     outputSummaryLabels(settings).joinToString(" · ", transform = label)

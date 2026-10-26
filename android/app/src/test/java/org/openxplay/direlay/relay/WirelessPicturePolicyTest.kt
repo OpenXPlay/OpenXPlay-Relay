@@ -63,11 +63,11 @@ class WirelessPicturePolicyTest {
 
     @Test fun customStartsFromCurrentAutoAndThenKeepsEditsUntilAutoIsSelectedAgain() {
         val auto = WirelessPicturePolicy.resolve(base, saved(1920, 720))
-        val both = base.copy(dlnaOutput = true, miracastOutput = true)
+        val both = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.DLNA, RelayOutput.MIRACAST))
         assertEquals(auto.size, WirelessPicturePolicy.customStart(both, auto, Viewport(1280, 720)))
         assertEquals(WirelessPictureSize(1080, 1920), WirelessPicturePolicy.customStart(
-            base.copy(miracastOutput = true), auto, Viewport(1080, 1920)))
-        assertEquals(auto.size, WirelessPicturePolicy.customStart(base.copy(miracastOutput = true), auto, null))
+            base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.MIRACAST)), auto, Viewport(1080, 1920)))
+        assertEquals(auto.size, WirelessPicturePolicy.customStart(base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.MIRACAST)), auto, null))
         val custom = WirelessPicturePolicy.choose(base, WirelessPictureMode.CUSTOM, auto.size)
         assertEquals(auto.size, custom.wirelessPictureSize)
         val edited = custom.copy(wirelessPictureSize = WirelessPictureSize(1024, 600))

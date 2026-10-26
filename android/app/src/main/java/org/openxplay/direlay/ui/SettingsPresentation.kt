@@ -9,7 +9,8 @@ import org.openxplay.direlay.settings.WirelessNetworkChoice
 
 data class RadioOption(val title: Int, val supporting: Int)
 val outputOptions = listOf(RadioOption(R.string.ui_browser, R.string.option_browser_hint),
-    RadioOption(R.string.ui_carlink, R.string.option_carlink_hint))
+    RadioOption(R.string.ui_carlink, R.string.option_carlink_hint),
+    RadioOption(R.string.wireless_display, R.string.option_wireless_display_hint))
 val connectionOptions = listOf(RadioOption(R.string.direlay_wireless, R.string.option_wireless_hint),
     RadioOption(R.string.ui_usb, R.string.option_usb_hint))
 fun networkOption(choice: WirelessNetworkChoice) = when (choice) {
@@ -19,7 +20,8 @@ fun networkOption(choice: WirelessNetworkChoice) = when (choice) {
 }
 enum class SettingsNotice { SILENT, NEXT_START, RECONNECT }
 fun settingsNotice(before: RelaySettings, after: RelaySettings, carlinkConnected: Boolean,
-    physicalWidthBefore: Int = 0, physicalWidthAfter: Int = physicalWidthBefore): SettingsNotice = when {
+    physicalWidthBefore: Int = 0, physicalWidthAfter: Int = physicalWidthBefore,
+    carlinkPictureTrial: org.openxplay.direlay.settings.CarlinkPictureTrial? = null): SettingsNotice = when {
     before == after && physicalWidthBefore == physicalWidthAfter -> SettingsNotice.SILENT
     before.vehicleInformation != after.vehicleInformation && carlinkConnected -> SettingsNotice.RECONNECT
     // These options are captured by the next CarPlay input session.
@@ -27,14 +29,17 @@ fun settingsNotice(before: RelaySettings, after: RelaySettings, carlinkConnected
         before.displayMode != after.displayMode || before.display != after.display || before.mfiTarget != after.mfiTarget ||
         before.i2cPath != after.i2cPath || before.remoteServer != after.remoteServer || before.remoteToken != after.remoteToken ||
         before.carBluetoothAudio != after.carBluetoothAudio || physicalWidthBefore != physicalWidthAfter -> SettingsNotice.NEXT_START
+    before.carlinkPictureDefault != after.carlinkPictureDefault &&
+        (carlinkPictureTrial == null || carlinkPictureTrial.size != after.carlinkPictureDefault) -> SettingsNotice.NEXT_START
     before.carlinkPictureSize != after.carlinkPictureSize && carlinkConnected -> SettingsNotice.RECONNECT
     else -> SettingsNotice.SILENT
 }
 
 data class SettingsFeedback(val message: Int, val action: Int? = null)
 fun settingsFeedback(before: RelaySettings, after: RelaySettings, carlinkConnected: Boolean, running: Boolean,
-    physicalWidthBefore: Int = 0, physicalWidthAfter: Int = physicalWidthBefore): SettingsFeedback? =
-    when (settingsNotice(before, after, carlinkConnected, physicalWidthBefore, physicalWidthAfter)) {
+    physicalWidthBefore: Int = 0, physicalWidthAfter: Int = physicalWidthBefore,
+    carlinkPictureTrial: org.openxplay.direlay.settings.CarlinkPictureTrial? = null): SettingsFeedback? =
+    when (settingsNotice(before, after, carlinkConnected, physicalWidthBefore, physicalWidthAfter, carlinkPictureTrial)) {
         SettingsNotice.SILENT -> null
         SettingsNotice.NEXT_START -> SettingsFeedback(R.string.settings_next_start, if (running) R.string.settings_restart else null)
         SettingsNotice.RECONNECT -> SettingsFeedback(if (before.vehicleInformation != after.vehicleInformation)

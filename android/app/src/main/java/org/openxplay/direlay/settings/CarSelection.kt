@@ -5,6 +5,9 @@ package org.openxplay.direlay.settings
 
 data class CarSelection(val brand: String = "", val brandText: String = "", val model: String = "", val modelText: String = "",
     val year: String = "", val yearText: String = "") {
+    val complete get() = brand.isNotEmpty() && model.isNotEmpty() &&
+        (brand != "other" || brandText.isNotBlank()) && (model != "other" || modelText.isNotBlank())
+
     fun normalized(): CarSelection {
         val brand = this.brand.takeIf { it.isEmpty() || it == "other" || it in catalogIds }.orEmpty()
         val models = catalogIds[brand].orEmpty()

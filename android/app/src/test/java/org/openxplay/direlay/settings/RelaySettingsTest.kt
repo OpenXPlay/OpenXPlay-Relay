@@ -112,14 +112,14 @@ class RelaySettingsTest {
             assertNull(initial.dlnaRenderer); assertEquals(DlnaPicture.P720, initial.dlnaPicture)
             for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
                 for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
-                    val value = initial.copy(dlnaOutput = dlna, miracastOutput = miracast, dlnaPicture = picture, dlnaRenderer = receiver)
+                    val value = initial.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
                     value.validate(wireless = false)
                     store.save(value)
                     assertEquals(value, store.load())
                     RelaySettingsStore(context).use { assertEquals(value, it.load()) }
                     val prefs = context.getSharedPreferences("direlay", 0)
-                    assertEquals(dlna, prefs.getBoolean("dlnaOutput", !dlna))
-                    assertEquals(miracast, prefs.getBoolean("miracastOutput", !miracast))
+                    assertEquals(RelayOutput.entries.filter { it in value.outputs }.joinToString(",") { it.wire }, prefs.getString("outputs", null))
+                    for (key in listOf("carlinkOutput", "bothOutputs", "dlnaOutput", "miracastOutput")) assertFalse(prefs.contains(key))
                     assertEquals(receiver?.udn, prefs.getString("dlnaRendererUdn", null))
                     assertEquals(receiver?.name, prefs.getString("dlnaRendererName", null))
                     assertEquals(picture.name, prefs.getString("dlnaPicture", null))
@@ -385,7 +385,7 @@ class RelaySettingsTest {
 
     @Test fun guidedSetupStaysOpenAfterTheGuidesOwnSavesButExistingInstallsCountAsSetUp() {
         val fresh = RelaySettingsStore(context)
-        fresh.save(fresh.load().copy(carlinkOutput = true))
+        fresh.save(fresh.load().copy(outputs = setOf(RelayOutput.CARLINK)))
         assertFalse(RelaySettingsStore(context).setupCompleted)
         fresh.setupCompleted = true
         assertTrue(RelaySettingsStore(context).setupCompleted)
@@ -424,7 +424,7 @@ class RelaySettingsTest {
     @Test fun vehicleInformationIsOptInAndPersistsIndependentlyOfOutput() {
         val store = RelaySettingsStore(context)
         assertFalse(store.load().vehicleInformation)
-        store.save(store.load().copy(carlinkOutput = true, vehicleInformation = true))
+        store.save(store.load().copy(outputs = setOf(RelayOutput.CARLINK), vehicleInformation = true))
         assertTrue(RelaySettingsStore(context).load().vehicleInformation)
         store.save(store.load().copy(vehicleInformation = false))
         assertFalse(store.load().vehicleInformation)
@@ -437,15 +437,51 @@ class RelaySettingsTest {
         assertFalse(RelaySettingsStore(context).load().autoStartWhenReady)
     }
 
-    @Test fun bothOutputsIgnoreLegacyDeveloperModeAndLeaveItsStoredKeyUntouched() {
+    @Test fun outputCombinationsIgnoreLegacyDeveloperModeAndLeaveItsStoredKeyUntouched() {
         val preferences = context.getSharedPreferences("direlay", 0)
         for (legacy in listOf(false, true)) {
             preferences.edit().putBoolean("developerMode", legacy).commit()
-            for (carlink in listOf(false, true)) {
-                store.save(store.load().copy(carlinkOutput = carlink, bothOutputs = true))
-                assertTrue(RelaySettingsStore(context).load().bothOutputs)
-                assertEquals(carlink, store.load().carlinkOutput)
+            RelaySettingsStore(context).use { store ->
+                store.save(store.load().copy(outputs = RelayOutput.entries.toSet()))
+                assertEquals(RelayOutput.entries.toSet(), store.load().outputs)
                 assertEquals(legacy, preferences.getBoolean("developerMode", !legacy))
+            }
+        }
+    }
+
+    @Test fun allLegacyOutputKeysMigrateBeforePersistAndSetupCompletionIsKept() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        for (mask in 0..15) {
+            clear()
+            prefs.edit().putBoolean("carlinkOutput", mask and 1 != 0).putBoolean("bothOutputs", mask and 2 != 0)
+                .putBoolean("dlnaOutput", mask and 4 != 0).putBoolean("miracastOutput", mask and 8 != 0).commit()
+            RelaySettingsStore(context).use { store ->
+                val expected = OutputSelection.legacy(mask and 1 != 0, mask and 2 != 0, mask and 4 != 0, mask and 8 != 0)
+                val settings = store.load()
+                assertEquals(expected, settings.outputs)
+                assertTrue(store.setupCompleted)
+                store.save(settings)
+                assertEquals(RelayOutput.entries.filter { it in expected }.joinToString(",") { it.wire }, prefs.getString("outputs", null))
+                for (key in listOf("carlinkOutput", "bothOutputs", "dlnaOutput", "miracastOutput")) assertFalse(prefs.contains(key))
+                assertEquals(expected, store.load().outputs)
+                assertTrue(store.setupCompleted)
+            }
+        }
+    }
+
+    @Test fun newStoredOutputsWinDropUnknownValuesAndEmptySetsCannotBeSaved() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        for ((wire, expected) in listOf("future,miracast,web" to setOf(RelayOutput.BROWSER, RelayOutput.MIRACAST),
+            "dlna,dlna" to setOf(RelayOutput.DLNA), "future" to setOf(RelayOutput.BROWSER), "" to setOf(RelayOutput.BROWSER))) {
+            clear()
+            prefs.edit().putString("outputs", wire).putBoolean("bothOutputs", true).commit()
+            RelaySettingsStore(context).use { store ->
+                val settings = store.load()
+                assertEquals(expected, settings.outputs)
+                assertTrue(store.setupCompleted)
+                assertThrows(IllegalArgumentException::class.java) { settings.copy(outputs = emptySet()).validate(false) }
+                assertThrows(IllegalArgumentException::class.java) { store.save(settings.copy(outputs = emptySet())) }
+                assertEquals(expected, store.load().outputs)
             }
         }
     }

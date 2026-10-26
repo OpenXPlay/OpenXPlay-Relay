@@ -59,13 +59,14 @@ data class RelayInput(
     val hotspotBand: String? = null,
     /** The saved shared Wi-Fi this phone is on now; null when it is on none of them. */
     val sharedWifiSsid: String? = null,
+    val overlayNeeded: Boolean = false,
 )
 
 enum class WebPhase { OFF, STARTING, LISTENING, FAILED }
 /** [code]: web_port_busy or web_failed when [phase] is FAILED. */
 data class WebServerInput(val phase: WebPhase = WebPhase.OFF, val port: Int? = null, val code: String? = null,
     /** The trusted public name, when one serves the page. */
-    val trustedName: String? = null)
+    val trustedName: String? = null, val sinceMillis: Long? = null)
 
 /** Carlink, in the order a link comes up. OFF: the output is not chosen. */
 enum class CarlinkPhase {

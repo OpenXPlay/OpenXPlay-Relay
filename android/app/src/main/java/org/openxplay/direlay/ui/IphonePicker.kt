@@ -25,16 +25,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.openxplay.direlay.R
 import org.openxplay.direlay.bluetooth.BondedDevice
-import org.openxplay.direlay.bluetooth.BondedDevices
 import org.openxplay.direlay.bluetooth.IphoneSelection
 import org.openxplay.direlay.ui.design.*
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun IphonePickerSetting(choice: String?, source: BondedDevices, initiallyOpen: Boolean,
+@Composable fun IphonePickerSetting(choice: String?, source: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, initiallyOpen: Boolean,
     choose: (String?) -> Unit) {
     val context = LocalContext.current
     var visible by rememberSaveable { mutableStateOf(initiallyOpen) }
@@ -42,9 +39,9 @@ import org.openxplay.direlay.ui.design.*
     var devices by remember { mutableStateOf(emptyList<BondedDevice>()) }
     var localName by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(source, visible, revision) {
-        val snapshot = withContext(Dispatchers.IO) { source.read() to source.localName() }
-        devices = snapshot.first
-        localName = snapshot.second
+        val snapshot = source()
+        devices = snapshot.devices
+        localName = snapshot.localName
     }
     DisposableEffect(context, visible) {
         val registered = visible

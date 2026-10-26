@@ -62,18 +62,20 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
             value.microphoneSource.name, value.wirelessNetwork.choice.name, value.wirelessNetwork.manualSsid,
             value.wirelessNetwork.manualPassphrase, value.wirelessNetwork.band.name, value.wirelessNetwork.security.name,
             SharedWifiNetworks.encode(value.wirelessNetwork.sharedWifiNetworks)))
+        // Slots 3 and 5 stay reserved so older bundles keep the other flag indices.
         putBooleanArray("flags", booleanArrayOf(value.autoStartOnBoot, value.autoStartWhenReady,
-            value.localPreview, value.carlinkOutput, value.playCarPlayAudio, value.bothOutputs, value.vehicleInformation))
+            value.localPreview, false, value.playCarPlayAudio, false, value.vehicleInformation))
         putString("frameRate", value.frameRate.name)
         putIntArray("numbers", intArrayOf(0, value.webPort ?: 0, value.wirelessNetwork.channel))
-        putBoolean("dlnaOutput", value.dlnaOutput)
+        putStringArray("outputs", RelayOutput.entries.filter { it in value.outputs }.map { it.wire }.toTypedArray())
         putString("dlnaRendererUdn", value.dlnaRenderer?.udn)
         putString("dlnaRendererName", value.dlnaRenderer?.name)
         putString("dlnaPicture", value.dlnaPicture.name)
-        putBoolean("miracastOutput", value.miracastOutput)
         putString("wirelessPicture", value.wirelessPicture.name)
         putInt("wirelessPictureWidth", value.wirelessPictureSize.width)
         putInt("wirelessPictureHeight", value.wirelessPictureSize.height)
+        putString("carlinkPictureSizes", CarlinkPictureSizes.savedJson(value.carlinkPictureSizes).toString())
+        putString("carlinkPictureDefault", value.carlinkPictureDefault?.let { CarlinkPictureSizes.json(it).toString() })
         putBoolean("miracastStretch", value.miracastStretch)
         putBoolean("experimental.active", value.experimental.active)
         putBoolean("experimental.rememberSubscription", value.experimental.rememberSubscription)
@@ -122,8 +124,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         connectionMode = ConnectionMode.valueOf(text[0]), mfiTarget = MfiTarget.valueOf(text[1]),
         i2cPath = text[2], remoteServer = text[3], remoteToken = text[4], carlinkDeviceName = text[5], carlinkDeviceModel = text[6],
         microphoneSource = MicrophoneSource.valueOf(text[7]),
-        autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2], carlinkOutput = flags[3],
-        playCarPlayAudio = flags[4], bothOutputs = flags[5], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), webPort = numbers[1].takeIf { it != 0 },
+        autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2],
+        playCarPlayAudio = flags[4], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), webPort = numbers[1].takeIf { it != 0 },
         frameRate = FrameRatePreference.entries.firstOrNull { it.name == bundle.getString("frameRate") } ?: base.frameRate,
         videoStats = if (bundle.containsKey("videoStats")) VideoStatsWindow.fromStored(bundle.getString("videoStats")) else base.videoStats,
         teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == bundle.getString("teslaBrowser") } ?: base.teslaBrowser,
@@ -131,14 +133,19 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         teslaPublicAddress = bundle.getString("teslaPublicAddress") ?: base.teslaPublicAddress,
         teslaMirrorAddress = bundle.getString("teslaMirrorAddress") ?: base.teslaMirrorAddress,
         teslaAndroidAddress = bundle.getString("teslaAndroidAddress") ?: base.teslaAndroidAddress,
-        dlnaOutput = bundle.getBoolean("dlnaOutput", base.dlnaOutput),
+        outputs = bundle.getStringArray("outputs")?.takeIf { wires -> wires.isNotEmpty() &&
+            wires.all { wire -> RelayOutput.entries.any { it.wire == wire } } }
+            ?.map { wire -> RelayOutput.entries.first { it.wire == wire } }?.toSet() ?: base.outputs,
         dlnaRenderer = if (bundle.containsKey("dlnaRendererUdn")) bundle.getString("dlnaRendererUdn")?.let {
             DlnaRendererChoice(it, bundle.getString("dlnaRendererName").orEmpty()) } else base.dlnaRenderer,
         dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == bundle.getString("dlnaPicture") } ?: base.dlnaPicture,
-        miracastOutput = bundle.getBoolean("miracastOutput", base.miracastOutput),
         wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == bundle.getString("wirelessPicture") } ?: base.wirelessPicture,
         wirelessPictureSize = WirelessPictureSize(bundle.getInt("wirelessPictureWidth", base.wirelessPictureSize.width),
             bundle.getInt("wirelessPictureHeight", base.wirelessPictureSize.height)),
+        carlinkPictureSizes = if (bundle.containsKey("carlinkPictureSizes"))
+            CarlinkPictureSizes.decodeSaved(bundle.getString("carlinkPictureSizes").orEmpty()) else base.carlinkPictureSizes,
+        carlinkPictureDefault = if (bundle.containsKey("carlinkPictureDefault"))
+            CarlinkPictureSizes.decodeDefault(bundle.getString("carlinkPictureDefault")) else base.carlinkPictureDefault,
         miracastStretch = bundle.getBoolean("miracastStretch", base.miracastStretch),
         carlinkReconnectOnResize = bundle.getBoolean("carlinkReconnectOnResize", base.carlinkReconnectOnResize),
         videoCodec = VideoCodecSetting.entries.firstOrNull { it.name == bundle.getString("videoCodec") } ?: base.videoCodec,

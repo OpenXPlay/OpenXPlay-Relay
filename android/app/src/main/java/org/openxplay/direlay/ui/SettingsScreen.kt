@@ -22,11 +22,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.direlay.relay.CarPlayFrameRate
-import org.openxplay.direlay.relay.CarModels
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -37,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.stateDescription
 import com.shilapi.xcertplay.orchestration.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.*
@@ -75,70 +73,85 @@ import org.openxplay.direlay.settings.*
 private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading() })
 
 @Composable fun SettingsScreen(state: SettingsEditorState, wireless: (RelaySettings) -> Boolean,
-    route: String, back: () -> Unit, open: (String) -> Unit, identityStatus: Int, identityView: DeveloperView,
+    route: String, back: () -> Unit, open: (String) -> Unit,
     copy: (String) -> Unit, import: (Boolean) -> Unit, remove: (Boolean) -> Unit, currentWifi: String? = null,
-    bondedDevices: org.openxplay.direlay.bluetooth.BondedDevices, useSharedWifi: (String) -> Unit = {},
-    adminPage: @Composable () -> Unit = {}, accessSummary: String = "", runtime: org.openxplay.direlay.relay.RelayRuntime? = null, running: Boolean = false) {
-    val runtimeContext = LocalContext.current.applicationContext
+    bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, useSharedWifi: (String) -> Unit = {},
+    sources: org.openxplay.direlay.presentation.ScreenSources, actions: org.openxplay.direlay.presentation.ScreenActions,
+    support: org.openxplay.direlay.presentation.SupportActions, running: Boolean = false) {
+    val common by sources.settings.screenState()
+    val settings = common ?: return
     var draft by state.draft
-    var confirmCarlink by remember { mutableStateOf(false) }
+    var confirmOutput by remember { mutableStateOf<RelaySettings?>(null) }
+    fun selectOutput(choice: OutputChoice, kind: WirelessDisplayKind) {
+        val next = OutputSelection.choose(draft, choice, kind, wireless(draft))
+        val candidate = draft.copy(outputs = OutputSelection.outputs(choice, kind))
+        if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmOutput = next
+        else draft = next
+    }
     var confirmUsb by remember { mutableStateOf(false) }
     if (confirmUsb) UsbConnectionDialog(confirm = {
         val candidate = draft.copy(connectionMode = ConnectionMode.USB)
         draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
         confirmUsb = false
     }, dismiss = { confirmUsb = false })
-    val appliedFps = runtime?.appliedFrameRate?.collectAsState()?.value
-    val negotiatedFps = runtime?.negotiatedFrameRate?.collectAsState()?.value
-    val frameRate = if (running && appliedFps != null) appliedFps else CarPlayFrameRate.requested(draft.frameRate, negotiatedFps)
+    val appliedFps = settings.appliedFps
+    val negotiatedFps = settings.negotiatedFps
+    val frameRate = if (running) appliedFps else CarPlayFrameRate.requested(draft.frameRate, negotiatedFps)
     val errors = settingsErrors(draft, wireless(draft))
     val invalidPages = state.errorPages(wireless)
     val page = route.substringBefore('#')
     val target = route.substringAfter('#', "")
     var iphoneLocated by rememberSaveable { mutableStateOf(false) }
     var sharedWifiLocated by rememberSaveable { mutableStateOf(false) }
-    var models by remember { mutableStateOf<CarModels?>(null) }
-    LaunchedEffect(runtime) { models = withContext(Dispatchers.IO) { runtime?.carModels } }
+    val models = settings.models
     val carSummary = carSelectionSummary(draft.car, models, LocalConfiguration.current.locales[0],
         stringResource(R.string.car_none), stringResource(R.string.car_other))
     val ms = if (LocalRelayMotion.current) 220 else 0
-    if (confirmCarlink) AlertDialog(onDismissRequest = { confirmCarlink = false },
-        title = { Text(stringResource(R.string.ui_carlink)) },
-        text = { Text(stringResource(R.string.carlink_wifi_direct_confirm)) },
-        confirmButton = { TextButton(onClick = {
-            draft = CarlinkConnectionPolicy.enabling(draft, draft.copy(carlinkOutput = true), wireless(draft))
-            confirmCarlink = false
-        }) { Text(stringResource(android.R.string.ok)) } },
-        dismissButton = { TextButton(onClick = { confirmCarlink = false }) { Text(stringResource(android.R.string.cancel)) } })
+    confirmOutput?.let { next ->
+        val miracast = next.miracastOutput
+        AlertDialog(onDismissRequest = { confirmOutput = null },
+            title = { Text(stringResource(if (miracast) R.string.wireless_miracast else R.string.ui_carlink)) },
+            text = { Text(stringResource(if (miracast) R.string.miracast_wifi_direct_confirm else R.string.carlink_wifi_direct_confirm)) },
+            confirmButton = { TextButton(onClick = { draft = next; confirmOutput = null }) { Text(stringResource(android.R.string.ok)) } },
+            dismissButton = { TextButton(onClick = { confirmOutput = null }) { Text(stringResource(android.R.string.cancel)) } })
+    }
     DetailPage(stringResource(settingsPageTitle(page)), back) {
         when (page) {
-            "settings" -> SettingsMenu(draft, invalidPages, wireless(draft), accessSummary, carSummary, identityStatus, frameRate, open)
-            "settings/configFiles" -> if (runtime != null) ConfigFilesScreen(remember(runtime) {
-                org.openxplay.direlay.config.ConfigFiles(runtimeContext, runtime.settingsStore, runtime.publicName, runtime.tlsStore)
-            })
-            "settings/logs" -> if (runtime != null) LogsScreen(runtime.logs, remember(runtime) {
-                org.openxplay.direlay.logs.OpenXPlayLogUploader(org.openxplay.direlay.logs.InternetUploadConnection(
-                    runtimeContext.getSystemService(android.net.ConnectivityManager::class.java)),
-                    runtimeContext.packageManager.getPackageInfo(runtimeContext.packageName, 0).versionName.orEmpty(),
-                    org.openxplay.direlay.logs.PreferencesLogUploadStore(
-                        runtimeContext.getSharedPreferences("log-uploads", android.content.Context.MODE_PRIVATE)))
-            })
-            "settings/identity" -> IdentitySettings(state, identityView, copy, import, remove)
+            "settings" -> {
+                val identityStatus by sources.identity.screenState()
+                val summary = stringResource(R.string.menu_access_summary,
+                    menuToggleSummary(settings.adminEnabled), menuToggleSummary(settings.publicNameEnabled))
+                SettingsMenu(draft, invalidPages, wireless(draft), summary, carSummary, identityStatus, frameRate,
+                    state.lastSaved.value.car.complete, open)
+            }
+            "settings/configFiles" -> ConfigFilesScreen(support.config)
+            "settings/logs" -> LogsScreen(support.logs, support.upload)
+            "settings/identity" -> {
+                val identityView by sources.developer.screenState()
+                IdentitySettings(state, identityView, copy, import, remove)
+            }
             "settings/output" -> {
                 SettingsGroup("output", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.ui_output), outputSummary(draft),
-                    initiallyExpanded = true, targeted = target == "output") {
+                    initiallyExpanded = true, targeted = target == "output",
+                    footer = if (OutputSelection.choice(draft.outputs) == null) stringResource(R.string.output_multiple_hint) else null) {
+                    val selected = OutputSelection.choice(draft.outputs)
+                    val kind = OutputSelection.wirelessKind(draft.outputs)
                     Column(Modifier.selectableGroup()) {
                         outputOptions.forEachIndexed { index, option ->
-                            RadioOptionRow(option, (if (draft.carlinkOutput) 1 else 0) == index,
-                                extra = if (index == 1) ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) }) else null) {
-                                val candidate = draft.copy(carlinkOutput = index == 1)
-                                if (CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate)) != candidate) confirmCarlink = true
-                                else draft = candidate
-                            }
+                            val choice = OutputChoice.entries[index]
+                            RadioOptionRow(option, selected == choice, extra = when {
+                                choice == OutputChoice.CARLINK -> ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) })
+                                choice == OutputChoice.WIRELESS && selected == choice -> ({
+                                    Options(listOf("DLNA", "Miracast"), kind.ordinal) { selectOutput(choice, WirelessDisplayKind.entries[it]) }
+                                })
+                                else -> null
+                            }) { selectOutput(choice, kind) }
                         }
                     }
+                    if (selected == null) InsetRow(R.drawable.symbol_link, IconHue.DEVELOPER,
+                        stringResource(R.string.output_multiple), outputSummary(draft), onClick = { open("developer") })
                     if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
-                    AnimatedVisibility(draft.carlinkOutput || draft.bothOutputs, enter = expandVertically(tween(ms)) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
+                    AnimatedVisibility(draft.carlinkOutput, enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SettingField(stringResource(R.string.direlay_carlink_name), draft.carlinkDeviceName, errors["name"]) { draft = draft.copy(carlinkDeviceName = it) }
                             SettingsToggleGroup(stringResource(R.string.vehicle_title), draft.vehicleInformation, R.drawable.symbol_car, IconHue.CAR,
@@ -150,10 +163,14 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         }
                     }
                 }
-                WirelessDisplaySettings(draft, wireless(draft), runtime, state, openCarScreen = { open("settings/car") }) { draft = it }
+                if (draft.dlnaOutput || draft.miracastOutput) {
+                    val picture by sources.wirelessPicture.screenState()
+                    WirelessDisplaySettings(draft, picture, actions.searchRenderers, state, openCarScreen = { open("settings/car") }) { draft = it }
+                }
             }
             "settings/car" -> {
-                if (runtime != null) CarScreenSettings(draft, runtime,
+                val view by sources.car.screenState()
+                CarScreenSettings(draft, view, wireless, actions.clearHeadUnit, target,
                     openTrustedHttps = { open("settings/access/publicName") },
                     openOutput = { open("settings/output") }) { draft = it }
             }
@@ -164,6 +181,14 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
                         CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
                 }
+                val picture by sources.carlinkPicture.screenState()
+                val trial = picture.trial
+                val selectPicture = actions.tryCarlinkPicture
+                CarlinkPictureSettings(carlinkPictureUiModel(draft, trial, picture.canvas,
+                    state.numberText["carlinkPictureWidth"].orEmpty(), state.numberText["carlinkPictureHeight"].orEmpty(), picture.effective),
+                    select = selectPicture, setDefault = { draft = draft.copy(carlinkPictureDefault = it) },
+                    delete = { size -> state.deleteCarlinkPicture(size, trial) { actions.clearCarlinkPictureTrial(true) } }, input = state::updateCarlinkPicture,
+                    save = { state.saveCarlinkPicture(selectPicture) })
                 SettingsGroup("frameRate", R.drawable.symbol_activity, IconHue.PICTURE, stringResource(R.string.picture_frame_rate),
                     frameRateSummary(draft.frameRate, frameRate, stringResource(R.string.picture_frame_rate_auto)),
                     initiallyExpanded = false, targeted = target == "frameRate", footer = stringResource(R.string.picture_frame_rate_hint)) {
@@ -198,8 +223,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                         if (needsUsbConfirmation(draft.connectionMode, candidate.connectionMode, wireless(draft))) confirmUsb = true
                         else draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
                     }
-                    AnimatedVisibility(wireless(draft), enter = expandVertically(tween(ms)) + fadeIn(tween(ms)),
-                        exit = shrinkVertically(tween(ms)) + fadeOut(tween(ms))) {
+                    AnimatedVisibility(wireless(draft), enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)),
+                        exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
                         Column {
                             IphonePickerSetting(draft.iphoneAddress, bondedDevices, target == "iphone" && !iphoneLocated) {
                                 draft = draft.copy(iphoneAddress = it)
@@ -226,7 +251,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                                     if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
                                         NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
                                     if (choice == WirelessNetworkChoice.WIFI_DIRECT && !CarlinkConnectionPolicy.wifiDirectAllowed(draft))
-                                        Hint(stringResource(if (draft.miracastOutput) R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint))
+                                        Hint(stringResource(if (draft.miracastOutput && !draft.carlinkOutput) R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint))
                                 }, enabled = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)) {
                                 draft = draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice))
                             }
@@ -247,8 +272,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     footer = stringResource(R.string.direlay_boot_hint)) { draft = draft.copy(autoStartOnBoot = it) }
             }
             "settings/access" -> {
-                val name = runtime?.publicName?.view?.collectAsState()?.value
-                adminPage()
+                val access by sources.admin.screenState()
+                val nameView by sources.name.screenState()
+                val name = nameView.view
+                AdminPageSettings(access.enabled, access.urls, actions.adminEnabled, copy, actions.resetPassword)
                 InsetGroup(footer = stringResource(R.string.public_name_summary)) {
                     SettingsMenuRow(R.string.public_name_title, name?.name?.takeIf { it.isNotEmpty() }
                         ?: menuToggleSummary(name?.enabled == true), R.drawable.symbol_globe) { open("settings/access/publicName") }
@@ -260,7 +287,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
 }
 @Composable fun NetworkFields(network: WirelessNetworkSettings, choice: WirelessNetworkChoice,
-    errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit, credentialsModifier: Modifier = Modifier, change: (WirelessNetworkSettings) -> Unit) {
+    errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit,
+    credentialsModifier: Modifier = Modifier, compactHints: Boolean = false, change: (WirelessNetworkSettings) -> Unit) {
     val hotspot = choice == WirelessNetworkChoice.PHONE_HOTSPOT
     val context = LocalContext.current
     val opener: NetworkSettingsOpener = remember(context) { NetworkSettingsLauncher(context) }
@@ -271,7 +299,22 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(stringResource(if (hotspot) R.string.direlay_car_hotspot_hint else R.string.direlay_existing_wifi_hint))
         // Apps cannot read the hotspot band, so the advice is unconditional (2.4 GHz stutters on real cars).
-        Hint(stringResource(R.string.hotspot_5ghz_hint))
+        if (compactHints) {
+            var expanded by rememberSaveable { mutableStateOf(false) }
+            val motion = LocalRelayMotion.current
+            val state = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.setup_hotspot_5ghz), Modifier.weight(1f), style = RelayTokens.footnote,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                IconButton(onClick = { expanded = !expanded }, Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                    .semantics { stateDescription = state }) {
+                    Symbol(R.drawable.symbol_info, stringResource(R.string.setup_hotspot_5ghz_details))
+                }
+            }
+            AnimatedVisibility(expanded, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+                Hint(stringResource(R.string.hotspot_5ghz_hint))
+            }
+        } else Hint(stringResource(R.string.hotspot_5ghz_hint))
         TextButton(onClick = { opener.open(hotspot) }) {
             Text(stringResource(if (hotspot) R.string.settings_open_hotspot else R.string.ui_open_wifi))
         }
@@ -340,7 +383,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
     InsetDivider()
 }
-@Composable fun AboutScreen(back: () -> Unit) {
+@Composable fun AboutScreen(back: () -> Unit, updates: org.openxplay.direlay.presentation.UpdateActions) {
     val context = LocalContext.current
     fun link(url: String) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     DetailPage(stringResource(R.string.direlay_about), back) {
@@ -350,7 +393,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 Image(painterResource(R.mipmap.ic_launcher_foreground), null, Modifier.size(64.dp))
                 Column(Modifier.weight(1f)) {
                     RelayBrand()
-                    Text(context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
+                    Text(LocalAppVersion.current,
                         style = RelayTokens.callout, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -364,6 +407,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             InsetRow(R.drawable.symbol_info, IconHue.DEVELOPER, stringResource(R.string.about_licence_title),
                 stringResource(R.string.about_licence), onClick = { link("https://github.com/OpenXPlay/OpenXPlay-Relay/blob/main/NOTICE") })
         }
+        UpdateSection(updates)
         InsetGroup(header = stringResource(R.string.direlay_acknowledgements), footer = stringResource(R.string.direlay_trademark)) {
             Column(Modifier.padding(16.dp)) { Text(stringResource(R.string.direlay_acknowledgement_text), style = RelayTokens.footnote) }
             InsetDivider()

@@ -11,8 +11,14 @@
     <string name="setup2_network_subtitle">Choose the Wi-Fi link for the iPhone.</string>
     <string name="setup2_prepare_subtitle">Check this phone, then the iPhone.</string>
     <string name="setup2_start_subtitle">Review your choices before connecting.</string>
-    <string name="setup2_launch_title">Ready to connect</string>
-    <string name="setup2_launch_subtitle">Continue with your saved setup.</string>
-    <string name="setup2_continue">Continue</string>
     <string name="setup2_set_up_again">Set up again</string>
+    <string name="setup_wireless_display_hint">Use the car’s screen-casting receiver. Picture only: CarPlay can’t be touched on the car.</string>
+    <string name="setup_picture_only">Picture only</string>
+    <string name="setup_dlna_hint">The car’s receiver app plays what this phone sends, a few seconds behind.</string>
+    <string name="setup_miracast_hint">Cast this phone to the car from Android’s screen casting. Less delay; uses Wi-Fi Direct.</string>
+    <string name="setup_multiple_outputs">Several outputs are on in Developer settings. Choosing one here replaces them.</string>
+    <string name="setup_change">Change</string>
+    <string name="setup_hotspot_5ghz">5 GHz recommended</string>
+    <string name="setup_hotspot_5ghz_details">5 GHz advice</string>
+    <string name="setup_prepare_ready">Ready</string>
 </resources>

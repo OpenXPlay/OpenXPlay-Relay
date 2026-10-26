@@ -4,7 +4,6 @@
 package org.openxplay.direlay.ui.design
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.selection.toggleable
@@ -28,7 +27,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.PathSection
-import org.openxplay.direlay.path.PathTone
 import org.openxplay.direlay.path.StepState
 import org.openxplay.direlay.ui.LocalRelayMotion
 import org.openxplay.direlay.ui.Symbol
@@ -59,39 +57,6 @@ import org.openxplay.direlay.ui.Symbol
     }
 }
 
-@Composable fun AutoSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
-    val label = stringResource(R.string.design_auto)
-    Row(Modifier.heightIn(min = 48.dp).toggleable(checked, role = Role.Switch, onValueChange = onChange)
-        .semantics(mergeDescendants = true) { contentDescription = label },
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, style = RelayTokens.footnote)
-        RelaySwitch(checked, null)
-    }
-}
-
-@Composable fun StatusCapsule(tone: PathTone, text: String) {
-    val motion = LocalRelayMotion.current
-    val color = LocalStatusColors.current.color(tone)
-    val breath = rememberRelayBreath(tone == PathTone.PROGRESS)
-    val state = stringResource(when (tone) {
-        PathTone.LIVE -> R.string.design_live
-        PathTone.READY -> R.string.design_ready
-        PathTone.PROGRESS -> R.string.design_state_working
-        PathTone.ACTION -> R.string.design_state_action
-        PathTone.ERROR -> R.string.design_state_failed
-        PathTone.IDLE -> R.string.design_idle
-    })
-    Surface(shape = RelayTokens.pill, color = color.copy(alpha = .14f),
-        modifier = Modifier.widthIn(max = 240.dp).animateContentSize(relaySpatial(motion)).semantics(mergeDescendants = true) { stateDescription = state }) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(8.dp).graphicsLayer { alpha = if (tone == PathTone.PROGRESS) (breath.value - .84f) / .16f else 1f }
-                .background(color, RelayTokens.pill))
-            Text(text, style = RelayTokens.caption.copy(fontFeatureSettings = "tnum"))
-        }
-    }
-}
-
 /** Keep each code with its glyph (word joiner, no visible gap) and each section letter with its first token. */
 internal fun diagnosticSections(text: String): List<String> = text.split(" | ").map { section ->
     val tokens = section.split(' ')
@@ -105,7 +70,11 @@ internal fun diagnosticSections(text: String): List<String> = text.split(" | ").
 }
 
 @OptIn(ExperimentalLayoutApi::class)
-@Composable fun DiagnosticLine(text: String, onCopy: (String) -> Unit) {
+@Composable fun DiagnosticLine(line: String, onCopy: (String) -> Unit, version: String = "", active: Boolean = true) {
+    val now by produceState(System.currentTimeMillis(), line, version, active) {
+        if (active) while (true) { value = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) }
+    }
+    val text = org.openxplay.direlay.path.formatDiagnostic(line, version, now)
     val haptic = LocalHapticFeedback.current
     val label = stringResource(R.string.design_copy_diagnostic)
     val sections = remember(text) { diagnosticSections(text) }

@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import org.openxplay.direlay.ui.design.*
 import androidx.compose.foundation.BorderStroke
@@ -60,10 +60,12 @@ fun CollapsibleCard(key: String, title: String, summary: String, initiallyExpand
             if (error) Symbol(R.drawable.symbol_error, errorLabel)
             Box(Modifier.rotate(angle)) { Symbol(R.drawable.symbol_chevron, null) }
         }
-        AnimatedVisibility(expanded, enter = expandVertically(relaySpatial(motion)) + fadeIn(relayEffects(motion)),
-            exit = shrinkVertically(relaySpatial(motion)) + fadeOut(relayEffects(motion))) {
-            Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+        AnimatedVisibility(expanded, enter = relayDisclosureEnter(motion), exit = relayDisclosureExit(motion)) {
+            Column {
+                HorizontalDivider(Modifier.padding(start = 16.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                Column(Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+            }
         }
     }
 }
@@ -114,16 +116,16 @@ fun SettingsMenuRow(title: Int, summary: String?, icon: Int, error: Boolean = fa
 
 @Composable
 fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Boolean,
-    accessSummary: String, carSummary: String, identityStatus: Int, frameRate: Int, open: (String) -> Unit) {
+    accessSummary: String, carSummary: String, identityStatus: Int, frameRate: Int, carComplete: Boolean, open: (String) -> Unit) {
     val experimental = draft.experimental
     val context = LocalContext.current
-    val version = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() }
+    val version = LocalAppVersion.current
     InsetGroup {
         SettingsMenuRow(R.string.ui_output, outputSummary(draft),
             R.drawable.symbol_car, "settings/output" in invalidPages) { open("settings/output") }
         InsetDivider()
         SettingsMenuRow(R.string.car_and_screen, carSummary,
-            R.drawable.symbol_car) { open("settings/car") }
+            R.drawable.symbol_car, !carComplete || "settings/car" in invalidPages) { open("settings/car") }
         InsetDivider()
         SettingsMenuRow(R.string.picture_title, pictureMenuSummary(resolutionSummary(draft), draft.carplayScreenWidth.mm, codecSummary(draft), frameRate),
             R.drawable.symbol_monitor) { open("settings/picture") }
@@ -150,7 +152,7 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
         }
     }
     InsetGroup {
-        SettingsMenuRow(R.string.direlay_about, version, R.drawable.symbol_info) { open("settings/about") }
+        SettingsMenuRow(R.string.direlay_about, updateMenuVersion(version), R.drawable.symbol_info) { open("settings/about") }
         InsetDivider()
         SettingsMenuRow(R.string.ui_developer, null, R.drawable.symbol_code,
             invalidPages.any { it.startsWith("developer/") }) { open("developer") }

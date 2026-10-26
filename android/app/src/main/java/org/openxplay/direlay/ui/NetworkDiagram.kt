@@ -34,12 +34,8 @@ fun networkDescription(choice: WirelessNetworkChoice): Int = when (choice) {
     val track = MaterialTheme.colorScheme.outlineVariant
     val scale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     val hub = choice == WirelessNetworkChoice.EXISTING_WIFI
-    val phase = if (active && LocalRelayMotion.current) {
-        val transition = rememberInfiniteTransition(label = "network links")
-        val progress by transition.animateFloat(0f, 1f,
-            infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "network travel")
-        progress
-    } else null
+    val motion = LocalRelayMotion.current
+    val phase = rememberRelayPhase(active, choice, periodMillis = 1600, durationMillis = 3200)
     BoxWithConstraints(Modifier.fillMaxWidth().height((if (hub) 174.dp else 140.dp) * scale)
         .clearAndSetSemantics { contentDescription = description }) {
         // Captions yield to icons before text could collide, including at 200% font scale.
@@ -63,7 +59,7 @@ fun networkDescription(choice: WirelessNetworkChoice): Int = when (choice) {
                     drawLine(color, end, end - unit * 5.dp.toPx() + normal * 3.dp.toPx(), 1.5.dp.toPx(), StrokeCap.Round)
                     drawLine(color, end, end - unit * 5.dp.toPx() - normal * 3.dp.toPx(), 1.5.dp.toPx(), StrokeCap.Round)
                 }
-                phase?.let { drawCircle(color, 2.5.dp.toPx(), start + (end - start) * it) }
+                if (active && motion) drawCircle(color, 2.5.dp.toPx(), start + (end - start) * phase.value)
             }
         }
         if (captions && !hub) {

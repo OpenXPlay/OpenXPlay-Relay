@@ -111,7 +111,7 @@
     <string name="path_action_start_now">Start now</string>
     <string name="path_explain_bluetooth">The iPhone starts CarPlay over Bluetooth, and Carlink finds the car over Bluetooth.</string>
     <string name="path_explain_hotspot">The iPhone, and a car using the browser, join this hotspot. Its name and password must match the relay settings, or the iPhone cannot join.</string>
-    <string name="path_explain_car_network">The car\'s browser reaches this phone over its hotspot or the same Wi-Fi. Wi-Fi Direct does not work for the browser.</string>
+    <string name="path_explain_car_network">The car reaches this phone over its hotspot or the same Wi-Fi, not over Wi-Fi Direct.</string>
     <string name="path_explain_car_page">The first time, the browser warns about the certificate: choose Advanced, then Proceed.</string>
     <string name="path_explain_carplay_start">CarPlay starts after the car, so it uses the car\'s real screen size and does not restart.</string>
     <string name="path_explain_bluetooth_off">This phone\'s Bluetooth is off. Turn it on; CarPlay continues by itself.</string>
@@ -129,4 +129,5 @@
     <string name="path_explain_projection_timeout">The car did not start the picture in time. Keep Carlink in front and retry.</string>
     <string name="path_explain_heartbeat_timeout">The link to the car dropped. It reconnects by itself; keep Carlink open on the car.</string>
     <string name="path_explain_wifi_join">This phone could not join the car\'s Wi-Fi. Keep Wi-Fi on and Carlink open, then retry.</string>
+    <string name="path_allow_overlay">Allow display over other apps</string>
 </resources>

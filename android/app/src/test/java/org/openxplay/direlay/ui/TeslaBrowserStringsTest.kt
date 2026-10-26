@@ -37,7 +37,7 @@ class TeslaBrowserStringsTest {
         R.string.tesla_address_invalid to ("Enter an IPv4 address outside 10.x, 172.16–31.x, 192.168.x and the other reserved ranges." to "请输入不在 10.x、172.16–31.x、192.168.x 和其他保留网段内的 IPv4 地址。"),
         R.string.tesla_address_android13 to ("Android 13 and later may drop connections from the hotspot to this address (seen on Android 15). If the Tesla cannot open the page, use a 169.254 address." to "Android 13 及更高版本可能会丢弃热点设备发往这个地址的连接（已在 Android 15 上出现）。如果特斯拉打不开页面，请改用 169.254 开头的地址。"),
         R.string.tesla_requirements to ("Connect the Tesla to this phone’s hotspot (5 GHz if possible) or its Wi-Fi Direct network, and turn on Remain Connected in Drive in the Tesla’s Wi-Fi settings. Needs MCU2 or later." to "让特斯拉连接这台手机的热点（最好用 5 GHz）或 Wi-Fi 直连网络，并在特斯拉的 Wi-Fi 设置中打开“驾驶时保持连接”（Remain Connected in Drive）。需要 MCU2 或更新的车机。"),
-        R.string.tesla_needs_browser to ("A Tesla shows CarPlay in its browser: choose Browser (or Browser and Carlink) in Settings → Output." to "特斯拉通过浏览器显示 CarPlay：请在「设置 → 输出」中选择浏览器（或浏览器和 Carlink）。"),
+        R.string.tesla_needs_browser to ("A Tesla shows CarPlay in its browser: choose Car browser in Settings → Output." to "特斯拉通过浏览器显示 CarPlay：请在「设置 → 输出」中选择车载浏览器。"),
         R.string.tesla_open_output to ("Open Output" to "打开输出设置"),
         R.string.tesla_needs_wireless to ("Tesla adaptation needs wireless CarPlay: the USB connection already uses Android’s only VPN." to "特斯拉适配需要使用无线 CarPlay：USB 连接已经占用了 Android 唯一的 VPN。"),
         R.string.tesla_needs_phone_network to ("Tesla adaptation needs this phone’s hotspot or Wi-Fi Direct. A shared Wi-Fi router does not pass the address to this phone." to "特斯拉适配需要使用本机热点或 Wi-Fi 直连。共享 Wi-Fi 路由器不会把这个地址转给这台手机。"),

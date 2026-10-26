@@ -17,7 +17,7 @@ fun presentPath(input: PathInput, zone: ZoneId = ZoneId.systemDefault()): Connec
     val running = input.iphone.started || input.iphone.armed || input.iphone.step !in setOf(LinkStep.IDLE, LinkStep.ENDED)
     // Read the pick before blocking: Bluetooth may be off when Connect arms a start.
     val canStart = input.setup.valid && input.relay.identity == IdentityState.READY &&
-        input.relay.permissionsGranted >= input.relay.permissionsTotal && !input.relay.vpnConsentNeeded &&
+        input.relay.permissionsGranted >= input.relay.permissionsTotal && !input.relay.vpnConsentNeeded && !input.relay.overlayNeeded &&
         (!input.setup.wireless || input.iphone.pick == IphonePick.PICKED) && !running
     val ownSteps = input.stepIds().map { input.presentStep(it, canStart, running) }
     val prerequisites = prerequisites(ownSteps.map { it.id }, input.setup.network)
@@ -52,8 +52,8 @@ fun presentPath(input: PathInput, zone: ZoneId = ZoneId.systemDefault()): Connec
         if (live) LiveSummary(input.live.sessionSinceMillis, input.live.chips.toList()) else null,
         PathNodes(input.iphone.name, input.relay.bluetoothName,
             input.car.carlink.carName ?: input.car.screen
-                ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name),
-        diagnostic(sections, input, zone))
+                ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name ?: input.car.miracast.name),
+        diagnostic(sections, input, zone), input.version)
 }
 
 private fun PathInput.stepIds(): List<StepId> = buildList {
@@ -64,7 +64,8 @@ private fun PathInput.stepIds(): List<StepId> = buildList {
         setup.outputs.any { it == CarOutput.CARLINK || it == CarOutput.MIRACAST }) add(WIFI)
     if (setup.network == NetworkPlan.PHONE_HOTSPOT) add(HOTSPOT)
     if (setup.network == NetworkPlan.SHARED_WIFI) add(SHARED_WIFI)
-    if (CarOutput.BROWSER in setup.outputs) addAll(listOf(CAR_NETWORK, WEB_SERVER, CAR_PAGE))
+    if (CarOutput.BROWSER in setup.outputs || CarOutput.DLNA in setup.outputs) add(CAR_NETWORK)
+    if (CarOutput.BROWSER in setup.outputs) addAll(listOf(WEB_SERVER, CAR_PAGE))
     if (CarOutput.CARLINK in setup.outputs) addAll(listOf(CARLINK_FIND, CARLINK_LINK, CARLINK_PIN, CARLINK_READY))
     if (CarOutput.DLNA in setup.outputs) add(DLNA)
     if (CarOutput.MIRACAST in setup.outputs) add(MIRACAST)
@@ -91,7 +92,7 @@ private fun prerequisites(ids: List<StepId>, network: NetworkPlan): Map<StepId, 
         put(CARLINK_LINK, listOf(CARLINK_FIND))
         put(CARLINK_PIN, listOf(CARLINK_LINK))
         put(CARLINK_READY, listOf(CARLINK_PIN))
-        put(DLNA, if (CAR_NETWORK in ids) listOf(CAR_NETWORK) else listOf(WIFI, HOTSPOT).filter { it in ids })
+        put(DLNA, listOf(CAR_NETWORK))
         put(MIRACAST, listOf(WIFI))
         put(IPHONE_PAIRED, listOf(BLUETOOTH))
         iphone.zipWithNext().forEach { (before, after) -> put(after, listOf(before)) }
@@ -170,11 +171,16 @@ private fun PathInput.identityStep() = when (relay.identity) {
 }
 
 private fun PathInput.permissionsStep(): PathStep {
-    val missing = (relay.permissionsTotal - relay.permissionsGranted).coerceAtLeast(0)
-    return if (missing == 0 && !relay.vpnConsentNeeded) pathStep(PERMISSIONS, OK,
-        evidence = raw("${relay.permissionsGranted}/${relay.permissionsTotal}"))
-    else pathStep(PERMISSIONS, ACTION, if (relay.vpnConsentNeeded && missing <= 1) text(R.string.path_allow_vpn)
-        else text(R.string.path_permissions_needed, missing.toString()), action = GRANT_PERMISSIONS)
+    val total = relay.permissionsTotal + (if (relay.vpnConsentNeeded) 1 else 0) + (if (relay.overlayNeeded) 1 else 0)
+    val missing = (relay.permissionsTotal - relay.permissionsGranted).coerceAtLeast(0) +
+        (if (relay.vpnConsentNeeded) 1 else 0) + (if (relay.overlayNeeded) 1 else 0)
+    return if (missing == 0) pathStep(PERMISSIONS, OK,
+        evidence = raw("${relay.permissionsGranted}/$total"))
+    else pathStep(PERMISSIONS, ACTION, when {
+        relay.overlayNeeded && missing == 1 -> text(R.string.path_allow_overlay)
+        relay.vpnConsentNeeded && missing == 1 -> text(R.string.path_allow_vpn)
+        else -> text(R.string.path_permissions_needed, missing.toString())
+    }, action = GRANT_PERMISSIONS)
 }
 
 private fun PathInput.keepAliveStep() = if (relay.keepAlive == KeepAliveState.PENDING)
@@ -212,7 +218,7 @@ private fun PathInput.webServerStep() = when (car.web.phase) {
     WebPhase.OFF, WebPhase.STARTING -> pathStep(WEB_SERVER, WORKING, text(R.string.path_starting))
     WebPhase.FAILED -> pathStep(WEB_SERVER, FAILED, if (car.web.code == "web_port_busy")
         text(R.string.path_port_busy, car.web.port?.toString().orEmpty()) else text(R.string.path_could_not_start),
-        code = car.web.code ?: "web_failed")
+        code = car.web.code ?: "web_failed", since = car.web.sinceMillis)
 }
 
 private fun PathInput.carPageStep() = if (car.pages > 0)
@@ -361,10 +367,8 @@ private fun PathInput.linkProgress(id: StepId, state: StepState, detail: StepTex
 
 private fun PathInput.carplayStartStep(canStart: Boolean): PathStep {
     iphone.carWaitUntilMillis?.let { until ->
-        val remaining = (until - nowMillis).coerceAtLeast(0)
-        val seconds = remaining / 1000 + if (remaining % 1000 > 0) 1 else 0
-        return pathStep(CARPLAY_START, WAITING, text(R.string.path_car_screen_wait, seconds.toString()),
-            action = START_NOW, since = iphone.stepSinceMillis)
+        return pathStep(CARPLAY_START, WAITING, text(R.string.path_car_screen_wait),
+            action = START_NOW, since = iphone.stepSinceMillis).copy(carWaitUntilMillis = until)
     }
     if (iphone.armed) return pathStep(CARPLAY_START, BLOCKED, text(R.string.path_start_armed))
     if (iphone.step == LinkStep.IDLE && !iphone.started && iphone.failure == null)
@@ -412,8 +416,7 @@ private fun diagnostic(sections: List<PathSectionView>, input: PathInput, zone: 
     val parts = sections.map { section -> section.section.code + " " +
         section.steps.joinToString(" ") { it.id.code + it.state.glyph } }.toMutableList()
     sections.flatMap { it.steps }.firstOrNull { it.state == FAILED && it.code != null }?.let { failure ->
-        parts.add("E ${failure.code} ${clock.format(Instant.ofEpochMilli(failure.sinceMillis ?: input.nowMillis))}")
+        parts.add("E ${failure.code} ${clock.format(Instant.ofEpochMilli(failure.sinceMillis ?: 0L))}")
     }
-    parts.add("${input.version} ${clock.format(Instant.ofEpochMilli(input.nowMillis))}")
     return parts.joinToString(" | ")
 }

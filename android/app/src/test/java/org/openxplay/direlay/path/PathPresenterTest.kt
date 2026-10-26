@@ -53,7 +53,7 @@ class PathPresenterTest {
             Triple(NetworkPlan.PHONE_HOTSPOT, setOf(CarOutput.CARLINK), common + listOf(BLUETOOTH, WIFI, HOTSPOT) + clink + wireless + PICTURE),
             Triple(NetworkPlan.PHONE_HOTSPOT, setOf(CarOutput.CARLINK, CarOutput.BROWSER), common + listOf(BLUETOOTH, WIFI, HOTSPOT) + browser + clink + wireless + PICTURE),
             Triple(NetworkPlan.WIFI_DIRECT, setOf(CarOutput.BROWSER), common + listOf(BLUETOOTH, WIFI) + browser + wireless + PICTURE),
-            Triple(NetworkPlan.SHARED_WIFI, setOf(CarOutput.DLNA), common + listOf(BLUETOOTH, WIFI, SHARED_WIFI) + DLNA + wireless + PICTURE),
+            Triple(NetworkPlan.SHARED_WIFI, setOf(CarOutput.DLNA), common + listOf(BLUETOOTH, WIFI, SHARED_WIFI, CAR_NETWORK, DLNA) + wireless + PICTURE),
             Triple(NetworkPlan.USB, setOf(CarOutput.BROWSER), common + browser + wired + PICTURE),
             Triple(NetworkPlan.PHONE_HOTSPOT, setOf(CarOutput.TESLA), common + listOf(BLUETOOTH, HOTSPOT) + wireless + listOf(TESLA, PICTURE)),
             Triple(NetworkPlan.WIFI_DIRECT, setOf(CarOutput.MIRACAST), common + listOf(BLUETOOTH, WIFI) + MIRACAST + wireless + PICTURE),
@@ -76,7 +76,7 @@ class PathPresenterTest {
                 assertEquals(PathSection.entries.filter { section -> steps.any { it.section == section } }, actual.sections.map { it.section })
                 assertTrue(actual.sections.all { it.steps.isNotEmpty() })
                 assertEquals(steps.distinct(), steps)
-                assertEquals(CarOutput.BROWSER in outputs, CAR_NETWORK in steps)
+                assertEquals(CarOutput.BROWSER in outputs || CarOutput.DLNA in outputs, CAR_NETWORK in steps)
                 assertEquals(CarOutput.BROWSER in outputs, WEB_SERVER in steps)
                 assertEquals(CarOutput.BROWSER in outputs, CAR_PAGE in steps)
                 listOf(CARLINK_FIND, CARLINK_LINK, CARLINK_PIN, CARLINK_READY).forEach {
@@ -102,6 +102,29 @@ class PathPresenterTest {
         }
     }
 
+    @Test fun wirelessOnlyPathsAndOverlayConsentArePartOfReadiness() {
+        val dlna = ready.copy(setup = ready.setup.copy(outputs = setOf(CarOutput.DLNA)))
+        assertEquals(listOf(CAR_NETWORK, DLNA), path(dlna).section(PathSection.CAR)!!.steps.map { it.id })
+        val disconnected = dlna.copy(car = dlna.car.copy(address = null, dlna = OutputInput(OutputPhase.WAITING_USER)))
+        assertEquals(WAITING, disconnected.step(CAR_NETWORK).state)
+        assertEquals(BLOCKED, disconnected.step(DLNA).state)
+        val cast = ready.copy(setup = ready.setup.copy(outputs = setOf(CarOutput.MIRACAST), network = NetworkPlan.PHONE_HOTSPOT),
+            relay = ready.relay.copy(wifiOn = true, overlayNeeded = true))
+        assertEquals(listOf(MIRACAST), path(cast).section(PathSection.CAR)!!.steps.map { it.id })
+        assertTrue(path(cast).steps.any { it.id == WIFI })
+        assertFalse(path(cast).steps.any { it.id == CAR_NETWORK })
+        assertFalse(path(cast).canStart)
+        assertEquals(StepText.of(R.string.path_allow_overlay), cast.step(PERMISSIONS).detail)
+        assertEquals(GRANT_PERMISSIONS, cast.step(PERMISSIONS).action)
+        val two = cast.copy(relay = cast.relay.copy(permissionsGranted = 3))
+        assertEquals(StepText.of(R.string.path_permissions_needed, "2"), two.step(PERMISSIONS).detail)
+        val bothConsents = cast.copy(relay = cast.relay.copy(vpnConsentNeeded = true))
+        assertEquals(StepText.of(R.string.path_permissions_needed, "2"), bothConsents.step(PERMISSIONS).detail)
+        val allowed = cast.copy(relay = cast.relay.copy(overlayNeeded = false))
+        assertTrue(path(allowed).canStart)
+        assertEquals(StepText.raw("4/4"), allowed.step(PERMISSIONS).evidence)
+    }
+
     @Test fun relayStepsUseExactDetailsEvidenceAndActions() {
         assertEquals(StepText.raw(ready.setup.summary), ready.step(MODE).evidence)
         assertEquals(StepText.raw("Installed"), ready.step(IDENTITY).evidence)
@@ -120,7 +143,7 @@ class PathPresenterTest {
         assertEquals(StepText.of(R.string.path_permissions_needed, "2"), permissions.detail)
         assertEquals(GRANT_PERMISSIONS, permissions.action)
         assertEquals(StepText.of(R.string.path_allow_vpn), ready.copy(relay = ready.relay.copy(
-            permissionsGranted = 3, vpnConsentNeeded = true)).step(PERMISSIONS).detail)
+            permissionsGranted = 4, vpnConsentNeeded = true)).step(PERMISSIONS).detail)
         assertEquals(ACTION, ready.copy(relay = ready.relay.copy(vpnConsentNeeded = true)).step(PERMISSIONS).state)
         KeepAliveState.entries.forEach { state ->
             val value = ready.copy(relay = ready.relay.copy(keepAlive = state))
@@ -182,7 +205,7 @@ class PathPresenterTest {
         assertEquals(BLOCKED, noServer.step(CAR_PAGE).state)
         val shared = output(CarOutput.DLNA, OutputInput(OutputPhase.READY), ready.copy(
             setup = ready.setup.copy(network = NetworkPlan.SHARED_WIFI), relay = ready.relay.copy(sharedWifiSsid = null)))
-        // With no browser network step, DLNA depends on Wi-Fi rather than the saved-network selection.
+        // A receiver that is already ready keeps its proved state when the network changes.
         assertEquals(OK, shared.step(DLNA).state)
         val withBrowser = shared.copy(setup = shared.setup.copy(outputs = setOf(CarOutput.DLNA, CarOutput.BROWSER)))
         assertEquals(OK, withBrowser.step(DLNA).state)
@@ -258,7 +281,9 @@ class PathPresenterTest {
             val waiting = ready.copy(iphone = ready.iphone.copy(started = true, carWaitUntilMillis = now + left,
                 stepSinceMillis = now - 1000)).step(CARPLAY_START)
             assertEquals(WAITING, waiting.state)
-            assertEquals(StepText.of(R.string.path_car_screen_wait, label), waiting.detail)
+            assertEquals(StepText.of(R.string.path_car_screen_wait), waiting.detail)
+            assertEquals(now + left, waiting.carWaitUntilMillis)
+            assertEquals(label.toLong(), countdownSeconds(checkNotNull(waiting.carWaitUntilMillis), now))
             assertEquals(START_NOW, waiting.action)
             assertEquals(R.string.path_action_start_now, waiting.actionLabel)
             assertEquals(now - 1000, waiting.sinceMillis)
@@ -531,6 +556,9 @@ class PathPresenterTest {
         assertEquals("1920×720", path().nodes.car)
         assertEquals("192.168.43.1", path(ready.copy(car = ready.car.copy(screen = null))).nodes.car)
         assertEquals("DLNA", path(ready.copy(car = CarInput(savedScreen = "800×480", dlna = OutputInput(name = "DLNA")))).nodes.car)
+        assertEquals("Cast display", path(ready.copy(car = CarInput(miracast = OutputInput(name = "Cast display")))).nodes.car)
+        assertEquals("Receiver", path(ready.copy(car = CarInput(dlna = OutputInput(name = "Receiver"),
+            miracast = OutputInput(name = "Cast display")))).nodes.car)
         assertNull(path(ready.copy(car = CarInput(savedScreen = "800×480"))).nodes.car)
         val liveWithError = phone(LinkStep.VIDEO).copy(live = LiveInput(pictureOnCar = true),
             car = ready.car.copy(web = WebServerInput(WebPhase.FAILED, code = "web_failed")))
@@ -555,19 +583,19 @@ class PathPresenterTest {
         assertNull(path(noScreen.copy(setup = noScreen.setup.copy(outputs = emptySet()))).nodes.car)
     }
 
-    @Test fun threeFullDiagnosticLinesAreExact() {
-        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP· RF· IAP· JOIN· SES· | P LIVE· | 0.1.6 14:32:05", path().diagnostic)
-        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN✗ SES· | P LIVE· | E first_tcp_timeout 14:31:58 | 0.1.6 14:32:05",
+    @Test fun threeStableDiagnosticLinesAreExact() {
+        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP· RF· IAP· JOIN· SES· | P LIVE·", path().diagnostic)
+        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN✗ SES· | P LIVE· | E first_tcp_timeout 14:31:58",
             path(failed("first_tcp_timeout", LinkStep.JOINING)).diagnostic)
         val wired = phone(LinkStep.VIDEO, ready.copy(setup = ready.setup.copy(network = NetworkPlan.USB)))
             .copy(live = LiveInput(pictureOnCar = true))
-        assertEquals("R MODE✓ ID✓ PERM✓ | C NET✓ WEB✓ PAGE✓ | I USB✓ CP✓ DEV✓ TRUST✓ CTRL✓ SES✓ | P LIVE✓ | 0.1.6 14:32:05", path(wired).diagnostic)
+        assertEquals("R MODE✓ ID✓ PERM✓ | C NET✓ WEB✓ PAGE✓ | I USB✓ CP✓ DEV✓ TRUST✓ CTRL✓ SES✓ | P LIVE✓", path(wired).diagnostic)
         val retrying = failed("first_tcp_timeout", LinkStep.JOINING, true)
-        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN~ SES· | P LIVE· | 0.1.6 14:32:05", path(retrying).diagnostic)
+        assertEquals("R MODE✓ ID✓ PERM✓ BT✓ HS✓ | C NET✓ WEB✓ PAGE✓ | I PAIR✓ CP✓ RF✓ IAP✓ JOIN~ SES· | P LIVE·", path(retrying).diagnostic)
         val twoFailures = failed("first_tcp_timeout", LinkStep.JOINING).copy(car = ready.car.copy(
             web = WebServerInput(WebPhase.FAILED, code = "web_failed")))
-        assertTrue(path(twoFailures).diagnostic.endsWith(" | E web_failed 14:32:05 | 0.1.6 14:32:05"))
-        assertTrue(presentPath(ready, ZoneId.of("Asia/Shanghai")).diagnostic.endsWith("0.1.6 22:32:05"))
+        assertTrue(path(twoFailures).diagnostic.endsWith(" | E web_failed 00:00:00"))
+        assertTrue(presentPath(ready, ZoneId.of("Asia/Shanghai")).let { it.version == "0.1.6" && !it.diagnostic.contains("22:32:05") })
     }
 
     @Test fun everyStateNamedInTheStepTableIsReachable() {
