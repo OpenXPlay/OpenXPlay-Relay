@@ -28,7 +28,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     private val diagnostics: ClinkDiagnostics = ClinkDiagnostics.NONE,
     private val p2pReservation: P2pReservation = P2pReservation { false },
     private val onSecret: (String) -> Unit = {},
-    experimental: ExperimentalOptions = ExperimentalOptions()) : ClinkLink {
+    experimental: ExperimentalOptions = ExperimentalOptions.OFF) : ClinkLink {
     private val context = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
     private val bluetooth = context.getSystemService(BluetoothManager::class.java)

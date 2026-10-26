@@ -11,10 +11,15 @@ class ExperimentalOptionsTest {
         recordAdvertisements = true, sendBluetoothAddress = true,
             isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
 
-    @Test fun defaultsAndMasterOffDisableEveryOptionWithoutLosingChoices() {
-        assertEquals(ExperimentalOptions(), ExperimentalOptions().effective())
+    @Test fun everyOptionButTheBluetoothAddressStartsOnAndMasterOffDisablesThemWithoutLosingChoices() {
+        val defaults = ExperimentalOptions()
+        assertTrue(defaults.active); assertFalse(defaults.sendBluetoothAddress)
+        assertEquals(listOf("remember_subscription", "keep_scanning", "record_advertisements",
+            "isolate_carlink_network", "wait_for_carlink", "recover_wireless_network"), defaults.effective().names())
+        assertEquals(ExperimentalOptions.OFF, defaults.copy(active = false).effective())
+        assertEquals(0, ExperimentalOptions.OFF.optionCount)
         val disabled = selected.copy(active = false)
-        assertEquals(ExperimentalOptions(), disabled.effective())
+        assertEquals(ExperimentalOptions.OFF, disabled.effective())
         assertTrue(disabled.effective().names().isEmpty())
         assertEquals(7, disabled.optionCount)
         assertEquals(selected.effective(), disabled.copy(active = true).effective())
@@ -46,11 +51,11 @@ class ExperimentalOptionsTest {
 
     @Test fun connectionExperimentsCanBeSelectedIndependentlyAndNeedTheMasterSwitch() {
         for (isolate in listOf(false, true)) for (wait in listOf(false, true)) for (recover in listOf(false, true)) {
-            val choices = ExperimentalOptions(active = true, isolateCarlinkNetwork = isolate,
+            val choices = ExperimentalOptions.OFF.copy(active = true, isolateCarlinkNetwork = isolate,
                 waitForCarlink = wait, recoverWirelessNetwork = recover)
             assertEquals(choices, choices.effective(carlinkTrace = false))
             assertEquals(listOf(isolate, wait, recover).count { it }, choices.optionCount)
-            assertEquals(ExperimentalOptions(), choices.copy(active = false).effective())
+            assertEquals(ExperimentalOptions.OFF, choices.copy(active = false).effective())
         }
     }
 }

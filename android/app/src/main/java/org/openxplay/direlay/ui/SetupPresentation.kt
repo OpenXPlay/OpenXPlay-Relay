@@ -33,13 +33,15 @@ fun setupNetworkLabel(choice: WirelessNetworkChoice) =
 
 enum class SetupChoiceTag(val label: Int, val warning: Boolean = false) {
     RECOMMENDED(R.string.setup_recommended), EXPERIMENTAL(R.string.setup_experimental, true),
-    PICTURE_ONLY(R.string.setup_picture_only, true), NOT_RECOMMENDED(R.string.setup_not_recommended, true)
+    COMING_SOON(R.string.setup_coming_soon, true), NOT_RECOMMENDED(R.string.setup_not_recommended, true)
 }
 fun setupOutputTag(choice: OutputChoice) = when (choice) {
     OutputChoice.BROWSER -> SetupChoiceTag.RECOMMENDED
     OutputChoice.CARLINK -> SetupChoiceTag.EXPERIMENTAL
-    OutputChoice.WIRELESS -> SetupChoiceTag.PICTURE_ONLY
+    OutputChoice.WIRELESS -> SetupChoiceTag.COMING_SOON
 }
+/** Wireless display waits for device acceptance; Developer settings can still turn DLNA or Miracast on. */
+fun outputOpen(choice: OutputChoice) = choice != OutputChoice.WIRELESS
 fun setupConnectionTag(settings: RelaySettings, wireless: Boolean): SetupChoiceTag? = when {
     !wireless -> SetupChoiceTag.NOT_RECOMMENDED
     recommendedConnection(settings) == ConnectionMode.WIRELESS -> SetupChoiceTag.RECOMMENDED

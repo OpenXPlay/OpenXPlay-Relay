@@ -3,19 +3,20 @@
 // Created by riko chen on 2026-10-23
 package org.openxplay.direlay.settings
 
+/** Every option but sending the Bluetooth address starts on; [OFF] is what the master switch leaves in effect. */
 data class ExperimentalOptions(
-    val active: Boolean = false,
-    val rememberSubscription: Boolean = false,
-    val keepScanning: Boolean = false,
-    val recordAdvertisements: Boolean = false,
+    val active: Boolean = true,
+    val rememberSubscription: Boolean = true,
+    val keepScanning: Boolean = true,
+    val recordAdvertisements: Boolean = true,
     val sendBluetoothAddress: Boolean = false,
     val bluetoothAddress: String = "",
-    val isolateCarlinkNetwork: Boolean = false,
-    val waitForCarlink: Boolean = false,
-    val recoverWirelessNetwork: Boolean = false,
+    val isolateCarlinkNetwork: Boolean = true,
+    val waitForCarlink: Boolean = true,
+    val recoverWirelessNetwork: Boolean = true,
 ) {
     fun effective(carlinkTrace: Boolean = true): ExperimentalOptions {
-        if (!active) return ExperimentalOptions()
+        if (!active) return OFF
         val address = normalizedBluetoothAddress(bluetoothAddress)
         return copy(recordAdvertisements = recordAdvertisements && carlinkTrace,
             sendBluetoothAddress = sendBluetoothAddress && address != null,
@@ -33,6 +34,9 @@ data class ExperimentalOptions(
         .filter { it.first }.map { it.second }
 
     companion object {
+        val OFF = ExperimentalOptions(active = false, rememberSubscription = false, keepScanning = false,
+            recordAdvertisements = false, isolateCarlinkNetwork = false, waitForCarlink = false, recoverWirelessNetwork = false)
+
         fun normalizedBluetoothAddress(value: String): String? {
             val octets = value.split(':')
             if (octets.size != 6 || octets.any { it.length != 2 || it.any { c -> c !in "0123456789abcdefABCDEF" } }) return null

@@ -13,7 +13,7 @@
     <string name="setup2_start_subtitle">Review your choices before connecting.</string>
     <string name="setup2_set_up_again">Set up again</string>
     <string name="setup_wireless_display_hint">Use the car’s screen-casting receiver. Picture only: CarPlay can’t be touched on the car.</string>
-    <string name="setup_picture_only">Picture only</string>
+    <string name="setup_coming_soon">Coming soon</string>
     <string name="setup_dlna_hint">The car’s receiver app plays what this phone sends, a few seconds behind.</string>
     <string name="setup_miracast_hint">Cast this phone to the car from Android’s screen casting. Less delay; uses Wi-Fi Direct.</string>
     <string name="setup_multiple_outputs">Several outputs are on in Developer settings. Choosing one here replaces them.</string>
