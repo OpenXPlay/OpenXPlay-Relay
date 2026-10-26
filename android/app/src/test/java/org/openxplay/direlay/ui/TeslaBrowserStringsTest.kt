@@ -40,7 +40,7 @@ class TeslaBrowserStringsTest {
         R.string.tesla_needs_browser to ("A Tesla shows CarPlay in its browser: choose Car browser in Settings → Output." to "特斯拉通过浏览器显示 CarPlay：请在「设置 → 输出」中选择车载浏览器。"),
         R.string.tesla_open_output to ("Open Output" to "打开输出设置"),
         R.string.tesla_needs_wireless to ("Tesla adaptation needs wireless CarPlay: the USB connection already uses Android’s only VPN." to "特斯拉适配需要使用无线 CarPlay：USB 连接已经占用了 Android 唯一的 VPN。"),
-        R.string.tesla_needs_phone_network to ("Tesla adaptation needs this phone’s hotspot or Wi-Fi Direct. A shared Wi-Fi router does not pass the address to this phone." to "特斯拉适配需要使用本机热点或 Wi-Fi 直连。共享 Wi-Fi 路由器不会把这个地址转给这台手机。"),
+        R.string.tesla_needs_phone_network to ("Tesla adaptation needs this phone’s hotspot or Wi-Fi Direct. The car’s hotspot does not pass the address to this phone." to "特斯拉适配需要使用本机热点或 Wi-Fi 直连。车机热点不会把这个地址转给这台手机。"),
         R.string.tesla_needs_name to ("Set up Trusted HTTPS first." to "请先设置可信 HTTPS。"),
         R.string.tesla_open_name to ("Open Trusted HTTPS" to "打开可信 HTTPS"),
         R.string.tesla_address_failed to ("The Tesla address could not be added: %1\$s" to "无法添加特斯拉访问地址：%1\$s"),

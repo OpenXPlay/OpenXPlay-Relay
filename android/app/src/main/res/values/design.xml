@@ -78,7 +78,7 @@
     <string name="design_step_bluetooth">Bluetooth</string>
     <string name="design_step_wifi">Wi-Fi</string>
     <string name="design_step_hotspot">Hotspot</string>
-    <string name="design_step_shared_wifi">Shared Wi-Fi</string>
+    <string name="design_step_shared_wifi">Car\'s hotspot</string>
     <string name="design_step_car_network">Car network</string>
     <string name="design_step_web_server">Web server</string>
     <string name="design_step_car_page">Open on the car</string>

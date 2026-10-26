@@ -10,7 +10,7 @@
     <string name="path_bluetooth">蓝牙</string>
     <string name="path_wifi">Wi-Fi</string>
     <string name="path_hotspot">热点</string>
-    <string name="path_shared_wifi">共享 Wi-Fi</string>
+    <string name="path_shared_wifi">车机热点</string>
     <string name="path_car_network">车机网络</string>
     <string name="path_web_server">网页服务</string>
     <string name="path_car_page">车机打开网页</string>
@@ -49,7 +49,7 @@
     <string name="path_radio_unknown">无法读取，请确认已打开</string>
     <string name="path_turn_on_wifi">请打开 Wi-Fi</string>
     <string name="path_turn_on_hotspot">打开热点 %1$s</string>
-    <string name="path_join_shared_wifi">连接已保存的 Wi-Fi</string>
+    <string name="path_join_shared_wifi">连接车机热点</string>
     <string name="path_car_network_wait">等待车机能访问的网络</string>
     <string name="path_starting">正在启动</string>
     <string name="path_port_busy">端口 %1$s 被占用</string>
@@ -85,6 +85,7 @@
     <string name="path_iphone_near">让 iPhone 靠近并解锁</string>
     <string name="path_connecting_iphone">正在连接 %1$s</string>
     <string name="path_iphone_joining_wifi">等待 iPhone 加入 %1$s</string>
+    <string name="path_iphone_joining_car_hotspot">等待 iPhone 加入车机热点</string>
     <string name="path_iphone_did_not_join">iPhone 没连上，请检查热点密码</string>
     <string name="path_plug_unlock_iphone">插上并解锁 iPhone</string>
     <string name="path_allow_usb">在本机允许 USB 访问</string>
