@@ -20,7 +20,7 @@ import org.openxplay.direlay.bridge.StreamBridgeSink
 import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.service.AndroidRelayKeepAlive
 
-class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, com.shilapi.xcertplay.orchestration.WirelessConnectionPolicyProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider {
+class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, com.shilapi.xcertplay.orchestration.WirelessConnectionPolicyProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider, com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler {
     lateinit var runtime: RelayRuntime
         private set
     lateinit var keepAlive: AndroidRelayKeepAlive
@@ -69,6 +69,11 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder()
                 .detectDiskReads().detectDiskWrites().detectCustomSlowCalls().penaltyLog().build())
         }
+    }
+
+    override fun onHostUiRequested(): Boolean {
+        if (::runtime.isInitialized) runtime.input.hostUiRequested()
+        return true
     }
 
     override fun carPlayHostOverlay(activity: androidx.activity.ComponentActivity): android.view.View? =

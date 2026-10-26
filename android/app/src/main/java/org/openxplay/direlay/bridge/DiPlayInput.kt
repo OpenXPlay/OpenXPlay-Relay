@@ -113,6 +113,12 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
         Unit
     }
 
+    fun hostUiRequested() = synchronized(gate) {
+        Log.i(TAG, "CarPlay asked for the car UI")
+        sink?.hostUiRequested()
+        Unit
+    }
+
     override fun reconfigure(config: SessionConfig): ReconfigureResult = synchronized(gate) {
         requestedScreen.value = config.screens[ScreenId.MAIN]
         ReconfigureResult.RESTART_SESSION

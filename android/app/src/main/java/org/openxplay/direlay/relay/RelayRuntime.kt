@@ -1359,7 +1359,7 @@ class RelayRuntime(private val context: Context,
             val output = WebOutput(WebOutputConfig(
                 // Includes the local Tesla TUN address; no interface-specific listener is needed.
                 bindAddress = "0.0.0.0", port = port, sslContext = ssl,
-                staticAssetRoot = root.toPath(), plugins = plugins,
+                staticAssetRoot = root.toPath(), plugins = plugins, hostUi = true,
                 displaySettings = org.openxplay.direlay.logs.TimelineDisplaySettingsPort(settingsStore, connectionLog), viewArea = viewAreaPort,
                 sourceUrl = "https://github.com/OpenXPlay/OpenXPlay-Relay",
                 relay = org.openxplay.stream.web.RelayInfo("Android", appVersion()),
