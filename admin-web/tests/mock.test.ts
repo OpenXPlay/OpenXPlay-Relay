@@ -75,9 +75,9 @@ it('provides Linux Wi-Fi status, scans, join and forget', async () => {
   const status = (await call('/status')).data;
   expect(status.platform).toBe('linux'); expect(status.wifiProvisioning).toBe(true); expect(status.wifiClient.setupHotspot).toBe(true);
   const settings = (await call('/settings')).data;
-  expect(settings.schema.some((section: { id: string }) => section.id === 'wifi')).toBe(true);
-  const options = settings.schema.find((section: { id: string }) => section.id === 'network').fields[0].options;
-  expect(options.map((option: { value: string }) => option.value)).toEqual(['shared-wifi', 'device-hotspot']);
+  expect(settings.schema.some((section: { id: string }) => section.id === 'connection')).toBe(true);
+  const options = settings.schema.flatMap((section: { fields: { key: string; options: unknown }[] }) => section.fields).find((field: { key: string }) => field.key === 'networkMode').options;
+  expect(options.map((option: { value: string }) => option.value)).toEqual(['device-hotspot', 'shared-wifi']);
   expect((await call('/wifi/networks')).data.length).toBe(4);
   expect((await call('/wifi', 'PUT', { ssid: 'Home Wi-Fi', password: 'openxplay' })).status).toBe(200);
   expect((await call('/status')).data.wifiClient).toMatchObject({ ssid: 'Home Wi-Fi', setupHotspot: false });
@@ -141,7 +141,7 @@ it('uses the Linux settings schema for Linux preview states', async () => {
     expect(keys).not.toContain('bootStart');
     expect(settings.values.autoStart).toBe(true);
     expect(settings.values).not.toHaveProperty('bootStart');
-    expect(settings.schema.filter((section: { id: string }) => section.id === 'wifi')).toHaveLength(1);
+    expect(settings.schema.filter((section: { id: string }) => section.id === 'connection')).toHaveLength(1);
     expect((await call('/status')).data.platform).toBe('linux');
   } finally { vi.unstubAllEnvs(); }
 });
@@ -158,7 +158,7 @@ it.each([true, false])('applies a network switch now with a two-second outage (L
     expect((await call('/settings')).data.values.sharedWifiNetworks.every((entry: { current: boolean }) => !entry.current)).toBe(true);
     expect((await call('/settings', 'PUT', { networkMode: 'shared-wifi' })).data.applied).toBe('now');
     time.mockReturnValue(now + 4002);
-    expect((await call('/status')).data.network).toEqual({ mode: 'shared-wifi', wifi: 'Home Wi-Fi' });
+    expect((await call('/status')).data.network).toMatchObject({ mode: 'shared-wifi', wifi: 'Home Wi-Fi' });
     await call('/settings', 'PUT', { sharedWifiNetworks: [] });
     expect((await call('/settings', 'PUT', { networkMode: 'shared-wifi' })).data.errors).toEqual({ networkMode: 'error.noSavedWifi' });
   } finally { time.mockRestore(); }
@@ -286,4 +286,52 @@ it('keeps trace routes absent from the Android mock', async () => {
   const call = relay(); await call('/login', 'POST', { password: 'openxplay' });
   for (const path of ['', '/tail', '/download', '/files/trace-00000001-0-00000001.jsonl']) expect((await call('/carlink-trace' + path)).status).toBe(404);
   for (const path of ['/clear', '/capture']) expect((await call('/carlink-trace' + path, 'POST', { action: 'start' })).status).toBe(404);
+});
+it.each([false, true])('exports valid log ZIPs, retains a receipt and previews both config envelopes (Linux %s)', async linux => {
+  const call = relay(linux); await call('/login', 'POST', { password: 'openxplay' });
+  expect((await call('/logs/receipt')).status).toBe(404);
+  const file = await call('/logs/export', 'POST', { range: '10m' }); expect(file.data).toMatchObject({ bytes: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+  const zip = await call('/logs/export/' + file.data.id); expect(zip.headers['Content-Type']).toBe('application/zip'); expect(Buffer.from(zip.data).readUInt32LE()).toBe(0x04034b50); expect(Buffer.from(zip.data).toString()).toContain('timeline.txt');
+  const receipt = await call('/logs/upload', 'POST', { id: file.data.id }); expect(receipt.data).toMatchObject({ logId: expect.any(String), expiresMillis: expect.any(Number) }); expect((await call('/logs/receipt')).data).toEqual(receipt.data);
+  const png = await call('/logs/qr.png'); expect(Buffer.from(png.data).slice(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const envelope = (await call('/config/user')).data; expect(envelope.format).toBe('openxplay-user-config');
+  envelope.settings.autoStart = false; envelope.settings.futureSetting = true;
+  const dry = await call('/config/import?dryRun=1', 'POST', envelope); expect(dry.data.applied).toContain('autoStart'); expect(dry.data.ignored).toContain('futureSetting'); expect((await call('/settings')).data.values.autoStart).toBe(true);
+  await call('/config/import', 'POST', envelope); expect((await call('/settings')).data.values.autoStart).toBe(false);
+  const privacy = { ...(await call('/config/privacy')).data, providers: { duckdns: { name: '', token: 'private-mock-token' } }, futurePrivate: 'ignored' };
+  expect(privacy.format).toBe('openxplay-privacy-config'); expect(privacy).not.toHaveProperty('settings');
+  const preview = await call('/config/import?dryRun=1', 'POST', privacy); expect(preview.data).toMatchObject({ applied: ['providers'], ignored: ['futurePrivate'] }); expect((await call('/config/privacy')).data).not.toHaveProperty('providers');
+  await call('/config/import', 'POST', privacy); expect((await call('/config/privacy')).data.providers).toEqual(privacy.providers);
+  expect((await call('/update?channel=stable')).data).toMatchObject({ current: '0.2.1', latest: '0.2.1', channel: 'stable' }); expect((await call('/update?channel=beta')).data.latest).toContain('beta');
+});
+it('caps log exports at two files and rejects invalid import envelopes and oversized files', async () => {
+  const call = relay(true); await call('/login', 'POST', { password: 'openxplay' });
+  const first = (await call('/logs/export', 'POST', { range: '10m' })).data.id;
+  await call('/logs/export', 'POST', { range: '30m' }); await call('/logs/export', 'POST', { range: '24h' }); expect((await call('/logs/export/' + first)).status).toBe(404);
+  expect((await call('/logs/export', 'POST', { range: 'forever' })).status).toBe(422);
+  expect((await call('/config/import', 'POST', { format: 'unknown', version: 1 })).status).toBe(422);
+  expect((await call('/config/import', 'POST', { note: 'x'.repeat(65536) })).status).toBe(413);
+});
+it('validates frame rate, experimental address and picture sizes, and keeps a trial out of saved settings', async () => {
+  const call = relay(true); await call('/login', 'POST', { password: 'openxplay' });
+  expect((await call('/settings', 'PUT', { frameRate: '60' })).status).toBe(200);
+  expect((await call('/settings', 'PUT', { frameRate: '90' })).status).toBe(422);
+  for (const address of ['00:00:00:00:00:00', '02:00:00:00:00:00', '01:23:45:67:89:ab', 'not-an-address']) expect((await call('/settings', 'PUT', { experimentalBluetoothAddress: address })).status).toBe(422);
+  expect((await call('/settings', 'PUT', { experimentalBluetoothAddress: '00:1A:7D:DA:71:13' })).status).toBe(200);
+  expect((await call('/settings', 'PUT', { carlinkPictureSizes: [{ width: 1300, height: 720 }] })).status).toBe(200);
+  expect((await call('/settings', 'PUT', { carlinkPictureSizes: [{ width: 1301, height: 720 }] })).status).toBe(422);
+  expect((await call('/settings', 'PUT', { carlinkPictureTry: null })).status).toBe(422);
+  await call('/settings', 'PUT', { output: 'carlink' });
+  const original = (await call('/settings')).data.values.carlinkPictureDefault;
+  expect((await call('/settings', 'PUT', { carlinkPictureTry: { width: 1920, height: 720 } })).status).toBe(200);
+  const saved = (await call('/settings')).data.values; expect(saved.carlinkPictureTry).toEqual({ width: 1920, height: 720 });
+  expect((await call('/config/user')).data.settings).not.toHaveProperty('carlinkPictureTry'); expect(saved.carlinkPictureDefault).toEqual(original);
+});
+it('expires log exports after one hour', async () => {
+  const time = vi.spyOn(Date, 'now').mockReturnValue(1793000000000);
+  try {
+    const call = relay(true); await call('/login', 'POST', { password: 'openxplay' });
+    const file = (await call('/logs/export', 'POST', { range: '10m' })).data;
+    time.mockReturnValue(1793003600001); expect((await call('/logs/export/' + file.id)).status).toBe(404);
+  } finally { time.mockRestore(); }
 });

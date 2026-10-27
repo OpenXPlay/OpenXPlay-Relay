@@ -37,7 +37,7 @@ it('is confined to Linux developer settings and preserves Android schema goldens
   expect(mockSettings(false).schema.flatMap(s => s.fields).some(f => f.key === 'carlinkTrace')).toBe(false);
   const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
   expect(source).toContain('disposeTrace?.(); disposeTrace = null;');
-  expect(source).toContain('if (traceVisible(status?.platform, developer, currentView))');
+  expect(source).toContain("route === 'settings/developer/carlink' && status!.platform === 'linux'");
   expect(source).toContain("checked ? 'on' : 'off'");
 });
 it('polls every two seconds, never overlaps reads and stops even during an in-flight read', async () => {
@@ -59,7 +59,7 @@ it('uses exact Link and Error filters and stops fetching after the card is dispo
   const card = { querySelector: (selector: string) => selector.includes('filter') ? select : selector.includes('content') ? content : error };
   const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('carlink-trace') ? snapshot : { lines: ['{"type":"Link"}'] })));
   vi.stubGlobal('fetch', fetch);
-  const dispose = mountTrace(card as unknown as HTMLElement, key => key, () => 'error.request');
+  const dispose = mountTrace(card as unknown as HTMLElement, key => key, () => 'error.request', (node, html) => { node.innerHTML = html; });
   await vi.advanceTimersByTimeAsync(0); expect(content.innerHTML).toContain('Link');
   for (const type of ['Link', 'Error']) {
     select.value = type; select.addEventListener.mock.calls[0][1](); await vi.advanceTimersByTimeAsync(0);
@@ -84,7 +84,7 @@ it.each([0, 180])('preserves trace scrollTop %s and focused button across pollin
   };
   const card = { querySelector: (selector: string) => selector.includes('filter') ? select : selector.includes('content') ? content : { textContent: '' } };
   vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('carlink-trace') ? { ...snapshot, enabled: true } : { lines: ['{"type":"Link"}'] }))));
-  const dispose = mountTrace(card as unknown as HTMLElement, key => key, () => 'error.request');
+  const dispose = mountTrace(card as unknown as HTMLElement, key => key, () => 'error.request', (node, html) => { node.innerHTML = html; });
   await vi.advanceTimersByTimeAsync(0);
   list.scrollTop = scrollTop; ownerDocument.activeElement = capture;
   const previous = capture;

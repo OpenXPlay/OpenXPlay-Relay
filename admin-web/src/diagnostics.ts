@@ -187,7 +187,8 @@ export function diagnosticsView(status: Status, t: Translate): string {
   const wireless = status.platform === 'linux' && status.wireless ? `<h3>${t('wireless.title')}</h3><pre>${esc(JSON.stringify(status.wireless, null, 2))}</pre>` : '';
   const carlink = status.platform === 'linux' && status.carlink ? `<h3>${t('ui.carlink')}</h3><pre>${esc(JSON.stringify(status.carlink, null, 2))}</pre>` : '';
   const network = status.platform === 'linux' && status.network.plan ? `<h3>${t('connections.title')}</h3><pre>${esc(JSON.stringify(status.network, null, 2))}</pre>` : '';
-  return `${carlink}${host}${hostCapabilitiesView(status, t)}${wireless}${network}${bluetoothView(status, t)}<h3>${t('diag.video')}</h3>${video}<h3>${t('diag.receivers')}</h3>${receivers || `<p class="muted">${t('diag.none')}</p>`}`;
+  const group = (key: string, title: string, content: string) => content ? `<details class="diagnostic-group" data-details="${key}"><summary>${esc(t(title))}</summary>${content}</details>` : '';
+  return group('video', 'diag.video', video) + group('carlink', 'ui.carlink', carlink) + group('host', 'host.title', host + hostCapabilitiesView(status, t)) + group('wireless', 'wireless.title', wireless) + group('network', 'connections.title', network) + group('bluetooth', 'bt.title', bluetoothView(status, t)) + group('receivers', 'diag.receivers', receivers || `<p class="muted">${t('diag.none')}</p>`);
 }
 export function receiverReport(status: Status, client: string, now = new Date()): string | null {
   const receiver = status.receivers?.find(r => r.client === client);

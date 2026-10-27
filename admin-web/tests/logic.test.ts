@@ -120,6 +120,7 @@ it('uses the platform hotspot and only asks to add before switching when the lis
 });
 it('includes the actual Wi-Fi, hotspot credentials, first saved SSID and comeback port', () => {
   const status = networkStatus(); const settings = mockSettings(true);
+  settings.values.sharedWifiNetworks = [{ ssid: 'Home Wi-Fi', hasPassword: true }];
   status.adminPort = 7000; status.hotspot = { ssid: 'Relay <&>', password: 'real-secret', ip: '10.42.0.1', active: false };
   expect(switchConsequences(status, settings, 'device-hotspot')).toMatchObject({ change: 'net.leaveWifi', parameters: { wifi: 'Car Wi-Fi', ssid: 'Relay <&>', password: 'real-secret', url: 'https://10.42.0.1:7000' } });
   expect(switchConsequences(status, settings, 'shared-wifi').parameters.wifi).toBe('Home Wi-Fi');

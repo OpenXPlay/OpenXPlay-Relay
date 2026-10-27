@@ -1,0 +1,674 @@
+[
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "MODE",
+    "expected": "path_mode"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "IDENTITY",
+    "expected": "path_identity"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "PERMISSIONS",
+    "expected": "path_permissions"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "KEEP_ALIVE",
+    "expected": "path_keep_alive"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "BLUETOOTH",
+    "expected": "path_bluetooth"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "WIFI",
+    "expected": "path_wifi"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "HOTSPOT",
+    "expected": "path_hotspot"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "SHARED_WIFI",
+    "expected": "path_shared_wifi"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "CAR_NETWORK",
+    "expected": "path_car_network"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "WEB_SERVER",
+    "expected": "path_web_server"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "CAR_PAGE",
+    "expected": "path_car_page"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "CARLINK_FIND",
+    "expected": "path_carlink_find"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "CARLINK_LINK",
+    "expected": "path_carlink_link"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "CARLINK_PIN",
+    "expected": "path_carlink_pin"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "CARLINK_READY",
+    "expected": "path_carlink_ready"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "DLNA",
+    "expected": "path_dlna"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "MIRACAST",
+    "expected": "path_miracast"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "IPHONE_PAIRED",
+    "expected": "path_iphone_paired"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "USB_HOST",
+    "expected": "path_usb_host"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "CARPLAY_START",
+    "expected": "path_carplay_start"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "IPHONE_BLUETOOTH",
+    "expected": "path_iphone_bluetooth"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "IPHONE_AUTH",
+    "expected": "path_iphone_auth"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "IPHONE_WIFI",
+    "expected": "path_iphone_wifi"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "USB_IPHONE",
+    "expected": "path_usb_iphone"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "USB_TRUST",
+    "expected": "path_usb_trust"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "USB_CONTROL",
+    "expected": "path_usb_control"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "SESSION",
+    "expected": "path_session"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "TESLA",
+    "expected": "path_tesla"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "title",
+    "input": "PICTURE",
+    "expected": "path_picture"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "explanation",
+    "input": "BLUETOOTH",
+    "expected": "path_explain_bluetooth"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "explanation",
+    "input": "HOTSPOT",
+    "expected": "path_explain_hotspot"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "explanation",
+    "input": "CAR_NETWORK",
+    "expected": "path_explain_car_network"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "explanation",
+    "input": "CAR_PAGE",
+    "expected": "path_explain_car_page"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "explanation",
+    "input": "CARPLAY_START",
+    "expected": "path_explain_carplay_start"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "FIX_SETTINGS",
+    "expected": "path_action_fix_settings"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "IMPORT_IDENTITY",
+    "expected": "path_action_import_identity"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "GRANT_PERMISSIONS",
+    "expected": "path_action_grant_permissions"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "KEEP_ALIVE_SETTINGS",
+    "expected": "path_action_keep_alive_settings"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "TURN_ON_BLUETOOTH",
+    "expected": "path_action_turn_on"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "OPEN_WIFI",
+    "expected": "path_action_turn_on"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "OPEN_HOTSPOT",
+    "expected": "path_action_open_hotspot"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "CHOOSE_SHARED_WIFI",
+    "expected": "path_action_choose"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "CHOOSE_RENDERER",
+    "expected": "path_action_choose"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "CHOOSE_IPHONE",
+    "expected": "path_action_choose"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "COPY_PAGE_ADDRESS",
+    "expected": "path_action_copy_page_address"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "RECONNECT_CARLINK",
+    "expected": "path_action_retry"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "RETRY",
+    "expected": "path_action_retry"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "ENTER_PIN",
+    "expected": "path_action_enter_pin"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "OPEN_CAST",
+    "expected": "path_action_open_cast"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "PAIR_IPHONE",
+    "expected": "path_action_pair_iphone"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "actionLabel",
+    "input": "START_NOW",
+    "expected": "path_action_start_now"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "bluetooth_off",
+    "expected": "path_explain_bluetooth_off"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "iphone_unpaired",
+    "expected": "path_explain_iphone_unpaired"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "rfcomm_timeout",
+    "expected": "path_explain_rfcomm_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "wifi_off",
+    "expected": "path_explain_wifi_off"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "wifi_reset_required",
+    "expected": "path_explain_wifi_reset_required"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "usb_trust_denied",
+    "expected": "path_explain_usb_trust_denied"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "iphone_locked",
+    "expected": "path_explain_iphone_locked"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "usb_role",
+    "expected": "path_explain_usb_role"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "carlink_blocked",
+    "expected": "path_explain_carlink_blocked"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "web_port_busy",
+    "expected": "path_explain_web_port_busy"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "auth_rejected",
+    "expected": "path_explain_auth_rejected"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "auth_timeout",
+    "expected": "path_explain_auth_rejected"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "pin_cancelled",
+    "expected": "path_explain_auth_rejected"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "peer_key_changed",
+    "expected": "path_explain_peer_key_changed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "projection_timeout",
+    "expected": "path_explain_projection_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "heartbeat_timeout",
+    "expected": "path_explain_heartbeat_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "wifi_link_lost",
+    "expected": "path_explain_heartbeat_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "hotspot_not_ready",
+    "expected": "error_explain_hotspot_not_ready"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "hotspot_configuration",
+    "expected": "error_explain_hotspot_configuration"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "first_tcp_timeout",
+    "expected": "error_explain_first_tcp_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "bluetooth_unusable",
+    "expected": "error_explain_bluetooth_unusable"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_unavailable",
+    "expected": "error_explain_ble_unavailable"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_timeout",
+    "expected": "error_explain_ble_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_scan_failed",
+    "expected": "error_explain_ble_scan_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "gatt_connect_failed",
+    "expected": "error_explain_gatt_connect_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "gatt_services_failed",
+    "expected": "error_explain_gatt_services_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_discovery_failed",
+    "expected": "error_explain_gatt_services_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_service_missing",
+    "expected": "error_explain_ble_service_missing"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_subscribe_failed",
+    "expected": "error_explain_ble_subscribe_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_cccd_failed",
+    "expected": "error_explain_ble_cccd_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_cccd_timeout",
+    "expected": "error_explain_ble_cccd_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_write_failed",
+    "expected": "error_explain_ble_write_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_request_rejected",
+    "expected": "error_explain_ble_request_rejected"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_reply_invalid",
+    "expected": "error_explain_ble_reply_invalid"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_verify_timeout",
+    "expected": "error_explain_ble_verify_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_exchange_timeout",
+    "expected": "error_explain_ble_exchange_timeout"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "ble_exchange_failed",
+    "expected": "error_explain_ble_exchange_failed"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "renderer_not_found",
+    "expected": "dlna_error_not_found"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "renderer_unreachable",
+    "expected": "dlna_error_unreachable"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "renderer_no_avtransport",
+    "expected": "dlna_error_no_avtransport"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "renderer_rejected",
+    "expected": "dlna_error_rejected"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "renderer_stopped",
+    "expected": "dlna_error_stopped"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "stream_server_failed",
+    "expected": "dlna_error_server"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "unsupported_video",
+    "expected": "dlna_error_video"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "overlay_denied",
+    "expected": "miracast_allow_overlay"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "window_failed",
+    "expected": "miracast_error_window"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "decoder_failed",
+    "expected": "miracast_error_decoder"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "display_lost",
+    "expected": "miracast_error_display"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "wifi_join_timeout",
+    "expected": "path_explain_wifi_join"
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": "unknown",
+    "expected": null
+  },
+  {
+    "case": "everyTitleActionAndExplanationMappingIsCovered",
+    "kind": "failureExplanation",
+    "input": null,
+    "expected": null
+  },
+  {
+    "case": "carWaitUsesCeilingSecondsAndNeverGoesNegative",
+    "kind": "countdown",
+    "input": 20000,
+    "expected": 20
+  },
+  {
+    "case": "carWaitUsesCeilingSecondsAndNeverGoesNegative",
+    "kind": "countdown",
+    "input": 19999,
+    "expected": 20
+  },
+  {
+    "case": "carWaitUsesCeilingSecondsAndNeverGoesNegative",
+    "kind": "countdown",
+    "input": 1001,
+    "expected": 2
+  },
+  {
+    "case": "carWaitUsesCeilingSecondsAndNeverGoesNegative",
+    "kind": "countdown",
+    "input": 1000,
+    "expected": 1
+  },
+  {
+    "case": "carWaitUsesCeilingSecondsAndNeverGoesNegative",
+    "kind": "countdown",
+    "input": 1,
+    "expected": 1
+  },
+  {
+    "case": "carWaitUsesCeilingSecondsAndNeverGoesNegative",
+    "kind": "countdown",
+    "input": 0,
+    "expected": 0
+  },
+  {
+    "case": "carWaitUsesCeilingSecondsAndNeverGoesNegative",
+    "kind": "countdown",
+    "input": -1,
+    "expected": 0
+  },
+  {
+    "case": "aTapRightAfterTheActionChangesIsIgnored",
+    "kind": "tap",
+    "input": 0,
+    "expected": false
+  },
+  {
+    "case": "aTapRightAfterTheActionChangesIsIgnored",
+    "kind": "tap",
+    "input": 499,
+    "expected": false
+  },
+  {
+    "case": "aTapRightAfterTheActionChangesIsIgnored",
+    "kind": "tap",
+    "input": 500,
+    "expected": true
+  }
+]

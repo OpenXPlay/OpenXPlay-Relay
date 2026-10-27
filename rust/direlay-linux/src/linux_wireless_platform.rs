@@ -24,12 +24,13 @@ pub struct LinuxWirelessPlatform {
     input: Arc<DiPlayInput>,
     backends: crate::host_backends::HostBackends,
     capabilities: Option<Arc<crate::host_capabilities::CapabilityCache>>,
-    session: (u32, bool),
+    start_gate: Option<crate::start_policy::StartGate>,
     hotspot_lifetime: Arc<crate::hotspot_lifetime::HotspotLifetime>,
     bluetooth_wake: Option<Arc<crate::bluetooth_wake::BluetoothWake>>,
     secure_connections: Option<Arc<crate::secure_connections::SecureConnections>>,
     /// The SSID of the access point `create_hotspot` prepared, when known before it is up.
     planned_ssid: Mutex<Option<String>>,
+    current_hotspot: Mutex<Option<Arc<dyn WirelessHotspotManager>>>,
     provisioning: Option<Arc<crate::provision::ProvisioningGate>>,
     before_activation: Option<crate::host_backends::BeforeActivation>,
     inventory: Option<Arc<crate::net_inventory::InventoryCache>>,
@@ -47,7 +48,7 @@ impl LinuxWirelessPlatform {
     ) -> Self {
         let backends = backends.for_controller();
         input.initialize_video_state(&options.state_dir);
-        let session = input.configure_session();
+        input.configure_session();
         let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
             Duration::from_secs(options.hotspot_down_gap_seconds()),
             None,
@@ -61,15 +62,20 @@ impl LinuxWirelessPlatform {
             input,
             backends,
             capabilities: None,
-            session,
+            start_gate: None,
             hotspot_lifetime,
             bluetooth_wake: None,
             secure_connections: None,
             planned_ssid: Mutex::new(None),
+            current_hotspot: Mutex::default(),
             provisioning: None,
             before_activation: None,
             inventory: None,
         }
+    }
+    pub fn with_start_gate(mut self, gate: crate::start_policy::StartGate) -> Self {
+        self.start_gate = Some(gate);
+        self
     }
     pub fn with_capabilities(
         mut self,
@@ -133,7 +139,7 @@ impl LinuxWirelessPlatform {
         &self,
         inner: Arc<dyn WirelessHotspotManager>,
     ) -> Arc<dyn WirelessHotspotManager> {
-        match &self.capabilities {
+        let hotspot: Arc<dyn WirelessHotspotManager> = match &self.capabilities {
             Some(cache) => Arc::new(ProbedHotspot {
                 inner,
                 cache: cache.clone(),
@@ -142,7 +148,9 @@ impl LinuxWirelessPlatform {
                 carlink: self.options.carlink_interface().into(),
             }),
             None => inner,
-        }
+        };
+        *self.current_hotspot.lock().unwrap() = Some(hotspot.clone());
+        hotspot
     }
     pub fn load_local_mfi(directory: &std::path::Path) -> Result<Arc<dyn MfiAuthenticator>> {
         let key = std::fs::read(directory.join("identity.pk8"))?;
@@ -205,6 +213,12 @@ impl BluetoothConnection for BluetoothClient {
     }
 }
 impl WirelessPlatform for LinuxWirelessPlatform {
+    fn network_watch_enabled(&self) -> bool {
+        true
+    }
+    fn car_ready(&self) -> Result<bool> {
+        self.start_gate.as_ref().map_or(Ok(true), |g| g())
+    }
     fn check_bluetooth_radio(&self) -> Result<()> {
         self.backends.bluetooth.check_radio()?;
         // A bonded iPhone reconnects only with Secure Connections on: a switch the policy is
@@ -352,7 +366,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
                 .clone()
                 .ok_or_else(|| std::io::Error::other("AP BSSID unavailable"))?,
             self.backends.bluetooth.local_address()?,
-            self.session,
+            self.input.configure_session(),
             self.options.settings.car_bluetooth_audio,
         );
         self.input.configure_display(&mut config.main);
@@ -370,6 +384,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
             callbacks,
         );
         network.input = Some((input, sink, events));
+        network.hotspot = self.current_hotspot.lock().unwrap().clone();
         Ok(Arc::new(network))
     }
     fn run_bootstrap(
@@ -482,6 +497,17 @@ struct ControlEvents {
     closed: Arc<AtomicBool>,
 }
 impl WirelessControlEvents for ControlEvents {
+    fn on_stage_changed(&self, stage: Iap2WirelessControlStage) {
+        if !self.closed.load(Ordering::Acquire) {
+            self.events.emit(
+                "iap2-stage",
+                &serde_json::json!({"stage":format!("{stage:?}")}),
+            );
+        }
+    }
+    fn before_wifi_configuration(&self) -> Result<()> {
+        self.before_start_session()
+    }
     fn on_incoming(&self, frame: &Iap2Frame) {
         if let Some(input) = &self.input {
             input.iap2_context(frame);
@@ -530,6 +556,8 @@ pub struct LinuxNetwork {
     closed: Arc<AtomicBool>,
     channels: Arc<Mutex<Vec<Arc<Iap2Session>>>>,
     input: Option<BridgeWiring>,
+    hotspot: Option<Arc<dyn WirelessHotspotManager>>,
+    watchdog: Arc<Mutex<Option<carplay_airplay::first_tcp_watchdog::FirstTcpWatchdog>>>,
 }
 impl LinuxNetwork {
     #[allow(clippy::too_many_arguments)]
@@ -560,6 +588,8 @@ impl LinuxNetwork {
             closed: Arc::new(AtomicBool::new(false)),
             channels: Arc::new(Mutex::new(Vec::new())),
             input: None,
+            hotspot: None,
+            watchdog: Arc::default(),
         }
     }
     pub fn accept_tunnel(&self, stream: Arc<dyn DuplexStream>) -> Result<bool> {
@@ -590,10 +620,38 @@ struct SessionListener {
     closed: Arc<AtomicBool>,
     events: Arc<JsonEvents>,
     active: Mutex<Vec<Weak<AirPlaySession>>>,
+    watchdog: Arc<Mutex<Option<carplay_airplay::first_tcp_watchdog::FirstTcpWatchdog>>>,
 }
 impl AirPlaySessionListener for SessionListener {
+    fn on_tcp_accepted(&self, event: AirPlayTcpAccepted) {
+        if let Some(w) = self.watchdog.lock().unwrap().as_mut() {
+            w.accepted(&event, std::time::Instant::now());
+        }
+    }
+    fn on_host_ui_requested(&self, _: &AirPlaySession) {
+        if !self.closed.load(Ordering::Acquire) {
+            if let Some(input) = &self.input {
+                input.host_ui_requested();
+            }
+        }
+    }
+    fn on_startup_milestone(&self, _: &AirPlaySession, name: &str) {
+        if !self.closed.load(Ordering::Acquire) {
+            self.events.startup_milestone(name);
+        }
+    }
+    fn on_video_frame_rendered(&self, _: &AirPlaySession) {
+        if !self.closed.load(Ordering::Acquire) {
+            self.events.startup_milestone("first_video_rendered");
+        }
+    }
     fn on_session_active(&self, s: Arc<AirPlaySession>) {
         if !self.closed.load(Ordering::Acquire) {
+            if let Some(w) = self.watchdog.lock().unwrap().as_mut() {
+                if !w.session_established() {
+                    return;
+                }
+            }
             self.active.lock().unwrap().push(Arc::downgrade(&s));
             if let Some(input) = &self.input {
                 input.session_context(true);
@@ -716,6 +774,31 @@ fn spawn_tunnel(
     Ok(true)
 }
 impl NetworkAttachment for LinuxNetwork {
+    fn uses_startup_watchdog(&self) -> bool {
+        true
+    }
+    fn start_session_sent(&self, now: std::time::Instant) {
+        if let Some(w) = self.watchdog.lock().unwrap().as_mut() {
+            w.start_session_sent(now);
+        }
+    }
+    fn poll_startup(&self, now: std::time::Instant) -> Result<()> {
+        match self
+            .watchdog
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|w| w.poll(now))
+        {
+            Some(carplay_airplay::first_tcp_watchdog::FirstTcpTimeout::FirstTcp) => {
+                Err(std::io::Error::other("first_tcp_timeout"))
+            }
+            Some(carplay_airplay::first_tcp_watchdog::FirstTcpTimeout::Session) => Err(
+                std::io::Error::other("AirPlay session timeout after TCP accept"),
+            ),
+            None => Ok(()),
+        }
+    }
     fn start(&self) -> Result<()> {
         let address = self
             .info
@@ -753,6 +836,7 @@ impl NetworkAttachment for LinuxNetwork {
             closed: self.closed.clone(),
             events: self.events.clone(),
             active: Mutex::new(Vec::new()),
+            watchdog: self.watchdog.clone(),
         });
         let mut server = LinuxAirPlayServer::new(
             address,
@@ -777,6 +861,10 @@ impl NetworkAttachment for LinuxNetwork {
             }));
         }
         let server = Arc::new(server);
+        *self.watchdog.lock().unwrap() = Some(
+            carplay_airplay::first_tcp_watchdog::FirstTcpWatchdog::new(server.listener_identity())
+                .with_session_timeout(Duration::from_secs(45)),
+        );
         server.start()?;
         let c = server.config();
         let e = Iap2WirelessCarPlayEndpoint {
@@ -819,6 +907,9 @@ impl NetworkAttachment for LinuxNetwork {
             .ok_or_else(|| std::io::Error::other("Network is not ready"))
     }
     fn validate_ready(&self) -> Result<()> {
+        if let Some(h) = &self.hotspot {
+            h.validate_ready()?;
+        }
         let interface = self
             .info
             .interface_name
@@ -837,6 +928,9 @@ impl NetworkAttachment for LinuxNetwork {
     }
     fn close(&self) -> Result<()> {
         self.closed.store(true, Ordering::Release);
+        if let Some(w) = self.watchdog.lock().unwrap().as_mut() {
+            w.terminate();
+        }
         for s in std::mem::take(&mut *self.channels.lock().unwrap()) {
             let _ = s.close();
         }
@@ -854,6 +948,95 @@ impl NetworkAttachment for LinuxNetwork {
 #[cfg(test)]
 mod network_tests {
     use super::*;
+    #[test]
+    fn every_wifi_and_start_write_validates_the_live_attachment() {
+        struct Attachment {
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+            failed: Arc<AtomicBool>,
+        }
+        impl NetworkAttachment for Attachment {
+            fn validate_ready(&self) -> Result<()> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if self.failed.load(Ordering::SeqCst) {
+                    Err(std::io::Error::other("changed"))
+                } else {
+                    Ok(())
+                }
+            }
+            fn start(&self) -> Result<()> {
+                Ok(())
+            }
+            fn endpoint(&self) -> Result<Iap2WirelessCarPlayEndpoint> {
+                Err(std::io::Error::other("unused"))
+            }
+            fn close(&self) -> Result<()> {
+                Ok(())
+            }
+        }
+        struct Pending(Arc<dyn NetworkAttachment>);
+        impl PendingNetwork for Pending {
+            fn ssid(&self, _: Duration) -> Result<String> {
+                Ok(String::new())
+            }
+            fn wait(&self, _: Duration) -> Result<Option<Arc<dyn NetworkAttachment>>> {
+                Ok(Some(self.0.clone()))
+            }
+        }
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed = Arc::new(AtomicBool::new(false));
+        let events = Arc::new(JsonEvents::new(Arc::new(|_| {})));
+        let controls = ControlEvents {
+            input: None,
+            events: events.clone(),
+            ready: Arc::new(|| {}),
+            start: Arc::new(|| {}),
+            wifi_sent: Arc::new(|| {}),
+            network: Some(Arc::new(Pending(Arc::new(Attachment {
+                calls: calls.clone(),
+                failed: failed.clone(),
+            })))),
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+        controls.before_wifi_configuration().unwrap();
+        controls.before_start_session().unwrap();
+        controls.before_wifi_configuration().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        failed.store(true, Ordering::SeqCst);
+        assert!(controls.before_wifi_configuration().is_err());
+        assert!(controls.before_start_session().is_err());
+        controls.on_stage_changed(Iap2WirelessControlStage::WifiConfigSent);
+        assert_eq!(events.runtime_path_facts().iphone.step, "WIFI_SENT");
+    }
+    #[test]
+    fn external_accepts_feed_the_listener_watchdog_and_retirement_fences_them() {
+        let identity = AirPlayListenerIdentity::new(7);
+        let now = std::time::Instant::now();
+        let mut watch =
+            carplay_airplay::first_tcp_watchdog::FirstTcpWatchdog::new(identity.clone());
+        watch.start_session_sent(now);
+        let listener = SessionListener {
+            input: None,
+            callbacks: NetworkCallbacks {
+                on_air_play: Arc::new(|| {}),
+                on_tunnel_ready: Arc::new(|| {}),
+                on_failure: Arc::new(|_| {}),
+            },
+            closed: Arc::new(AtomicBool::new(false)),
+            events: Arc::new(JsonEvents::new(Arc::new(|_| {}))),
+            active: Mutex::default(),
+            watchdog: Arc::new(Mutex::new(Some(watch))),
+        };
+        listener.on_tcp_accepted(AirPlayTcpAccepted {
+            listener: identity,
+            internal: false,
+            accepted_at_nanos: 0,
+        });
+        let mut w = listener.watchdog.lock().unwrap();
+        let w = w.as_mut().unwrap();
+        assert!(w.poll(now + Duration::from_secs(31)).is_none());
+        w.terminate();
+        assert!(!w.session_established());
+    }
     #[test]
     fn capability_worker_starts_after_hotspot_start_even_if_it_fails() {
         struct Runner(Arc<std::sync::atomic::AtomicBool>);

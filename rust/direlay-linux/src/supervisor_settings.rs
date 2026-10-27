@@ -45,6 +45,14 @@ pub fn supervisor_settings(
                     address: o.settings.carlink_address.clone(),
                     id: pairing_id,
                     band: station_5ghz as u8,
+                    phone_mac: (o.settings.experimental_active
+                        && o.settings.experimental_send_bluetooth_address)
+                        .then(|| {
+                            crate::carlink_policy::bluetooth_address(
+                                &o.settings.experimental_bluetooth_address,
+                            )
+                        })
+                        .flatten(),
                 })
             } else {
                 None
@@ -89,6 +97,36 @@ pub fn supervisor_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_flags_use_root_state_and_only_an_enabled_valid_bluetooth_override() {
+        let root = std::env::temp_dir().join(format!(
+            "supervisor-runtime-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let mut o =
+            Options::parse(&["--state-dir".into(), root.to_string_lossy().into_owned()]).unwrap();
+        o.settings.output = "both".into();
+        for (active, send, address, expected) in [
+            (true, true, "AA:BB:CC:DD:EE:FF", true),
+            (false, true, "aa:bb:cc:dd:ee:ff", false),
+            (true, false, "aa:bb:cc:dd:ee:ff", false),
+            (true, true, "01:00:00:00:00:01", false),
+        ] {
+            o.settings.experimental_active = active;
+            o.settings.experimental_send_bluetooth_address = send;
+            o.settings.experimental_bluetooth_address = address.into();
+            let args = supervisor_settings(&o, vec![], &[], String::new(), None, false).arguments();
+            assert!(args.iter().any(|a| a == "--host-ui"));
+            assert!(args
+                .windows(2)
+                .any(|a| a[0] == "--clink-state-dir" && a[1] == root.as_os_str()));
+            assert!(args
+                .windows(2)
+                .any(|a| a[0] == "--clink-scan" && a[1] == "continuous"));
+            assert_eq!(args.iter().any(|a| a == "--clink-phone-mac"), expected);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn hevc_argument_matrix_uses_current_picture_settings() {
         let root = std::env::temp_dir().join(format!(

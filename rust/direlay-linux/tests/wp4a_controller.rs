@@ -51,6 +51,8 @@ struct Shared {
     closed: Mutex<Vec<String>>,
     callbacks: Mutex<Option<NetworkCallbacks>>,
     network_started: AtomicBool,
+    gate_enabled: AtomicBool,
+    gate_ready: AtomicBool,
     connecting: AtomicBool,
     connected: AtomicBool,
     establish: AtomicBool,
@@ -101,6 +103,8 @@ impl Default for Shared {
             closed: Mutex::new(Vec::new()),
             callbacks: Mutex::new(None),
             network_started: AtomicBool::new(false),
+            gate_enabled: AtomicBool::new(false),
+            gate_ready: AtomicBool::new(false),
             connecting: AtomicBool::new(false),
             connected: AtomicBool::new(false),
             establish: AtomicBool::new(true),
@@ -282,6 +286,9 @@ impl CloseResource for Pairing {
     }
 }
 impl WirelessPlatform for Platform {
+    fn car_ready(&self) -> openxplay_relay::Result<bool> {
+        Ok(!self.0.gate_enabled.load(Ordering::SeqCst) || self.0.gate_ready.load(Ordering::SeqCst))
+    }
     fn check_bluetooth_radio(&self) -> openxplay_relay::Result<()> {
         if self.0.radio_down.load(Ordering::Acquire) {
             Err(std::io::Error::other(
@@ -1318,4 +1325,29 @@ fn bluetooth_starts_while_the_wifi_provisioning_still_blocks_the_ap() {
     assert!(f.authenticated.lock().unwrap().unwrap() < ready);
     assert!(f.wifi_sent.lock().unwrap().unwrap() >= ready);
     run.stop();
+}
+
+#[test]
+fn screen_wait_prepares_hotspot_before_airplay_and_is_cancelable() {
+    for release in [false, true] {
+        let f = Arc::new(Shared::default());
+        f.gate_enabled.store(true, Ordering::SeqCst);
+        let mut run = Run::with_retry(
+            f.clone(),
+            Duration::from_secs(2),
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+        );
+        wait_for(|| {
+            f.hotspot_starts.load(Ordering::SeqCst) > 0 && f.connecting.load(Ordering::SeqCst)
+        });
+        assert!(!f.network_started.load(Ordering::SeqCst));
+        if release {
+            f.gate_ready.store(true, Ordering::SeqCst);
+            wait_for(|| run.controller.stage() == "WirelessActive");
+        }
+        let start = Instant::now();
+        run.stop();
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
 }

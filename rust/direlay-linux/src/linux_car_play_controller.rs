@@ -22,6 +22,13 @@ pub struct MfiResource {
 }
 /// Platform interface for `NetworkAttachment`. Implementations must support bounded shutdown.
 pub trait NetworkAttachment: Send + Sync {
+    fn uses_startup_watchdog(&self) -> bool {
+        false
+    }
+    fn start_session_sent(&self, _now: Instant) {}
+    fn poll_startup(&self, _now: Instant) -> Result<()> {
+        Ok(())
+    }
     fn validate_ready(&self) -> Result<()> {
         Ok(())
     }
@@ -61,6 +68,12 @@ pub trait BluetoothConnection: DuplexStream {
 }
 /// Platform interface for `WirelessPlatform`. Implementations must support bounded shutdown.
 pub trait WirelessPlatform: Send + Sync {
+    fn car_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn network_watch_enabled(&self) -> bool {
+        false
+    }
     /// Errors propagate to the lifecycle owner.
     fn check_bluetooth_radio(&self) -> Result<()>;
     /// Errors propagate to the lifecycle owner.
@@ -568,7 +581,9 @@ impl LinuxCarPlayController {
                 // The head unit stays on the AP while the iPhone is retried, unless the iPhone
                 // never joined it: then the AP goes down for the gap, so the Wi-Fi driver and the
                 // iPhone drop their stale association before the next attempt brings it back.
-                self.release_attempt(recreate.is_none());
+                let recovery = e.to_string().contains("changed")
+                    || e.to_string().contains("association was lost");
+                self.release_attempt(recreate.is_none() && !recovery);
                 if let Some(reason) = recreate {
                     self.events.log(&format!(
                         "hotspot-recreate reason={reason} gapMs={}",
@@ -677,6 +692,9 @@ impl LinuxCarPlayController {
                     return;
                 }
                 s.start_session = true;
+                if let Some(n) = &s.network {
+                    n.start_session_sent(Instant::now());
+                }
             }
             let state = state.clone();
             let platform = platform.clone();
@@ -690,17 +708,33 @@ impl LinuxCarPlayController {
                         // The iPhone joins the AP while its session starts.
                         sample_stations(platform.as_ref(), &state, &events, generation);
                         let s = m.lock().unwrap();
-                        let slice = deadline
-                            .saturating_duration_since(Instant::now())
-                            .min(STATION_POLL);
+                        let uses_watchdog = s
+                            .network
+                            .as_ref()
+                            .is_some_and(|n| n.uses_startup_watchdog());
+                        let slice = if uses_watchdog {
+                            STATION_POLL
+                        } else {
+                            deadline
+                                .saturating_duration_since(Instant::now())
+                                .min(STATION_POLL)
+                        };
                         let (s, _) = c
                             .wait_timeout_while(s, slice, |s| handing_off(s, generation))
                             .unwrap();
                         if !handing_off(&s, generation) {
                             return;
                         }
-                        if Instant::now() >= deadline {
-                            drop(s);
+                        let network = s.network.clone();
+                        let uses_watchdog =
+                            network.as_ref().is_some_and(|n| n.uses_startup_watchdog());
+                        drop(s);
+                        if let Some(e) = network.and_then(|n| n.poll_startup(Instant::now()).err())
+                        {
+                            abort(&state, generation, e.to_string());
+                            return;
+                        }
+                        if !uses_watchdog && Instant::now() >= deadline {
                             abort(
                                 &state,
                                 generation,
@@ -746,7 +780,9 @@ impl LinuxCarPlayController {
         hotspot.on_car_play_confirmed()?;
         loop {
             self.wait(Duration::from_secs(1))?;
-            hotspot.validate_ready()?;
+            if !self.platform.network_watch_enabled() {
+                hotspot.validate_ready()?;
+            }
         }
     }
     /// The attempt's network worker: prepares and starts the AP, then, once the adapter is
@@ -789,6 +825,11 @@ impl LinuxCarPlayController {
         })?
         .is_none()
         {}
+        while !self.platform.car_ready()? {
+            await_attempt(&self.state, generation, Duration::from_millis(100), |_| {
+                None::<()>
+            })?;
+        }
         self.network_stage(generation, "AttachingNetwork", serde_json::json!({}));
         let state = self.state.clone();
         let e = self.events.clone();
@@ -816,8 +857,52 @@ impl LinuxCarPlayController {
         self.own(Layer::Network, Box::new(move || n.close()))?;
         let mut s = self.state.0.lock().unwrap();
         attempt_check(&s, generation)?;
-        s.network = Some(network);
+        s.network = Some(network.clone());
         self.state.1.notify_all();
+        drop(s);
+        if self.platform.network_watch_enabled() {
+            let mut watch = carplay_airplay::car_play_controller::WirelessNetworkWatch::new(true);
+            let mut iphone_stations = BTreeSet::new();
+            loop {
+                if await_attempt(&self.state, generation, STATION_POLL, |_| None::<()>).is_err() {
+                    return Ok(());
+                }
+                let stations = self.platform.hotspot_stations();
+                let sent = self.state.0.lock().unwrap().start_session;
+                watch.check(|| {
+                    network.validate_ready()?;
+                    if sent {
+                        if let Some(stations) = &stations {
+                            let current = stations.iter().cloned().collect::<BTreeSet<_>>();
+                            if iphone_stations.is_empty() {
+                                iphone_stations.extend(
+                                    self.state.0.lock().unwrap().stations.joined.iter().cloned(),
+                                );
+                            }
+                            let before = self
+                                .state
+                                .0
+                                .lock()
+                                .unwrap()
+                                .stations
+                                .before
+                                .clone()
+                                .unwrap_or_default();
+                            let joined = current
+                                .difference(&before)
+                                .cloned()
+                                .collect::<BTreeSet<_>>();
+                            if !iphone_stations.is_empty() && iphone_stations.is_disjoint(&current)
+                            {
+                                return Err(std::io::Error::other("iPhone association was lost"));
+                            }
+                            iphone_stations.extend(joined);
+                        }
+                    }
+                    Ok(())
+                })?;
+            }
+        }
         Ok(())
     }
     fn release_attempt(&self, keep_hotspot: bool) {
@@ -939,6 +1024,17 @@ impl PendingNetwork for AttemptNetwork {
             attempt_check(&s, self.generation)?;
             s.stations.begin(before);
             *read = true;
+        }
+        drop(read);
+        if self.platform.network_watch_enabled() {
+            let known = self.state.0.lock().unwrap().stations.joined.clone();
+            if !known.is_empty() {
+                if let Some(current) = self.platform.hotspot_stations() {
+                    if known.is_disjoint(&current.into_iter().collect()) {
+                        return Err(std::io::Error::other("iPhone association was lost"));
+                    }
+                }
+            }
         }
         Ok(Some(network))
     }

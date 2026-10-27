@@ -96,6 +96,14 @@ impl ReceiverDiagnostics {
         }
         true
     }
+    pub fn page_count(&self, now: Instant) -> usize {
+        self.clients
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| now.saturating_duration_since(c.seen) < EXPIRY)
+            .count()
+    }
     pub fn clear(&self) {
         self.clients.lock().unwrap().clear();
     }

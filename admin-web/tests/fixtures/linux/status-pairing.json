@@ -1,0 +1,178 @@
+{
+  "adminFeatures": [
+    "logs",
+    "config-files",
+    "update-check"
+  ],
+  "adminHotspot": {
+    "reason": null,
+    "state": "off"
+  },
+  "adminPort": 6975,
+  "adminUrl": "https://openxplay-linux.local:6975/",
+  "adminUrls": [
+    "https://10.42.0.1:6975/"
+  ],
+  "autoStartPaused": true,
+  "carlink": null,
+  "host": "openxplay-linux.local",
+  "hostAddresses": [
+    {
+      "developerOnly": false,
+      "interface": "wlan0",
+      "ipv4": "10.42.0.1"
+    }
+  ],
+  "hostProfile": {
+    "bluetoothAdapter": null,
+    "model": null,
+    "profileError": null,
+    "profileLoaded": false,
+    "profilePath": "/etc/openxplay/host.json",
+    "secureConnections": "pairing-off",
+    "wifiInterface": "wlan0",
+    "wifiPresent": true
+  },
+  "hotspot": {
+    "active": true,
+    "hasPassword": true,
+    "ip": "10.42.0.1",
+    "password": "openxplay123",
+    "ssid": "OpenXPlay-1A2B"
+  },
+  "iphone": {
+    "name": null,
+    "reason": "NoIphone"
+  },
+  "name": "OpenXPlay Linux",
+  "network": {
+    "followingCarlink": false,
+    "mode": "device-hotspot",
+    "wifi": null
+  },
+  "notices": [],
+  "output": "web",
+  "pairedDevices": [],
+  "pairingAvailable": true,
+  "pairingCancelable": true,
+  "pairingDeadline": 1793000600,
+  "pairingRemaining": 600,
+  "pathInput": {
+    "car": {
+      "address": "10.42.0.1",
+      "carlink": {
+        "carName": null,
+        "code": null,
+        "error": null,
+        "joinMethod": null,
+        "phase": "OFF",
+        "picture": null,
+        "pinPending": false,
+        "retrying": false,
+        "sinceMillis": null,
+        "trail": [],
+        "trusted": false
+      },
+      "dlna": {
+        "code": null,
+        "name": null,
+        "phase": "OFF",
+        "sinceMillis": null
+      },
+      "miracast": {
+        "code": null,
+        "name": null,
+        "phase": "OFF",
+        "sinceMillis": null
+      },
+      "pageUrl": "https://10.42.0.1:8443/",
+      "pages": 1,
+      "savedScreen": "1920×720",
+      "screen": "1920×720",
+      "tesla": {
+        "code": null,
+        "name": null,
+        "phase": "OFF",
+        "sinceMillis": null
+      },
+      "web": {
+        "code": null,
+        "phase": "LISTENING",
+        "port": 8443,
+        "sinceMillis": 1792999990000,
+        "trustedName": null
+      }
+    },
+    "iphone": {
+      "armed": false,
+      "carWaitUntilMillis": null,
+      "failure": null,
+      "name": null,
+      "pick": "NONE",
+      "started": false,
+      "step": "IDLE",
+      "stepDetail": null,
+      "stepSinceMillis": null,
+      "usb": "UNKNOWN"
+    },
+    "live": {
+      "chips": [],
+      "pictureOnCar": false,
+      "sessionSinceMillis": null
+    },
+    "nowMillis": 1793000000000,
+    "platform": "linux",
+    "relay": {
+      "bluetoothName": "OpenXPlay Linux",
+      "bluetoothOn": true,
+      "hotspotBand": "auto",
+      "hotspotOn": true,
+      "hotspotSsid": "OpenXPlay-1A2B",
+      "identity": "READY",
+      "identityLabel": null,
+      "keepAlive": "NOT_NEEDED",
+      "overlayNeeded": false,
+      "permissionsGranted": 0,
+      "permissionsTotal": 0,
+      "sharedWifiSsid": null,
+      "vpnConsentNeeded": false,
+      "wifiOn": true,
+      "wifiSsid": null
+    },
+    "setup": {
+      "network": "PHONE_HOTSPOT",
+      "outputs": [
+        "BROWSER"
+      ],
+      "summary": "",
+      "valid": true
+    },
+    "version": "0.1.6-beta.1"
+  },
+  "platform": "linux",
+  "publicName": {
+    "state": "off"
+  },
+  "receiverPort": 8443,
+  "receiverUrls": [
+    "https://10.42.0.1:8443/"
+  ],
+  "running": false,
+  "state": "Idle",
+  "version": "0.1.6-beta.1",
+  "video": {
+    "codec": "H264",
+    "codecString": null,
+    "height": null,
+    "reason": "no-main-screen-output",
+    "width": null
+  },
+  "wifiClient": {
+    "ip": null,
+    "setupHotspot": false,
+    "signal": null,
+    "ssid": null
+  },
+  "wifiControl": true,
+  "wifiProvisioning": false
+}

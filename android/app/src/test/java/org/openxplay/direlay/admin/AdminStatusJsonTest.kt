@@ -8,6 +8,7 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openxplay.direlay.path.PathInput
 import org.openxplay.stream.core.VideoCodec
 import org.openxplay.stream.core.VideoCodecDecision
 import org.robolectric.RobolectricTestRunner
@@ -18,6 +19,19 @@ import org.robolectric.annotation.Config
 class AdminStatusJsonTest {
     private val base = AdminStatus("android", "OpenXPlay Relay", "test", "openxplay-android.local", "https://openxplay-android.local:6975/",
         emptyList(), "active", true, false, AdminIphone("iPhone", "connected"), AdminNetwork("wifi-direct", null), "web", null, emptyList())
+
+    @Test fun statusIncludesTheAndroidPathInputAlongsideExistingFields() {
+        val input = PathInput(nowMillis = 1793000000100, version = "0.2.1")
+        val status = JSONObject(base.copy(pathInput = input).json().toString())
+        val path = status.getJSONObject("pathInput")
+        assertEquals("android", path.getString("platform"))
+        assertEquals(1793000000100, path.getLong("nowMillis"))
+        assertEquals("0.2.1", path.getString("version"))
+        assertEquals(readJsonValue(input.json()), readJsonValue(path))
+        assertEquals("iPhone", status.getJSONObject("iphone").getString("name"))
+        assertEquals("web", status.getString("output"))
+        assertEquals("android", base.json().getJSONObject("pathInput").getString("platform"))
+    }
 
     @Test fun pairingWindowAndPairedDevicesUseTheSharedContract() {
         val json = base.copy(pairingAvailable = true, pairingDeadline = 1_600, pairingRemaining = 581,

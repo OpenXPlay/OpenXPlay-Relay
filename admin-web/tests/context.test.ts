@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-16
 
+import { presentPath } from '../src/path/present-path';
+import { presentStage } from '../src/path/present-stage';
 import { expect, it } from 'vitest';
 import { homeView, addressViews, settingsViews, developerPreference, homeButtonCount } from '../src/logic';
 import { previewStatus, mockSettings } from '../dev-server';
@@ -64,13 +66,13 @@ it('keeps the live browser pairing code on additional interfaces', () => {
   expect(addressViews(state, true).every(a => a.receiver.includes('?code=123'))).toBe(true);
 });
 
-it('keeps every preview Home within five visible buttons including More', () => {
-  const counts = Object.fromEntries(['fresh', 'no-iphone', 'working', 'carlink-unpaired', 'error'].map(name => [name, homeButtonCount(fixture(name), true)]));
-  expect(counts).toEqual({ fresh: 5, 'no-iphone': 5, working: 5, 'carlink-unpaired': 5, error: 5 });
-  console.info('Home visible buttons (default password):', counts);
-  expect(homeButtonCount(fixture('working'))).toBe(4);
-  const state = fixture('working'); state.hostAddresses = [];
-  expect(homeButtonCount(state)).toBe(1);
+it('keeps one primary and one quiet stage action; addresses and pairing live in the drawer', () => {
+  for (const name of ['idle', 'ready', 'pairing', 'carlink-pin', 'carlink-scanning', 'failure', 'car-first-wait', 'live']) {
+    const view = presentStage(presentPath(fixture(name).pathInput!));
+    expect([view.primary].filter(Boolean).length).toBeLessThanOrEqual(1);
+    expect([view.secondary].filter(Boolean).length).toBeLessThanOrEqual(1);
+    if (name === 'live') { expect(view.primary).toBeNull(); expect(view.secondary).toEqual({ type: 'Stop' }); }
+  }
 });
 it('gives car setup priority over the connected iPhone and password', () => {
   const state = fixture('carlink-unpaired');

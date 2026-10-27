@@ -5,6 +5,7 @@ package org.openxplay.direlay.admin
 
 import org.json.JSONArray
 import org.json.JSONObject
+import org.openxplay.direlay.path.PathInput
 
 /** JSON values use the platform JSON implementation; no serialization runtime is required. */
 typealias JsonElement = Any?
@@ -66,7 +67,8 @@ data class AdminStatus(val platform: String, val name: String, val version: Stri
     val pairingRemaining: Long? = null, val pairingNeedsConfirmation: Boolean = false, val pairingOnRelay: Boolean = false,
     val pairedDevices: List<AdminPairedDevice> = emptyList(), val receivers: List<AdminReceiver>? = null,
     val pairingCancelable: Boolean = false, val pairingNeedsPermission: Boolean = false,
-    val pairingPermissionDenied: Boolean = false, val pairingNotified: Boolean = false) : AdminJson {
+    val pairingPermissionDenied: Boolean = false, val pairingNotified: Boolean = false,
+    val pathInput: PathInput = PathInput()) : AdminJson {
     override fun json() = obj("platform" to platform, "name" to name, "version" to version,
         "hostAddresses" to hostAddresses, "receiverPort" to receiverPort, "adminPort" to adminPort,
         "pairingAvailable" to pairingAvailable, "pairingDeadline" to pairingDeadline,
@@ -78,7 +80,8 @@ data class AdminStatus(val platform: String, val name: String, val version: Stri
         "hotspot" to hotspot, "wifiControl" to wifiControl, "video" to video,
         "host" to host, "adminUrl" to adminUrl, "receiverUrls" to receiverUrls, "state" to state,
         "running" to running, "autoStartPaused" to autoStartPaused, "iphone" to iphone,
-        "network" to network, "output" to output, "carlink" to carlink, "notices" to notices).apply {
+        "network" to network, "output" to output, "carlink" to carlink, "notices" to notices,
+        "pathInput" to pathInput.json()).apply {
         receivers?.let { put("receivers", jsonValue(it)) }
     }
 }

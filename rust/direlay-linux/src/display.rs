@@ -18,7 +18,7 @@ pub struct Size {
     pub height: u32,
 }
 impl Size {
-    fn valid(self) -> bool {
+    pub(crate) fn valid(self) -> bool {
         (1..=32768).contains(&self.width) && (1..=32768).contains(&self.height)
     }
 }
@@ -30,7 +30,7 @@ pub struct Screen {
     pub density_dpi: u32,
 }
 impl Screen {
-    fn valid(self) -> bool {
+    pub(crate) fn valid(self) -> bool {
         Size {
             width: self.width,
             height: self.height,
@@ -66,6 +66,46 @@ pub struct DisplayState {
     pub canvas: Size,
     pub max_macroblocks: Option<u32>,
     pub records: Vec<Record>,
+    #[serde(skip)]
+    pub frame_rate: oxp_core::model::FrameRatePreference,
+    #[serde(default)]
+    pub car_key: String,
+    #[serde(default)]
+    pub cars: std::collections::BTreeMap<String, SavedCarDisplay>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedCarDisplay {
+    pub head_unit: Option<HeadUnit>,
+    pub canvas: Size,
+    pub max_macroblocks: Option<u32>,
+    pub records: Vec<Record>,
+}
+impl DisplayState {
+    pub fn select_car(&mut self, key: String) -> bool {
+        if key == self.car_key {
+            return false;
+        }
+        self.cars.insert(
+            self.car_key.clone(),
+            SavedCarDisplay {
+                head_unit: self.head_unit.clone(),
+                canvas: self.canvas,
+                max_macroblocks: self.max_macroblocks,
+                records: self.records.clone(),
+            },
+        );
+        let saved = self.cars.remove(&key);
+        self.head_unit = saved.as_ref().and_then(|s| s.head_unit.clone());
+        self.canvas = saved
+            .as_ref()
+            .map(|s| s.canvas)
+            .unwrap_or_else(|| Self::default().canvas);
+        self.max_macroblocks = saved.as_ref().and_then(|s| s.max_macroblocks);
+        self.records = saved.map(|s| s.records).unwrap_or_default();
+        self.car_key = key;
+        true
+    }
 }
 impl Default for DisplayState {
     fn default() -> Self {
@@ -80,21 +120,27 @@ impl Default for DisplayState {
             },
             max_macroblocks: None,
             records: vec![],
+            frame_rate: Default::default(),
+            car_key: String::new(),
+            cars: Default::default(),
         }
     }
 }
 impl DisplayState {
     pub fn settings(&self) -> DisplaySettings {
-        DisplaySettings {
-            resolution: self.resolution.clone(),
-            screen_width: self.screen_width,
-            video_codec: self.video_codec.clone(),
-        }
+        let mut s = DisplaySettings::new(
+            self.resolution.clone(),
+            self.screen_width,
+            self.video_codec.clone(),
+        );
+        s.frame_rate = self.frame_rate;
+        s
     }
     pub fn set_settings(&mut self, s: &DisplaySettings) {
         self.resolution = s.resolution.clone();
         self.screen_width = s.screen_width;
         self.video_codec = s.video_codec.clone();
+        self.frame_rate = s.frame_rate;
     }
     pub fn load(path: &std::path::Path) -> Self {
         let v = std::fs::read(path)
@@ -147,6 +193,18 @@ impl DisplayState {
                 .filter(|r| r.screen.valid() && r.size.valid() && r.count > 0)
                 .collect();
         }
+        s.car_key = v["carKey"].as_str().unwrap_or("").to_owned();
+        s.cars = serde_json::from_value(v["cars"].clone()).unwrap_or_default();
+        s.cars.retain(|key, c| {
+            key.len() < 512
+                && c.head_unit
+                    .as_ref()
+                    .is_none_or(|h| h.screen.valid() && h.viewport.is_none_or(Size::valid))
+                && c.canvas.valid()
+                && c.records
+                    .iter()
+                    .all(|r| r.screen.valid() && r.size.valid() && r.count > 0)
+        });
         s.trim();
         s
     }
@@ -446,6 +504,12 @@ struct Target {
 pub(crate) struct DisplayRuntime {
     pub saved: DisplayState,
     pub resize: crate::carlink_resize::CarlinkResizePolicy,
+    pub pictures: crate::carlink_policy::PictureSelection,
+    pub picture_default: Option<Size>,
+    pub pending_picture_default: bool,
+    pub carlink_primary: bool,
+    pub carlink_mode: bool,
+    pub fallback: Option<(HeadUnit, Vec<Record>)>,
     pub disable_view_areas: bool,
     pub path: Option<PathBuf>,
     applied: Option<Target>,
@@ -460,13 +524,46 @@ pub(crate) struct DisplayRuntime {
 }
 impl DisplayRuntime {
     fn target(&self) -> Target {
-        let canvas = self.saved.planned_canvas();
+        let canvas = self
+            .pictures
+            .applied
+            .or_else(|| {
+                self.saved
+                    .head_unit
+                    .is_none()
+                    .then(|| {
+                        self.fallback.as_ref().map(|(h, _)| {
+                            fit_canvas(
+                                Size {
+                                    width: h.screen.width,
+                                    height: h.screen.height,
+                                },
+                                &self.saved.resolution,
+                                self.saved.max_macroblocks,
+                            )
+                        })
+                    })
+                    .flatten()
+            })
+            .unwrap_or_else(|| {
+                if self.saved.head_unit.is_none() {
+                    self.pictures
+                        .automatic_canvas
+                        .unwrap_or_else(|| self.saved.planned_canvas())
+                } else {
+                    self.saved.planned_canvas()
+                }
+            });
         Target {
             disable_view_areas: self.disable_view_areas,
             canvas,
             physical: physical_width(canvas, self.saved.screen_width),
             screen: self.saved.head_unit.as_ref().map(|h| h.screen),
-            settings: self.saved.settings(),
+            settings: {
+                let mut settings = self.saved.settings();
+                settings.frame_rate = Default::default();
+                settings
+            },
         }
     }
     pub fn persist(&self) -> std::io::Result<()> {
@@ -476,20 +573,48 @@ impl DisplayRuntime {
         Ok(())
     }
     pub fn freeze(&mut self) {
+        // The Linux output currently negotiates CEA 5 (1280x720). An explicit trial or saved
+        // picture takes precedence over the legacy window/mode selection.
+        let picture = self.pictures.trial.unwrap_or_else(|| {
+            self.picture_default.or(self.carlink_mode.then_some(Size {
+                width: 1280,
+                height: 720,
+            }))
+        });
+        if self.carlink_primary && picture.is_some() && self.pictures.automatic_canvas.is_none() {
+            self.pictures.automatic_canvas = Some(self.saved.planned_canvas());
+        }
+        self.pictures.applied = self
+            .carlink_primary
+            .then_some(picture)
+            .flatten()
+            .map(|s| fit_canvas(s, "auto", self.saved.max_macroblocks));
         let target = self.target();
         self.saved.canvas = target.canvas;
-        self.areas = plan_areas(
-            target.canvas,
-            self.saved
-                .head_unit
-                .as_ref()
-                .filter(|_| !self.disable_view_areas),
-            if self.disable_view_areas {
-                &[]
-            } else {
-                &self.saved.records
-            },
-        );
+        self.areas = if self.pictures.applied.is_some() {
+            plan_areas(target.canvas, None, &[])
+        } else {
+            plan_areas(
+                target.canvas,
+                self.saved
+                    .head_unit
+                    .as_ref()
+                    .or_else(|| self.fallback.as_ref().map(|(h, _)| h))
+                    .filter(|_| !self.disable_view_areas),
+                if self.disable_view_areas {
+                    &[]
+                } else {
+                    if self.saved.head_unit.is_none() {
+                        self.fallback
+                            .as_ref()
+                            .map(|(_, r)| r.as_slice())
+                            .unwrap_or(&self.saved.records)
+                    } else {
+                        &self.saved.records
+                    }
+                },
+            )
+        };
         self.applied = Some(target);
         self.active = 0;
         self.pending = None;
@@ -574,6 +699,100 @@ impl DisplayRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remembered_display_is_scoped_to_car_and_round_trips() {
+        let mut s = DisplayState::default();
+        let h = HeadUnit {
+            screen: Screen {
+                width: 1920,
+                height: 720,
+                density_dpi: 160,
+            },
+            viewport: None,
+            fullscreen: None,
+            fullscreen_preferred: None,
+        };
+        s.observe(h.clone(), None, 1);
+        assert!(s.select_car("car-a".into()));
+        assert!(s.head_unit.is_none());
+        s.observe(
+            HeadUnit {
+                screen: Screen {
+                    width: 1280,
+                    height: 800,
+                    density_dpi: 160,
+                },
+                ..h.clone()
+            },
+            None,
+            2,
+        );
+        s.select_car(String::new());
+        assert_eq!(s.head_unit, Some(h));
+        s.select_car("car-a".into());
+        assert_eq!(s.head_unit.unwrap().screen.height, 800);
+        let car = crate::car_models::CarSelection {
+            brand: "xpeng".into(),
+            model: "g6".into(),
+            year: "g6-2023".into(),
+            ..Default::default()
+        };
+        let mut d = DisplayRuntime {
+            fallback: car.built_in(),
+            ..Default::default()
+        };
+        d.freeze();
+        assert!(d.saved.head_unit.is_none());
+        assert_ne!(d.saved.canvas, DisplayState::default().canvas);
+        assert!(d.areas.len() > 1);
+    }
+    #[test]
+    fn picture_pins_canvas_and_whole_view_until_connection_ends() {
+        let mut d = DisplayRuntime {
+            carlink_primary: true,
+            picture_default: Some(Size {
+                width: 1920,
+                height: 720,
+            }),
+            ..Default::default()
+        };
+        d.freeze();
+        assert_eq!(
+            d.saved.canvas,
+            Size {
+                width: 1920,
+                height: 720
+            }
+        );
+        assert_eq!(d.areas.len(), 1);
+        d.picture_default = Some(Size {
+            width: 1280,
+            height: 800,
+        });
+        assert!(!d.due(Instant::now()));
+        d.freeze();
+        assert_eq!(
+            d.saved.canvas,
+            Size {
+                width: 1280,
+                height: 800
+            }
+        );
+        d.pictures.trial = Some(None);
+        d.freeze();
+        assert_eq!(d.saved.canvas, DisplayState::default().canvas);
+        d.pictures.trial = None;
+        d.picture_default = None;
+        d.carlink_mode = true;
+        d.freeze();
+        assert_eq!(
+            d.saved.canvas,
+            Size {
+                width: 1280,
+                height: 720
+            }
+        );
+    }
     fn size(width: u32, height: u32) -> Size {
         Size { width, height }
     }

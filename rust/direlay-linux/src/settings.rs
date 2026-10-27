@@ -46,6 +46,18 @@ pub struct Settings {
     pub carlink_reconnect_on_resize: bool,
     pub carlink_hevc: String,
     pub carlink_trace: String,
+    pub frame_rate: String,
+    pub carlink_picture_size: String,
+    pub carlink_picture_sizes: Vec<crate::display::Size>,
+    pub carlink_picture_default: Option<crate::display::Size>,
+    pub car_brand: String,
+    pub car_brand_text: String,
+    pub car_model: String,
+    pub car_model_text: String,
+    pub car_year: String,
+    pub experimental_active: bool,
+    pub experimental_send_bluetooth_address: bool,
+    pub experimental_bluetooth_address: String,
     pub auto_start: bool,
     pub video_stats: String,
     #[serde(rename = "carPlayViewAreas")]
@@ -90,6 +102,18 @@ impl Default for Settings {
             carlink_reconnect_on_resize: false,
             carlink_hevc: "auto".into(),
             carlink_trace: "off".into(),
+            frame_rate: "auto".into(),
+            carlink_picture_size: "window".into(),
+            carlink_picture_sizes: vec![],
+            carlink_picture_default: None,
+            car_brand: String::new(),
+            car_brand_text: String::new(),
+            car_model: String::new(),
+            car_model_text: String::new(),
+            car_year: String::new(),
+            experimental_active: true,
+            experimental_send_bluetooth_address: false,
+            experimental_bluetooth_address: String::new(),
             auto_start: true,
             video_stats: "off".into(),
             car_play_view_areas: true,
@@ -120,6 +144,24 @@ fn persist_loaded_settings(dir: &Path, bytes: &[u8]) {
     }
 }
 impl Settings {
+    pub fn car(&self) -> crate::car_models::CarSelection {
+        crate::car_models::CarSelection {
+            brand: self.car_brand.clone(),
+            brand_text: self.car_brand_text.clone(),
+            model: self.car_model.clone(),
+            model_text: self.car_model_text.clone(),
+            year: self.car_year.clone(),
+        }
+        .normalized()
+    }
+    pub fn normalize_car(&mut self) {
+        let c = self.car();
+        self.car_brand = c.brand;
+        self.car_brand_text = c.brand_text;
+        self.car_model = c.model;
+        self.car_model_text = c.model_text;
+        self.car_year = c.year;
+    }
     pub fn load(dir: &Path) -> Result<Self> {
         Self::load_with_defaults(dir, &Self::default())
     }
@@ -172,7 +214,8 @@ impl Settings {
                         .entry("hotspotChannel")
                         .or_insert_with(|| defaults.hotspot_channel.into());
                 }
-                let s: Self = serde_json::from_value(value)?;
+                let mut s: Self = serde_json::from_value(value)?;
+                s.normalize_car();
                 s.validate()?;
                 if let Some(migrated) = migrated {
                     persist_loaded_settings(dir, &serde_json::to_vec_pretty(&migrated)?);
@@ -201,6 +244,35 @@ impl Settings {
     }
     pub fn validate(&self) -> Result<()> {
         let invalid = |s: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, s);
+        if crate::carplay_policy::frame_rate_setting(&self.frame_rate).is_none() {
+            return Err(invalid("Invalid frameRate"));
+        }
+        if !["window", "mode"].contains(&self.carlink_picture_size.as_str()) {
+            return Err(invalid("Invalid carlinkPictureSize"));
+        }
+        crate::carlink_policy::validate_pictures(
+            &self.carlink_picture_sizes,
+            self.carlink_picture_default,
+        )?;
+        if self.experimental_active
+            && self.experimental_send_bluetooth_address
+            && !self.experimental_bluetooth_address.is_empty()
+            && crate::carlink_policy::bluetooth_address(&self.experimental_bluetooth_address)
+                .is_none()
+        {
+            return Err(invalid("Invalid experimentalBluetoothAddress"));
+        }
+        for text in [
+            &self.car_brand,
+            &self.car_brand_text,
+            &self.car_model,
+            &self.car_model_text,
+            &self.car_year,
+        ] {
+            if text.chars().count() > 128 || text.chars().any(char::is_control) {
+                return Err(invalid("Invalid car selection"));
+            }
+        }
         self.network_roles.validate()?;
         if !crate::network_roles::valid_country(&self.wifi_country) {
             return Err(invalid("Invalid wifiCountry"));

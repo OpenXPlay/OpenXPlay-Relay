@@ -99,7 +99,7 @@ it('leaves Android-shaped schemas and status output unchanged', () => {
   const settings = mockSettings(false);
   expect(settingsViews(settings, false, 'android').map(s => [s.id, s.fields.map(f => f.key)])).toEqual([
     ['connection', ['iphone', 'networkMode', 'sharedWifiNetworks', 'autoStart', 'bootStart']],
-    ['output', ['output', 'requirePairingCode', 'carlinkName', 'vehicleInformation']],
+    ['output', ['output', 'requirePairingCode', 'wirelessDisplay', 'carlinkName', 'vehicleInformation', 'carBluetoothAudio', 'carlinkAutoReconnect', 'plugins', 'pluginsEnabled']],
   ]);
   const status = fixture(); status.platform = 'android'; status.autoStartPaused = true;
   expect(statusView(status, t)).not.toContain('home-start');
