@@ -21,7 +21,7 @@ it('keeps English and Chinese keys and substitution parameters in parity', () =>
   const source = readFileSync(new URL('../src/i18n.ts', import.meta.url), 'utf8');
   const english = source.split('"en": {')[1].split('"zh-CN": {')[0];
   const chinese = source.split('"zh-CN": {')[1].split('export function')[0];
-  const entries = (text: string) => new Map([...text.matchAll(/"([\w.-]+)": "(.*)"/g)].map(([, key, value]) => [key, [...value.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort()]));
+  const entries = (text: string) => new Map([...text.matchAll(/"([\w./-]+)": "(.*)"/g)].map(([, key, value]) => [key, [...value.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort()]));
   const en = entries(english); const zh = entries(chinese);
   expect([...en.keys()].sort()).toEqual([...zh.keys()].sort());
   for (const [key, parameters] of en) expect(zh.get(key), key).toEqual(parameters);

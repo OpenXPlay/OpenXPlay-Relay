@@ -67,6 +67,7 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 // trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
+  pathInput?: import('./path/model').PartialInput;
   adminHotspot?: { state: 'up' | 'paused-carlink' | 'waiting-interface' | 'off' | 'failed'; reason: string | null };
   hostAddresses?: HostAddress[]; receiverPort?: number; adminPort?: number; pairingAvailable?: boolean; pairingDeadline?: number | null; screenConnected?: boolean;
   pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[];
@@ -88,11 +89,11 @@ export class ApiError extends Error {
 }
 export class NetworkError extends Error {}
 export const events = new EventTarget();
-export async function request<T>(path: string, method = 'GET', body?: unknown, retry = true): Promise<T> {
+export async function request<T>(path: string, method = 'GET', body?: unknown, retry = true, timeoutMillis = 8000): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/api/v0${path}`, {
-      method, credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(8000),
+      method, credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(timeoutMillis),
       headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-OpenXPlay-Admin': '1' },
       ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }),
     });
@@ -100,7 +101,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
     events.dispatchEvent(new Event('offline'));
     if (retry) {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      return request<T>(path, method, body, false);
+      return request<T>(path, method, body, false, timeoutMillis);
     }
     throw new NetworkError('error.network');
   }
@@ -113,6 +114,11 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
   return data as T;
 }
 export const api = {
+  logExport: (range: '10m' | '30m' | '24h') => request<import('./feature-pages').LogExport>('/logs/export', 'POST', { range }, false, 60000),
+  logUpload: (id: string) => request<import('./feature-pages').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
+  logReceipt: () => request<import('./feature-pages').LogReceipt>('/logs/receipt', 'GET', undefined, false),
+  configImport: (envelope: unknown, dryRun = false) => request<import('./feature-pages').ConfigImport>('/config/import' + (dryRun ? '?dryRun=1' : ''), 'POST', envelope, false),
+  updateCheck: async (channel: 'stable' | 'beta') => { const result = await request<import('./feature-pages').UpdateCheck | { error: string }>('/update?channel=' + channel, 'GET', undefined, false, 15000); if ('error' in result) throw new ApiError(503, result.error); return result; },
   previewRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles/preview', 'POST', { networkRoles, ...extra }, false),
   saveRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles, ...extra }, false),
   session: () => request<Session>('/session'),

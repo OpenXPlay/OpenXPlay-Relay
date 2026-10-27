@@ -172,7 +172,7 @@ it('renders status without a host profile as before on either relay', () => {
     expect(status.hostProfile).toBeUndefined();
     for (const t of [en, zh]) {
       const diagnostics = diagnosticsView(status, t);
-      expect(diagnostics).toContain(`<h3>${t('diag.video')}</h3>`);
+      expect(diagnostics).toContain(`<summary>${t('diag.video')}</summary>`);
       for (const key of ['host.model', 'host.bluetooth', 'host.sc']) {
         expect(diagnostics).not.toContain(`<dt>${t(key)}</dt>`);
       }

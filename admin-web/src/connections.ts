@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-23
 
+import { patchMarkup } from './dom';
 import { api, ApiError, NetworkError, type Status, type NetworkInterface, type NetworkPlan, type NetworkProposal, type PlannedRole } from './api';
 import { COUNTRY_CODES } from './wifi-countries';
 import type { NetworkRolesSetting } from './schema';
@@ -116,8 +117,8 @@ export function editConnections(s: Status, saved: NetworkRolesSetting | undefine
       if (current !== generation || !dialog.isConnected) return;
       proposal = next;
       const channels = adminChannels({ ...s, network: { ...s.network, plan: next.plan } }, draft);
-      dialog.querySelector('#admin-channel')!.innerHTML = channelOptions(channels, draft.adminHotspot!.channel, t);
-      dialog.querySelector('#roles-preview')!.innerHTML = proposalView(s, next, location.hostname, t);
+      patchMarkup(dialog.querySelector('#admin-channel')!, channelOptions(channels, draft.adminHotspot!.channel, t));
+      patchMarkup(dialog.querySelector('#roles-preview')!, proposalView(s, next, location.hostname, t));
       // Validate alternatives through the same endpoint; impossible choices keep their reason.
       if (draft.mode === 'custom') await Promise.all([...dialog.querySelectorAll<HTMLSelectElement>('[data-role]')].map(async select => {
         const key = select.dataset.role as RoleKey;
@@ -131,7 +132,7 @@ export function editConnections(s: Status, saved: NetworkRolesSetting | undefine
       }));
       if (current === generation) save.disabled = !canSaveRoles(proposal, busy);
     } catch (e) {
-      if (current === generation) { proposal = null; save.disabled = true; if (e instanceof ApiError && e.checks.length) dialog.querySelector('#roles-preview')!.innerHTML = checksView({ checks: e.checks }, t); else error.textContent = t(e instanceof ApiError ? e.key : 'error.network'); }
+      if (current === generation) { proposal = null; save.disabled = true; if (e instanceof ApiError && e.checks.length) patchMarkup(dialog.querySelector('#roles-preview')!, checksView({ checks: e.checks }, t)); else error.textContent = t(e instanceof ApiError ? e.key : 'error.network'); }
     }
   };
   dialog.querySelector('form')!.addEventListener('change', event => {
@@ -146,7 +147,7 @@ export function editConnections(s: Status, saved: NetworkRolesSetting | undefine
       if (select.id === 'admin-interface') draft.adminHotspot!.interface = select.value || null;
       else draft.adminHotspot!.band = select.value as 'auto' | '2.4' | '5';
       draft.adminHotspot!.channel = 0;
-      dialog.querySelector<HTMLSelectElement>('#admin-channel')!.innerHTML = channelOptions(adminChannels(s, draft), 0, t);
+      patchMarkup(dialog.querySelector<HTMLSelectElement>('#admin-channel')!, channelOptions(adminChannels(s, draft), 0, t));
     }
     else if (select.id === 'admin-channel') draft.adminHotspot!.channel = Number(select.value);
     else if (select.dataset.role) draft = pick(draft, select.dataset.role as RoleKey, select.value);
