@@ -276,10 +276,28 @@ impl MfiAuthenticator for Auth {
 #[derive(Default)]
 struct Events {
     calls: Mutex<Vec<String>>,
+    stages: Mutex<Vec<Iap2WirelessControlStage>>,
+    wifi_failure: bool,
+    start_failure: bool,
 }
 impl WirelessControlEvents for Events {
+    fn on_stage_changed(&self, stage: Iap2WirelessControlStage) {
+        self.stages.lock().unwrap().push(stage);
+    }
+    fn before_wifi_configuration(&self) -> Result<()> {
+        self.calls.lock().unwrap().push("wifi-before".into());
+        if self.wifi_failure {
+            return Err(std::io::Error::other(
+                "network changed before Wi-Fi details",
+            ));
+        }
+        Ok(())
+    }
     fn before_start_session(&self) -> Result<()> {
         self.calls.lock().unwrap().push("before".into());
+        if self.start_failure {
+            return Err(std::io::Error::other("network changed before StartSession"));
+        }
         Ok(())
     }
     fn on_start_session_sent(&self, e: Iap2StartSessionSent) {
@@ -391,12 +409,56 @@ fn answers_with_the_network_wait_for_it_after_authentication() {
         "Wi-Fi configuration before StartSession"
     );
     let calls = events.calls.lock().unwrap();
+    assert_eq!(calls.iter().filter(|s| *s == "wifi-before").count(), 1);
+    for (index, call) in calls.iter().enumerate() {
+        if call == "wifi-before" {
+            assert!(calls[index + 1].starts_with("iap2 tx=0x5703"));
+            assert_eq!(calls[index + 2], "wifi-sent");
+        }
+    }
+    assert_eq!(
+        *events.stages.lock().unwrap(),
+        [
+            Iap2WirelessControlStage::Identified,
+            Iap2WirelessControlStage::Authenticated,
+            Iap2WirelessControlStage::Subscribed,
+            Iap2WirelessControlStage::WifiConfigSent,
+            Iap2WirelessControlStage::CarplayStartSent,
+        ]
+    );
     let position = |name: &str| calls.iter().position(|c| c.starts_with(name)).unwrap();
     assert!(position("iap2 accessory network ready afterMs=") < position("wifi-sent"));
     assert!(position("wifi-sent") < position("before"));
     assert_eq!(calls.iter().filter(|c| *c == "wifi-sent").count(), 1);
     drop(calls);
     session.close().unwrap();
+}
+#[test]
+fn network_validation_failure_prevents_wifi_and_start_session_writes() {
+    for request in [0x5702, 0x4e0e, 0x4300] {
+        let phone = authenticated_then(&[frame(request, &[])]);
+        let session = phone.session();
+        let events = Events {
+            wifi_failure: request != 0x4300,
+            start_failure: request == 0x4300,
+            ..Default::default()
+        };
+        let error = Iap2WirelessControlClient::new(session.clone(), Arc::new(Auth))
+            .run(
+                &config(),
+                &endpoint(),
+                Some(Duration::from_millis(500)),
+                &events,
+            )
+            .unwrap_err();
+        assert!(error.to_string().starts_with("network changed before"));
+        let sent = ids(&phone);
+        assert!(!sent.contains(&0x5703));
+        assert!(!sent.contains(&0x4301));
+        let calls = events.calls.lock().unwrap();
+        assert!(!calls.iter().any(|s| s == "wifi-sent" || s == "sent"));
+        session.close().unwrap();
+    }
 }
 #[test]
 fn the_wait_for_the_network_is_bounded() {
@@ -492,6 +554,19 @@ fn wireless_flow_identifies_authenticates_then_bounds_wifi_responses() {
     ]);
     assert_eq!(sent.iter().filter(|f| f.message_id == 0x5703).count(), 7);
     let calls = events.calls.lock().unwrap();
+    assert_eq!(calls.iter().filter(|s| *s == "wifi-before").count(), 7);
+    assert_eq!(
+        *events.stages.lock().unwrap(),
+        [
+            Iap2WirelessControlStage::Identified,
+            Iap2WirelessControlStage::Authenticated,
+            Iap2WirelessControlStage::Subscribed,
+            Iap2WirelessControlStage::WifiConfigSent,
+            Iap2WirelessControlStage::CarplayStartSent,
+            Iap2WirelessControlStage::TransportNotified,
+            Iap2WirelessControlStage::PostTransportWifiConfigSent,
+        ]
+    );
     let before = calls.iter().position(|s| s == "before").unwrap();
     assert_eq!(calls[before + 1], "sent");
     drop(calls);

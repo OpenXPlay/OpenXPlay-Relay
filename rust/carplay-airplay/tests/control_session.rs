@@ -20,6 +20,7 @@ struct Socket {
     output: Mutex<VecDeque<Vec<u8>>>,
     wake: Condvar,
     closed: AtomicBool,
+    failed: AtomicBool,
 }
 impl Socket {
     fn offer(&self, v: Vec<u8>) {
@@ -47,8 +48,14 @@ impl DuplexStream for Socket {
     }
     fn recv(&self, _: usize, timeout: Duration) -> Result<Receive> {
         let mut q = self.input.lock().unwrap();
-        if q.is_empty() && !self.closed.load(Ordering::Acquire) {
+        if q.is_empty()
+            && !self.closed.load(Ordering::Acquire)
+            && !self.failed.load(Ordering::Acquire)
+        {
             q = self.wake.wait_timeout(q, timeout).unwrap().0;
+        }
+        if self.failed.load(Ordering::Acquire) {
+            return Err(std::io::Error::other("control read failed"));
         }
         Ok(if let Some(v) = q.pop_front() {
             Receive::Data(v)
@@ -100,8 +107,21 @@ struct Events {
     ended: AtomicUsize,
     commands: Mutex<Vec<String>>,
     ui: AtomicUsize,
+    milestones: Mutex<Vec<String>>,
+    rendered: AtomicUsize,
+    throw_milestone: AtomicBool,
 }
 impl AirPlaySessionListener for Events {
+    fn on_startup_milestone(&self, _: &AirPlaySession, name: &str) {
+        assert!(
+            !self.throw_milestone.load(Ordering::Relaxed),
+            "host observer failed"
+        );
+        self.milestones.lock().unwrap().push(name.into());
+    }
+    fn on_video_frame_rendered(&self, _: &AirPlaySession) {
+        self.rendered.fetch_add(1, Ordering::Relaxed);
+    }
     fn on_tcp_accepted(&self, _: AirPlayTcpAccepted) {}
     fn on_session_active(&self, _: Arc<AirPlaySession>) {
         self.active.fetch_add(1, Ordering::Relaxed);
@@ -371,6 +391,136 @@ fn commands_dispatch_to_listener_and_record_marks_active() {
     assert_eq!(f.events.active.load(Ordering::Relaxed), 1);
 }
 #[test]
+fn host_ui_excludes_video_playback_and_remote_control_but_keeps_command_observation() {
+    let f = fixture(config());
+    for params in [
+        V::Dictionary(vec![]),
+        V::dict([("url", "oem://".into())]),
+        V::dict([("url", "videoplayback:".into())]),
+    ] {
+        call(
+            &f,
+            "POST",
+            "/command",
+            &V::dict([("type", "requestUI".into()), ("params", params)]),
+        );
+    }
+    assert_eq!(f.events.ui.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        *f.events.commands.lock().unwrap(),
+        ["requestUI", "requestUI", "requestUI"]
+    );
+    let mut remote = request(
+        "POST",
+        "/command",
+        BplistCodec::encode(&V::dict([
+            ("type", "requestUI".into()),
+            (
+                "params",
+                V::dict([(
+                    "data",
+                    V::Data(BplistCodec::encode(&V::Dictionary(vec![])).unwrap()),
+                )]),
+            ),
+        ]))
+        .unwrap(),
+    );
+    remote.headers.insert("x-apple-streamid".into(), "3".into());
+    assert_eq!(f.session.handle_request(&remote).unwrap().status, 200);
+    assert_eq!(f.events.ui.load(Ordering::Relaxed), 2);
+    assert_eq!(f.events.commands.lock().unwrap().len(), 3);
+}
+
+#[test]
+fn external_playback_proof_rejects_replaced_streams_other_phones_and_closed_sessions() {
+    let f = fixture(config());
+    assert!(f.session.playback_token().is_none());
+    call(&f, "SETUP", "/", &streams(&[110]));
+    let first = f.session.playback_token().unwrap();
+    assert!(f.session.report_video_frame_rendered(&first));
+    call(&f, "SETUP", "/", &streams(&[110]));
+    assert!(!f.session.report_video_frame_rendered(&first));
+    let second = f.session.playback_token().unwrap();
+    assert!(f.session.report_video_frame_rendered(&second));
+    let other = fixture(config());
+    call(&other, "SETUP", "/", &streams(&[110]));
+    assert!(!other.session.report_video_frame_rendered(&second));
+    let current = other.session.playback_token().unwrap();
+    assert!(other.session.report_video_frame_rendered(&current));
+    call(&f, "TEARDOWN", "/", &streams(&[110]));
+    assert!(!f.session.report_video_frame_rendered(&second));
+    other.session.close().unwrap();
+    assert!(!other.session.report_video_frame_rendered(&current));
+    assert!(other.session.playback_token().is_none());
+    assert_eq!(f.events.rendered.load(Ordering::Relaxed), 2);
+    assert_eq!(other.events.rendered.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn startup_milestones_only_follow_accepted_protocol_steps_and_observer_panics_are_isolated() {
+    let f = fixture(config());
+    let peer = AirPlayCrypto::x25519_generate().unwrap();
+    for body in [vec![], [vec![1], peer.public_key.to_vec()].concat()] {
+        f.session
+            .handle_request(&request("POST", "/auth-setup", body))
+            .unwrap();
+    }
+    call(&f, "SETUP", "/", &streams(&[111]));
+    call(&f, "SETUP", "/", &streams(&[110]));
+    assert_eq!(
+        *f.events.milestones.lock().unwrap(),
+        ["auth_setup_accepted", "setup_main_screen"]
+    );
+    f.events.throw_milestone.store(true, Ordering::Relaxed);
+    assert_eq!(call(&f, "SETUP", "/", &streams(&[110])).status, 200);
+    assert!(f.session.playback_token().is_some());
+    f.events.throw_milestone.store(false, Ordering::Relaxed);
+    // Control SETUP is observed before transport allocation, even when the host has supplied none.
+    assert!(f
+        .session
+        .handle_request(&request(
+            "SETUP",
+            "/",
+            BplistCodec::encode(&V::Dictionary(vec![])).unwrap()
+        ))
+        .is_err());
+    assert_eq!(
+        f.events.milestones.lock().unwrap().last().unwrap(),
+        "setup_control"
+    );
+    f.session.close().unwrap();
+}
+
+fn wait_for_end(f: &Fixture) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while f.events.ended.load(Ordering::Acquire) == 0 {
+        assert!(Instant::now() < deadline, "control worker did not finish");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn transport_milestones_distinguish_peer_eof_and_io_failure() {
+    for failed in [false, true] {
+        let f = fixture(config());
+        if failed {
+            f.socket.failed.store(true, Ordering::Release);
+        } else {
+            f.socket.close().unwrap();
+        }
+        f.session.start().unwrap();
+        wait_for_end(&f);
+        assert_eq!(
+            *f.events.milestones.lock().unwrap(),
+            [if failed {
+                "transport_closed_io_failed"
+            } else {
+                "transport_closed_peer_eof"
+            }]
+        );
+    }
+}
+#[test]
 fn close_notifies_once_and_terminates_waiting_input() {
     let f = fixture(config());
     f.session.start().unwrap();
@@ -383,6 +533,10 @@ fn close_notifies_once_and_terminates_waiting_input() {
         .send_iap_message(&[1], Duration::from_millis(100))
         .unwrap());
     assert!(!f.session.send_touch(&[]).unwrap());
+    assert_eq!(
+        *f.events.milestones.lock().unwrap(),
+        ["transport_closed_local"]
+    );
 }
 #[test]
 fn feature_negotiation_and_data_teardown_match_source() {
@@ -483,5 +637,16 @@ fn pair_verify_response_is_plaintext_then_control_encryption_activates() {
         Some("950.7.1")
     );
     assert_eq!(f.session.controller_id().as_deref(), Some("controller"));
+    assert_eq!(*f.events.milestones.lock().unwrap(), ["pair_verified"]);
+    let mut corrupt = cipher
+        .encrypt(b"GET /info RTSP/1.0\r\nCSeq: 5\r\n\r\n")
+        .unwrap();
+    *corrupt.last_mut().unwrap() ^= 1;
+    f.socket.offer(corrupt);
+    wait_for_end(&f);
+    assert_eq!(
+        *f.events.milestones.lock().unwrap(),
+        ["pair_verified", "transport_closed_decrypt_failed"]
+    );
     f.session.close().unwrap();
 }

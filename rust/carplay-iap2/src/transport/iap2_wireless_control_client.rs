@@ -85,6 +85,12 @@ pub struct Iap2StartSessionSent {
 }
 /// Platform interface for `WirelessControlEvents`. Implementations must support bounded shutdown.
 pub trait WirelessControlEvents: Send + Sync {
+    /// Observe each successfully reached bring-up stage in increasing order; default leaves host reporting unchanged.
+    fn on_stage_changed(&self, _stage: Iap2WirelessControlStage) {}
+    /// Validate the host network immediately before each permitted Wi-Fi configuration send; errors abort bring-up.
+    fn before_wifi_configuration(&self) -> Result<()> {
+        Ok(())
+    }
     /// Errors propagate to the lifecycle owner.
     fn before_start_session(&self) -> Result<()>;
     /// Errors propagate to the lifecycle owner.
@@ -198,12 +204,14 @@ impl Iap2WirelessControlClient {
             &progress,
         )?;
         progress("iap2 identification accepted");
+        events.on_stage_changed(Iap2WirelessControlStage::Identified);
         self.mfi.run_with_progress(
             &self.session,
             deadline.require_remaining(Instant::now(), false)?,
             &progress,
         )?;
         progress("iap2 authentication accepted");
+        events.on_stage_changed(Iap2WirelessControlStage::Authenticated);
         for subscription in
             Iap2ControlMessages::subscriptions_with_route_guidance(identification.route_guidance)?
         {
@@ -213,6 +221,7 @@ impl Iap2WirelessControlClient {
             )?;
         }
         progress("iap2 subscriptions sent");
+        events.on_stage_changed(Iap2WirelessControlStage::Subscribed);
         events.on_ready();
         let mut result = Iap2WirelessControlResult {
             forwarded_frames: 0,
@@ -319,9 +328,7 @@ impl Iap2WirelessControlClient {
                     let bluetooth = body.optional_string(0)?.unwrap_or_else(|| "none".into());
                     let usb = body.optional_string(1)?.unwrap_or_else(|| "none".into());
                     result.transport_notification_seen = true;
-                    result.stage = result
-                        .stage
-                        .max(Iap2WirelessControlStage::TransportNotified);
+                    result.advance(Iap2WirelessControlStage::TransportNotified, events);
                     progress(&format!("iap2 rx=0x4e0e device-transport-identifier bluetooth={bluetooth} usb={usb}; resending 0x5703"));
                     answers.push_back(Answer::PostTransportWifiConfiguration);
                 }
@@ -359,6 +366,7 @@ impl Iap2WirelessControlClient {
                     progress("iap2 0x5703 ignored: maximum Wi-Fi configuration sends reached");
                     return Ok(());
                 }
+                events.before_wifi_configuration()?;
                 self.session.send(
                     &Self::accessory_wifi_configuration(endpoint)?,
                     deadline.require_remaining_with(Instant::now(), || events.keep_alive())?,
@@ -366,12 +374,13 @@ impl Iap2WirelessControlClient {
                 result.wifi_configurations_sent += 1;
                 if post {
                     result.post_transport_wifi_configurations_sent += 1;
-                    result.stage = result
-                        .stage
-                        .max(Iap2WirelessControlStage::PostTransportWifiConfigSent);
+                    result.advance(
+                        Iap2WirelessControlStage::PostTransportWifiConfigSent,
+                        events,
+                    );
                 } else {
                     *pre_transport += 1;
-                    result.stage = result.stage.max(Iap2WirelessControlStage::WifiConfigSent);
+                    result.advance(Iap2WirelessControlStage::WifiConfigSent, events);
                 }
                 progress("iap2 tx=0x5703 accessory-wifi-configuration");
                 events.on_wifi_configuration_sent();
@@ -389,7 +398,7 @@ impl Iap2WirelessControlClient {
                     },
                     |event| events.on_start_session_sent(event),
                 )?;
-                result.stage = result.stage.max(Iap2WirelessControlStage::CarplayStartSent);
+                result.advance(Iap2WirelessControlStage::CarplayStartSent, events);
                 result.car_play_start_sessions_sent += 1;
                 progress("iap2 tx=0x4301 carplay-start-session");
             }
@@ -398,15 +407,17 @@ impl Iap2WirelessControlClient {
                     progress("iap2 post-transport 0x5703 ignored: maximum Wi-Fi configuration sends reached");
                     return Ok(());
                 }
+                events.before_wifi_configuration()?;
                 self.session.send(
                     &Self::accessory_wifi_configuration(endpoint)?,
                     deadline.require_remaining_with(Instant::now(), || events.keep_alive())?,
                 )?;
                 result.wifi_configurations_sent += 1;
                 result.post_transport_wifi_configurations_sent += 1;
-                result.stage = result
-                    .stage
-                    .max(Iap2WirelessControlStage::PostTransportWifiConfigSent);
+                result.advance(
+                    Iap2WirelessControlStage::PostTransportWifiConfigSent,
+                    events,
+                );
                 progress("iap2 tx=0x5703 post-transport accessory-wifi-configuration");
                 events.on_wifi_configuration_sent();
             }
@@ -422,6 +433,15 @@ impl Iap2WirelessControlClient {
 
     pub fn car_play_start_session(endpoint: &Iap2WirelessCarPlayEndpoint) -> Result<Iap2Frame> {
         Iap2CarPlayMessages::start_session(endpoint)
+    }
+}
+
+impl Iap2WirelessControlResult {
+    fn advance(&mut self, stage: Iap2WirelessControlStage, events: &dyn WirelessControlEvents) {
+        if stage > self.stage {
+            self.stage = stage;
+            events.on_stage_changed(stage);
+        }
     }
 }
 
