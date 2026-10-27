@@ -471,6 +471,35 @@ pub enum AdminUpdate {
 pub type AdminResult = Result<(), String>;
 /// The shell implements this seam; the HTTP server never accesses receiver internals.
 pub trait RelayAdmin: Send + Sync + 'static {
+    fn logs_export(&self, _range: &str) -> Result<Value, String> {
+        Err("error.request".into())
+    }
+    fn logs_download(&self, _id: &str) -> std::io::Result<(std::fs::File, u64, String)> {
+        Err(std::io::ErrorKind::NotFound.into())
+    }
+    fn logs_upload(&self, _id: &str) -> Result<Value, String> {
+        Err("rejected".into())
+    }
+    fn logs_receipt(&self) -> std::io::Result<Option<Value>> {
+        Ok(None)
+    }
+    /// Runtime lane hook for a bounded snapshot of its recent connection timeline.
+    fn recent_connection_timeline_for_log_export(&self) -> String {
+        String::new()
+    }
+    fn config_export(&self, _privacy: bool) -> Result<Value, BTreeMap<String, String>> {
+        Err(BTreeMap::from([("file".into(), "unsupported".into())]))
+    }
+    fn config_import(
+        &self,
+        _bytes: &[u8],
+        _dry_run: bool,
+    ) -> Result<Value, BTreeMap<String, String>> {
+        Err(BTreeMap::from([("file".into(), "unsupported".into())]))
+    }
+    fn update_check(&self, _channel: &str) -> Result<Value, &'static str> {
+        Err("offline")
+    }
     /// Linux recorder support; absent on other platforms.
     fn carlink_trace(&self) -> Option<(bool, bool, Value)> {
         None

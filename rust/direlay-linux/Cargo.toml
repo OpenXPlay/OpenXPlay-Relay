@@ -31,6 +31,7 @@ x509-cert.workspace = true
 der.workspace = true
 ureq.workspace = true
 base64ct.workspace = true
+miniz_oxide.workspace = true
 
 [[bin]]
 name = "openxplay-relay"
