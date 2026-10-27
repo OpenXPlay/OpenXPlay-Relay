@@ -15,6 +15,18 @@ use std::{
 
 /// Platform interface for `SessionControl`. Implementations must support bounded shutdown.
 pub trait SessionControl: Send + Sync {
+    /// Return the opaque identity of the current main stream, or None when playback proof is unavailable.
+    fn playback_token(&self) -> Option<PlaybackToken> {
+        None
+    }
+    /// Confirm a frame displayed by an external receiver; reject tokens from replaced streams or sessions.
+    fn report_video_frame_rendered(&self, _token: &PlaybackToken) -> bool {
+        false
+    }
+    /// Send one media HID press and release (3 = play/pause, 4 = next, 5 = previous); false when unavailable.
+    fn send_media_button(&self, _index: u8) -> Result<bool> {
+        Ok(false)
+    }
     fn show_view_area(&self, _index: usize) -> bool {
         false
     }
