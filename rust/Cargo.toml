@@ -46,6 +46,9 @@ cms = "0.2"
 # ca-certificates; base64url for JWS (already in the tree through der/pkcs8).
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 base64ct = { version = "=1.8.3", features = ["alloc"] }
+# Log export (2026-10-27): DEFLATE for the zip the admin page saves or uploads; pure Rust,
+# MIT OR Zlib OR Apache-2.0.
+miniz_oxide = "=0.9.1"
 
 [profile.release]
 opt-level = "z"

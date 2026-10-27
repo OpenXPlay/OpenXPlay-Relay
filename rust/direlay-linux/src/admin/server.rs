@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 // Source: admin-web/dev-server.ts.
+#[path = "file_routes.rs"]
+mod file_routes;
 #[path = "carlink_trace.rs"]
 pub(crate) mod trace_files;
 
@@ -29,7 +31,9 @@ pub const MAX_BODY: usize = 16_384;
 // A 16 KiB file can expand sixfold when wrapped as a JSON string.
 const MAX_IMPORT_BODY: usize = crate::public_name::config::MAX_BYTES * 6 + 1024;
 fn body_limit(path: &str) -> usize {
-    if path.split('?').next() == Some("/api/v0/public-name/import") {
+    if path.split('?').next() == Some("/api/v0/config/import") {
+        64 * 1024
+    } else if path.split('?').next() == Some("/api/v0/public-name/import") {
         MAX_IMPORT_BODY
     } else {
         MAX_BODY
@@ -98,6 +102,8 @@ impl Response {
             413 => "Content Too Large",
             422 => "Unprocessable Entity",
             429 => "Too Many Requests",
+            502 => "Bad Gateway",
+            503 => "Service Unavailable",
             _ => "Internal Server Error",
         };
         write!(out, "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n", self.status, reason, self.body.len() as u64 + self.files.iter().map(|(_, size)| size).sum::<u64>())?;
@@ -207,6 +213,9 @@ impl AdminServer {
         };
         if path == "/carlink-trace" || path.starts_with("/carlink-trace/") {
             return self.trace_route(request, path, &body);
+        }
+        if let Some(response) = self.file_route(request, path, &body) {
+            return response;
         }
         let string = |key: &str| body.get(key).and_then(Value::as_str);
         match (method, path) {
