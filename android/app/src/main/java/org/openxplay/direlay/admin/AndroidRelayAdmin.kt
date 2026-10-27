@@ -5,6 +5,7 @@ package org.openxplay.direlay.admin
 
 import android.content.Context
 import org.openxplay.direlay.bluetooth.IphoneSelection
+import org.openxplay.direlay.presentation.sampledPathInput
 import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.ui.SettingsNotice
 import org.openxplay.direlay.ui.settingsNotice
@@ -46,6 +47,8 @@ class AndroidRelayAdmin(private val context: Context, private val runtime: Relay
             else -> "waiting"
         }
         val wifi = org.openxplay.direlay.settings.currentWifiSsid(context)
+        val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+        val path = runtime.sampledPathInput(context, settings, wifi, runtime.bondedDevices.localName(), version)
         val now = System.currentTimeMillis() / 1000
         val window = pairing.state(now)
         val format = runtime.status.videoFormat
@@ -54,7 +57,7 @@ class AndroidRelayAdmin(private val context: Context, private val runtime: Relay
             (listOf(host) + runtime.carIpv4.sorted()).map {
                 "https://$it:$port/"
             } else emptyList()
-        return AdminStatus("android", "OpenXPlay Relay", context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(),
+        return AdminStatus("android", "OpenXPlay Relay", version,
             host, "https://$host:6975/", receivers, state, running, runtime.autoStartGate.paused,
             AdminIphone(device?.name, reason), AdminNetwork(AdminSettingsMapping.network(settings), wifi),
             AdminSettingsMapping.output(settings), if (settings.carlinkOutput) AdminCarlink(runtime.carlinkState, runtime.carlinkDetail) else null,
@@ -72,7 +75,7 @@ class AndroidRelayAdmin(private val context: Context, private val runtime: Relay
                         AdminHostAddress(network.name, address.hostAddress.orEmpty(), listOf("usb", "rndis", "veth", "docker", "tun", "wg").any { network.name.startsWith(it) })
                     }
                 }
-            } catch (_: java.net.SocketException) { emptyList() }, receiverPort = port,
+            } catch (_: java.net.SocketException) { emptyList() }, receiverPort = port, pathInput = path,
             hotspot = settings.wirelessNetwork.takeIf {
                 it.choice == org.openxplay.direlay.settings.WirelessNetworkChoice.PHONE_HOTSPOT && it.manualSsid.isNotEmpty()
             }?.let { AdminHotspot(it.manualSsid, it.manualPassphrase, if (running) runtime.carIpv4.sorted().firstOrNull() else null, running) })
