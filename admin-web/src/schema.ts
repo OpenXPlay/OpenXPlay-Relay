@@ -6,7 +6,8 @@ export interface SavedNetwork { ssid: string; hasPassword?: boolean; current?: b
 export interface PublicNameProvider { name: string; tokenSet: boolean }
 export type PublicNameProviders = Record<string, PublicNameProvider>;
 export interface NetworkRolesSetting { mode: 'auto' | 'custom'; iphone?: { link: 'hotspot' | 'saved-network'; interface: string }; carBrowser?: { network: 'iphone' | 'interface'; interface: string | null }; carlink?: { interface: string | null }; adminHotspot?: { enabled: boolean; interface: string | null; ssid: string; band: 'auto' | '2.4' | '5'; channel: number } }
-export type Value = NetworkRolesSetting | string | number | boolean | null | SavedNetwork[] | string[] | PublicNameProviders;
+export interface PictureSize { width: number; height: number }
+export type Value = PictureSize | PictureSize[] | NetworkRolesSetting | string | number | boolean | null | SavedNetwork[] | string[] | PublicNameProviders;
 export type Values = Record<string, Value>;
 export type Illustration = 'wifi-direct' | 'phone-hotspot' | 'device-hotspot' | 'shared-wifi';
 export interface Option { value: Value; labelKey: string; hintKey?: string; illustration?: Illustration }

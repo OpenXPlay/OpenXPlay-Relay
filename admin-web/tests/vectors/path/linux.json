@@ -1,0 +1,1015 @@
+[
+  {
+    "case": "Linux relay hotspot",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "IDLE"
+      }
+    },
+    "expected": {
+      "tone": "READY",
+      "focus": {
+        "id": "CARPLAY_START"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_tap_connect"
+      },
+      "primary": {
+        "type": "Connect"
+      },
+      "secondary": null,
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux shared Wi-Fi",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "SHARED_WIFI",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz",
+        "sharedWifiSsid": "Car Wi-Fi"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "IDLE"
+      }
+    },
+    "expected": {
+      "tone": "READY",
+      "focus": {
+        "id": "CARPLAY_START"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_tap_connect"
+      },
+      "primary": {
+        "type": "Connect"
+      },
+      "secondary": null,
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux web only",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "IDLE"
+      }
+    },
+    "expected": {
+      "tone": "READY",
+      "focus": {
+        "id": "CARPLAY_START"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_tap_connect"
+      },
+      "primary": {
+        "type": "Connect"
+      },
+      "secondary": null,
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux both outputs",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER",
+          "CARLINK"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720",
+        "carlink": {
+          "phase": "PLAYING",
+          "trusted": true,
+          "carName": "G6",
+          "picture": "1920×720 H.265"
+        }
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "IDLE"
+      }
+    },
+    "expected": {
+      "tone": "READY",
+      "focus": {
+        "id": "CARPLAY_START"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_tap_connect"
+      },
+      "primary": {
+        "type": "Connect"
+      },
+      "secondary": null,
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux idle setup",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": false
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "IDLE"
+      }
+    },
+    "expected": {
+      "tone": "ACTION",
+      "focus": {
+        "id": "MODE"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_settings_missing"
+      },
+      "primary": {
+        "type": "Step",
+        "action": "FIX_SETTINGS",
+        "step": "MODE",
+        "label": "path_action_fix_settings"
+      },
+      "secondary": null,
+      "nodes": {
+        "focus": "RELAY"
+      }
+    }
+  },
+  {
+    "case": "Linux ready",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "IDLE"
+      }
+    },
+    "expected": {
+      "tone": "READY",
+      "focus": {
+        "id": "CARPLAY_START"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_tap_connect"
+      },
+      "primary": {
+        "type": "Connect"
+      },
+      "secondary": null,
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux pairing",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "NONE",
+        "name": null,
+        "step": "IDLE"
+      }
+    },
+    "expected": {
+      "tone": "ACTION",
+      "focus": {
+        "id": "IPHONE_PAIRED"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_pair_iphone"
+      },
+      "primary": {
+        "type": "Step",
+        "action": "PAIR_IPHONE",
+        "step": "IPHONE_PAIRED",
+        "label": "path_action_pair_iphone"
+      },
+      "secondary": null,
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux Carlink scanning",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "CARLINK"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720",
+        "carlink": {
+          "phase": "SCANNING",
+          "sinceMillis": 1792999988000
+        }
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "STARTING",
+        "started": true
+      }
+    },
+    "expected": {
+      "tone": "PROGRESS",
+      "focus": {
+        "id": "CARLINK_FIND"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_open_carlink"
+      },
+      "primary": null,
+      "secondary": {
+        "type": "Stop"
+      },
+      "nodes": {
+        "focus": "CAR"
+      }
+    }
+  },
+  {
+    "case": "Linux Carlink PIN",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "CARLINK"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720",
+        "carlink": {
+          "phase": "PIN",
+          "pinPending": true
+        }
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "STARTING",
+        "started": true
+      }
+    },
+    "expected": {
+      "tone": "ACTION",
+      "focus": {
+        "id": "CARLINK_PIN"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_enter_pin"
+      },
+      "primary": {
+        "type": "Step",
+        "action": "ENTER_PIN",
+        "step": "CARLINK_PIN",
+        "label": "path_action_enter_pin"
+      },
+      "secondary": {
+        "type": "Stop"
+      },
+      "nodes": {
+        "focus": "CAR"
+      }
+    }
+  },
+  {
+    "case": "Linux iPhone failure with Retry",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "JOINING",
+        "started": true,
+        "failure": {
+          "step": "JOINING",
+          "code": "first_tcp_timeout",
+          "text": "The iPhone did not join",
+          "atMillis": 1792999970000,
+          "retrying": false,
+          "trail": [
+            "Wi-Fi details sent"
+          ]
+        }
+      }
+    },
+    "expected": {
+      "tone": "ERROR",
+      "focus": {
+        "id": "IPHONE_WIFI"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_iphone_did_not_join"
+      },
+      "primary": {
+        "type": "Step",
+        "action": "RETRY",
+        "step": "IPHONE_WIFI",
+        "label": "path_action_retry"
+      },
+      "secondary": {
+        "type": "Stop"
+      },
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux iPhone failure with automatic retry",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "JOINING",
+        "started": true,
+        "failure": {
+          "step": "JOINING",
+          "code": "first_tcp_timeout",
+          "text": "The iPhone did not join",
+          "atMillis": 1792999970000,
+          "retrying": true,
+          "trail": [
+            "Wi-Fi details sent"
+          ]
+        }
+      }
+    },
+    "expected": {
+      "tone": "PROGRESS",
+      "focus": {
+        "id": "IPHONE_WIFI"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_retrying"
+      },
+      "primary": {
+        "type": "Step",
+        "action": "RETRY",
+        "step": "IPHONE_WIFI",
+        "label": "path_action_retry"
+      },
+      "secondary": {
+        "type": "Stop"
+      },
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux car-first wait",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 0,
+        "screen": null,
+        "savedScreen": null
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "STARTING",
+        "started": true,
+        "carWaitUntilMillis": 1793000012000
+      }
+    },
+    "expected": {
+      "tone": "PROGRESS",
+      "focus": {
+        "id": "CAR_PAGE"
+      },
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "path_car_screen_wait"
+      },
+      "primary": {
+        "type": "Step",
+        "action": "START_NOW",
+        "step": "CARPLAY_START",
+        "label": "path_action_start_now"
+      },
+      "secondary": {
+        "type": "Stop"
+      },
+      "nodes": {
+        "focus": "IPHONE"
+      }
+    }
+  },
+  {
+    "case": "Linux live",
+    "input": {
+      "platform": "linux",
+      "nowMillis": 1793000000000,
+      "version": "0.2.1",
+      "setup": {
+        "network": "PHONE_HOTSPOT",
+        "outputs": [
+          "BROWSER"
+        ],
+        "summary": "",
+        "valid": true
+      },
+      "relay": {
+        "identity": "READY",
+        "bluetoothOn": true,
+        "bluetoothName": "OpenXPlay Linux",
+        "wifiOn": true,
+        "hotspotOn": true,
+        "hotspotSsid": "OpenXPlay-1A2B",
+        "hotspotBand": "5 GHz"
+      },
+      "car": {
+        "address": "10.42.0.1",
+        "web": {
+          "phase": "LISTENING",
+          "port": 8443
+        },
+        "pageUrl": "https://10.42.0.1:8443/",
+        "pages": 1,
+        "screen": "1920×720"
+      },
+      "iphone": {
+        "pick": "PICKED",
+        "name": "iPhone",
+        "step": "VIDEO",
+        "started": true
+      },
+      "live": {
+        "pictureOnCar": true,
+        "sessionSinceMillis": 1792999249000,
+        "chips": [
+          "1920×720",
+          "60 fps",
+          "H.265"
+        ]
+      }
+    },
+    "expected": {
+      "tone": "LIVE",
+      "focus": null,
+      "sections": [
+        {
+          "section": "RELAY"
+        },
+        {
+          "section": "CAR"
+        },
+        {
+          "section": "IPHONE"
+        },
+        {
+          "section": "PICTURE"
+        }
+      ]
+    },
+    "stage": {
+      "headline": {
+        "res": "design_live"
+      },
+      "primary": null,
+      "secondary": {
+        "type": "Stop"
+      },
+      "nodes": {
+        "focus": null
+      }
+    }
+  }
+]

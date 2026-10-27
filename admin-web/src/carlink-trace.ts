@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-22
 
+import { patchMarkup } from './dom';
 import { request } from './api';
 export interface TraceSnapshot {
   enabled: boolean; running: boolean;
@@ -32,12 +33,12 @@ export class TracePoller {
   async refresh() {
     if (this.stopped || this.busy) return;
     clearTimeout(this.timer); this.busy = true;
-    try { await this.read(); }
+    try { if (typeof document === 'undefined' || !document.hidden) await this.read(); }
     finally { this.busy = false; if (!this.stopped) this.timer = setTimeout(() => void this.refresh(), 2000); }
   }
   dispose() { this.stopped = true; clearTimeout(this.timer); }
 }
-export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: unknown) => string): () => void {
+export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: unknown) => string, patch = patchMarkup): () => void {
   let disposed = false, filter = '', snapshot: TraceSnapshot | null = null, busy = false;
   const select = card.querySelector<HTMLSelectElement>('select[data-trace-filter]')!;
   const content = card.querySelector<HTMLElement>('[data-trace-content]')!;
@@ -56,7 +57,7 @@ export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: un
       const focused = content.ownerDocument.activeElement;
       const action = content.querySelectorAll<HTMLButtonElement>('button[data-trace]');
       const focusKey = Array.from(action).find(button => button === focused)?.dataset.trace;
-      snapshot = next; content.innerHTML = tracePanel(next, tail.lines, lastMedia.lines[0], t);
+      snapshot = next; patch(content, tracePanel(next, tail.lines, lastMedia.lines[0], t));
       content.querySelectorAll<HTMLButtonElement>('button').forEach(b => { b.disabled ||= busy; });
       if (focusKey) Array.from(content.querySelectorAll<HTMLButtonElement>('button[data-trace]')).find(button => button.dataset.trace === focusKey)?.focus({ preventScroll: true });
       const list = content.querySelector<HTMLElement>('.trace-lines');
