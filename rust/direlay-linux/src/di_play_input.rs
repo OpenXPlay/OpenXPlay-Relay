@@ -68,9 +68,14 @@ pub(crate) struct InputState {
     pub output: Option<SyncSender<Message>>,
     pub active: bool,
     pub desired_fps: u32,
+    pub negotiated_fps: Option<f64>,
+    pub frame_rate_setting: oxp_core::model::FrameRatePreference,
+    pub playback: Option<PlaybackToken>,
+    pub carlink_frames: u64,
     pub applied_fps: u32,
     /// A receiver asked to apply `desired_fps`; it stays pending through the rate limit.
     pub restart_requested: bool,
+    pub frame_rate_changed: bool,
     pub last_restart: Option<Instant>,
     pub desired_video: VideoCodecDecision,
     pub applied_video: VideoCodecDecision,
@@ -172,8 +177,13 @@ impl DiPlayInput {
             output: None,
             active: false,
             desired_fps: 60,
+            negotiated_fps: None,
+            frame_rate_setting: Default::default(),
+            playback: None,
+            carlink_frames: 0,
             applied_fps: 60,
             restart_requested: false,
+            frame_rate_changed: false,
             last_restart: None,
             desired_video: Default::default(),
             applied_video: Default::default(),
@@ -187,6 +197,15 @@ impl DiPlayInput {
             auto_video: Default::default(),
             codec_setting: "auto".into(),
             video_configured: false,
+        }));
+        let startup_state = Arc::downgrade(&state);
+        events.startup_listener(Arc::new(move |reason| {
+            if let Some(state)=startup_state.upgrade() {
+                let mut s=state.lock().unwrap();
+                if s.active && !matches!(reason,"failed"|"disconnected") { return; }
+                let id=s.current.unwrap_or(s.generation+1);
+                Self::publish_locked(&mut s,"0-session",Message::Json(serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":format!("startup/{reason}")}})));
+            }
         }));
         let display = Arc::new(Mutex::new(crate::display::DisplayRuntime::default()));
         let worker_display = display.clone();
@@ -411,15 +430,22 @@ impl DiPlayInput {
         s.current = Some(id);
         s.latest = Some(id);
         s.control = Some(control);
-        s.keys = None;
+        let media = s.control.clone().unwrap();
+        s.keys = Some(Arc::new(
+            move |key, down| match crate::carplay_policy::media_button(key) {
+                Some(index) => !down || media.send_media_button(index).unwrap_or(false),
+                None => false,
+            },
+        ));
         s.active = false;
+        s.playback = None;
         s.recovery.clear();
         s.declarations.retain(|key, _| key.starts_with("display-"));
         Self::publish_locked(
             &mut s,
             "0-session",
             Message::Json(
-                serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING"}}),
+                serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":"startup/waiting-media"}}),
             ),
         );
         drop(s);
@@ -440,7 +466,7 @@ impl DiPlayInput {
                 &mut s,
                 "0-session",
                 Message::Json(
-                    serde_json::json!({"type":"session","session":{"id":next.to_string(),"phase":"CONNECTING"}}),
+                    serde_json::json!({"type":"session","session":{"id":next.to_string(),"phase":"CONNECTING","reason":"startup/waiting-media"}}),
                 ),
             );
             drop(s);
@@ -484,12 +510,19 @@ impl DiPlayInput {
                 ),
             );
             s.current = None;
+            s.playback = None;
             let summary = s
                 .keyframe_watch
                 .take()
                 .and_then(|w| w.summary((self.clock)(), "still missing at session end"));
             (std::mem::take(&mut s.microphones), summary)
         };
+        {
+            let mut f = self.events.facts.lock().unwrap();
+            f.picture_on_car = false;
+            f.session = None;
+            f.iphone.session_since_millis = None;
+        }
         if let Some(line) = summary {
             self.events.log(&line);
         }
@@ -541,6 +574,7 @@ impl DiPlayInput {
         let (fps, video, write) = {
             let mut s = self.state.lock().unwrap();
             s.restart_requested = false;
+            s.frame_rate_changed = false;
             s.applied_fps = s.desired_fps;
             s.applied_video = s.desired_video;
             s.video_configured = true;
@@ -599,6 +633,7 @@ impl DiPlayInput {
             "width":field("width"),"height":field("height")})
     }
     pub fn clear_receiver_capabilities(&self) {
+        self.events.facts.lock().unwrap().picture_on_car = false;
         self.display.lock().unwrap().connected = false;
         self.context_disconnected();
         self.set_video_decision(oxp_core::video_codec_policy::resolve(&[], false));
@@ -672,11 +707,14 @@ impl DiPlayInput {
             }
             let rate_change = !waiting_settings
                 && s.restart_requested
-                && s.last_restart
-                    .is_none_or(|at| now.saturating_duration_since(at) >= RATE_RESTART_INTERVAL);
+                && (s.frame_rate_changed
+                    || s.last_restart.is_none_or(|at| {
+                        now.saturating_duration_since(at) >= RATE_RESTART_INTERVAL
+                    }));
             if rate_change {
                 s.restart_requested = false;
                 s.last_restart = Some(now);
+                s.frame_rate_changed = false;
             }
             (display_change || rate_change || codec_change, write)
         };
@@ -692,9 +730,14 @@ impl DiPlayInput {
                 self.context_peer(v);
                 Ok(true)
             }
+            Message::Json(v) if v["type"] == "stats" => Ok(self.receiver_playback(v)),
             Message::Json(v) if v["type"] == "display-settings" => {
+                let mut v = v.clone();
+                if v.get("frameRate").is_none() {
+                    v["frameRate"] = self.display_settings().frame_rate.wire_name().into();
+                }
                 let settings =
-                    oxp_wire::decode_display_settings(v).map_err(std::io::Error::other)?;
+                    oxp_wire::decode_display_settings(&v).map_err(std::io::Error::other)?;
                 self.update_display_settings(settings)?;
                 Ok(true)
             }
@@ -711,7 +754,14 @@ impl DiPlayInput {
                     display["refreshHz"].as_f64(),
                     display["sustainedFps"].as_f64(),
                 ) as u32;
-                self.state.lock().unwrap().desired_fps = fps;
+                {
+                    let mut s = self.state.lock().unwrap();
+                    s.negotiated_fps = Some(fps as f64);
+                    s.desired_fps = crate::carplay_policy::requested_frame_rate(
+                        s.frame_rate_setting,
+                        s.negotiated_fps,
+                    );
+                }
                 let hardware = v["decoders"].as_array().is_some_and(|ds| {
                     ds.iter().any(|d| {
                         d["hardware"] == true
@@ -775,6 +825,141 @@ impl DiPlayInput {
     }
 }
 impl DiPlayInput {
+    pub fn host_ui_requested(&self) {
+        let mut s = self.state.lock().unwrap();
+        if s.current.is_some() {
+            Self::publish_locked(
+                &mut s,
+                "",
+                Message::Json(serde_json::json!({"type":"host-ui"})),
+            );
+        }
+    }
+    pub fn configure_runtime_settings(&self, settings: &crate::settings::Settings) -> Result<()> {
+        let mut d = self.display.lock().unwrap();
+        if d.saved.select_car(settings.car().key()) {
+            d.pictures.automatic_canvas = None;
+            d.connected = false;
+            d.persist()?;
+        }
+        d.fallback = settings.car().built_in();
+        if d.picture_default != settings.carlink_picture_default
+            && (d.pictures.trial.is_some() || self.session_active())
+        {
+            d.pending_picture_default = true;
+        }
+        d.picture_default = settings.carlink_picture_default;
+        d.carlink_mode = settings.carlink_picture_size == "mode";
+        d.carlink_primary = settings.output == "carlink"
+            || (settings.output == "both" && {
+                let facts = self.events.facts.lock().unwrap();
+                facts.carlink.phase == "PLAYING" || facts.carlink.screen.is_some()
+            });
+        d.disable_view_areas = !settings.car_play_view_areas;
+        Ok(())
+    }
+    /// Connection-local selection. The shell applies the restart through its normal tick.
+    pub fn try_carlink_picture(&self, size: Option<crate::display::Size>) -> Result<bool> {
+        let mut d = self.display.lock().unwrap();
+        let default = d.picture_default;
+        if size.is_some() && d.pictures.automatic_canvas.is_none() {
+            d.pictures.automatic_canvas = Some(d.saved.planned_canvas());
+        }
+        let changed = d.pictures.choose(size, default)?;
+        if changed {
+            d.pictures.applied = size;
+            d.settings_since = Some((self.clock)());
+        }
+        Ok(changed)
+    }
+    pub fn accept_picture_default(&self) {
+        let mut d = self.display.lock().unwrap();
+        if std::mem::take(&mut d.pending_picture_default) {
+            d.pictures.trial = None;
+        }
+    }
+    pub fn clear_picture_trial(&self) {
+        let mut d = self.display.lock().unwrap();
+        if d.saved.head_unit.is_none() {
+            if let Some(canvas) = d.pictures.automatic_canvas {
+                d.saved.canvas = canvas;
+            }
+        }
+        d.pictures.stopped();
+    }
+    pub fn screen_known(&self) -> bool {
+        let d = self.display.lock().unwrap();
+        d.saved.head_unit.is_some() || d.fallback.is_some()
+    }
+    pub fn screen_reported(&self) -> bool {
+        self.display.lock().unwrap().connected
+    }
+    /// A receiver report only proves a frame from the current stream, captured before delivery.
+    pub fn receiver_playback(&self, event: &serde_json::Value) -> bool {
+        let (id, control, token) = {
+            let mut s = self.state.lock().unwrap();
+            let Some(id) = s.current else {
+                return false;
+            };
+            let proof = if event["type"] == "stats" {
+                let session = event["session"]
+                    .as_u64()
+                    .or_else(|| event["session"].as_str().and_then(|s| s.parse().ok()));
+                event["screen"].as_u64().unwrap_or(0) == 0 && session == Some(id)
+            } else if event["type"] == "media-stats" {
+                let n = event["liveFrames"].as_u64().unwrap_or(0);
+                let grew = n > s.carlink_frames;
+                s.carlink_frames = n;
+                grew
+            } else {
+                false
+            };
+            if !proof {
+                return false;
+            }
+            (id, s.control.clone(), s.playback.clone())
+        };
+        let accepted = control
+            .zip(token)
+            .is_some_and(|(c, t)| c.report_video_frame_rendered(&t));
+        if accepted && self.state.lock().unwrap().current == Some(id) {
+            let mut f = self.events.facts.lock().unwrap();
+            f.picture_on_car = true;
+        }
+        accepted
+    }
+    pub fn runtime_path_facts(&self) -> crate::path_facts::RuntimePathFacts {
+        let mut facts = self.events.runtime_path_facts();
+        let d = self.display.lock().unwrap();
+        let s = self.state.lock().unwrap();
+        facts.session = s.current;
+        facts.saved_screen = d.saved.head_unit.as_ref().map(|h| crate::display::Size {
+            width: h.screen.width,
+            height: h.screen.height,
+        });
+        facts.screen = facts.saved_screen.filter(|_| d.connected);
+        facts.built_in_screen = d.fallback.as_ref().map(|(h, _)| crate::display::Size {
+            width: h.screen.width,
+            height: h.screen.height,
+        });
+        facts.picture_on_car &= s.current.is_some();
+        if let Some(Message::Json(v)) = s.declarations.get("1-video-0") {
+            let f = &v["format"];
+            if let Some((w, h)) = f["width"].as_u64().zip(f["height"].as_u64()) {
+                facts.chips = vec![
+                    format!("{w}×{h}"),
+                    format!("{} fps", s.applied_fps),
+                    if f["codec"] == "H265" {
+                        "H.265"
+                    } else {
+                        "H.264"
+                    }
+                    .into(),
+                ];
+            }
+        }
+        facts
+    }
     fn setting_decision(setting: &str, automatic: VideoCodecDecision) -> VideoCodecDecision {
         match setting {
             "h264" => VideoCodecDecision {
@@ -794,6 +979,17 @@ impl DiPlayInput {
             let path = state_dir.join("display.json");
             d.saved = crate::display::DisplayState::load(&path);
             d.path = Some(path);
+            if let Ok(settings) = crate::settings::Settings::load(state_dir) {
+                d.saved.frame_rate =
+                    crate::carplay_policy::frame_rate_setting(&settings.frame_rate)
+                        .unwrap_or_default();
+                let mut s = self.state.lock().unwrap();
+                s.frame_rate_setting = d.saved.frame_rate;
+                s.desired_fps = crate::carplay_policy::requested_frame_rate(
+                    s.frame_rate_setting,
+                    s.negotiated_fps,
+                );
+            }
         }
         let message = Message::Json(oxp_wire::display_settings(&d.saved.settings()));
         Self::publish_locked(&mut self.state.lock().unwrap(), "display-settings", message);
@@ -811,6 +1007,30 @@ impl DiPlayInput {
         settings: oxp_core::model::DisplaySettings,
     ) -> Result<()> {
         settings.validate().map_err(std::io::Error::other)?;
+        let state_dir = self
+            .display
+            .lock()
+            .unwrap()
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_owned());
+        if let Some(dir) = state_dir {
+            let path = dir.join("settings.json");
+            let mut value: serde_json::Value = match std::fs::read(&path) {
+                Ok(bytes) => serde_json::from_slice(&bytes)?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+                Err(e) => return Err(e),
+            };
+            value
+                .as_object_mut()
+                .ok_or_else(|| std::io::Error::other("Invalid settings file"))?
+                .insert(
+                    "frameRate".into(),
+                    crate::carplay_policy::frame_rate_value(settings.frame_rate).into(),
+                );
+            crate::platform::private_state_file(&path, &serde_json::to_vec_pretty(&value)?)?;
+        }
         let mut d = self.display.lock().unwrap();
         if d.saved.settings() != settings {
             let old = d.saved.clone();
@@ -820,10 +1040,24 @@ impl DiPlayInput {
                 d.saved = old;
                 return Err(e);
             }
-            d.settings_since = Some((self.clock)());
+            if old.resolution != settings.resolution
+                || old.screen_width != settings.screen_width
+                || old.video_codec != settings.video_codec
+            {
+                d.settings_since = Some((self.clock)());
+            }
             let mut s = self.state.lock().unwrap();
             if s.codec_setting != settings.video_codec {
                 s.keyframe_watch = None;
+            }
+            if s.frame_rate_setting != settings.frame_rate {
+                s.frame_rate_setting = settings.frame_rate;
+                s.desired_fps = crate::carplay_policy::requested_frame_rate(
+                    settings.frame_rate,
+                    s.negotiated_fps,
+                );
+                s.restart_requested = s.desired_fps != s.applied_fps;
+                s.frame_rate_changed = true;
             }
             s.codec_setting = settings.video_codec.clone();
             let automatic = if s.hevc_failed {
@@ -1000,6 +1234,94 @@ impl InputEvents for DiPlayInput {
             Some(m) if s.current.is_some() => m.offer(b),
             _ => Ok(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod runtime_parity_tests {
+    use super::*;
+    struct Control(Mutex<Vec<u8>>);
+    impl SessionControl for Control {
+        fn send_touch(&self, _: &[AirPlayContact]) -> Result<bool> {
+            Ok(false)
+        }
+        fn send_media_button(&self, index: u8) -> Result<bool> {
+            self.0.lock().unwrap().push(index);
+            Ok(true)
+        }
+    }
+    fn input() -> DiPlayInput {
+        DiPlayInput::new(Arc::new(JsonEvents::new(Arc::new(|_| {}))))
+    }
+    #[test]
+    fn startup_reasons_arrive_before_media_and_host_ui_is_never_replayed() {
+        let input = input();
+        let (tx, rx) = sync_channel(16);
+        input.state.lock().unwrap().output = Some(tx);
+        input
+            .events
+            .emit("stage", &serde_json::json!({"stage":"ConnectingBluetooth"}));
+        let Message::Json(v) = rx.recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(v["session"]["reason"], "startup/authenticating");
+        input.begin(Arc::new(Control(Mutex::default()))).unwrap();
+        rx.recv().unwrap();
+        input.host_ui_requested();
+        assert_eq!(
+            rx.recv().unwrap(),
+            Message::Json(serde_json::json!({"type":"host-ui"}))
+        );
+        assert!(input
+            .state
+            .lock()
+            .unwrap()
+            .declarations
+            .values()
+            .all(|m| !matches!(m,Message::Json(v) if v["type"]=="host-ui")));
+    }
+    #[test]
+    fn media_keys_delegate_once_per_press_and_stop_with_the_session() {
+        let input = input();
+        let c = Arc::new(Control(Mutex::default()));
+        let id = input.begin(c.clone()).unwrap();
+        for key in [7, 8, 9] {
+            assert!(input.key(key, true).unwrap());
+            assert!(input.key(key, false).unwrap());
+        }
+        assert_eq!(*c.0.lock().unwrap(), [3, 4, 5]);
+        assert!(!input.key(0, true).unwrap());
+        input.end(id).unwrap();
+        assert!(!input.key(7, true).unwrap());
+    }
+    #[test]
+    fn setting_changes_restart_only_if_resolved_rate_changes() {
+        let input = input();
+        input.configure_session();
+        let mut setting = input.display_settings();
+        setting.frame_rate = oxp_core::model::FrameRatePreference::Fps60;
+        input.update_display_settings(setting.clone()).unwrap();
+        assert!(!input.apply_requested_restart(|| panic!("same rate")));
+        setting.frame_rate = oxp_core::model::FrameRatePreference::Fps45;
+        input.update_display_settings(setting).unwrap();
+        assert!(input.apply_requested_restart(|| {}));
+        assert_eq!(input.configure_session().0, 45);
+        assert!(!input.apply_requested_restart(|| panic!("duplicate")));
+        input.state.lock().unwrap().negotiated_fps = Some(30.);
+        input.configure_session();
+        assert_eq!(input.applied_frame_rate(), 45);
+    }
+    #[test]
+    fn stats_require_current_session_and_a_captured_playback_token() {
+        let input = input();
+        let id = input.begin(Arc::new(Control(Mutex::default()))).unwrap();
+        for session in [id, id + 1] {
+            assert!(!input.receiver_playback(
+                &serde_json::json!({"type":"stats","session":session,"screen":0})
+            ));
+        }
+        assert!(!input.runtime_path_facts().picture_on_car);
+        assert!(!input.receiver_playback(&serde_json::json!({"type":"media-stats","liveFrames":0})));
     }
 }
 
@@ -1591,6 +1913,7 @@ mod display_tests {
             resolution: "auto".into(),
             screen_width: width,
             video_codec: codec.into(),
+            frame_rate: Default::default(),
         }
     }
     #[test]
@@ -1660,9 +1983,14 @@ mod display_tests {
         let reply = rx.recv_timeout(Duration::from_secs(1)).unwrap();
         let mut bytes = Vec::new();
         oxp_wire::write(&mut bytes, &reply).unwrap();
+        let mut expected = match request {
+            Message::Json(v) => v,
+            _ => unreachable!(),
+        };
+        expected["frameRate"] = "AUTO".into();
         assert_eq!(
             oxp_wire::read(&mut std::io::Cursor::new(bytes)).unwrap(),
-            Some(request)
+            Some(Message::Json(expected))
         );
         assert_eq!(input.display_settings().screen_width, 300);
         let control = Arc::new(AreaControl(Mutex::new(vec![])));

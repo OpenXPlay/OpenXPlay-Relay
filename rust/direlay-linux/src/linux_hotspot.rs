@@ -343,6 +343,7 @@ impl ApKeyfile<'_> {
 struct HotspotState {
     connection: Option<String>,
     profile_loaded: bool,
+    profile_channel: u8,
     ready: Option<WirelessHotspotInfo>,
 }
 pub struct LinuxHotspot {
@@ -381,6 +382,7 @@ impl LinuxHotspot {
             state: Mutex::new(HotspotState {
                 connection: None,
                 profile_loaded: false,
+                profile_channel: 0,
                 ready: None,
             }),
             closed: AtomicBool::new(false),
@@ -536,6 +538,7 @@ impl LinuxHotspot {
                 "bg"
             };
             let keyfile = self.keyfile_dir.join(format!("{id}.nmconnection"));
+            self.state.lock().unwrap().profile_channel = channel.parse().unwrap_or(0);
             let profile = ApKeyfile {
                 id: &id,
                 interface: &self.interface,
@@ -592,6 +595,7 @@ impl LinuxHotspot {
                     "6",
                 ])?;
                 cmd(&["nmcli", "connection", "up", "id", &id])?;
+                self.state.lock().unwrap().profile_channel = 6;
             }
             let address = loop {
                 let output = cmd(&[
@@ -737,14 +741,20 @@ impl LinuxHotspot {
         self.radio(&|args| command(self.runner.as_ref(), args, Duration::from_secs(5)))
     }
     pub fn validate_ready(&self) -> Result<()> {
-        let expected = self
-            .state
-            .lock()
-            .unwrap()
-            .ready
-            .as_ref()
-            .and_then(|r| r.host_address)
-            .ok_or_else(|| std::io::Error::other("Hotspot is not ready"))?;
+        let (expected, connection, profile_channel) = {
+            let state = self.state.lock().unwrap();
+            (
+                state
+                    .ready
+                    .clone()
+                    .ok_or_else(|| std::io::Error::other("Hotspot is not ready"))?,
+                state
+                    .connection
+                    .clone()
+                    .ok_or_else(|| std::io::Error::other("Hotspot profile is unavailable"))?,
+                state.profile_channel,
+            )
+        };
         let now = WifiOutput::ipv4(&command(
             self.runner.as_ref(),
             &[
@@ -757,8 +767,48 @@ impl LinuxHotspot {
             ],
             Duration::from_secs(5),
         )?);
-        if now != Some(expected) {
+        if now != expected.host_address {
             return Err(std::io::Error::other("Hotspot address changed"));
+        }
+        let active = command(
+            self.runner.as_ref(),
+            &[
+                "nmcli",
+                "-g",
+                "GENERAL.CONNECTION",
+                "device",
+                "show",
+                &self.interface,
+            ],
+            Duration::from_secs(5),
+        )?;
+        if crate::provision::terse_fields(active.trim_end()).join(":") != connection {
+            return Err(std::io::Error::other("Hotspot connection changed"));
+        }
+        let profile = command(
+            self.runner.as_ref(),
+            &[
+                "nmcli",
+                "-g",
+                "802-11-wireless.ssid,802-11-wireless.channel,802-11-wireless-security.key-mgmt",
+                "connection",
+                "show",
+                "id",
+                &connection,
+            ],
+            Duration::from_secs(5),
+        )?;
+        let rows: Vec<_> = profile.lines().collect();
+        if rows.len() != 3
+            || crate::provision::terse_fields(rows[0]).join(":") != expected.ssid
+            || rows[1].parse::<u8>().ok() != Some(profile_channel)
+            || rows[2] != "wpa-psk"
+        {
+            return Err(std::io::Error::other("Hotspot configuration changed"));
+        }
+        let radio = self.radio_info()?;
+        if radio.channel != Some(expected.channel) {
+            return Err(std::io::Error::other("Hotspot channel changed"));
         }
         Ok(())
     }
@@ -917,7 +967,11 @@ impl WirelessHotspotManager for ExistingWifiManager {
         let before = self.ready.lock().unwrap().clone();
         let now = self.snapshot()?;
         if before.as_ref().is_some_and(|b| {
-            b.host_address != now.host_address || b.access_point_bssid != now.access_point_bssid
+            b.host_address != now.host_address
+                || b.access_point_bssid != now.access_point_bssid
+                || b.ssid != now.ssid
+                || b.channel != now.channel
+                || b.security != now.security
         }) {
             return Err(std::io::Error::other("Existing Wi-Fi changed"));
         }

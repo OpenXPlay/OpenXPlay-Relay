@@ -39,6 +39,7 @@ pub struct BleCarlinkSettings {
     pub id: String,
     /// Carlink band the head unit creates its group on: 0 is 2.4 GHz, 1 allows 5 GHz.
     pub band: u8,
+    pub phone_mac: Option<String>,
 }
 /// A certificate for the head-unit page from PEM files (the trusted-HTTPS name's).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +100,7 @@ impl SupervisorSettings {
             ]);
             args
         };
+        args.push("--host-ui".into());
         args.extend([
             "--relay-name".into(),
             crate::branding::DEVICE_NAME.into(),
@@ -134,7 +136,15 @@ impl SupervisorSettings {
                 "--clink-hevc".into(),
                 c.hevc.clone().into(),
             ]);
+            args.extend([
+                "--clink-state-dir".into(),
+                self.state_dir.as_os_str().into(),
+            ]);
             if let Some(ble) = &c.ble {
+                args.extend(["--clink-scan".into(), "continuous".into()]);
+                if let Some(mac) = &ble.phone_mac {
+                    args.extend(["--clink-phone-mac".into(), mac.into()]);
+                }
                 args.extend([
                     "--clink-link".into(),
                     "ble".into(),
@@ -1202,6 +1212,7 @@ mod tls_tests {
                     address: None,
                     id: "id".into(),
                     band: 1,
+                    phone_mac: None,
                 }),
                 head_unit: Ipv4Addr::new(192, 168, 43, 1),
                 local: Ipv4Addr::new(192, 168, 43, 2),
@@ -1211,6 +1222,7 @@ mod tls_tests {
             let mut expected = vec![
                 "--unix",
                 "/tmp/oxp-relay.sock",
+                "--host-ui",
                 "--relay-name",
                 crate::branding::DEVICE_NAME,
                 "--relay-version",
@@ -1223,9 +1235,13 @@ mod tls_tests {
                 "Model 1",
                 "--clink-hevc",
                 "off",
+                "--clink-state-dir",
+                "/state",
             ];
             expected.extend(if ble {
                 vec![
+                    "--clink-scan",
+                    "continuous",
                     "--clink-link",
                     "ble",
                     "--clink-interface",
@@ -1248,7 +1264,7 @@ mod tls_tests {
             assert_eq!(strings(settings.arguments()), expected);
             settings.carlink.as_mut().unwrap().trace = true;
             expected.splice(
-                6..6,
+                7..7,
                 ["--clink-trace", "/state/carlink-trace", "--control-stdin"],
             );
             assert_eq!(strings(settings.arguments()), expected);
@@ -1278,6 +1294,7 @@ mod tls_tests {
             &format!("{state}/receiver-tls"),
             "--tls-san",
             "openxplay-linux.local",
+            "--host-ui",
             "--relay-name",
             crate::branding::DEVICE_NAME,
             "--relay-version",

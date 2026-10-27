@@ -73,6 +73,45 @@ impl CommandRunner for Fake {
                     })
                 }
             }
+        } else if a.iter().any(|s| s == "GENERAL.CONNECTION") {
+            self.profiles
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .lines()
+                .find_map(|l| l.strip_prefix("id="))
+                .unwrap()
+                .to_owned()
+        } else if a.iter().any(|s| {
+            s == "802-11-wireless.ssid,802-11-wireless.channel,802-11-wireless-security.key-mgmt"
+        }) {
+            let profile = self.profiles.lock().unwrap().last().unwrap().clone();
+            let value = |key: &str| {
+                profile
+                    .lines()
+                    .find_map(|l| l.strip_prefix(key))
+                    .unwrap()
+                    .to_owned()
+            };
+            format!(
+                "{}\n{}\nwpa-psk",
+                String::from_utf8(
+                    value("ssid=")
+                        .split(';')
+                        .filter(|s| !s.is_empty())
+                        .map(|b| b.parse::<u8>().unwrap())
+                        .collect()
+                )
+                .unwrap()
+                .replace('\\', "\\\\")
+                .replace(':', "\\:"),
+                if self.fail_5g || self.report24 {
+                    "6".into()
+                } else {
+                    value("channel=")
+                }
+            )
         } else if a.iter().any(|s| s == "IP4.ADDRESS") {
             include_str!("fixtures/nmcli-ipv4.txt").into()
         } else if a.iter().any(|s| s == "IN-USE,CHAN,BSSID") {
@@ -278,8 +317,8 @@ fn session_restart_reuses_ap_without_networkmanager_activation() {
     assert_eq!(info.channel, reused.channel);
     assert_eq!(info.host_address, reused.host_address);
     let calls = runner.calls.lock().unwrap();
-    // Reuse only checks the address; it never changes the AP connection.
-    assert_eq!(calls.len(), before + 1);
+    // Reuse validates the address, active profile and radio without activating the AP again.
+    assert_eq!(calls.len(), before + 4);
     assert!(calls[before].iter().any(|a| a == "IP4.ADDRESS"));
     assert_eq!(*runner.attempts.lock().unwrap(), 1);
     assert!(!calls

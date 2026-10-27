@@ -103,7 +103,7 @@ impl StreamConnection {
                                 oxp_wire::write(&mut stream, settings)
                                     .map_err(std::io::Error::other)?;
                             }
-                            oxp_wire::write(&mut stream,&oxp_wire::Message::Json(serde_json::json!({"type":"input-capabilities","codecs":["H264","H265"],"screens":[0],"touch":true,"keys":[],"microphone":true,"keyFrameRequests":true,"reconfigure":"RESTART_SESSION"}))).map_err(std::io::Error::other)?;
+                            oxp_wire::write(&mut stream,&oxp_wire::Message::Json(serde_json::json!({"type":"input-capabilities","codecs":["H264","H265"],"screens":[0],"touch":true,"keys":[7,8,9],"microphone":true,"keyFrameRequests":true,"reconfigure":"RESTART_SESSION"}))).map_err(std::io::Error::other)?;
                             for (_, m) in s
                                 .declarations
                                 .iter()
@@ -348,7 +348,7 @@ mod display_wire_tests {
         let connection = StreamConnection::new(path, input.clone(), events);
         connection.receiver_started();
         connection.start().unwrap();
-        let request = json!({"type":"display-settings","resolution":"native","screenWidth":125,"videoCodec":"h265"});
+        let request = json!({"type":"display-settings","resolution":"native","screenWidth":125,"videoCodec":"h265","frameRate":"AUTO"});
         for round in 0..2 {
             let (mut peer, _) = listener.accept().unwrap();
             peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();

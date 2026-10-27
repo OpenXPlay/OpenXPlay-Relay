@@ -33,6 +33,11 @@ impl StreamBridgeSink {
         events: Arc<JsonEvents>,
     ) -> Self {
         let session = input.begin(control).expect("begin session");
+        {
+            let mut f = events.facts.lock().unwrap();
+            f.picture_on_car = false;
+            f.session = Some(session);
+        }
         Self {
             clock: None,
             input,
@@ -190,6 +195,13 @@ impl MediaSink for StreamBridgeSink {
                             payload,
                         };
                         s.sequence = s.sequence.wrapping_add(1);
+                        {
+                            let mut input = self.input.state.lock().unwrap();
+                            if input.current == Some(s.session) {
+                                input.playback =
+                                    input.control.as_ref().and_then(|c| c.playback_token());
+                            }
+                        }
                         self.input.publish(s.session, "", m);
                     }
                     Err(e) => self.dropped("video-dropped", e),

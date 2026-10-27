@@ -101,11 +101,14 @@ impl CommandRunner for ProcessCommandRunner {
         })
     }
 }
+type StartupListener = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct JsonEvents {
     output: Arc<dyn Fn(String) + Send + Sync>,
     gate: Mutex<()>,
     follow_timeline: Mutex<Option<(Instant, Instant, bool)>>,
     timing: crate::boot_timing::BootTiming,
+    pub(crate) facts: Arc<Mutex<crate::path_facts::RuntimePathFacts>>,
+    startup: Mutex<Option<StartupListener>>,
 }
 impl JsonEvents {
     pub fn new(output: Arc<dyn Fn(String) + Send + Sync>) -> Self {
@@ -114,6 +117,8 @@ impl JsonEvents {
             gate: Mutex::new(()),
             follow_timeline: Mutex::new(None),
             timing: Default::default(),
+            facts: Arc::default(),
+            startup: Mutex::default(),
         }
     }
     /// Records a step towards a CarPlay session; the first ACTIVE session of a controller
@@ -155,9 +160,29 @@ impl JsonEvents {
         drop(timeline);
         self.emit("carlink-follow-over", &fields);
     }
+    pub fn runtime_path_facts(&self) -> crate::path_facts::RuntimePathFacts {
+        self.facts.lock().unwrap().clone()
+    }
+    pub(crate) fn startup_listener(&self, listener: StartupListener) {
+        *self.startup.lock().unwrap() = Some(listener);
+    }
+    pub fn startup_milestone(&self, name: &str) {
+        self.emit("airplay-milestone", &serde_json::json!({"name":name}));
+    }
     pub fn emit(&self, event: &str, fields: &serde_json::Value) {
         if event == "stage" && fields["stage"] == "WirelessActive" {
             self.follow_over("iphone-connected");
+        }
+        let reason =
+            self.facts
+                .lock()
+                .unwrap()
+                .observe(event, fields, wall_clock().as_millis() as u64);
+        if let Some(reason) = reason {
+            let listener = self.startup.lock().unwrap().clone();
+            if let Some(listener) = listener {
+                listener(reason);
+            }
         }
         let _g = self.gate.lock().unwrap();
         let mut v = serde_json::json!({"event":event,"time":timestamp()});

@@ -284,6 +284,7 @@ pub struct LinuxAirPlayServer {
     closed: Arc<AtomicBool>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     factory: Option<MediaFactory>,
+    listener_identity: AirPlayListenerIdentity,
 }
 impl LinuxAirPlayServer {
     #[allow(clippy::too_many_arguments)]
@@ -313,7 +314,11 @@ impl LinuxAirPlayServer {
             closed: Arc::new(AtomicBool::new(false)),
             worker: Mutex::new(None),
             factory: None,
+            listener_identity: AirPlayListenerIdentity::new(0),
         }
+    }
+    pub fn listener_identity(&self) -> AirPlayListenerIdentity {
+        self.listener_identity.clone()
     }
     pub fn with_media_factory(mut self, factory: MediaFactory) -> Self {
         self.factory = Some(factory);
@@ -349,6 +354,7 @@ impl LinuxAirPlayServer {
             self.factory.clone(),
             self.transport.clone(),
         );
+        let listener_identity = self.listener_identity.clone();
         *self.worker.lock().unwrap() = Some(crate::platform::spawn_worker(
             "airplay-accept",
             Box::new(move || {
@@ -365,6 +371,11 @@ impl LinuxAirPlayServer {
                                 let _ = tcp.shutdown(Shutdown::Both);
                                 continue;
                             }
+                            listener.on_tcp_accepted(AirPlayTcpAccepted {
+                                listener: listener_identity.clone(),
+                                internal: false,
+                                accepted_at_nanos: oxp_core::monotonic_nanos() as u64,
+                            });
                             let liveness = configure_peer_liveness(&tcp);
                             let result = (|| -> Result<()> {
                                 let control =
@@ -444,6 +455,26 @@ impl LinuxAirPlayServer {
 }
 struct DeferredControl(Mutex<std::sync::Weak<AirPlaySession>>);
 impl SessionControl for DeferredControl {
+    fn playback_token(&self) -> Option<PlaybackToken> {
+        self.0
+            .lock()
+            .unwrap()
+            .upgrade()
+            .and_then(|s| s.playback_token())
+    }
+    fn report_video_frame_rendered(&self, token: &PlaybackToken) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .upgrade()
+            .is_some_and(|s| s.report_video_frame_rendered(token))
+    }
+    fn send_media_button(&self, index: u8) -> Result<bool> {
+        match self.0.lock().unwrap().upgrade() {
+            Some(s) => s.send_media_button(index),
+            None => Ok(false),
+        }
+    }
     fn show_view_area(&self, index: usize) -> bool {
         self.0
             .lock()
