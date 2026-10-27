@@ -749,13 +749,13 @@ class RelaySettingsTest {
             store.save(store.load().copy(experimental = choices))
             RelaySettingsStore(context).use { assertEquals(choices, it.load().experimental) }
             assertEquals(false, prefs.getBoolean("experimental.active", true))
-            assertEquals(true, prefs.getBoolean("experimental.rememberSubscription", false))
-            assertEquals(true, prefs.getBoolean("experimental.keepScanning", false))
-            assertEquals(true, prefs.getBoolean("experimental.recordAdvertisements", false))
+            assertFalse(prefs.contains("experimental.rememberSubscription"))
+            assertFalse(prefs.contains("experimental.keepScanning"))
+            assertFalse(prefs.contains("experimental.recordAdvertisements"))
             assertEquals(true, prefs.getBoolean("experimental.sendBluetoothAddress", false))
-            assertEquals(true, prefs.getBoolean("experimental.isolateCarlinkNetwork", false))
-            assertEquals(true, prefs.getBoolean("experimental.waitForCarlink", false))
-            assertEquals(true, prefs.getBoolean("experimental.recoverWirelessNetwork", false))
+            assertFalse(prefs.contains("experimental.isolateCarlinkNetwork"))
+            assertFalse(prefs.contains("experimental.waitForCarlink"))
+            assertFalse(prefs.contains("experimental.recoverWirelessNetwork"))
             assertEquals(choices.bluetoothAddress, prefs.getString("experimental.bluetoothAddress", null))
             val writes = mutableListOf<String>()
             val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key -> key?.let(writes::add) }
@@ -764,6 +764,24 @@ class RelaySettingsTest {
                 store.save(store.load().copy(autoStartOnBoot = initial.autoStartOnBoot))
                 assertTrue(writes.none { it.startsWith("experimental.") })
             } finally { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+    }
+
+    @Test fun upgradingDisabledLegacyLabsEnablesNewDefaultsOnceWithoutActivatingBluetoothOverride() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        prefs.edit().putBoolean("experimental.active", false).putBoolean("experimental.keepScanning", false)
+            .putBoolean("experimental.sendBluetoothAddress", true).putString("experimental.bluetoothAddress", "a0:b1:c2:d3:e4:f5").commit()
+        RelaySettingsStore(context).use { migrated ->
+            val value = migrated.load()
+            assertTrue(value.experimental.active)
+            assertEquals(5, value.experimental.optionCount)
+            assertTrue(value.experimental.effective().keepScanning)
+            assertFalse(value.experimental.sendBluetoothAddress)
+            migrated.save(value.copy(experimental = value.experimental.copy(active = false, startupDiagnostics = false)))
+        }
+        RelaySettingsStore(context).use {
+            assertFalse(it.load().experimental.active)
+            assertFalse(it.load().experimental.startupDiagnostics)
         }
     }
 

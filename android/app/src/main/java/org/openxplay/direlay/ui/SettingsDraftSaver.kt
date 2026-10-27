@@ -78,6 +78,11 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("carlinkPictureDefault", value.carlinkPictureDefault?.let { CarlinkPictureSizes.json(it).toString() })
         putBoolean("miracastStretch", value.miracastStretch)
         putBoolean("experimental.active", value.experimental.active)
+        putBoolean("experimental.remotePlaybackProof", value.experimental.remotePlaybackProof)
+        putBoolean("experimental.cancelRecoveredRetries", value.experimental.cancelRecoveredRetries)
+        putBoolean("experimental.startupStatus", value.experimental.startupStatus)
+        putBoolean("experimental.startupDiagnostics", value.experimental.startupDiagnostics)
+        putBoolean("experimental.networkObservationBackoff", value.experimental.networkObservationBackoff)
         putBoolean("experimental.rememberSubscription", value.experimental.rememberSubscription)
         putBoolean("experimental.keepScanning", value.experimental.keepScanning)
         putBoolean("experimental.recordAdvertisements", value.experimental.recordAdvertisements)
@@ -113,6 +118,11 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
     val numbers = requireNotNull(bundle.getIntArray("numbers"))
     base.copy(experimental = ExperimentalOptions(
         active = bundle.getBoolean("experimental.active", base.experimental.active),
+        remotePlaybackProof = bundle.getBoolean("experimental.remotePlaybackProof", base.experimental.remotePlaybackProof),
+        cancelRecoveredRetries = bundle.getBoolean("experimental.cancelRecoveredRetries", base.experimental.cancelRecoveredRetries),
+        startupStatus = bundle.getBoolean("experimental.startupStatus", base.experimental.startupStatus),
+        startupDiagnostics = bundle.getBoolean("experimental.startupDiagnostics", base.experimental.startupDiagnostics),
+        networkObservationBackoff = bundle.getBoolean("experimental.networkObservationBackoff", base.experimental.networkObservationBackoff),
         rememberSubscription = bundle.getBoolean("experimental.rememberSubscription", base.experimental.rememberSubscription),
         keepScanning = bundle.getBoolean("experimental.keepScanning", base.experimental.keepScanning),
         recordAdvertisements = bundle.getBoolean("experimental.recordAdvertisements", base.experimental.recordAdvertisements),

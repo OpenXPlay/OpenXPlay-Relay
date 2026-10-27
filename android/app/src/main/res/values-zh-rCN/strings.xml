@@ -730,7 +730,7 @@
     <string name="experimental_title">实验功能</string>
     <string name="experimental_summary">开 · %1$d 项</string>
     <string name="experimental_use_options">使用实验功能</string>
-    <string name="experimental_use_options_hint">控制下面所有实验选项，关闭后仍保留你的选择。更改在各项注明的下一次连接时生效，运行中的会话不会立即断开。</string>
+    <string name="experimental_use_options_hint">控制下面所有实验选项，关闭后仍保留你的选择。更改在下一次连接时生效，运行中的会话不会立即断开。</string>
     <string name="experimental_carlink">Carlink 快速连接</string>
     <string name="experimental_carlink_hint">用于排查已配对的车为什么只在显示六位码时才能连上。更改在下一次 Carlink 连接时生效。</string>
     <string name="experimental_remember_subscription">记住蓝牙订阅方式</string>
@@ -787,4 +787,14 @@
     <string name="carlink_picture_invalid">请输入偶数像素：横屏 640–1920 × 360–1080，竖屏宽高互换。</string>
     <string name="carlink_picture_duplicate">列表中已有此尺寸，保存即选中它。</string>
     <string name="dev_screen_carlink_picture">%1$s（Carlink 画面尺寸）</string>
+    <string name="experimental_remote_playback_proof">远端播放确认</string>
+    <string name="experimental_remote_playback_proof_hint">车机浏览器真正显示画面后，再确认无线播放已经建立。</string>
+    <string name="experimental_cancel_recovered_retries">取消已恢复连接的重试</string>
+    <string name="experimental_cancel_recovered_retries_hint">连接已恢复时，取消此前排队的重试，避免打断会话。</string>
+    <string name="experimental_startup_status">网页连接进度</string>
+    <string name="experimental_startup_status_hint">在车机网页显示连接进度，区分等待 iPhone 与等待画面。</string>
+    <string name="experimental_startup_diagnostics">启动阶段诊断</string>
+    <string name="experimental_startup_diagnostics_hint">记录从认证到首帧的协议阶段，帮助定位连接卡住的位置。</string>
+    <string name="experimental_network_observation_backoff">网络观测退避</string>
+    <string name="experimental_network_observation_backoff_hint">同一次连接中，减少系统不支持的网络观测及其重复日志。</string>
 </resources>

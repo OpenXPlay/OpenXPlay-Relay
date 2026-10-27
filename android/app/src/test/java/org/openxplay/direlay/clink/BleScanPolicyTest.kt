@@ -13,7 +13,7 @@ class BleScanPolicyTest {
         assertEquals(8L, policy.timeoutSeconds)
         assertNull(policy.restartMs)
         val disabled = ExperimentalOptions(active = false, keepScanning = true).effective()
-        assertEquals(policy, BleScanPolicy.forAttempt(disabled.keepScanning))
+        assertEquals(BleScanPolicy.forAttempt(true), BleScanPolicy.forAttempt(disabled.keepScanning))
     }
 
     @Test fun continuousScanHasNoEmptyResultTimeoutAndRenewsEveryTenMinutes() {

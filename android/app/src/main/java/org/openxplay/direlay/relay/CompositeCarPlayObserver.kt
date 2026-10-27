@@ -11,13 +11,16 @@ import com.shilapi.xcertplay.orchestration.CarPlayStatus
 internal class CompositeCarPlayObserver(private val diagnostics: CarPlayEventObserver,
     private val plugins: CarPlayEventObserver? = null,
     private val stage: CarPlayEventObserver? = null,
-    private val link: CarPlayEventObserver? = null) : CarPlayEventObserver {
+    private val link: CarPlayEventObserver? = null,
+    private val startup: CarPlayEventObserver? = null) : CarPlayEventObserver {
     private inline fun forward(call: CarPlayEventObserver.() -> Unit) {
         runCatching { diagnostics.call() }
         runCatching { stage?.call() }
         runCatching { link?.call() }
         runCatching { plugins?.call() }
+        runCatching { startup?.call() }
     }
+    override fun onStartupMilestone(name: String) = forward { onStartupMilestone(name) }
     override fun onStatus(status: CarPlayStatus) = forward { onStatus(status) }
     override fun onProgress(message: String) = forward { onProgress(message) }
     override fun onSessionActive() = forward { onSessionActive() }

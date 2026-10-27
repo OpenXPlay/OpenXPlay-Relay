@@ -16,7 +16,9 @@ import java.util.concurrent.TimeUnit
 
 /** Owns the session fence and serializes all sink callbacks, including replacement and stop. */
 class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val restartCarPlay: () -> Unit = {},
-    private val automaticHevc: () -> Boolean = { false }, private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 }) : ProjectionInput, AutoCloseable {
+    private val automaticHevc: () -> Boolean = { false }, private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val remotePlaybackProof: () -> Boolean = { false },
+    private val startupStatus: () -> Boolean = { false }) : ProjectionInput, AutoCloseable {
     @Volatile override var capabilities = InputCapabilities(
         setOf(VideoCodec.H264, VideoCodec.H265), setOf(ScreenId.MAIN),
         touch = true, keys = emptySet(), microphone = false,
@@ -92,6 +94,8 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
         var requestedEnd = false
         var active = false
         var announced = false
+        var playbackToken: Any? = null
+        var rendered = false
         val audio = mutableSetOf<Int>()
         val microphones = mutableMapOf<Int, MicrophoneUplink>()
         val microphoneStreams = mutableSetOf<Int>()
@@ -110,6 +114,26 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
     fun context(update: ContextUpdate) = synchronized(gate) {
         latestContext[update.topic] = update
         sink?.context(update)
+        Unit
+    }
+
+    /** Feedback must identify this session and an accepted main stream, never just forwarded bytes. */
+    fun playback(stats: OutputStats): Boolean = synchronized(gate) {
+        if (!remotePlaybackProof() || stats.screen != ScreenId.MAIN || stats.rendered <= 0) return false
+        val session = current ?: return false
+        if (stats.session != session.id || !session.active || session.rendered) return false
+        val token = session.playbackToken ?: return false
+        session.control.reportVideoFrameRendered(token).also { if (it) session.rendered = true }
+    }
+
+    internal fun mediaReason(): String? = if (startupStatus()) "startup/waiting-media" else null
+
+    fun startupProgress(reason: String): Unit = synchronized(gate) {
+        if (!startupStatus()) return
+        val session = current ?: return
+        if (session.active && reason != "startup/failed" && reason != "startup/disconnected") return
+        announceLocked(session)
+        sink?.session(SessionState(session.id, SessionPhase.CONNECTING, reason))
         Unit
     }
 
@@ -145,14 +169,15 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
     /**
      * DiPlay builds the media engine when CarPlay starts, before any iPhone connects, and drops an
      * engine that never saw a stream without further callbacks. The new session fences the previous
-     * one at once but is announced (CONNECTING) only when the iPhone's first stream arrives, so a
-     * start and stop without an iPhone leaves no session behind.
+     * one at once. Startup reporting announces CONNECTING immediately; otherwise announcement waits
+     * for the first stream. Stopping always ends any announced session.
      */
     internal fun begin(control: SessionControl): Session = synchronized(gate) {
         current?.let { it.requestedEnd = true; endLocked(it) }
         Session(SessionId(++nextId), control).also {
             current = it
             latest = it
+            if (startupStatus()) { announceLocked(it); sink?.session(SessionState(it.id, SessionPhase.CONNECTING, "startup/connecting")) }
         }
     }
 
@@ -175,6 +200,8 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
             reset()
             session.id = SessionId(++nextId)
             session.active = false
+            session.playbackToken = null
+            session.rendered = false
             session.requests = KeyframeRequests()
             session.requestedEnd = false
             health.resetSession()
@@ -203,6 +230,8 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
 
     private fun endLocked(session: Session) {
         health.ended(nowMs(), automaticHevc(), session.requestedEnd)
+        session.playbackToken = null
+        session.rendered = false
         session.cleanup()
         session.audio.forEach { sink?.audioFormat(it, null) }
         session.microphoneStreams.forEach { sink?.microphone(it, null) }
@@ -215,7 +244,8 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
         refreshMicrophoneCapability()
         // Recovery handlers stay with the session: a resumed main stream keeps DiPlay's original
         // registration, and DiPlay itself ignores requests for a stream that is gone.
-        if (session.announced) sink?.session(SessionState(session.id, SessionPhase.ENDED))
+        if (session.announced) sink?.session(SessionState(session.id, SessionPhase.ENDED,
+            if (!session.requestedEnd && startupStatus()) "startup/disconnected" else null))
     }
 
     override fun control(event: ControlEvent): Boolean {

@@ -16,6 +16,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     private val browser: org.openxplay.direlay.logs.BrowserTimeline? = null,
     private val carPlayStage: CarPlayStageTracker? = null,
     private val iphoneLink: IphoneLinkTracker? = null,
+    private val playback: (OutputStats) -> Unit = {},
     private val clock: () -> Long = System::nanoTime) : HubListener, ProjectionOutput {
     override val id = "relay-status"
     private val frames = ConcurrentHashMap<ScreenId, AtomicLong>()
@@ -66,7 +67,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     override fun stats(outputId: String, stats: OutputStats) {
         measurements[outputId] = stats
         latestStats[outputId] = stats.toString()
-        if (outputId == "web") rememberWeb(stats)
+        if (outputId == "web") { rememberWeb(stats); playback(stats) }
     }
     override fun receiverDiagnostics(outputId: String, origin: Origin, type: String, json: String) {
         if (outputId == "web") {
