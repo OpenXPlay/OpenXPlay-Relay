@@ -116,6 +116,8 @@ fn likely_iphone(device: &BondedDevice) -> bool {
     device.iap2 || device.phone_class || device.name.to_lowercase().contains("iphone")
 }
 pub struct LinuxRelayAdmin {
+    log_exports: crate::logs::Service,
+    release_checks: crate::update_check::Checker,
     /// The open pairing window and when it closes, in `auth::monotonic_seconds`.
     pairing: Mutex<Option<(crate::linux_bluetooth::PairingMode, u64)>>,
     /// BlueZ for the admin pairing window; a fake in tests.
@@ -343,6 +345,8 @@ impl LinuxRelayAdmin {
             inventory.refresh();
         }
         Ok(Self {
+            log_exports: crate::logs::Service::new(options.state_dir.clone()),
+            release_checks: crate::update_check::Checker::default(),
             admin_hotspot: Arc::new(
                 crate::admin_hotspot::AdminHotspot::new(
                     options.state_dir.clone(),
@@ -2220,7 +2224,209 @@ pub fn update_settings(
         Err(e) => Err(BTreeMap::from([("settings".into(), e.to_string())])),
     }
 }
+impl LinuxRelayAdmin {
+    fn build_log_export(&self, range: &str) -> std::io::Result<crate::logs::Export> {
+        let range = serde_json::from_value::<crate::logs::Range>(serde_json::json!(range))?;
+        let status = self.status();
+        let settings = self.settings.lock().unwrap().clone();
+        let mut known: Vec<(String, &str)> = Vec::new();
+        for network in &settings.shared_wifi_networks {
+            known.push((network.ssid.clone(), "name"));
+            known.push((network.password.clone(), "secret"));
+        }
+        if let Some(hotspot) = status.hotspot {
+            known.push((hotspot.ssid, "name"));
+            known.push((hotspot.password, "secret"));
+        }
+        for device in status.paired_devices {
+            known.push((device.name, "name"));
+        }
+        if let Some(pin) = settings.carlink_pin.as_ref() {
+            known.push((pin.clone(), "secret"));
+        }
+        if let Some(password) = settings.admin_hotspot_password.as_ref() {
+            known.push((password.clone(), "secret"));
+        }
+        if let Some(pin) = self.armed_pin.lock().unwrap().as_ref() {
+            known.push((pin.pin.clone(), "secret"));
+        }
+        if let Some(bytes) =
+            crate::logs::read_private(&self.options.state_dir.join("hotspot.credentials"), 4096)?
+        {
+            let credentials = serde_json::from_slice::<(String, String)>(&bytes)
+                .ok()
+                .or_else(|| {
+                    let text = std::str::from_utf8(&bytes).ok()?;
+                    let mut lines = text.lines();
+                    Some((lines.next()?.into(), lines.next()?.into()))
+                });
+            if let Some((ssid, password)) = credentials {
+                known.push((ssid, "name"));
+                known.push((password, "secret"));
+            }
+        }
+        for (key, value) in &self.options.overrides {
+            if key.contains("password") || key.contains("token") {
+                known.push((value.clone(), "secret"));
+            }
+            if key.contains("ssid") {
+                known.push((value.clone(), "name"));
+            }
+        }
+        if let Some((public, _)) =
+            crate::public_name::config::load(&self.options.state_dir.join("public-name.json"))?
+        {
+            if let Some(token) = public.token {
+                known.push((token, "secret"));
+            }
+            if let Some(name) = public.name {
+                known.push((name, "name"));
+            }
+        }
+        let providers = self.options.state_dir.join("public-name/providers.json");
+        if let Some(bytes) =
+            crate::logs::read_private(&providers, crate::public_name::config::MAX_BYTES)?
+        {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let Some(providers) = value["providers"].as_object() {
+                    for provider in providers.values() {
+                        for (key, kind) in [("name", "name"), ("token", "secret")] {
+                            if let Some(value) = provider[key].as_str() {
+                                known.push((value.into(), kind));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut safe = crate::config_files::settings_values(
+            &settings,
+            &oxp_wire::display_settings(&self.input.display_settings()),
+        );
+        let count = settings.shared_wifi_networks.len();
+        safe.retain(|key, _| {
+            let key = key.to_ascii_lowercase();
+            ![
+                "name",
+                "ssid",
+                "password",
+                "token",
+                "pin",
+                "address",
+                "sharedwifi",
+            ]
+            .iter()
+            .any(|part| key.contains(part))
+        });
+        let profile = &self.options.host_profile;
+        let info = serde_json::json!({
+            "hostProfile":{"model":profile.profile.model,"loaded":profile.loaded,"devicePreset":settings.device_preset},
+            "wifiCapabilities":status.wireless.map(|w| w.summary),
+            "settings":safe,"savedWifiNetworkCount":count
+        }).to_string();
+        self.log_exports.export(
+            range,
+            &info,
+            &known,
+            &self.recent_connection_timeline_for_log_export(),
+        )
+    }
+}
 impl RelayAdmin for LinuxRelayAdmin {
+    fn logs_export(&self, range: &str) -> std::result::Result<serde_json::Value, String> {
+        self.build_log_export(range)
+            .map(|value| serde_json::to_value(value).unwrap())
+            .map_err(|_| "error.request".into())
+    }
+    fn logs_download(&self, id: &str) -> std::io::Result<(std::fs::File, u64, String)> {
+        let download = self.log_exports.download(id)?;
+        Ok((download.file, download.bytes, download.name))
+    }
+    fn logs_upload(&self, id: &str) -> std::result::Result<serde_json::Value, String> {
+        self.log_exports
+            .upload(id)
+            .map(|receipt| serde_json::to_value(receipt).unwrap())
+            .map_err(|error| error.code().into())
+    }
+    fn logs_receipt(&self) -> std::io::Result<Option<serde_json::Value>> {
+        self.log_exports
+            .receipt()
+            .map(|receipt| receipt.map(|receipt| serde_json::to_value(receipt).unwrap()))
+    }
+    fn update_check(&self, channel: &str) -> std::result::Result<serde_json::Value, &'static str> {
+        self.release_checks
+            .check(crate::update_check::Channel::parse(channel).ok_or("offline")?)
+            .map(|check| serde_json::to_value(check).unwrap())
+    }
+    fn config_export(
+        &self,
+        privacy: bool,
+    ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
+        let now = crate::logs::now_millis();
+        if privacy {
+            let public =
+                crate::public_name::config::load(&self.options.state_dir.join("public-name.json"))
+                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?
+                    .map(|(config, _)| serde_json::from_slice(&config.to_json()).unwrap());
+            crate::config_files::export_privacy(public, now)
+        } else {
+            crate::config_files::export_user(
+                &self.settings.lock().unwrap(),
+                &oxp_wire::display_settings(&self.input.display_settings()),
+                now,
+            )
+        }
+    }
+    fn config_import(
+        &self,
+        bytes: &[u8],
+        dry_run: bool,
+    ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
+        let current = self.settings.lock().unwrap().clone();
+        let mut display = oxp_wire::display_settings(&self.input.display_settings());
+        let plan = crate::config_files::plan(
+            bytes,
+            &crate::config_files::settings_values(&current, &display),
+        )?;
+        let mut settings = plan.values.clone();
+        for key in ["resolution", "screenWidth", "videoCodec"] {
+            if let Some(value) = settings.remove(key) {
+                display[key] = value;
+            }
+        }
+        oxp_wire::decode_display_settings(&display)
+            .map_err(|_| BTreeMap::from([("settings".into(), "error.linuxPicture".into())]))?;
+        let next = update_settings(&current, settings)?;
+        if plan.values.contains_key("pluginsEnabled") {
+            let installed = crate::plugins::installed(&self.options.plugins_root);
+            if next
+                .plugins_enabled
+                .iter()
+                .any(|id| !installed.iter().any(|plugin| &plugin.id == id))
+            {
+                return Err(BTreeMap::from([(
+                    "pluginsEnabled".into(),
+                    "error.plugins".into(),
+                )]));
+            }
+        }
+        if !dry_run {
+            if let Some(public) = plan.public_name {
+                self.public_name.import(&public).map_err(|e| match e {
+                    crate::public_name::service::ImportError::Invalid(errors) => errors,
+                    crate::public_name::service::ImportError::Storage => {
+                        BTreeMap::from([("file".into(), "io".into())])
+                    }
+                })?;
+            }
+            if !plan.values.is_empty() {
+                if let AdminUpdate::Errors(errors) = self.update(plan.values) {
+                    return Err(errors);
+                }
+            }
+        }
+        Ok(serde_json::to_value(plan.report).unwrap())
+    }
     fn carlink_trace(&self) -> Option<(bool, bool, serde_json::Value)> {
         let enabled = self
             .settings
@@ -2952,6 +3158,61 @@ impl RelayAdmin for LinuxRelayAdmin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn config_file_preview_apply_and_validation_match_the_settings_editor() {
+        let (admin, dir) = fake();
+        let before = std::fs::read(dir.join("settings.json")).unwrap();
+        let file = serde_json::json!({"format":"openxplay-user-config","version":1,"platform":"android","settings":{"outputs":["web","carlink"],"autoStartOnBoot":false,"localPreview":true}});
+        let bytes = serde_json::to_vec(&file).unwrap();
+        let preview = admin.config_import(&bytes, true).unwrap();
+        assert_eq!(
+            preview,
+            serde_json::json!({"applied":["autoStart","output"],"ignored":["localPreview"],"restartNeeded":true})
+        );
+        assert_eq!(std::fs::read(dir.join("settings.json")).unwrap(), before);
+        assert!(admin.pending.lock().unwrap().is_empty());
+        assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
+        assert_eq!(admin.settings.lock().unwrap().output, "both");
+        assert!(!admin.settings.lock().unwrap().auto_start);
+        assert!(!admin.pending.lock().unwrap().is_empty());
+        admin.response_failed();
+        let invalid=serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"receiverPort":6975}})).unwrap();
+        let preview_errors = admin.config_import(&invalid, true).unwrap_err();
+        let AdminUpdate::Errors(editor_errors) =
+            admin.update(serde_json::from_value(serde_json::json!({"receiverPort":6975})).unwrap())
+        else {
+            panic!("invalid port accepted")
+        };
+        assert_eq!(preview_errors, editor_errors);
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn privacy_file_dry_run_does_not_write_and_apply_reuses_public_name_import() {
+        let (admin, dir) = fake();
+        let public = serde_json::json!({"version":1,"enabled":false,"provider":"dynv6","name":"test.dynv6.net","token":"private-token","agreeLetsEncryptTerms":true});
+        let bytes=serde_json::to_vec(&serde_json::json!({"format":"openxplay-privacy-config","version":1,"publicName":public})).unwrap();
+        let preview = admin.config_import(&bytes, true).unwrap();
+        assert!(!dir.join("public-name.json").exists());
+        assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
+        assert_eq!(admin.config_export(true).unwrap()["publicName"], public);
+        assert!(!admin
+            .config_export(false)
+            .unwrap()
+            .to_string()
+            .contains("private-token"));
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(dir.join("public-name.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn network_roles_api_auth_preview_probing_persistence_and_application() {
         use std::os::unix::fs::PermissionsExt;

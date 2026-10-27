@@ -100,7 +100,10 @@ pub mod secure_connections;
 pub mod settings;
 pub mod supervisor;
 
+pub mod config_files;
 pub mod context;
+pub mod logs;
+pub mod update_check;
 
 mod context_route;
 

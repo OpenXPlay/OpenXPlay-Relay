@@ -96,6 +96,12 @@ Distributed builds combine this project with:
   License or the Apache License 2.0, at your option; bytes 1.12.1, licensed
   under the MIT License. Sources: https://crates.io/crates/<name>.
 
+- Rust crates for the log export zip (linked into openxplay-relay): miniz_oxide
+  0.9.1, licensed under the MIT License, the zlib License or the Apache License
+  2.0, at your option; adler2 2.0.1, licensed under the 0BSD License, the MIT
+  License or the Apache License 2.0, at your option. Sources:
+  https://crates.io/crates/<name>.
+
 - webpki-roots 1.0.10 (https://github.com/rustls/webpki-roots): the Mozilla
   root certificates that openxplay-relay trusts when it talks to Let's Encrypt
   and the DNS providers. The certificate data is licensed under the Community
