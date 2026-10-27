@@ -10,11 +10,14 @@ fn contract_fixture(name: &str, value: &serde_json::Value) {
     if std::env::var("UPDATE_ADMIN_FIXTURES").as_deref() == Ok("1") {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &expected).unwrap();
+        // The sidecar's header, not this file's own (REUSE must not read it).
+        // REUSE-IgnoreStart
         std::fs::write(
             path.with_extension("json.license"),
             "SPDX-FileCopyrightText: 2026 OpenXPlay.org\nSPDX-License-Identifier: AGPL-3.0-only\n",
         )
         .unwrap();
+        // REUSE-IgnoreEnd
     } else {
         let actual = std::fs::read_to_string(&path).unwrap_or_default();
         assert_eq!(actual, expected, "{} drifted. Review the diff after running UPDATE_ADMIN_FIXTURES=1 cargo test -p openxplay-relay --lib --offline admin_contract", path.display());
