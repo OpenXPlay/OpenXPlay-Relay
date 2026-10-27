@@ -739,7 +739,7 @@
     <string name="experimental_title">Experimental</string>
     <string name="experimental_summary">On · %1$d options</string>
     <string name="experimental_use_options">Use experimental options</string>
-    <string name="experimental_use_options_hint">Controls all experimental options below and keeps your choices when off. Changes take effect on the next connection indicated by each option; a running session stays connected.</string>
+    <string name="experimental_use_options_hint">Controls all experimental options below and keeps your choices when off. Changes take effect on the next connection; a running session stays connected.</string>
     <string name="experimental_carlink">Carlink quick connect</string>
     <string name="experimental_carlink_hint">For finding out why a paired car connects only while it shows the six-digit code. Changes apply to the next Carlink connection.</string>
     <string name="experimental_remember_subscription">Remember the Bluetooth subscription method</string>
@@ -796,4 +796,14 @@
     <string name="carlink_picture_invalid">Use even pixels: 640–1920 × 360–1080, reversed for portrait.</string>
     <string name="carlink_picture_duplicate">This size is already in the list. Save selects it.</string>
     <string name="dev_screen_carlink_picture">%1$s (Carlink picture size)</string>
+    <string name="experimental_remote_playback_proof">Remote playback confirmation</string>
+    <string name="experimental_remote_playback_proof_hint">Confirm the car browser has displayed a frame before treating wireless playback as established.</string>
+    <string name="experimental_cancel_recovered_retries">Cancel recovered retries</string>
+    <string name="experimental_cancel_recovered_retries_hint">Cancel a pending retry if the connection has recovered in the meantime.</string>
+    <string name="experimental_startup_status">Connection progress in browser</string>
+    <string name="experimental_startup_status_hint">Show connection progress and distinguish waiting for the iPhone from waiting for its picture.</string>
+    <string name="experimental_startup_diagnostics">Startup milestone diagnostics</string>
+    <string name="experimental_startup_diagnostics_hint">Record safe protocol milestones through the first picture to help diagnose startup failures.</string>
+    <string name="experimental_network_observation_backoff">Back off unavailable observations</string>
+    <string name="experimental_network_observation_backoff_hint">Avoid repeating unsupported network observations and their diagnostic messages during the same attempt.</string>
 </resources>

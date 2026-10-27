@@ -196,9 +196,10 @@ class StreamBridgeSink(
             formats[screen] = format
             sink.videoFormat(screen, format)
             input.videoFormat(session, screen, format)
+            if (screen == ScreenId.MAIN) session.playbackToken = session.control.playbackToken()
             if (!session.active) {
                 session.active = true
-                sink.session(SessionState(session.id, SessionPhase.ACTIVE))
+                sink.session(SessionState(session.id, SessionPhase.ACTIVE, input.mediaReason()))
             }
             if (localPreview()) configurePreview(type, screen)
         }

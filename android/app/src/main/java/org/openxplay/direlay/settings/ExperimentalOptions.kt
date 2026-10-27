@@ -3,7 +3,10 @@
 // Created by riko chen on 2026-10-23
 package org.openxplay.direlay.settings
 
-/** Every option but sending the Bluetooth address starts on; [OFF] is what the master switch leaves in effect. */
+/**
+ * Laboratory choices; promoted features remain enabled independently of the laboratory master.
+ * Legacy constructor choices remain readable in saved drafts, but effective() ignores them.
+ */
 data class ExperimentalOptions(
     val active: Boolean = true,
     val rememberSubscription: Boolean = true,
@@ -14,28 +17,46 @@ data class ExperimentalOptions(
     val isolateCarlinkNetwork: Boolean = true,
     val waitForCarlink: Boolean = true,
     val recoverWirelessNetwork: Boolean = true,
+    val remotePlaybackProof: Boolean = true,
+    val cancelRecoveredRetries: Boolean = true,
+    val startupStatus: Boolean = true,
+    val startupDiagnostics: Boolean = true,
+    val networkObservationBackoff: Boolean = true,
 ) {
     fun effective(carlinkTrace: Boolean = true): ExperimentalOptions {
-        if (!active) return OFF
         val address = normalizedBluetoothAddress(bluetoothAddress)
-        return copy(recordAdvertisements = recordAdvertisements && carlinkTrace,
-            sendBluetoothAddress = sendBluetoothAddress && address != null,
-            bluetoothAddress = address.orEmpty())
+        return copy(rememberSubscription = true, keepScanning = true, recordAdvertisements = carlinkTrace,
+            isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true,
+            sendBluetoothAddress = active && sendBluetoothAddress && address != null,
+            bluetoothAddress = if (active) address.orEmpty() else "",
+            remotePlaybackProof = active && remotePlaybackProof,
+            cancelRecoveredRetries = active && cancelRecoveredRetries,
+            startupStatus = active && startupStatus,
+            startupDiagnostics = active && startupDiagnostics,
+            networkObservationBackoff = active && networkObservationBackoff)
     }
 
     val invalidAddress: Boolean get() = active && sendBluetoothAddress && normalizedBluetoothAddress(bluetoothAddress) == null
-    val optionCount: Int get() = listOf(rememberSubscription, keepScanning, recordAdvertisements, sendBluetoothAddress,
-        isolateCarlinkNetwork, waitForCarlink, recoverWirelessNetwork).count { it }
+    val optionCount: Int get() = listOf(remotePlaybackProof, cancelRecoveredRetries, startupStatus, startupDiagnostics, networkObservationBackoff, sendBluetoothAddress).count { it }
 
     fun names(): List<String> = listOf(rememberSubscription to "remember_subscription", keepScanning to "keep_scanning",
         recordAdvertisements to "record_advertisements", sendBluetoothAddress to "send_bluetooth_address",
         isolateCarlinkNetwork to "isolate_carlink_network", waitForCarlink to "wait_for_carlink",
-        recoverWirelessNetwork to "recover_wireless_network")
+        recoverWirelessNetwork to "recover_wireless_network",
+        remotePlaybackProof to "remote_playback_proof",
+        cancelRecoveredRetries to "cancel_recovered_retries",
+        startupStatus to "startup_status",
+        startupDiagnostics to "startup_diagnostics",
+        networkObservationBackoff to "network_observation_backoff")
         .filter { it.first }.map { it.second }
 
     companion object {
-        val OFF = ExperimentalOptions(active = false, rememberSubscription = false, keepScanning = false,
-            recordAdvertisements = false, isolateCarlinkNetwork = false, waitForCarlink = false, recoverWirelessNetwork = false)
+        val OFF = ExperimentalOptions(active = false,
+            remotePlaybackProof = false,
+            cancelRecoveredRetries = false,
+            startupStatus = false,
+            startupDiagnostics = false,
+            networkObservationBackoff = false)
 
         fun normalizedBluetoothAddress(value: String): String? {
             val octets = value.split(':')

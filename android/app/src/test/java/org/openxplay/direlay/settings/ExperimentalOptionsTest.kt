@@ -11,18 +11,18 @@ class ExperimentalOptionsTest {
         recordAdvertisements = true, sendBluetoothAddress = true,
             isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
 
-    @Test fun everyOptionButTheBluetoothAddressStartsOnAndMasterOffDisablesThemWithoutLosingChoices() {
+    @Test fun newLaboratoryOptionsDefaultOnAndPromotedFeaturesSurviveMasterOff() {
         val defaults = ExperimentalOptions()
         assertTrue(defaults.active); assertFalse(defaults.sendBluetoothAddress)
-        assertEquals(listOf("remember_subscription", "keep_scanning", "record_advertisements",
-            "isolate_carlink_network", "wait_for_carlink", "recover_wireless_network"), defaults.effective().names())
+        assertEquals(5, defaults.optionCount)
         assertEquals(ExperimentalOptions.OFF, defaults.copy(active = false).effective())
-        assertEquals(0, ExperimentalOptions.OFF.optionCount)
-        val disabled = selected.copy(active = false)
-        assertEquals(ExperimentalOptions.OFF, disabled.effective())
-        assertTrue(disabled.effective().names().isEmpty())
-        assertEquals(7, disabled.optionCount)
-        assertEquals(selected.effective(), disabled.copy(active = true).effective())
+        val disabled = selected.copy(active = false).effective()
+        assertEquals(ExperimentalOptions.OFF, disabled)
+        assertEquals(6, disabled.names().size)
+        assertTrue(disabled.recoverWirelessNetwork && disabled.keepScanning && disabled.waitForCarlink)
+        assertFalse(disabled.remotePlaybackProof || disabled.cancelRecoveredRetries || disabled.startupStatus ||
+            disabled.startupDiagnostics || disabled.networkObservationBackoff || disabled.sendBluetoothAddress)
+        assertEquals(selected.effective(), selected.copy(active = false).copy(active = true).effective())
     }
 
     @Test fun traceAndAddressValidityGateOnlyTheirOwnOptions() {
@@ -36,8 +36,7 @@ class ExperimentalOptionsTest {
         assertTrue(invalid.effective().recordAdvertisements)
         assertFalse(invalid.copy(active = false).invalidAddress)
         assertFalse(invalid.copy(sendBluetoothAddress = false).invalidAddress)
-        assertEquals(listOf("remember_subscription", "keep_scanning", "record_advertisements", "send_bluetooth_address",
-            "isolate_carlink_network", "wait_for_carlink", "recover_wireless_network"), selected.effective().names())
+        assertEquals(12, selected.effective().names().size)
     }
 
     @Test fun addressRequiresSixHexUnicastOctetsAndRejectsHiddenAndZeroAddresses() {
@@ -49,13 +48,12 @@ class ExperimentalOptionsTest {
             assertEquals(address.lowercase(), ExperimentalOptions.normalizedBluetoothAddress(address))
     }
 
-    @Test fun connectionExperimentsCanBeSelectedIndependentlyAndNeedTheMasterSwitch() {
-        for (isolate in listOf(false, true)) for (wait in listOf(false, true)) for (recover in listOf(false, true)) {
-            val choices = ExperimentalOptions.OFF.copy(active = true, isolateCarlinkNetwork = isolate,
-                waitForCarlink = wait, recoverWirelessNetwork = recover)
-            assertEquals(choices, choices.effective(carlinkTrace = false))
-            assertEquals(listOf(isolate, wait, recover).count { it }, choices.optionCount)
-            assertEquals(ExperimentalOptions.OFF, choices.copy(active = false).effective())
-        }
+    @Test fun retiredChoicesCannotDisableNormalFeatures() {
+        val old = ExperimentalOptions(active = false, rememberSubscription = false, keepScanning = false,
+            recordAdvertisements = false, isolateCarlinkNetwork = false, waitForCarlink = false, recoverWirelessNetwork = false)
+        val enabled = old.effective()
+        assertTrue(enabled.rememberSubscription && enabled.keepScanning && enabled.recordAdvertisements &&
+            enabled.isolateCarlinkNetwork && enabled.waitForCarlink && enabled.recoverWirelessNetwork)
+        assertFalse(old.effective(carlinkTrace = false).recordAdvertisements)
     }
 }

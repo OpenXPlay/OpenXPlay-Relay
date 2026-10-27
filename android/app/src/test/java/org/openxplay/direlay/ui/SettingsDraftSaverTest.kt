@@ -275,7 +275,7 @@ class SettingsDraftSaverTest {
             requireNotNull(relaySettingsSaver(base).restore(bundle)).wirelessNetwork.sharedWifiNetworks)
     }
     @Test fun experimentalChoicesAndIncompleteAddressSurviveParcelRoundTrip() {
-        val options = ExperimentalOptions(active = false, rememberSubscription = true, keepScanning = true,
+        val options = ExperimentalOptions(active = false, remotePlaybackProof = false, startupStatus = false, networkObservationBackoff = false, rememberSubscription = true, keepScanning = true,
             recordAdvertisements = true, sendBluetoothAddress = true,
             isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:")
         val chosen = base.copy(experimental = options)

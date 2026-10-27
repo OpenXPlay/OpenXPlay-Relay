@@ -107,12 +107,15 @@ class RelayRuntime(private val context: Context,
     val input = DiPlayInput(
         applyFrameRate = ::applyFrameRate,
         restartCarPlay = { setup.execute { sessionActions.action("restart", manual = false) } },
+        remotePlaybackProof = { settingsStore.snapshot.value?.experimental?.effective()?.remotePlaybackProof == true },
+        startupStatus = { settingsStore.snapshot.value?.experimental?.effective()?.startupStatus == true },
         automaticHevc = { settingsStore.snapshot.value?.videoCodec == VideoCodecSetting.AUTO && appliedVideoDecision.codec == VideoCodec.H265 },
     )
     private val bundledPlugins = org.openxplay.direlay.plugins.BundledPlugins(context.applicationContext)
     fun installedPlugins() = runCatching {
         org.openxplay.direlay.plugins.RelayPlugins.installed(bundledPlugins.root())
     }.getOrDefault(emptyList())
+    internal val startupObserver = StartupObserver(input)
     val carPlayStage = CarPlayStageTracker { settingsStore.wireless() }
     val carPlayDiagnostics = CarPlayDiagnostics(secrets = {
         buildList {
@@ -124,7 +127,7 @@ class RelayRuntime(private val context: Context,
             add(AirPlayPersistence.loadManualHotspotPassphrase(context))
             add(AirPlayPersistence.loadExistingWifiPassphrase(context))
         }
-    }, timeline = connectionLog)
+    }, timeline = connectionLog, startupEnabled = { settingsStore.snapshot.value?.experimental?.effective()?.startupDiagnostics == true })
     val iphoneLink = IphoneLinkTracker(wireless = { settingsStore.wireless() }, diagnostics = { carPlayDiagnostics.error })
     val pluginContext = org.openxplay.direlay.plugins.PluginContextObserver(input::context)
     val logSecrets: org.openxplay.direlay.logs.LogSecrets by lazy {
@@ -174,7 +177,7 @@ class RelayRuntime(private val context: Context,
     }
     private val browserTimeline = org.openxplay.direlay.logs.BrowserTimeline(connectionLog)
     val status = RelayStatus(redactFailure = ::redactFailureMessage, connectionLog = connectionLog,
-        browser = browserTimeline, carPlayStage = carPlayStage, iphoneLink = iphoneLink)
+        browser = browserTimeline, carPlayStage = carPlayStage, iphoneLink = iphoneLink, playback = { input.playback(it) })
     private val setup = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "direlay-runtime").apply { isDaemon = true }
     }

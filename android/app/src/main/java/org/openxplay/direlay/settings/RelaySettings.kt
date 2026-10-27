@@ -420,28 +420,39 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         edit.apply()
     }
 
-    private fun loadExperimentalOptions() = ExperimentalOptions().let { defaults -> ExperimentalOptions(
-        active = relay.getBoolean("experimental.active", defaults.active),
-        rememberSubscription = relay.getBoolean("experimental.rememberSubscription", defaults.rememberSubscription),
-        keepScanning = relay.getBoolean("experimental.keepScanning", defaults.keepScanning),
-        recordAdvertisements = relay.getBoolean("experimental.recordAdvertisements", defaults.recordAdvertisements),
-        sendBluetoothAddress = relay.getBoolean("experimental.sendBluetoothAddress", defaults.sendBluetoothAddress),
-        bluetoothAddress = relay.getString("experimental.bluetoothAddress", defaults.bluetoothAddress).orEmpty(),
-        isolateCarlinkNetwork = relay.getBoolean("experimental.isolateCarlinkNetwork", defaults.isolateCarlinkNetwork),
-        waitForCarlink = relay.getBoolean("experimental.waitForCarlink", defaults.waitForCarlink),
-        recoverWirelessNetwork = relay.getBoolean("experimental.recoverWirelessNetwork", defaults.recoverWirelessNetwork),
-    ) }
+    private fun loadExperimentalOptions(): ExperimentalOptions {
+        val legacy = relay.contains("experimental.active") && relay.getInt("experimental.version", 0) < 2
+        val oldActive = relay.getBoolean("experimental.active", true)
+        val value = ExperimentalOptions(
+            active = legacy || oldActive,
+            sendBluetoothAddress = relay.getBoolean("experimental.sendBluetoothAddress", false) && (!legacy || oldActive),
+            bluetoothAddress = relay.getString("experimental.bluetoothAddress", "").orEmpty(),
+            remotePlaybackProof = relay.getBoolean("experimental.remotePlaybackProof", true),
+            cancelRecoveredRetries = relay.getBoolean("experimental.cancelRecoveredRetries", true),
+            startupStatus = relay.getBoolean("experimental.startupStatus", true),
+            startupDiagnostics = relay.getBoolean("experimental.startupDiagnostics", true),
+            networkObservationBackoff = relay.getBoolean("experimental.networkObservationBackoff", true),
+        )
+        if (legacy) relay.edit().also { writeExperimentalOptions(it, value) }.apply()
+        return value
+    }
 
     private fun writeExperimentalOptions(edit: android.content.SharedPreferences.Editor, value: ExperimentalOptions) {
-        edit.putBoolean("experimental.active", value.active)
-            .putBoolean("experimental.rememberSubscription", value.rememberSubscription)
-            .putBoolean("experimental.keepScanning", value.keepScanning)
-            .putBoolean("experimental.recordAdvertisements", value.recordAdvertisements)
+        edit.putInt("experimental.version", 2)
+            .putBoolean("experimental.active", value.active)
             .putBoolean("experimental.sendBluetoothAddress", value.sendBluetoothAddress)
             .putString("experimental.bluetoothAddress", value.bluetoothAddress)
-            .putBoolean("experimental.isolateCarlinkNetwork", value.isolateCarlinkNetwork)
-            .putBoolean("experimental.waitForCarlink", value.waitForCarlink)
-            .putBoolean("experimental.recoverWirelessNetwork", value.recoverWirelessNetwork)
+            .putBoolean("experimental.remotePlaybackProof", value.remotePlaybackProof)
+            .putBoolean("experimental.cancelRecoveredRetries", value.cancelRecoveredRetries)
+            .putBoolean("experimental.startupStatus", value.startupStatus)
+            .putBoolean("experimental.startupDiagnostics", value.startupDiagnostics)
+            .putBoolean("experimental.networkObservationBackoff", value.networkObservationBackoff)
+            .remove("experimental.rememberSubscription")
+            .remove("experimental.keepScanning")
+            .remove("experimental.recordAdvertisements")
+            .remove("experimental.isolateCarlinkNetwork")
+            .remove("experimental.waitForCarlink")
+            .remove("experimental.recoverWirelessNetwork")
     }
 
     private fun loadDeveloperOverrides(stored: RelaySettings): DeveloperOverrides {

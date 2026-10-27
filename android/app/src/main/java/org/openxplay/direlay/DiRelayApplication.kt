@@ -29,12 +29,18 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
     override val wirelessNetworkRecoveryEnabled: Boolean
         get() = ::runtime.isInitialized && runtime.settingsStore.snapshot.value?.experimental?.effective()?.recoverWirelessNetwork == true
 
+    private fun startupOptions() = if (::runtime.isInitialized) runtime.settingsStore.snapshot.value?.experimental?.effective() else null
+    override val cancelRecoveredRetries: Boolean get() = startupOptions()?.cancelRecoveredRetries == true
+    override val startupDiagnosticsEnabled: Boolean get() = startupOptions()?.startupDiagnostics == true
+    override val networkObservationBackoffEnabled: Boolean get() = startupOptions()?.networkObservationBackoff == true
+
     override val carPlayEventObserver: com.shilapi.xcertplay.orchestration.CarPlayEventObserver?
         get() = if (::runtime.isInitialized) org.openxplay.direlay.relay.CompositeCarPlayObserver(
             runtime.carPlayDiagnostics,
             runtime.pluginContext.takeIf { runtime.settingsStore.snapshot.value?.plugins == true },
             stage = runtime.carPlayStage,
             link = runtime.iphoneLink,
+            startup = runtime.startupObserver,
         ) else null
 
     private var networkTimeline: org.openxplay.direlay.logs.NetworkTimeline? = null

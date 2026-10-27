@@ -15,6 +15,55 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class DiPlayInputTest {
+    @Test fun playbackConfirmationRequiresCurrentSessionMainStreamAndActualRendering() {
+        var enabled = true
+        var confirmations = 0
+        val token = Any()
+        val control = object : SessionControl {
+            override fun sendTouch(contacts: List<AirPlayContact>) = false
+            override fun reportVideoFrameRendered(value: Any): Boolean {
+                assertSame(token, value); confirmations++; return true
+            }
+        }
+        DiPlayInput(remotePlaybackProof = { enabled }).use { input ->
+            input.start(configuration, CapturingInputSink())
+            val first = input.begin(control).apply { active = true; playbackToken = token }
+            val report = OutputStats(origin, ScreenId.MAIN, null, 0, 0, 1, null, session = first.id)
+            assertFalse(input.playback(report.copy(session = null)))
+            assertFalse(input.playback(report.copy(screen = ScreenId.CLUSTER)))
+            assertFalse(input.playback(report.copy(rendered = 0)))
+            enabled = false; assertFalse(input.playback(report)); enabled = true
+            assertTrue(input.playback(report))
+            assertFalse(input.playback(report))
+            val next = input.begin(control).apply { active = true; playbackToken = token }
+            assertFalse(input.playback(report))
+            assertTrue(input.playback(report.copy(session = next.id)))
+            input.end(next)
+            assertFalse(input.playback(report.copy(session = next.id)))
+            assertEquals(2, confirmations)
+        }
+    }
+
+    @Test fun startupProgressIsGatedAndCannotRegressAnActivePicture() {
+        var enabled = true
+        val states = mutableListOf<SessionState>()
+        DiPlayInput(startupStatus = { enabled }).use { input ->
+            input.start(configuration, object : InputSink by CapturingInputSink() {
+                override fun session(state: SessionState) { states.add(state) }
+            })
+            val session = input.begin(SessionControl { false })
+            input.startupProgress("startup/authenticating")
+            input.startupProgress("startup/waiting-media")
+            assertEquals("startup/waiting-media", states.last().reason)
+            session.active = true
+            input.startupProgress("startup/joining-network")
+            assertEquals("startup/waiting-media", states.last().reason)
+            enabled = false
+            input.startupProgress("startup/failed")
+            assertEquals("startup/waiting-media", states.last().reason)
+        }
+    }
+
     @Test fun hostUiRequestsReachOnlyTheCurrentSink() {
         DiPlayInput().use { input ->
             var first = 0
