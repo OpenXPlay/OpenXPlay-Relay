@@ -603,6 +603,8 @@ struct CurrentScreenListener {
     sink: Arc<dyn MediaSink>,
     session: Option<Weak<AirPlaySession>>,
     keyframes: Arc<KeyframeProbe>,
+    received: AtomicBool,
+    first_frame: Box<dyn Fn() + Send + Sync>,
 }
 impl CurrentScreenListener {
     fn log(&self, line: Option<String>) {
@@ -635,6 +637,9 @@ impl ScreenListener for CurrentScreenListener {
         if let Some(s) = self.slot.upgrade() {
             let _d = s.delivery.enter();
             if s.active() {
+                if !self.received.swap(true, Ordering::AcqRel) {
+                    (self.first_frame)();
+                }
                 let result = self.sink.on_video_frame(s.id.kind, bytes, sender, arrival);
                 self.log(self.keyframes.frame(bytes, Instant::now()));
                 return result;
@@ -770,11 +775,18 @@ impl AirPlayMediaHandler for CarPlayMediaEngine {
             }),
         );
         let screen = ScreenStream::with_key(transport, key).with_diagnostic(diagnostic);
+        let first_frame_session = session.clone();
         let port = screen.listen(Arc::new(CurrentScreenListener {
             slot: Arc::downgrade(&slot),
             sink: self.inner.sink.clone(),
             session,
             keyframes,
+            received: AtomicBool::new(false),
+            first_frame: Box::new(move || {
+                if let Some(session) = first_frame_session.as_ref().and_then(Weak::upgrade) {
+                    session.startup_milestone("first_video_received");
+                }
+            }),
         }))?;
         let _d = slot.delivery.enter();
         if !slot.active() {
@@ -1482,6 +1494,8 @@ mod tests {
             sink,
             session: None,
             keyframes: Arc::default(),
+            received: AtomicBool::new(false),
+            first_frame: Box::new(|| {}),
         };
         (slot, listener)
     }
@@ -1639,6 +1653,46 @@ mod tests {
                 "config 110 [1, 2]",
                 "frame 110 [3, 4] 77 88"
             ]
+        );
+    }
+    #[test]
+    fn first_frame_milestone_precedes_delivery_once_per_current_stream() {
+        let sink = Arc::new(Sink::default());
+        let (slot, mut listener) = listener(sink.clone());
+        let events = sink.clone();
+        listener.first_frame = Box::new(move || {
+            events.events.lock().unwrap().push("received".into());
+        });
+        listener.on_codec(VideoCodec::H265);
+        listener.on_config(&[1, 2]).unwrap();
+        assert!(!listener.received.load(Ordering::Acquire));
+        listener.on_frame(&[3], 1, 2).unwrap();
+        listener.on_frame(&[4], 3, 4).unwrap();
+        assert_eq!(
+            *sink.events.lock().unwrap(),
+            [
+                "codec 110 H265",
+                "config 110 [1, 2]",
+                "received",
+                "frame 110 [3] 1 2",
+                "frame 110 [4] 3 4",
+            ]
+        );
+        slot.active.store(false, Ordering::Release);
+        let (_successor, mut successor) = self::listener(sink.clone());
+        let events = sink.clone();
+        successor.first_frame = Box::new(move || {
+            events
+                .events
+                .lock()
+                .unwrap()
+                .push("successor received".into());
+        });
+        listener.on_frame(&[5], 5, 6).unwrap();
+        successor.on_frame(&[6], 7, 8).unwrap();
+        assert_eq!(
+            &sink.events.lock().unwrap()[5..],
+            ["successor received", "frame 110 [6] 7 8",]
         );
     }
     #[test]

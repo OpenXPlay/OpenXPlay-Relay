@@ -34,12 +34,16 @@ pub mod bplist_codec;
 pub mod buffered_audio_stream;
 /// bytes protocol module.
 pub mod bytes;
+/// Host-neutral wireless network recovery policy.
+pub mod car_play_controller;
 /// car play media engine protocol module.
 pub mod car_play_media_engine;
 /// control cipher protocol module.
 pub mod control_cipher;
 /// feedback position monitor protocol module.
 pub mod feedback_position_monitor;
+/// Host-polled first-TCP and optional session startup deadlines.
+pub mod first_tcp_watchdog;
 /// iap tunnel protocol module.
 pub mod iap_tunnel;
 /// media sink decorator protocol module.
@@ -88,6 +92,7 @@ pub use air_play_peer_diagnostics::AirPlayPeerDiagnostics;
 pub use air_play_session::AirPlayMediaHandler;
 pub use air_play_session::AirPlaySession;
 pub use air_play_session::AirPlaySessionListener;
+pub use air_play_session::PlaybackToken;
 pub use air_play_tcp_accepted::AirPlayListenerIdentity;
 pub use air_play_tcp_accepted::AirPlayTcpAccepted;
 pub use audio_stream::AudioCodecKind;

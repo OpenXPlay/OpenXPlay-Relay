@@ -17,6 +17,10 @@ use std::{
 use BplistValue as V;
 /// Platform interface for `AirPlaySessionListener`. Implementations must support bounded shutdown.
 pub trait AirPlaySessionListener: Send + Sync {
+    /// Receive fixed startup and transport milestone names on protocol threads; return quickly (default no-op).
+    fn on_startup_milestone(&self, _session: &AirPlaySession, _name: &str) {}
+    /// Receive confirmation that the current main stream reached an external display (default no-op).
+    fn on_video_frame_rendered(&self, _session: &AirPlaySession) {}
     fn on_device_info(&self, _session: &AirPlaySession, _info: &AirPlayDeviceInfo) {}
     fn on_host_ui_requested(&self, _session: &AirPlaySession) {}
     fn on_command(&self, _session: &AirPlaySession, _kind: &str, _params: &BplistValue) {}
@@ -112,6 +116,12 @@ struct Resources {
     ntp: Option<NtpClock>,
     event_server: Option<Arc<dyn StreamListener>>,
     keep_alive: Option<Arc<dyn DatagramTransport>>,
+}
+/// Opaque playback identity bound to one session and one accepted main-screen stream.
+#[derive(Clone, Debug)]
+pub struct PlaybackToken {
+    session: Weak<AirPlaySession>,
+    generation: u64,
 }
 pub struct AirPlaySession {
     socket: Arc<dyn DuplexStream>,
@@ -222,6 +232,11 @@ impl AirPlaySession {
     }
     pub fn log_debug(&self, message: &str) {
         self.listener.on_debug_log(message);
+    }
+    pub(crate) fn startup_milestone(&self, name: &str) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.listener.on_startup_milestone(self, name);
+        }));
     }
     pub fn start(self: &Arc<Self>) -> Result<()> {
         if self.started.swap(true, Ordering::AcqRel) {
@@ -395,15 +410,19 @@ impl AirPlaySession {
         Ok(())
     }
     pub fn send_media(&self, index: u8) -> Result<()> {
-        self.send_hid_report(
+        self.send_media_press(index)?;
+        Ok(())
+    }
+    fn send_media_press(&self, index: u8) -> Result<bool> {
+        let pressed = self.send_hid_report(
             crate::air_play_hid::MEDIA_HID_UID,
             AirPlayHid::media_report(index),
         )?;
-        self.send_hid_report(
+        let released = self.send_hid_report(
             crate::air_play_hid::MEDIA_HID_UID,
             AirPlayHid::media_report(0),
         )?;
-        Ok(())
+        Ok(pressed && released)
     }
     pub fn send_telephony(&self, index: u8) -> Result<()> {
         self.send_hid_report(
@@ -477,6 +496,7 @@ impl AirPlaySession {
         }
     }
     fn run_control(self: Arc<Self>) {
+        let mut close_milestone = "transport_closed_io_failed";
         let result = (|| -> Result<()> {
             let mut encrypted = Vec::new();
             let mut accumulated = Vec::new();
@@ -488,6 +508,7 @@ impl AirPlaySession {
                     Receive::Data(v) => v,
                     Receive::Timeout => continue,
                     Receive::Eof => {
+                        close_milestone = "transport_closed_peer_eof";
                         self.log_debug("airplay control closing reason=peer EOF");
                         break;
                     }
@@ -496,7 +517,9 @@ impl AirPlaySession {
                     let mut p = self.pairing.lock().unwrap();
                     if let Some(cipher) = &mut p.cipher {
                         encrypted.extend(chunk);
-                        let decrypted = cipher.decrypt(&encrypted)?;
+                        let decrypted = cipher.decrypt(&encrypted).inspect_err(|_| {
+                            close_milestone = "transport_closed_decrypt_failed";
+                        })?;
                         encrypted = decrypted.rest;
                         decrypted.data
                     } else {
@@ -528,11 +551,17 @@ impl AirPlaySession {
                         }
                     };
                     self.socket.send(&wire)?;
-                    {
+                    let pair_verified = {
                         let mut p = self.pairing.lock().unwrap();
                         if p.cipher.is_none() && p.verify.verified_controller_id().is_some() {
                             p.cipher = Some(p.verify.control_cipher()?);
+                            true
+                        } else {
+                            false
                         }
+                    };
+                    if pair_verified {
+                        self.startup_milestone("pair_verified");
                     }
                 }
                 if let Err(error) = self.media.on_setup_response_sent(&self) {
@@ -543,6 +572,11 @@ impl AirPlaySession {
             }
             Ok(())
         })();
+        self.startup_milestone(if self.is_closed() {
+            "transport_closed_local"
+        } else {
+            close_milestone
+        });
         if let Err(error) = result {
             if !self.is_closed() {
                 self.listener
@@ -596,7 +630,10 @@ impl AirPlaySession {
         if path.ends_with("/auth-setup") {
             return Ok(
                 match MfiSapAuthSetup::handle(&request.body, self.mfi.as_ref())? {
-                    Some(body) => bytes_response(OCTET_CONTENT_TYPE, body),
+                    Some(body) => {
+                        self.startup_milestone("auth_setup_accepted");
+                        bytes_response(OCTET_CONTENT_TYPE, body)
+                    }
                     None => response(400),
                 },
             );
@@ -629,6 +666,7 @@ impl AirPlaySession {
                 V::Array(self.handle_streams(streams)?),
             )]));
         }
+        self.startup_milestone("setup_control");
         let string = |k: &str| body.get(k).and_then(V::as_str).unwrap_or("").to_string();
         self.log_debug(&AirPlayPeerDiagnostics::summary(
             &string("model"),
@@ -782,6 +820,9 @@ impl AirPlaySession {
                             .wrapping_add(1),
                     );
                 }
+                if kind == 110 {
+                    self.startup_milestone("setup_main_screen");
+                }
                 result.push(reply);
             }
         }
@@ -830,7 +871,7 @@ impl AirPlaySession {
             }
             return Ok(response(200));
         }
-        if kind == "requestUI" {
+        if kind == "requestUI" && params.get("url").and_then(V::as_str) != Some("videoplayback:") {
             self.listener.on_host_ui_requested(self);
         }
         self.listener.on_command(self, kind, &params);
@@ -941,6 +982,27 @@ impl AirPlaySession {
     }
 }
 impl SessionControl for AirPlaySession {
+    fn playback_token(&self) -> Option<PlaybackToken> {
+        self.main_screen_session_token()
+            .map(|generation| PlaybackToken {
+                session: self.own.clone(),
+                generation,
+            })
+    }
+    fn report_video_frame_rendered(&self, token: &PlaybackToken) -> bool {
+        let current = || {
+            Weak::ptr_eq(&token.session, &self.own)
+                && self.main_screen_session_token() == Some(token.generation)
+        };
+        if !current() {
+            return false;
+        }
+        self.listener.on_video_frame_rendered(self);
+        current()
+    }
+    fn send_media_button(&self, index: u8) -> Result<bool> {
+        self.send_media_press(index)
+    }
     fn show_view_area(&self, index: usize) -> bool {
         AirPlaySession::show_view_area(self, index)
     }
@@ -1198,6 +1260,52 @@ mod event_tests {
             vec![AirPlayInfoPlist::view_area_command(1, 2)]
         );
         session.close().unwrap();
+    }
+    #[test]
+    fn media_button_seam_sends_play_pause_next_previous_press_and_release() {
+        let (session, socket) = session();
+        assert!(!session.send_media_button(4).unwrap());
+        ready(&session, &socket);
+        for index in [3, 4, 5] {
+            assert!(session.send_media_button(index).unwrap());
+        }
+        let commands = commands(&socket);
+        for (pair, index) in commands.as_chunks::<2>().0.iter().zip([3, 4, 5]) {
+            for command in pair {
+                assert_eq!(
+                    command.get("type").and_then(V::as_str),
+                    Some("hidSendReport")
+                );
+                assert_eq!(command.get("uuid").and_then(V::as_str), Some("2a2a2a2c"));
+            }
+            assert_eq!(
+                pair[0].get("hidReport").and_then(V::as_data),
+                Some([index].as_slice())
+            );
+            assert_eq!(
+                pair[1].get("hidReport").and_then(V::as_data),
+                Some([0].as_slice())
+            );
+        }
+        assert_eq!(commands.len(), 6);
+        session.close().unwrap();
+        assert!(!session.send_media_button(5).unwrap());
+    }
+    #[test]
+    fn hosts_implementing_only_touch_keep_all_new_session_controls_disabled() {
+        struct TouchOnly;
+        impl SessionControl for TouchOnly {
+            fn send_touch(&self, _: &[AirPlayContact]) -> Result<bool> {
+                Ok(false)
+            }
+        }
+        assert!(TouchOnly.playback_token().is_none());
+        assert!(!TouchOnly.send_media_button(4).unwrap());
+        let (session, _) = session();
+        assert!(!TouchOnly.report_video_frame_rendered(&PlaybackToken {
+            session: Arc::downgrade(&session),
+            generation: 1,
+        }));
     }
     #[test]
     fn normalized_touch_and_key_releases_keep_event_order() {
