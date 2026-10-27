@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-22
 
-import { patchMarkup } from './dom';
+import { patchMarkup, confirmSheet } from './dom';
 import { request } from './api';
 export interface TraceSnapshot {
   enabled: boolean; running: boolean;
@@ -67,7 +67,7 @@ export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: un
   select.addEventListener('change', () => { filter = select.value; revision++; void poller.refresh(); });
   content.addEventListener('click', async event => {
     const action = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-trace]')?.dataset.trace;
-    if (!action || busy || (action === 'clear' && !window.confirm(t('trace.clearConfirm')))) return;
+    if (!action || busy || (action === 'clear' && !await confirmSheet(t('trace.clearConfirm'), t('trace.clear'), t('ui.cancel')))) return;
     busy = true; error.textContent = '';
     content.querySelectorAll<HTMLButtonElement>('button').forEach(b => { b.disabled = true; });
     try {

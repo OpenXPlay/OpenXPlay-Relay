@@ -121,7 +121,7 @@ summary { cursor: pointer; min-height: 48px; padding-block: 12px; overflow-wrap:
 .stage-text p { font: var(--callout); }
 .stage-text #stage-failure { font: 400 .75rem/1rem ui-monospace, SFMono-Regular, Consolas, monospace; }
 .stage-actions { display: grid; justify-items: center; gap: 4px; padding-bottom: 8px; }
-.pill { width: 100%; min-height: 56px; padding: 16px 24px; }
+.pill { border-radius: var(--pill-radius); width: 100%; min-height: 56px; padding: 16px 24px; }
 .notice-chip { font: var(--footnote); color: var(--ok); background: transparent; border: 0; border-radius: var(--chip-radius); margin-top: 12px; }
 .drawer-handle { display: flex; width: 100%; min-height: 56px; padding: 16px 24px; gap: 16px; border: 0; border-radius: 32px 32px 0 0; background: var(--surface); touch-action: none; }
 #drawer-open { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
@@ -185,3 +185,16 @@ progress { display: block; width: 100%; margin-block: 12px; accent-color: var(--
 #stage-primary[data-action=RETRY] { background: color-mix(in srgb, var(--action) 16%, var(--surface)); color: var(--action); }
 .stage-tile[data-state=FAILED] { animation: stage-shake 300ms ease-out 1; }
 @keyframes stage-shake { 0%, 100% { translate: 0; } 20%, 60% { translate: -4px; } 40%, 80% { translate: 4px; } }
+/* Shared phone controls keep the visual and keyboard action order aligned. */
+.full-width { width: 100%; }
+.top-bar .back { width: 48px; height: 48px; padding: 12px; }
+.top-bar .back svg { width: 24px; height: 24px; }
+dialog .dialog-actions { display: flex; flex-direction: column; gap: 4px; }
+dialog .dialog-actions > button { width: 100%; }
+dialog .dialog-actions > .primary, dialog .dialog-actions > .confirm, dialog .dialog-actions > [type=submit] { order: -1; }
+dialog button.primary, dialog button.confirm { width: 100%; min-height: 56px; border-radius: var(--pill-radius); }
+dialog button[data-close], dialog button.cancel, dialog #wifi-cancel { display: flex; justify-content: center; width: 100%; border: 0; background: transparent; color: var(--secondary); }
+dialog button.confirm { background: var(--ok); color: var(--primary-ink); }
+.inset-group[hidden], input[hidden] { display: none; }
+
+.privacy .inset-row { justify-content: space-between; }

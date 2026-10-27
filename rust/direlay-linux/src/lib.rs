@@ -124,4 +124,5 @@ pub mod car_models;
 pub mod carlink_policy;
 pub mod carplay_policy;
 pub mod path_facts;
+pub mod path_input;
 pub mod start_policy;

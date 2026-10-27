@@ -11,6 +11,10 @@ pub type Values = Map<String, Value>;
 #[serde(rename_all = "camelCase")]
 pub struct AdminStatus {
     #[serde(default)]
+    pub path_input: Value,
+    #[serde(default)]
+    pub admin_features: Vec<String>,
+    #[serde(default)]
     pub host_addresses: Vec<AdminHostAddress>,
     #[serde(default)]
     pub hotspot: Option<AdminHotspot>,
@@ -157,6 +161,9 @@ pub struct AdminNetwork {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AdminCarlink {
+    pub code: Option<String>,
+    pub retrying: bool,
+    pub trail: Vec<String>,
     pub state: String,
     pub detail: String,
     pub last_lost_reason: Option<String>,
@@ -436,6 +443,8 @@ pub struct Field {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FieldOption {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<BTreeMap<String, String>>,
     pub value: Value,
     pub label_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]

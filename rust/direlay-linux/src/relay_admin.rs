@@ -1728,6 +1728,7 @@ fn picture_section() -> Section {
                 choices
                     .into_iter()
                     .map(|value| FieldOption {
+                        labels: None,
                         value: if key == "screenWidth" {
                             serde_json::json!(value.parse::<u32>().unwrap())
                         } else {
@@ -1757,6 +1758,7 @@ fn public_name_section() -> Section {
             crate::public_name::config::Provider::ALL
                 .into_iter()
                 .map(|p| FieldOption {
+                    labels: None,
                     value: p.id().into(),
                     label_key: format!("option.publicNameProvider.{}", p.id()),
                     hint_key: None,
@@ -1798,6 +1800,7 @@ fn runtime_section(id: &str, keys: &[(&str, &str)]) -> Section {
                     ["window", "mode"]
                         .into_iter()
                         .map(|v| FieldOption {
+                            labels: None,
                             value: v.into(),
                             label_key: format!("option.carlinkPictureSize.{v}"),
                             hint_key: None,
@@ -1805,7 +1808,10 @@ fn runtime_section(id: &str, keys: &[(&str, &str)]) -> Section {
                         })
                         .collect()
                 }),
-                visible_when: None,
+                visible_when: key.starts_with("carlinkPicture").then(|| VisibleWhen {
+                    key: "output".into(),
+                    equals: vec!["carlink".into(), "both".into()],
+                }),
                 min: None,
                 max: None,
             })
@@ -1827,48 +1833,37 @@ fn car_section(car: &crate::car_models::CarSelection) -> Section {
         ],
     );
     for field in &mut section.fields {
-        let rows: Vec<(&str, &str)> = match field.key.as_str() {
+        let rows: Vec<(&str, &BTreeMap<String, String>)> = match field.key.as_str() {
             "carBrand" => catalog
                 .brands
                 .iter()
-                .map(|b| (b.id.as_str(), b.names["en"].as_str()))
+                .map(|b| (b.id.as_str(), &b.names))
                 .collect(),
             "carModel" => brand
-                .map(|b| {
-                    b.models
-                        .iter()
-                        .map(|m| (m.id.as_str(), m.names["en"].as_str()))
-                        .collect()
-                })
+                .map(|b| b.models.iter().map(|m| (m.id.as_str(), &m.names)).collect())
                 .unwrap_or_default(),
             "carYear" => model
-                .map(|m| {
-                    m.years
-                        .iter()
-                        .map(|y| (y.id.as_str(), y.names["en"].as_str()))
-                        .collect()
-                })
+                .map(|m| m.years.iter().map(|y| (y.id.as_str(), &y.names)).collect())
                 .unwrap_or_default(),
             _ => vec![],
         };
         if field.field_type == "choice" {
             let mut options = vec![FieldOption {
+                labels: None,
                 value: "".into(),
                 label_key: format!("option.{}.", field.key),
                 hint_key: None,
                 illustration: None,
             }];
-            options.extend(rows.into_iter().map(|(id, name)| FieldOption {
+            options.extend(rows.into_iter().map(|(id, names)| FieldOption {
+                labels: Some(names.clone()),
                 value: id.into(),
-                label_key: if field.key == "carBrand" && id == "xpeng" {
-                    "option.carBrand.xpeng".into()
-                } else {
-                    name.into()
-                },
+                label_key: String::new(),
                 hint_key: None,
                 illustration: None,
             }));
             options.push(FieldOption {
+                labels: None,
                 value: "other".into(),
                 label_key: format!("option.{}.other", field.key),
                 hint_key: None,
@@ -1962,6 +1957,7 @@ pub fn settings_schema() -> Vec<Section> {
                 })
                 .into_iter()
                 .map(|v| FieldOption {
+                    labels: None,
                     value: v.into(),
                     label_key: format!("option.{key}.{v}"),
                     hint_key: None,
@@ -1973,6 +1969,7 @@ pub fn settings_schema() -> Vec<Section> {
                 ["auto", "msm8916", "phicomm-n1", "generic"]
                     .into_iter()
                     .map(|v| FieldOption {
+                        labels: None,
                         value: v.into(),
                         label_key: format!("option.devicePreset.{v}"),
                         hint_key: None,
@@ -1984,6 +1981,7 @@ pub fn settings_schema() -> Vec<Section> {
                 ["auto", "2.4", "5"]
                     .into_iter()
                     .map(|v| FieldOption {
+                        labels: None,
                         value: v.into(),
                         label_key: format!("option.hotspotBand.{v}"),
                         hint_key: None,
@@ -1995,6 +1993,7 @@ pub fn settings_schema() -> Vec<Section> {
                 ["device-hotspot", "shared-wifi"]
                     .into_iter()
                     .map(|v| FieldOption {
+                        labels: None,
                         value: v.into(),
                         label_key: format!("option.networkMode.{v}"),
                         hint_key: None,
@@ -2006,6 +2005,7 @@ pub fn settings_schema() -> Vec<Section> {
                 ["ble", "static"]
                     .into_iter()
                     .map(|v| FieldOption {
+                        labels: None,
                         value: v.into(),
                         label_key: format!("option.carlinkLink.{v}"),
                         hint_key: None,
@@ -2017,6 +2017,7 @@ pub fn settings_schema() -> Vec<Section> {
                 ["web", "carlink", "both"]
                     .into_iter()
                     .map(|v| FieldOption {
+                        labels: None,
                         value: v.into(),
                         label_key: format!("option.output.{v}"),
                         hint_key: None,
@@ -2085,7 +2086,7 @@ pub fn settings_schema() -> Vec<Section> {
                 ("carlinkPictureSize", "choice"),
                 ("carlinkPictureSizes", "object"),
                 ("carlinkPictureDefault", "object"),
-                ("carlinkPictureTrial", "object"),
+                ("carlinkPictureTry", "object"),
             ],
         ),
         car_section(&Default::default()),
@@ -2333,6 +2334,20 @@ impl LinuxRelayAdmin {
     }
 }
 impl RelayAdmin for LinuxRelayAdmin {
+    fn recent_connection_timeline_for_log_export(&self) -> String {
+        let facts = self.runtime_path_facts();
+        let mut text = facts
+            .timeline
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(summary) = facts.carlink_summary {
+            text.push('\n');
+            text.push_str(&summary);
+        }
+        text
+    }
     fn logs_export(&self, range: &str) -> std::result::Result<serde_json::Value, String> {
         self.build_log_export(range)
             .map(|value| serde_json::to_value(value).unwrap())
@@ -2504,7 +2519,8 @@ impl RelayAdmin for LinuxRelayAdmin {
         let wifi = self.wifi_status();
         let devices = self.backends.bluetooth.devices().unwrap_or_default();
         let now = crate::admin::auth::monotonic_seconds();
-        let wall_now = crate::platform::wall_clock().as_secs();
+        let wall_clock = crate::platform::wall_clock();
+        let wall_now = wall_clock.as_secs();
         let pairing_remaining = self
             .pairing
             .lock()
@@ -2562,7 +2578,11 @@ impl RelayAdmin for LinuxRelayAdmin {
                     ip,
                 }
             });
-        AdminStatus {
+        let mut status = AdminStatus {
+            path_input: serde_json::Value::Null,
+            admin_features: ["logs", "config-files", "update-check"]
+                .map(str::to_owned)
+                .to_vec(),
             video: self.input.video_status(),
             hotspot,
             wifi_control: true,
@@ -2692,7 +2712,21 @@ impl RelayAdmin for LinuxRelayAdmin {
             wifi_provisioning: Some(wifi.setup_hotspot),
             wifi_client: Some(wifi),
             public_name: Some(public_name),
-        }
+        };
+        drop(controller);
+        let identity_ready = self.options.test_input.is_some()
+            || ["identity.pk8", "certificate.p7b"].iter().all(|name| {
+                std::fs::metadata(options.identity_dir.join(name)).is_ok_and(|m| m.len() > 0)
+            });
+        crate::path_input::update(
+            &self.runtime_path_facts(),
+            &self.settings.lock().unwrap(),
+            &mut status,
+            wall_clock.as_millis() as u64,
+            identity_ready,
+            self.backends.bluetooth.check_radio().is_ok(),
+        );
+        status
     }
     fn network_roles_update(&self, values: Values) -> Option<crate::network_roles::SaveResult> {
         Some(self.propose_roles(values, true))
@@ -2722,6 +2756,14 @@ impl RelayAdmin for LinuxRelayAdmin {
             "frameRate".into(),
             crate::carplay_policy::frame_rate_value(self.input.display_settings().frame_rate)
                 .into(),
+        );
+        values.insert(
+            "carlinkPictureTry".into(),
+            serde_json::to_value({
+                let d = self.input.display.lock().unwrap();
+                d.pictures.trial.unwrap_or(d.picture_default)
+            })
+            .unwrap(),
         );
         let current = self
             .provision
@@ -2793,10 +2835,10 @@ impl RelayAdmin for LinuxRelayAdmin {
                 (Err(errors), _) => AdminUpdate::Errors(errors),
             };
         }
-        if let Some(trial) = values.remove("carlinkPictureTrial") {
+        if let Some(trial) = values.remove("carlinkPictureTry") {
             if !values.is_empty() {
                 return AdminUpdate::Errors(BTreeMap::from([(
-                    "carlinkPictureTrial".into(),
+                    "carlinkPictureTry".into(),
                     "error.conflict".into(),
                 )]));
             }
@@ -2807,7 +2849,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                     Ok(size) => Some(size),
                     Err(_) => {
                         return AdminUpdate::Errors(BTreeMap::from([(
-                            "carlinkPictureTrial".into(),
+                            "carlinkPictureTry".into(),
                             "error.invalid".into(),
                         )]))
                     }
@@ -2815,7 +2857,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             };
             return match self.try_carlink_picture(size) {
                 Ok(()) => AdminUpdate::AppliedNow,
-                Err(e) => AdminUpdate::Errors(BTreeMap::from([("carlinkPictureTrial".into(), e)])),
+                Err(e) => AdminUpdate::Errors(BTreeMap::from([("carlinkPictureTry".into(), e)])),
             };
         }
         let mut display = oxp_wire::display_settings(&self.input.display_settings());
@@ -3158,6 +3200,7 @@ impl RelayAdmin for LinuxRelayAdmin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("admin_contract_tests.rs");
     #[test]
     fn config_file_preview_apply_and_validation_match_the_settings_editor() {
         let (admin, dir) = fake();
@@ -3496,7 +3539,7 @@ mod tests {
         a.try_carlink_picture(None).unwrap();
         assert_eq!(a.input.display.lock().unwrap().pictures.trial, Some(None));
         let saved = serde_json::to_value(Settings::load(&dir).unwrap()).unwrap();
-        assert!(saved.get("carlinkPictureTrial").is_none());
+        assert!(saved.get("carlinkPictureTry").is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

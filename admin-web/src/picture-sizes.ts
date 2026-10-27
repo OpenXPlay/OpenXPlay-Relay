@@ -13,25 +13,44 @@ export function validPictureSize(size: PictureSize): boolean {
 }
 const same = (a: PictureSize | null, b: PictureSize | null) => a?.width === b?.width && a?.height === b?.height;
 export function normalizedSizes(sizes: PictureSize[]): PictureSize[] { return sizes.filter((s, i) => validPictureSize(s) && !picturePresets.some(p => same(p, s)) && !sizes.slice(0, i).some(p => same(p, s))).slice(0, 5); }
-export function mountPictureField(target: HTMLElement, field: Field, values: Values, t: Translate, save: (field: Field, value: Value) => void) {
+export function mountPictureField(target: HTMLElement, _field: Field, values: Values, t: Translate, save: (changes: Values) => Promise<void>, inUse?: string) {
+  let selected = (Object.hasOwn(values, 'carlinkPictureTry') ? values.carlinkPictureTry : values.carlinkPictureDefault ?? null) as PictureSize | null;
+  let width = '', height = '', busy = false, error = '', currentPicture = inUse;
   const sizes = () => Array.isArray(values.carlinkPictureSizes) ? values.carlinkPictureSizes as PictureSize[] : [];
   const label = (size: PictureSize | null) => size ? `${size.width} × ${size.height}` : t('ui.automatic');
-  const choose = (size: PictureSize | null) => { save(field, size); if (field.key !== 'carlinkPictureTry') values[field.key] = size; render(); };
+  async function apply(changes: Values) {
+    busy = true; error = ''; render();
+    try { await save(changes); Object.assign(values, changes); if (Object.hasOwn(changes, 'carlinkPictureTry')) currentPicture = label(changes.carlinkPictureTry as PictureSize | null); }
+    catch { error = t('error.request'); }
+    finally { busy = false; render(); }
+  }
   function render() {
-    if (field.key === 'carlinkPictureSizes') {
-      patchMarkup(target, `<h3>${esc(t(field.labelKey))}</h3><p class="muted">${esc(t('picture.customHint'))}</p><div>${sizes().map((s, index) => `<div class="address-row" data-key="size-${index}"><span>${label(s)}</span><button data-delete="${index}" aria-label="${esc(t('net.delete'))}: ${label(s)}">${t('net.delete')}</button></div>`).join('')}</div><form class="picture-size-form"><label>${t('picture.width')}<input name="width" type="number" step="2" min="360" max="1920" inputmode="numeric" required></label><label>${t('picture.height')}<input name="height" type="number" step="2" min="360" max="1920" inputmode="numeric" required></label><button ${sizes().length >= 5 ? 'disabled' : ''}>${t('net.save')}</button><p class="error" role="alert" data-picture-error></p></form>`);
-      target.querySelectorAll<HTMLButtonElement>('[data-delete]').forEach(button => on(button, 'click', () => { const removed = sizes()[Number(button.dataset.delete)], next = sizes().filter(s => !same(s, removed)); values.carlinkPictureSizes = next; save(field, next); if (same(values.carlinkPictureDefault as PictureSize | null, removed)) { values.carlinkPictureDefault = null; const defaultField = { ...field, key: 'carlinkPictureDefault' }; save(defaultField, null); } render(); }));
-      on(target.querySelector('form'), 'submit', event => {
-        event.preventDefault(); const form = event.target as HTMLFormElement;
-        const size = { width: Number((form.elements.namedItem('width') as HTMLInputElement).value), height: Number((form.elements.namedItem('height') as HTMLInputElement).value) };
-        if (!validPictureSize(size)) { target.querySelector('[data-picture-error]')!.textContent = t('picture.invalid'); return; }
-        const next = normalizedSizes([...sizes(), size]); values.carlinkPictureSizes = next; save(field, next); form.reset(); render();
-      });
-    } else {
-      const current = values[field.key] as PictureSize | null;
-      patchMarkup(target, `<h3>${esc(t(field.labelKey))}</h3><div class="chips">${[null, ...picturePresets, ...sizes()].map((s, index) => `<button data-size="${index}" aria-pressed="${same(s, current)}">${label(s)}</button>`).join('')}</div>${field.key === 'carlinkPictureTry' ? `<p class="muted">${t('picture.trialHint')}</p>` : ''}`);
-      target.querySelectorAll<HTMLButtonElement>('[data-size]').forEach(button => on(button, 'click', () => { if (confirm(t('files.pictureRestart'))) choose([null, ...picturePresets, ...sizes()][Number(button.dataset.size)]); }));
-    }
+    const choices = [null, ...picturePresets, ...sizes()];
+    patchMarkup(target, `<h2>${esc(t('picture.title'))}</h2><p class="muted">${esc(t('picture.current'))}: ${esc(currentPicture ?? label((Object.hasOwn(values, 'carlinkPictureTry') ? values.carlinkPictureTry : values.carlinkPictureDefault) as PictureSize | null))}</p><div class="chips" role="group" aria-label="${esc(t('picture.title'))}">${choices.map((size, index) => `<button data-size="${index}" aria-pressed="${same(size, selected)}" ${busy ? 'disabled' : ''}>${label(size)}${same(size, values.carlinkPictureDefault as PictureSize | null) ? ` · ${esc(t('picture.default'))}` : ''}</button>`).join('')}</div><button class="quiet full-width" data-default ${busy ? 'disabled' : ''}>${esc(t('picture.setDefault'))} · ${label(selected)}</button><button class="primary pill" data-try ${busy ? 'disabled' : ''}>${esc(t('field.carlinkPictureTry'))} · ${label(selected)}</button><p class="muted">${esc(t('picture.trialHint'))}</p><div>${sizes().map((size, index) => `<div class="address-row" data-key="size-${index}"><span>${label(size)}</span><button class="quiet" data-delete="${index}" aria-label="${esc(t('net.delete'))}: ${label(size)}" ${busy ? 'disabled' : ''}>${esc(t('net.delete'))}</button></div>`).join('')}</div><p class="muted">${esc(t('picture.customHint'))}</p><form class="picture-size-form"><label>${esc(t('picture.width'))}<input name="width" type="number" step="2" min="360" max="1920" inputmode="numeric" value="${esc(width)}" required></label><label>${esc(t('picture.height'))}<input name="height" type="number" step="2" min="360" max="1920" inputmode="numeric" value="${esc(height)}" required></label><button class="pill" ${busy || sizes().length >= 5 ? 'disabled' : ''}>${esc(t('picture.add'))}</button><p class="error" role="alert" data-picture-error>${esc(error)}</p></form>`);
+    target.querySelectorAll<HTMLButtonElement>('[data-size]').forEach(button => on(button, 'click', () => { selected = choices[Number(button.dataset.size)]; render(); }));
+    on(target.querySelector('[data-default]'), 'click', () => void apply({ carlinkPictureDefault: selected }));
+    on(target.querySelector('[data-try]'), 'click', () => {
+      const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', t('field.carlinkPictureTry'));
+      patchMarkup(dialog, `<h2>${esc(t('field.carlinkPictureTry'))}</h2><p>${esc(t('picture.trialHint'))}</p><button class="primary pill" data-confirm>${esc(t('ui.start'))} · ${label(selected)}</button><button class="quiet full-width" data-close>${esc(t('ui.cancel'))}</button>`);
+      document.body.append(dialog); dialog.showModal();
+      const close = () => { dialog.close(); dialog.remove(); target.querySelector<HTMLElement>('[data-try]')?.focus(); };
+      on(dialog, 'cancel', close); on(dialog.querySelector('[data-close]'), 'click', close);
+      on(dialog.querySelector('[data-confirm]'), 'click', () => { close(); void apply({ carlinkPictureTry: selected }); });
+    });
+    target.querySelectorAll<HTMLButtonElement>('[data-delete]').forEach(button => on(button, 'click', () => {
+      const removed = sizes()[Number(button.dataset.delete)], next = sizes().filter(s => !same(s, removed));
+      if (same(selected, removed)) selected = null;
+      void apply({ carlinkPictureSizes: next, ...(same(values.carlinkPictureDefault as PictureSize | null, removed) ? { carlinkPictureDefault: null } : {}) });
+    }));
+    const form = target.querySelector<HTMLFormElement>('form')!;
+    on(form, 'input', () => { width = (form.elements.namedItem('width') as HTMLInputElement).value; height = (form.elements.namedItem('height') as HTMLInputElement).value; });
+    on(form, 'submit', event => {
+      event.preventDefault(); const size = { width: Number(width), height: Number(height) };
+      if (!validPictureSize(size)) { error = t('picture.invalid'); render(); return; }
+      if (choices.some(s => same(s, size))) { selected = size; error = t('picture.duplicate'); render(); return; }
+      if (sizes().length >= 5) return;
+      selected = size; width = ''; height = ''; void apply({ carlinkPictureSizes: [...sizes(), size] });
+    });
   }
   render();
 }

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
+import { esc } from './html';
+
 const listeners = new WeakMap<EventTarget, Map<string, EventListener>>();
 /** Rebinding a patched row replaces its handler without replacing the row. */
 export function on<K extends keyof GlobalEventHandlersEventMap>(target: EventTarget | null | undefined, type: K, listener: (event: GlobalEventHandlersEventMap[K]) => void): void;
@@ -49,6 +51,10 @@ export function enhanceSheets(label: () => string) {
   });
   const enhance = (dialog: HTMLDialogElement) => {
     if (dialog.dataset.sheetReady) return;
+    dialog.querySelectorAll<HTMLElement>('.dialog-actions').forEach(actions => {
+      const primary = actions.querySelector('.primary, .confirm, button[type="submit"]');
+      if (primary) actions.prepend(primary);
+    });
     dialog.dataset.sheetReady = '1'; dialog.classList.add('sheet');
     const historySheet = String(++sequence); dialog.dataset.historySheet = historySheet;
     history.pushState({ ...history.state, oxpSheet: historySheet }, '', location.href);
@@ -69,4 +75,28 @@ export function enhanceSheets(label: () => string) {
     });
   };
   new MutationObserver(() => document.querySelectorAll<HTMLDialogElement>('dialog').forEach(enhance)).observe(document.body, { childList: true, subtree: true });
+}
+
+/** A shared confirmation sheet keeps primary and quiet actions in reading and focus order. */
+export function confirmSheet(message: string, primary: string, cancel: string): Promise<boolean> {
+  const trigger = document.activeElement as HTMLElement | null;
+  const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', primary);
+  patchMarkup(dialog, `<h2>${esc(primary)}</h2><p>${esc(message)}</p><div class="dialog-actions"><button class="primary" data-confirm>${esc(primary)}</button><button class="quiet" data-close>${esc(cancel)}</button></div>`);
+  return new Promise(resolve => {
+    let closed = false;
+    const close = (accepted: boolean) => {
+      if (closed) return;
+      closed = true;
+      // Finish removing this history entry before a caller closes its parent choice sheet.
+      const historySheet = dialog.dataset.historySheet;
+      const waitForBack = historySheet && history.state?.oxpSheet === historySheet;
+      if (waitForBack) window.addEventListener('popstate', () => resolve(accepted), { once: true });
+      dialog.close(); dialog.remove(); trigger?.focus();
+      if (!waitForBack) resolve(accepted);
+    };
+    on(dialog.querySelector('[data-confirm]'), 'click', () => close(true));
+    on(dialog.querySelector('[data-close]'), 'click', () => close(false));
+    on(dialog, 'cancel', event => { event.preventDefault(); close(false); });
+    document.body.append(dialog); dialog.showModal();
+  });
 }

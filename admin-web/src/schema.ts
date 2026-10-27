@@ -10,7 +10,7 @@ export interface PictureSize { width: number; height: number }
 export type Value = PictureSize | PictureSize[] | NetworkRolesSetting | string | number | boolean | null | SavedNetwork[] | string[] | PublicNameProviders;
 export type Values = Record<string, Value>;
 export type Illustration = 'wifi-direct' | 'phone-hotspot' | 'device-hotspot' | 'shared-wifi';
-export interface Option { value: Value; labelKey: string; hintKey?: string; illustration?: Illustration }
+export interface Option { value: Value; labelKey: string; labels?: { en: string; 'zh-CN': string }; hintKey?: string; illustration?: Illustration }
 export interface Field { key: string; type: 'bool' | 'choice' | 'text' | 'secret' | 'number' | 'phone' | 'networks' | 'plugins' | 'object'; labelKey: string; hintKey?: string; options?: Option[]; visibleWhen?: { key: string; equals: Value[] }; min?: number; max?: number }
 export interface Section { id: string; titleKey: string; fields: Field[] }
 export interface InstalledPlugin { id: string; name: Record<string, string>; icon: string | null; version: string; license: string; nonCommercialAssets: boolean }
@@ -36,3 +36,5 @@ export function validatePassword(password: string, confirm: string): string | nu
   if (confirm !== password) return 'error.passwordMismatch';
   return null;
 }
+
+export function optionLabel(option: Option | undefined, language: 'en' | 'zh-CN', t: (key: string) => string): string { return option?.labels?.[language] ?? (option ? t(option.labelKey) : ''); }

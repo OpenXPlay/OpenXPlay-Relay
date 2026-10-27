@@ -75,9 +75,9 @@ it('provides Linux Wi-Fi status, scans, join and forget', async () => {
   const status = (await call('/status')).data;
   expect(status.platform).toBe('linux'); expect(status.wifiProvisioning).toBe(true); expect(status.wifiClient.setupHotspot).toBe(true);
   const settings = (await call('/settings')).data;
-  expect(settings.schema.some((section: { id: string }) => section.id === 'wifi')).toBe(true);
-  const options = settings.schema.find((section: { id: string }) => section.id === 'network').fields[0].options;
-  expect(options.map((option: { value: string }) => option.value)).toEqual(['shared-wifi', 'device-hotspot']);
+  expect(settings.schema.some((section: { id: string }) => section.id === 'connection')).toBe(true);
+  const options = settings.schema.flatMap((section: { fields: { key: string; options: unknown }[] }) => section.fields).find((field: { key: string }) => field.key === 'networkMode').options;
+  expect(options.map((option: { value: string }) => option.value)).toEqual(['device-hotspot', 'shared-wifi']);
   expect((await call('/wifi/networks')).data.length).toBe(4);
   expect((await call('/wifi', 'PUT', { ssid: 'Home Wi-Fi', password: 'openxplay' })).status).toBe(200);
   expect((await call('/status')).data.wifiClient).toMatchObject({ ssid: 'Home Wi-Fi', setupHotspot: false });
@@ -141,7 +141,7 @@ it('uses the Linux settings schema for Linux preview states', async () => {
     expect(keys).not.toContain('bootStart');
     expect(settings.values.autoStart).toBe(true);
     expect(settings.values).not.toHaveProperty('bootStart');
-    expect(settings.schema.filter((section: { id: string }) => section.id === 'wifi')).toHaveLength(1);
+    expect(settings.schema.filter((section: { id: string }) => section.id === 'connection')).toHaveLength(1);
     expect((await call('/status')).data.platform).toBe('linux');
   } finally { vi.unstubAllEnvs(); }
 });
@@ -320,9 +320,12 @@ it('validates frame rate, experimental address and picture sizes, and keeps a tr
   expect((await call('/settings', 'PUT', { experimentalBluetoothAddress: '00:1A:7D:DA:71:13' })).status).toBe(200);
   expect((await call('/settings', 'PUT', { carlinkPictureSizes: [{ width: 1300, height: 720 }] })).status).toBe(200);
   expect((await call('/settings', 'PUT', { carlinkPictureSizes: [{ width: 1301, height: 720 }] })).status).toBe(422);
+  expect((await call('/settings', 'PUT', { carlinkPictureTry: null })).status).toBe(422);
+  await call('/settings', 'PUT', { output: 'carlink' });
   const original = (await call('/settings')).data.values.carlinkPictureDefault;
   expect((await call('/settings', 'PUT', { carlinkPictureTry: { width: 1920, height: 720 } })).status).toBe(200);
-  const saved = (await call('/settings')).data.values; expect(saved.carlinkPictureTry).toBeNull(); expect(saved.carlinkPictureDefault).toEqual(original);
+  const saved = (await call('/settings')).data.values; expect(saved.carlinkPictureTry).toEqual({ width: 1920, height: 720 });
+  expect((await call('/config/user')).data.settings).not.toHaveProperty('carlinkPictureTry'); expect(saved.carlinkPictureDefault).toEqual(original);
 });
 it('expires log exports after one hour', async () => {
   const time = vi.spyOn(Date, 'now').mockReturnValue(1793000000000);

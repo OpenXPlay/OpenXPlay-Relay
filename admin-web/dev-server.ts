@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
-import { validPictureSize } from './src/picture-sizes';
+import { readFileSync, readdirSync } from 'node:fs';
+import { validPictureSize, normalizedSizes, picturePresets } from './src/picture-sizes';
 import { validateHotspot } from './src/hotspot-settings';
 import { validateSharedNetworks } from './src/shared-networks';
 import type { SavedNetwork } from './src/schema';
@@ -14,6 +15,16 @@ import type { Plugin } from 'vite';
 import type { Field, Section, Settings, Value } from './src/schema';
 import type { PublicNameStatus, ReceiverReport, Status, WifiClient, Wireless } from './src/api';
 
+const fixtureRoot = new URL('./tests/fixtures/linux/', import.meta.url);
+export const linuxSettings = JSON.parse(readFileSync(new URL('settings.json', fixtureRoot), 'utf8')) as Settings;
+export const linuxStatusFixtures = Object.fromEntries(readdirSync(fixtureRoot).filter(name => name.startsWith('status-') && name.endsWith('.json')).map(name => [name.slice(7, -5), JSON.parse(readFileSync(new URL(name, fixtureRoot), 'utf8')) as Status]));
+export function linuxFixtureStatus(state: string, now = Date.now()): Status {
+  const alias: Record<string, string> = { live: 'live-browser', working: 'live-browser', failure: 'iphone-failure', error: 'iphone-failure' };
+  const status = structuredClone(linuxStatusFixtures[alias[state] ?? state] ?? linuxStatusFixtures.ready);
+  const old = status.pathInput!.nowMillis!;
+  const shift = (value: unknown): void => { if (!value || typeof value !== 'object') return; for (const [key, child] of Object.entries(value)) { if (key.endsWith('Millis') && typeof child === 'number') (value as Record<string, unknown>)[key] = child + now - old; else shift(child); } };
+  shift(status.pathInput); return status;
+}
 // A stored ZIP keeps the development download usable without adding a compression dependency.
 function mockZip(files: Record<string, string>): Buffer {
   const chunks: Buffer[] = [], directory: Buffer[] = []; let offset = 0;
@@ -87,26 +98,7 @@ export function mockPublicName(values: Settings['values'], now = Date.now() / 10
   return { state: 'ready', name, address: '192.168.1.78', notAfter: Math.floor(now) + 90 * 86400, trustedName: name };
 }
 function baseSettings(linux = false): Settings {
-  if (linux) return { schema: [
-    { id: 'connection', titleKey: 'section.connection', fields: [choice('devicePreset', ['auto', 'msm8916', 'phicomm-n1', 'generic']), choice('hotspotBand', ['auto', '2.4', '5'], { visibleWhen: when('networkMode', 'device-hotspot') }), field('iphone', 'phone'), choice('output', ['web', 'carlink', 'both']), field('requirePairingCode', 'bool'), field('autoStart', 'bool', { hintKey: 'hint.field.linuxAutoStart' })] },
-    { id: 'carlink', titleKey: 'section.carlink', fields: [
-      field('carlinkName', 'text', { visibleWhen: when('output', 'carlink', 'both') }),
-      field('carlinkModel', 'text', { visibleWhen: when('output', 'carlink', 'both') }),
-      field('carlinkAutoReconnect', 'bool', { hintKey: 'hint.field.carlinkAutoReconnect', visibleWhen: when('output', 'carlink', 'both') }),
-      field('carlinkReconnectOnResize', 'bool', { hintKey: 'hint.field.carlinkReconnectOnResize', visibleWhen: when('output', 'carlink', 'both') }),
-      choice('carlinkHevc', ['auto', 'off'], { hintKey: 'hint.field.carlinkHevc', visibleWhen: when('output', 'carlink', 'both') }),
-      choice('videoStats', ['off', '5', '15']), choice('carlinkTrace', ['off', 'on']), field('carPlayViewAreas', 'bool'),
-      field('receiverPort', 'number', { min: 1, max: 65535 }),
-    ] },
-    { id: 'audio', titleKey: 'section.audio', fields: [field('carBluetoothAudio', 'bool', { hintKey: 'hint.field.carBluetoothAudio' })] },
-    publicNameSection(),
-    { id: 'plugins', titleKey: 'section.plugins', fields: [field('plugins', 'bool', { hintKey: 'hint.plugins' }), field('pluginsEnabled', 'plugins')] },
-    { id: 'wifi', titleKey: 'section.wifi', fields: [] },
-    { id: 'network', titleKey: 'section.network', fields: [choice('networkMode', ['shared-wifi', 'device-hotspot'], { options: ['shared-wifi', 'device-hotspot'].map(value => ({ value, labelKey: `option.networkMode.${value}`, hintKey: `hint.option.networkMode.${value}`, illustration: value as 'shared-wifi' | 'device-hotspot' })) }), field('sharedWifiNetworks', 'networks')] },
-    { id: 'advanced', titleKey: 'section.advanced', fields: [field('wifiInterface', 'text'), field('hotspotChannel', 'number', { min: 0, max: 177, labelKey: 'field.wifiChannel', hintKey: 'hint.field.hotspotChannel' }), field('rfcommChannel', 'number', { min: 1, max: 30, hintKey: 'hint.rfcommChannel' })] },
-  ], installedPlugins: [{ id: 'org.openxplay.clock', name: { en: 'Clock', 'zh-CN': '时钟' }, version: '1.0.0', license: 'Apache-2.0 OR MIT', icon: null, nonCommercialAssets: false },
-    { id: 'org.openxplay.pet', name: { en: 'Pet', 'zh-CN': '宠物' }, version: '1.0.0', license: '(Apache-2.0 OR MIT) AND CC-BY-NC-SA-4.0', icon: null, nonCommercialAssets: true }],
-  values: { plugins: false, pluginsEnabled: [], iphone: 'auto', networkMode: 'shared-wifi', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], wifiInterface: 'wlan0', hotspotChannel: 0, hotspotBand: 'auto', devicePreset: 'auto', rfcommChannel: '', output: 'web', requirePairingCode: false, carBluetoothAudio: true, autoStart: true, carlinkName: 'OpenXPlay Linux', carlinkModel: 'OpenXPlay Relay Linux', carlinkAutoReconnect: true, carlinkReconnectOnResize: false, carlinkHevc: 'auto', carlinkTrace: 'on', videoStats: 'off', carPlayViewAreas: true, receiverPort: 8443, ...PUBLIC_NAME_OFF } };
+  if (linux) return structuredClone(linuxSettings);
   const schema: Section[] = [
     { id: 'connection', titleKey: 'section.connection', fields: [
       field('iphone', 'phone', { hintKey: 'hint.iphone' }), choice('transport', ['wireless', 'usb']),
@@ -139,6 +131,7 @@ function baseSettings(linux = false): Settings {
   return { schema, values: { iphone: 'auto', transport: 'wireless', networkMode: 'wifi-direct', hotspotSsid: 'OpenXPlay', hotspotPassword: 'openxplay123', hotspotBand: 'auto', sharedWifiNetworks: [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }], output: 'both', requirePairingCode: true, displayMode: 'auto', displayWidth: 1280, displayHeight: 720, displayDensity: 160, autoStart: true, bootStart: false, carlinkName: 'OpenXPlay Relay', vehicleInformation: '' } };
 }
 export function mockSettings(linux = false): Settings {
+  if (linux) return structuredClone(linuxSettings);
   const settings = baseSettings(linux);
   const add = (id: string, additions: Field[]) => {
     const existing = new Set(settings.schema.flatMap(s => s.fields).map(f => f.key));
@@ -155,15 +148,6 @@ export function mockSettings(linux = false): Settings {
     add('output', [field('carlinkAutoReconnect', 'bool', { visibleWhen: when('output', 'carlink', 'multiple') }), field('plugins', 'bool', { hintKey: 'hint.plugins' }), field('pluginsEnabled', 'plugins')]);
     Object.assign(settings.values, { output: 'carlink', networkMode: 'phone-hotspot', wirelessDisplay: 'dlna', carBluetoothAudio: true, vehicleInformation: true, carlinkAutoReconnect: true, plugins: false, pluginsEnabled: [] });
     settings.schema.flatMap(s => s.fields).forEach(f => { if (f.visibleWhen?.key === 'output') f.visibleWhen.equals = f.visibleWhen.equals.map(v => v === 'both' ? 'multiple' : v); });
-  } else {
-    add('connection/network/interfaces', [field('networkRoles', 'object'), field('adminHotspotPassword', 'secret'), field('wifiCountry', 'text'), field('carlinkInterface', 'text')]);
-    add('developer/carlink', [choice('carlinkLink', ['ble', 'static']), field('carlinkAddress', 'text', { visibleWhen: when('carlinkLink', 'ble') }), field('carlinkHeadUnit', 'text', { visibleWhen: when('carlinkLink', 'static') }), field('carlinkLocal', 'text', { visibleWhen: when('carlinkLink', 'static') })]);
-    add('picture', [choice('resolution', ['auto', 'native', '1080p', '720p', 'screen'], { labelKey: 'field.linux.resolution', options: ['auto', 'native', '1080p', '720p', 'screen'].map(value => ({ value, labelKey: `option.linux.resolution.${value}` })) }), choice('screenWidth', ['125', '200', '250', '300'], { labelKey: 'field.linux.screenWidth', options: [125, 200, 250, 300].map(value => ({ value, labelKey: `option.linux.screenWidth.${value}` })) }), choice('videoCodec', ['auto', 'h265', 'h264'])]);
-    add('output', [field('carlinkPictureSizes', 'object'), field('carlinkPictureDefault', 'object'), field('carlinkPictureTry', 'object')]);
-    add('car', [choice('carBrand', ['', 'xpeng', 'other']), field('carBrandText', 'text', { visibleWhen: when('carBrand', 'other') }), choice('carModel', ['', 'g6', 'other']), field('carModelText', 'text', { visibleWhen: when('carModel', 'other') }), choice('carYear', ['', '2024', '2025', '2026', 'other'])]);
-    add('picture', [choice('frameRate', ['auto', '30', '35', '40', '45', '50', '55', '60'])]);
-    add('experimental', [field('experimentalActive', 'bool'), field('experimentalSendBluetoothAddress', 'bool', { visibleWhen: when('experimentalActive', true) }), field('experimentalBluetoothAddress', 'text', { visibleWhen: when('experimentalSendBluetoothAddress', true) })]);
-    Object.assign(settings.values, { networkRoles: { mode: 'auto' }, wifiCountry: 'US', adminHotspotPassword: '', carlinkInterface: 'wlan0', carlinkLink: 'ble', carlinkAddress: '', carlinkHeadUnit: '', carlinkLocal: '', resolution: 'auto', screenWidth: 200, videoCodec: 'auto', frameRate: 'auto', carBrand: '', carBrandText: '', carModel: '', carModelText: '', carYear: '', carlinkPictureSizes: [], carlinkPictureDefault: null, carlinkPictureTry: null, experimentalActive: true, experimentalSendBluetoothAddress: false, experimentalBluetoothAddress: '00:1A:7D:DA:71:13' });
   }
   return settings;
 }
@@ -238,7 +222,17 @@ export function mockApi(linux = false): Plugin {
   ];
   const sessions = new Set<string>();
   const attempts = new Map<string, { count: number; until: number }>();
-  let settings = mockSettings(linux);
+  const demoSettings = (isLinux: boolean) => {
+    const result = mockSettings(isLinux);
+    if (isLinux) {
+      // Demo content changes values only; the schema is the production fixture verbatim.
+      result.values.networkMode = 'shared-wifi';
+      result.values.sharedWifiNetworks = [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: false }];
+      result.installedPlugins = [{ id: 'org.openxplay.clock', name: { en: 'Clock', 'zh-CN': '时钟' }, version: '1.0.0', license: 'Apache-2.0 OR MIT', icon: null, nonCommercialAssets: false }, { id: 'org.openxplay.pet', name: { en: 'Pet', 'zh-CN': '宠物' }, version: '1.0.0', license: 'CC-BY-NC-SA-4.0', icon: null, nonCommercialAssets: true }];
+    }
+    return result;
+  };
+  let settings = demoSettings(linux);
   let latestReceipt: import('./src/feature-pages').LogReceipt | null = null;
   let privacyConfig: Record<string, unknown> = {};
   const exports = new Map<string, { data: Buffer; createdMillis: number }>();
@@ -255,7 +249,7 @@ export function mockApi(linux = false): Plugin {
   };
   let sharedPasswords = new Map<string, string>([["Home Wi-Fi", "openxplay"], ["Car Wi-Fi", ""]]);
   let running = false; let paused = false; let started = 0;
-  let pictureTrial: Value = null;
+  let pictureTrial: Value | undefined;
   const phones = [
     { id: 'iphone-riko', name: "Riko's iPhone", kind: 'phone', connected: true, likelyIphone: true, selected: false },
     { id: 'car', name: 'Car audio', kind: 'car', connected: false, likelyIphone: false, selected: false },
@@ -269,10 +263,11 @@ export function mockApi(linux = false): Plugin {
       const path = url.pathname.slice('/api/v0'.length);
       const previewUrl = new URL(req.headers.referer ?? '/', 'http://localhost');
       const previewState = previewUrl.searchParams.get('state') ?? 'live';
-      if (preview && (previewUrl.searchParams.get('platform') !== 'android') !== linux) { linux = previewUrl.searchParams.get('platform') !== 'android'; settings = mockSettings(linux); previewInitialized = false; }
+      if (preview && (previewUrl.searchParams.get('platform') !== 'android') !== linux) { linux = previewUrl.searchParams.get('platform') !== 'android'; settings = demoSettings(linux); previewInitialized = false; }
       if (preview && !previewInitialized) {
-        linux = previewUrl.searchParams.get('platform') !== 'android'; settings = mockSettings(linux);
+        linux = previewUrl.searchParams.get('platform') !== 'android'; settings = demoSettings(linux);
         previewInitialized = true;
+        settings.values.carlinkTrace = 'on';
         settings.values.networkMode = previewState === 'hotspot' ? 'device-hotspot' : 'shared-wifi';
         wifiClient = previewState === 'fresh' || previewState === 'hotspot' ? { ssid: null, ip: null, signal: null, setupHotspot: previewState === 'fresh' } : { ssid: 'Car Wi-Fi', ip: '192.168.1.78', signal: 82, setupHotspot: false };
         if (previewState === 'fresh') { settings.values.sharedWifiNetworks = []; sharedPasswords.clear(); }
@@ -340,7 +335,7 @@ export function mockApi(linux = false): Plugin {
       if (['/config/user', '/config/privacy'].includes(path) && method === 'GET') {
         const privacy = path.endsWith('privacy');
         res.setHeader('Content-Disposition', `attachment; filename="openxplay-${privacy ? 'privacy' : 'user'}-config.json"`);
-        const safe = Object.fromEntries(Object.entries(settings.values).filter(([key]) => !/password|token|publicNameProviders/i.test(key)));
+        const safe = Object.fromEntries(Object.entries(settings.values).filter(([key]) => !/password|token|publicNameProviders|carlinkPictureTry/i.test(key)));
         return send(200, { format: privacy ? 'openxplay-privacy-config' : 'openxplay-user-config', version: 1, platform: linux ? 'linux' : 'android', appVersion: '0.2.1', exportedAt: new Date().toISOString(), ...(privacy ? privacyConfig : { settings: safe }) });
       }
       if (path === '/config/import' && method === 'POST') {
@@ -353,7 +348,7 @@ export function mockApi(linux = false): Plugin {
           return send(200, { applied, ignored, restartNeeded: applied.length > 0 });
         }
         if (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings)) return send(422, { error: 'error.invalid' });
-        const known = new Set(settings.schema.flatMap(s => s.fields).map(f => f.key));
+        const known = new Set(settings.schema.flatMap(s => s.fields).map(f => f.key).filter(key => key !== 'carlinkPictureTry'));
         const changes = Object.entries(body.settings as Record<string, Value>), applied = changes.filter(([key]) => known.has(key)).map(([key]) => key), ignored = changes.filter(([key]) => !known.has(key)).map(([key]) => key);
         const restartNeeded = applied.some(key => ['frameRate', 'resolution', 'videoCodec', 'carlinkPictureDefault'].includes(key));
         if (url.searchParams.get('dryRun') !== '1') for (const [key, value] of changes) if (known.has(key)) settings.values[key] = value;
@@ -483,7 +478,7 @@ export function mockApi(linux = false): Plugin {
         settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name, tokenSet: true } };
         return send(200, { ok: true, provider, name });
       }
-      if (path === '/settings' && method === 'GET') return send(200, settings);
+      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
       if (path === '/phones' && method === 'GET') return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id })));
       if (path === '/settings' && method === 'PUT') {
         const errors: Record<string, string> = {};
@@ -492,7 +487,7 @@ export function mockApi(linux = false): Plugin {
           if (!field) { errors[key] = 'error.invalid'; continue; }
           if (key === 'experimentalBluetoothAddress' && (typeof value !== 'string' || !/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(value) || (parseInt(value.slice(0, 2), 16) & 1) !== 0 || ['00:00:00:00:00:00', '02:00:00:00:00:00'].includes(value.toLowerCase()))) errors[key] = 'error.invalid';
           const pictureSize = (size: unknown) => !!size && typeof size === 'object' && validPictureSize(size as import('./src/schema').PictureSize);
-          if (key === 'carlinkPictureSizes' && (!Array.isArray(value) || value.length > 5 || !value.every(pictureSize))) errors[key] = 'error.invalid';
+          if (key === 'carlinkPictureSizes' && (!Array.isArray(value) || value.length > 5 || !value.every(pictureSize) || normalizedSizes(value as import('./src/schema').PictureSize[]).length !== value.length)) errors[key] = 'error.invalid';
           if (['carlinkPictureDefault', 'carlinkPictureTry'].includes(key) && value !== null && !pictureSize(value)) errors[key] = 'error.invalid';
           if (field.type === 'object') {
             if (value !== null && typeof value !== 'object') errors[key] = 'error.invalid';
@@ -513,6 +508,14 @@ export function mockApi(linux = false): Plugin {
           else if (key === 'hotspotPassword' && String(value).length < 8) errors[key] = 'error.invalid';
           else if (['hotspotSsid', 'carlinkName'].includes(key) && !String(value).trim()) errors[key] = 'error.required';
           else if (key === 'publicName' && value !== '' && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(String(value))) errors[key] = 'error.invalid';
+        }
+        if (linux && 'carlinkPictureTry' in body && (settings.values.output === 'web' || Object.keys(body).length > 1)) errors.carlinkPictureTry = 'error.conflict';
+        if (linux && ('carlinkPictureDefault' in body || 'carlinkPictureSizes' in body)) {
+          const nextDefault = Object.hasOwn(body, 'carlinkPictureDefault') ? body.carlinkPictureDefault : settings.values.carlinkPictureDefault;
+          const saved = body.carlinkPictureSizes ?? settings.values.carlinkPictureSizes;
+          const choices = [...picturePresets, ...(Array.isArray(saved) ? saved : []) as import('./src/schema').PictureSize[]];
+          const selected = nextDefault as import('./src/schema').PictureSize | null;
+          if (selected && !choices.some(size => size.width === selected.width && size.height === selected.height)) errors.carlinkPictureDefault = 'error.invalid';
         }
         const requestedNetworks = body.sharedWifiNetworks ?? settings.values.sharedWifiNetworks;
         if (body.networkMode === 'shared-wifi' && Array.isArray(requestedNetworks) && requestedNetworks.length === 0) errors.networkMode = 'error.noSavedWifi';
@@ -555,6 +558,7 @@ export function mockApi(linux = false): Plugin {
         if (Date.now() < outageUntil) return send(503, { error: 'error.network' });
         const phone = phones.find(phone => phone.id === settings.values.iphone) ?? phones[0];
         const status: Status = {
+          ...(linux ? linuxFixtureStatus(preview ? previewState : running ? 'live-browser' : 'idle') : {}),
           platform: linux ? 'linux' : 'android', name: 'OpenXPlay Relay', version: '0.2.1', host: `openxplay-${linux ? 'linux' : 'android'}.local`, adminUrl: `https://openxplay-${linux ? 'linux' : 'android'}.local:6975/`,
           wifiControl: linux,
           hotspot: { hasPassword: !!String(settings.values.hotspotPassword ?? 'openxplay123'), ssid: String(settings.values.hotspotSsid ?? 'OpenXPlay'), password: String(settings.values.hotspotPassword ?? 'openxplay123'), ip: settings.values.networkMode !== 'shared-wifi' ? '10.42.0.1' : wifiClient.setupHotspot ? '10.78.0.1' : null, active: settings.values.networkMode !== 'shared-wifi' || wifiClient.setupHotspot === true },
@@ -577,7 +581,8 @@ export function mockApi(linux = false): Plugin {
           result.network = status.network; result.hotspot = status.hotspot; result.wifiClient = wifiClient; result.hostAddresses = status.hostAddresses;
         }
         if (linux) { const facts = mockNetwork(result.network.mode); const roles = settings.values.networkRoles as import('./src/schema').NetworkRolesSetting; if (roles?.mode === 'custom') { facts.plan!.source = 'custom'; if (roles.iphone) facts.plan!.iphone.link = roles.iphone.link; if (roles.adminHotspot) Object.assign(facts.plan!.adminHotspot, roles.adminHotspot); } if (facts.country) facts.country.configured = String(settings.values.wifiCountry || 'system'); result.network = { ...facts, ...result.network }; result.adminHotspot = { state: roles?.adminHotspot?.enabled ? 'up' : 'off', reason: null }; }
-        result.pathInput = mockPathInput(result, preview ? previewState : '', Date.now(), previewPathEpoch);
+        result.pathInput = linux ? linuxFixtureStatus(preview ? previewState : running ? 'live-browser' : 'idle').pathInput : mockPathInput(result, preview ? previewState : '', Date.now(), previewPathEpoch);
+        if (linux) result.adminFeatures = ['logs', 'config-files', 'update-check'];
         if (previewState === 'pairing' && preview) pairingDeadline ??= Date.now() / 1000 + 600;
         if (previewState === 'carlink-pin' && preview && !pinAccepted) { result.output = 'carlink'; result.carlink = { state: 'authenticating', detail: '', trusted: false, pinRequested: true, pinDeadline }; }
         result.pairingDeadline = pairingDeadline && pairingDeadline > Date.now() / 1000 ? pairingDeadline : null;

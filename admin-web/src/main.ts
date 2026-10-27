@@ -7,13 +7,14 @@ import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
-import { patchMarkup, on, enhanceSheets } from './dom';
+import { patchMarkup, on, enhanceSheets, confirmSheet } from './dom';
 import { mountStage, timer } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
 import type { StageAction } from './path/present-stage';
-import { fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture } from './settings-tree';
+import { fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons } from './settings-tree';
 import { mountPictureField } from './picture-sizes';
+import { COUNTRY_CODES } from './wifi-countries';
 import { mountFeaturePage } from './feature-pages';
 import { connectionsView, editConnections } from './connections';
 import type { NetworkRolesSetting } from './schema';
@@ -23,7 +24,7 @@ import { homeView, settingsViews, developerPreference, networkPanelView, switchC
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
 import type { SavedNetwork } from './schema';
 import { api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
-import { isVisible, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
+import { isVisible, optionLabel, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, translate, type Language } from './i18n';
 import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
 import { icon } from './icons';
@@ -111,7 +112,7 @@ function shell() {
   document.documentElement.lang = language;
   document.body.dataset.page = currentView;
   const title = t(routeTitle(route));
-  patchMarkup(root, `<header class="top-bar">${session === 'ready' ? currentView === 'home' ? `<a class="icon-button" href="#settings" aria-label="${t('ui.settings')}">${icon('settings')}</a>` : `<a class="icon-button back" href="#${parentRoute(route)}" aria-label="${t('ui.back')}">‹</a><span id="bar-title" aria-hidden="true">${esc(title)}</span>` : `<span>OpenXPlay Relay</span>`}</header><div id="connection" role="status" class="banner" ${offline ? '' : 'hidden'}>${t('ui.reconnecting')}</div><div id="restart-required" class="card" hidden></div><main id="main"></main>`);
+  patchMarkup(root, `<header class="top-bar">${session === 'ready' ? currentView === 'home' ? `<a class="icon-button" href="#settings" aria-label="${t('ui.settings')}">${icon('settings')}</a>` : `<a class="icon-button back" href="#${parentRoute(route)}" aria-label="${t('ui.back')}">${icon('chevron-left')}</a><span id="bar-title" aria-hidden="true">${esc(title)}</span>` : `<span>OpenXPlay Relay</span>`}</header><div id="connection" role="status" class="banner" ${offline ? '' : 'hidden'}>${t('ui.reconnecting')}</div><div id="restart-required" class="card" hidden></div><main id="main"></main>`);
 }
 function render() {
   stage?.destroy(); stage = null; clearInterval(visibleTimer); visibleTimer = undefined;
@@ -163,24 +164,20 @@ function menuRow(target: string, title: string, summary = '', name = 'settings')
   const error = fields().filter(f => fieldRoute(f.key) === target || fieldRoute(f.key).startsWith(target + '/')).some(f => { const message = feedback.get(f.key); return !!message && !message.startsWith('ui.'); });
   return `<a class="inset-row menu-row" href="#${target}"><span class="icon-tile hue-${name}">${icon(name)}</span><span class="row-copy"><span>${esc(t(title))}</span>${summary ? `<small class="muted">${esc(summary)}</small>` : ''}</span>${error ? `<span class="error" aria-label="${t('error.invalid')}">!</span>` : ''}<span aria-hidden="true">›</span></a>`;
 }
-function pageSummary(target: string): string {
-  if (['settings/config-files', 'settings/logs', 'settings/developer'].includes(target)) return '';
-  if (target === 'settings/about') return status!.version;
-  const order: Record<string, string[]> = { 'settings/output': ['output'], 'settings/car': ['carBrandText', 'carBrand', 'carModelText', 'carModel', 'carYear'], 'settings/picture': ['resolution', 'carplayResolution', 'frameRate', 'videoCodec'], 'settings/audio': ['carBluetoothAudio'], 'settings/connection': ['transport', 'iphone'], 'settings/startup': ['autoStart', 'bootStart'] };
-  const selected = pageFields(settings!, target).filter(f => isVisible(f, settings!.values) && !['secret', 'object', 'networks', 'plugins'].includes(f.type)).sort((a, b) => (order[target]?.indexOf(a.key) ?? 0) - (order[target]?.indexOf(b.key) ?? 0));
-  const wanted = order[target] ? order[target].flatMap(key => selected.filter(f => f.key === key)) : selected;
-  return wanted.slice(0, 3).map(f => {
-    const value = settings!.values[f.key];
-    return f.type === 'bool' ? `${t(f.key === 'carBluetoothAudio' ? 'stage.carBluetooth' : f.labelKey)}: ${t(value ? 'stage.on' : 'stage.off')}` : f.type === 'choice' ? t(f.options?.find(o => o.value === value)?.labelKey ?? String(value ?? '')) : f.type === 'phone' ? phoneNames.get(String(value)) ?? t('ui.automatic') : String(value ?? '');
-  }).filter(Boolean).join(' · ');
+function pageSummary(target: string): string { return menuSummary(settings!, status!, target, language, t); }
+function editorField(field: Field): Field {
+  if (field.key !== 'wifiCountry') return field;
+  const names = new Intl.DisplayNames([language], { type: 'region' });
+  return { ...field, type: 'choice', options: [{ value: 'system', labelKey: 'roles.country.system' }, ...COUNTRY_CODES.map(value => ({ value, labelKey: '', labels: { en: names.of(value) ?? value, 'zh-CN': names.of(value) ?? value } }))] };
 }
 function renderReady() {
+  if (!pageAvailable(settings!, status!, route) && route !== 'home') { location.hash = parentRoute(route); return; }
   renderRestart();
   const main = document.getElementById('main')!;
   if (currentView === 'home') {
     patchMarkup(main, '<div id="dashboard"></div>');
     stage = mountStage(document.getElementById('dashboard')!, { t, action: action => void dispatchStage(action), copy: value => void copyStage(value),
-      details: () => `${menuRow('settings/car', 'menu.car', [settings!.values.carBrandText || settings!.values.carBrand, settings!.values.carModelText || settings!.values.carModel, settings!.values.carYear].filter(Boolean).join(' · '), 'car')}<div class="inset-group">${fields().filter(f => f.key === 'autoStart').map(f => fieldMarkup({ ...f, labelKey: 'stage.automatic', hintKey: undefined })).join('')}</div>${addressesView(status!, true, t)}${devicesView(status!, true, t)}<div id="pairing-panel" data-preserve></div>${videoStatsView(videoStats.read(status!, videoStatsInterval(settings, status!.platform), performance.now()), t)}${status!.notices.length ? `<div class="inset-group">${status!.notices.map(n => `<p>${esc(t(n))}</p>`).join('')}</div>` : ''}`,
+      details: () => `${menuRow('settings/car', 'menu.car', pageSummary('settings/car'), 'car')}<div class="inset-group">${fields().filter(f => f.key === 'autoStart').map(f => fieldMarkup({ ...f, labelKey: 'stage.automatic', hintKey: undefined })).join('')}</div>${addressesView(status!, true, t)}${devicesView(status!, true, t)}<div id="pairing-panel" data-preserve></div>${videoStatsView(videoStats.read(status!, videoStatsInterval(settings, status!.platform), performance.now()), t)}${status!.notices.length ? `<div class="inset-group">${status!.notices.map(n => `<p>${esc(t(n))}</p>`).join('')}</div>` : ''}`,
       bindDetails: scope => { bindCopies(scope); const auto = fields().find(f => f.key === 'autoStart'); if (auto) bindField(auto); renderPairingPanel(); syncVisibleTimer(); },
       notice: notice => { if (notice === 'DISPLAY_CHANGED') void dispatchStage({ type: 'Step', action: 'RETRY', step: 'CARPLAY_START', label: null }); else showSettings(notice === 'CHOOSE_CAR' ? 'settings/car' : 'settings'); },
     });
@@ -189,15 +186,15 @@ function renderReady() {
   patchMarkup(main, `<div class="settings-page"><h1 class="large-title">${esc(t(routeTitle(route)))}</h1><div id="settings"></div></div>`);
   const container = document.getElementById('settings')!;
   if (route === 'settings') {
-    patchMarkup(container, pages.map(([page, title, name], i) => `${[0, 4, 6, 9].includes(i) ? '<div class="inset-group menu-group">' : ''}${menuRow('settings/' + page, title, pageSummary('settings/' + page), name)}${[3, 5, 8, 11].includes(i) ? '</div>' : ''}`).join(''));
+    patchMarkup(container, [pages.slice(0, 4), pages.slice(4, 6), pages.slice(6, 9), pages.slice(9)].map(group => `<div class="inset-group menu-group">${group.filter(([page]) => pageAvailable(settings!, status!, 'settings/' + page)).map(([page, title, name]) => menuRow('settings/' + page, title, pageSummary('settings/' + page), name)).join('')}</div>`).join(''));
   } else if (route === 'settings/developer') {
-    patchMarkup(container, `<div class="inset-group">${developerPages.map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page))).join('')}</div>`);
+    patchMarkup(container, `<div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
-    mountFeaturePage(container, route, { t, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
+    mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
-    const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['plugins', 'pluginsEnabled'].includes(f.key));
-    patchMarkup(container, `<section class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
+    const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry'].includes(f.key)).map(editorField);
+    patchMarkup(container, `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
     list.forEach(bindField);
     if (route === 'settings/connection') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/connection/network', 'menu.connection/network', pageSummary('settings/connection/network'), 'wifi')}</div><div id="pairing-panel"></div>`);
     if (route === 'settings/connection/network') container.insertAdjacentHTML('beforeend', `<div id="network-panel" class="inset-group"></div>${status!.platform === 'linux' ? `<div class="inset-group">${menuRow('settings/connection/network/interfaces', 'menu.connection/network/interfaces', '', 'router')}</div>` : ''}`);
@@ -213,12 +210,12 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="password-card"><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form><button id="logout">${t('ui.logout')}</button></section>`);
       bindPassword(); on(document.getElementById('logout')!, 'click', async () => { try { await api.logout(); resetSession('login'); } catch (e) { pageError = errorKey(e); } });
     }
-    if (route === 'settings/car' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group"><p>${esc(status!.pathInput?.car?.savedScreen ?? status!.pathInput?.car?.screen ?? t('stage.noScreen'))}</p><button id="clear-saved-head-unit">${t('carlink.clearSaved')}</button><p id="clear-saved-result" role="status"></p></div>`);
-    on(document.getElementById('clear-saved-head-unit'), 'click', async () => { if (!confirm(t('carlink.clearSavedHint'))) return; try { await api.action('clear-saved-head-unit'); document.getElementById('clear-saved-result')!.textContent = t('ui.saved'); } catch (e) { document.getElementById('clear-saved-result')!.textContent = t(errorKey(e)); } });
+    if (route === 'settings/car' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group"><div class="inset-row"><span>${t('car.savedScreen')} · ${esc(status!.pathInput?.car?.savedScreen ?? t('stage.noScreen'))}</span></div><button class="quiet full-width" id="clear-saved-head-unit">${t('car.clearSaved')}</button><p id="clear-saved-result" role="status"></p></div>`);
+    on(document.getElementById('clear-saved-head-unit'), 'click', async () => { if (!await confirmSheet(t('carlink.clearSavedHint'), t('car.clearSaved'), t('ui.cancel'))) return; try { await api.action('clear-saved-head-unit'); document.getElementById('clear-saved-result')!.textContent = t('ui.saved'); } catch (e) { document.getElementById('clear-saved-result')!.textContent = t(errorKey(e)); } });
     if (route === 'settings/developer/diagnostics') { container.insertAdjacentHTML('beforeend', '<div id="diagnostics" class="inset-group"></div>'); renderDiagnostics(); }
     if (route === 'settings/developer/connection') {
       container.insertAdjacentHTML('beforeend', `<div class="inset-group"><button id="developer-restart">${t('home.restart')}</button><button id="forget-all-wifi">${t('net.forgetAll')}</button>${status!.platform === 'linux' ? `<button id="carlink-forget">${t('carlink.forget')}</button><button id="regenerate-code">${t('stage.regenerate')}</button>` : ''}</div>`);
-      on(document.getElementById('developer-restart')!, 'click', () => { if (confirm(t('home.restartHint'))) void api.action('restart').then(() => tick()); });
+      on(document.getElementById('developer-restart')!, 'click', async () => { if (await confirmSheet(t('home.restartHint'), t('home.restart'), t('ui.cancel'))) void api.action('restart').then(() => tick()); });
       on(document.getElementById('forget-all-wifi')!, 'click', () => void forgetAllWifi()); on(document.getElementById('carlink-forget')!, 'click', confirmForgetCarlink);
       on(document.getElementById('regenerate-code')!, 'click', () => void api.action('regenerate-pairing-code').then(() => tick()));
       const network = fields().find(f => f.key === 'networkMode'); if (network) { container.insertAdjacentHTML('beforeend', `<details class="inset-group"><summary>${t('stage.legacyNetwork')}</summary>${fieldMarkup(network)}</details>`); bindField(network); }
@@ -228,11 +225,7 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="carlink-debug"><h2>${t('trace.title')}</h2><label for="trace-filter">${t('trace.filter')}</label><select id="trace-filter" data-trace-filter>${traceFilters.map((value, i) => `<option value="${value}">${t(['trace.all', 'trace.rtsp', 'trace.frames', 'trace.media', 'trace.link', 'trace.errors'][i])}</option>`).join('')}</select><p class="error" role="alert" data-trace-error></p><div data-trace-content></div></section>`);
       disposeTrace = mountTrace(document.getElementById('carlink-debug')!, t, errorKey);
     }
-    // Plugins retain their own schema section while living beneath Output.
-    if (route === 'settings/output') {
-      const plugins = fields().filter(f => ['plugins', 'pluginsEnabled'].includes(f.key));
-      if (plugins.length) { container.insertAdjacentHTML('beforeend', `<details class="inset-group"><summary>${t('section.plugins')}</summary>${plugins.map(fieldMarkup).join('')}</details>`); plugins.forEach(bindField); }
-    }
+    if (route === 'settings/output' && pageAvailable(settings!, status!, 'settings/output/plugins')) container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/output/plugins', 'section.plugins', '', 'code')}</div>`);
     renderNetworkPanel(); renderPairingPanel(); updateVisibility(); renderPublicName();
   }
   syncPinDialog(); syncVisibleTimer();
@@ -520,15 +513,16 @@ function topology(mode: Illustration): string {
   return `<figure class="topology"><svg viewBox="0 0 310 ${shared ? 136 : 94}" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="${links}" stroke-dasharray="4 4"/></g>${shared ? node('router', 155, 16) : ''}${node('smartphone', 45, y)}${node('router', 155, y)}${node('car', 265, y)}<g fill="currentColor" font-size="11" text-anchor="middle">${shared ? `<text x="211" y="23">${t('ui.wifi')}</text>` : `<text x="100" y="29">${labelOne}</text><text x="210" y="29">${labelTwo}</text>`}<text x="45" y="${y + 32}">${t('ui.iphone')}</text><text x="155" y="${y + 32}">${t('ui.relay')}</text><text x="265" y="${y + 32}">${t('ui.screen')}</text></g></svg><figcaption>${t(`ui.topology.${mode}`)}</figcaption></figure>`;
 }
 function fieldMarkup(field: Field): string {
+  field = editorField(field);
   const id = fieldId(field.key), value = settings!.values[field.key], draft = drafts.get(field.key);
-  const label = esc(t(field.labelKey) === field.labelKey ? field.key : t(field.labelKey));
+  const label = esc(t(field.labelKey));
   const attr = `id="${id}" aria-describedby="${id}-hint ${id}-result"`;
   let control = '';
-  if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) control = `<details class="picture-disclosure"><summary>${label}</summary><div ${attr}></div></details>`;
+  if (field.key === 'carlinkPictureSizes') control = `<div ${attr}></div>`;
   else if (field.type === 'plugins') control = `<div ${attr}>${pluginList(settings!, language, t, true)}</div>`;
   else if (field.type === 'bool' || field.key === 'carlinkTrace') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attr} type="checkbox" role="switch" ${value === true || value === 'on' ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'choice' || field.type === 'phone') {
-    const summary = field.type === 'phone' ? value === 'auto' ? t('ui.automatic') : phoneNames.get(String(value)) ?? value : t(field.options?.find(o => o.value === value)?.labelKey ?? String(value ?? ''));
+    const summary = field.type === 'phone' ? value === 'auto' ? t('ui.automatic') : phoneNames.get(String(value)) ?? value : optionLabel(field.options?.find(o => o.value === value), language, t);
     control = `<button ${attr} class="inset-row picker-button" aria-haspopup="dialog"><span class="row-copy"><span>${label}</span><small class="muted">${esc(summary)}</small></span><span aria-hidden="true">›</span></button>`;
   } else {
     const object = field.type === 'object' || typeof value === 'object' && value !== null;
@@ -539,20 +533,21 @@ function fieldMarkup(field: Field): string {
   return `<div class="field" data-field="${esc(field.key)}">${control}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result" role="status">${esc(t(feedback.get(field.key) ?? ''))}</p></div>`;
 }
 function bindField(field: Field) {
+  field = editorField(field);
   const el = document.getElementById(fieldId(field.key)); if (!el) return;
-  if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, queueValue); return; }
+  if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.pathInput?.car?.carlink?.picture ?? undefined); return; }
   if (field.type === 'plugins') on(el, 'change', event => { const input = event.target as HTMLInputElement; queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked)); });
   else if (field.type === 'bool' || field.key === 'carlinkTrace') on(el, 'change', () => queueSave(field, field.key === 'carlinkTrace' ? (el as HTMLInputElement).checked ? 'on' : 'off' : (el as HTMLInputElement).checked));
   else if (field.type === 'phone') on(el, 'click', () => void pickPhone(field));
   else if (field.type === 'choice') on(el, 'click', () => {
-    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''}><span>${esc(t(option.labelKey))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
-    dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', () => {
+    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
+    dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', async () => {
       const option = field.options![Number(button.dataset.option)];
-      if (restartsPicture(field.key) && status?.running && !confirm(t('files.pictureRestart'))) return;
+      if (restartsPicture(field.key) && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
       close();
       if (field.key === 'networkMode') { requestNetworkSwitch(String(option.value)); return; }
       queueSave(field, String(option.value));
-      el.querySelector('small')!.textContent = t(option.labelKey);
+      el.querySelector('small')!.textContent = optionLabel(option, language, t);
     }));
   });
   else {
@@ -560,9 +555,9 @@ function bindField(field: Field) {
     const actions = el.closest('.field')!.querySelector<HTMLElement>('.field-edit-actions')!;
     on(el, 'input', () => { const stored = settings!.values[field.key]; const baseline = typeof stored === 'object' && stored !== null ? JSON.stringify(stored, null, 2) : String(stored ?? ''); if (input.value === baseline) drafts.delete(field.key); else drafts.set(field.key, input.value); actions.hidden = !drafts.has(field.key); });
     on(actions.querySelector('[data-cancel]')!, 'click', () => { drafts.delete(field.key); input.value = typeof settings!.values[field.key] === 'object' ? JSON.stringify(settings!.values[field.key], null, 2) : String(settings!.values[field.key] ?? ''); actions.hidden = true; result(field.key, ''); });
-    on(actions.querySelector('[data-save]')!, 'click', () => {
+    on(actions.querySelector('[data-save]')!, 'click', async () => {
       if (!input.checkValidity()) { result(field.key, 'error.range'); input.reportValidity(); return; }
-      if (restartsPicture(field.key) && status?.running && !confirm(t('files.pictureRestart'))) return;
+      if (restartsPicture(field.key) && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
       if (field.type === 'object') { try { const value = JSON.parse(input.value); queueValue(field, value); } catch { result(field.key, 'error.invalid'); return; } }
       else queueSave(field, input.value);
       drafts.delete(field.key); actions.hidden = true;
@@ -597,7 +592,7 @@ function renderRestart() {
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature; patchMarkup(el, restartView(required, t));
   on(el.querySelector<HTMLButtonElement>('#restart-now'), 'click', async event => {
-    if (!window.confirm(t('home.restartHint'))) return;
+    if (!await confirmSheet(t('home.restartHint'), t('home.restart'), t('ui.cancel'))) return;
     const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
     try { await api.action('restart'); needsRestart = false; void tick(); }
     catch (error) { el.querySelector('#restart-error')!.textContent = t(errorKey(error)); }
@@ -762,10 +757,10 @@ function updateVisibility() {
     const el = document.getElementById(fieldId(field.key))?.closest<HTMLElement>('.field');
     if (el) el.hidden = !isVisible(field, settings!.values) && !['networkRoles', 'wifiInterface', 'carlinkInterface', 'wifiCountry', 'adminHotspotPassword'].includes(field.key);
   }
-  document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = section.children.length === 0; });
+  document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = ![...section.children].some(child => !(child as HTMLElement).hidden); });
   renderPublicName();
 }
-function queueSave(field: Field, raw: string | boolean) {
+async function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
   if (field.key.startsWith('publicName')) {
     if (publicNameBusy) return;
@@ -782,10 +777,10 @@ function queueSave(field: Field, raw: string | boolean) {
     return;
   }
   if (field.key === 'transport' && needsUsbConfirmation(status?.platform, settings!.values.transport, value)) {
-    if (!window.confirm(t('confirm.transport.usb.android'))) { render(); return; }
+    if (!await confirmSheet(t('confirm.transport.usb.android'), t('ui.continue'), t('ui.cancel'))) { render(); return; }
   }
   if (field.key === 'output' && needsHotspotConfirmation(status?.platform, settings!.values, value)) {
-    if (!window.confirm(t('constraint.carlinkWifiDirectConfirm'))) { render(); return; }
+    if (!await confirmSheet(t('constraint.carlinkWifiDirectConfirm'), t('ui.continue'), t('ui.cancel'))) { render(); return; }
     // The Android API applies the output and safe network mode together.
     settings!.values.networkMode = 'phone-hotspot';
   }
@@ -809,7 +804,7 @@ async function save(key: string) {
   item.busy = true; const revision = item.revision; const current = epoch;
   const submitted = key === 'publicNameProvider' ? publicNameSubmission(settings!.values) : null;
   try {
-    const write = api.save(submitted ?? { [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
+    const write = key === 'wifiCountry' ? api.saveRoles(settings!.values.networkRoles as NetworkRolesSetting, { wifiCountry: String(item.value) }).then(() => ({ applied: 'now' as const })) : api.save(submitted ?? { [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
     if (submitted) publicNameWrite = write;
     const response = await write;
     if (current !== epoch) return;
@@ -819,7 +814,7 @@ async function save(key: string) {
       if (token) { token.value = String(settings.values.publicNameToken ?? ''); token.placeholder = settings.values.publicNameTokenSet ? t('publicName.tokenSaved') : ''; }
       for (const field of fields().filter(f => f.key.startsWith('publicName'))) result(field.key, 'ui.saved');
     }
-    if (revision === item.revision) { pending.delete(key); needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
+    if (revision === item.revision) { pending.delete(key); if (['carBrand', 'carModel', 'carYear'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {
@@ -836,10 +831,11 @@ async function save(key: string) {
 async function pickPhone(field: Field) {
   const trigger = document.getElementById(fieldId(field.key)) ?? document.getElementById('stage-primary')!;
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'phone-title');
-  patchMarkup(dialog, `<div class="sheet-header"><h2 id="phone-title">${t('ui.choosePhone')}</h2><button class="icon-button close" aria-label="${t('ui.close')}">${icon('x')}</button></div><div id="phone-list" role="status">${t('ui.loading')}</div>`);
+  patchMarkup(dialog, `<div class="sheet-header"><h2 id="phone-title">${t('ui.choosePhone')}</h2><button class="icon-button close" aria-label="${t('ui.close')}">${icon('x')}</button></div><div id="phone-list" role="status">${t('ui.loading')}</div><button type="button" class="quiet full-width" data-phone-cancel>${t('ui.cancel')}</button>`);
   document.body.append(dialog); dialog.showModal();
   const close = () => { dialog.close(); dialog.remove(); trigger.focus(); };
   on(dialog.querySelector('.close')!, 'click', close);
+  on(dialog.querySelector('[data-phone-cancel]'), 'click', close);
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
   const current = epoch;
   const list = dialog.querySelector<HTMLElement>('#phone-list')!;
@@ -892,7 +888,7 @@ async function forgetAllWifi() {
     return;
   }
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'wifi-confirm-title');
-  patchMarkup(dialog, `<h2 id="wifi-confirm-title">${t('net.forgetAll')}</h2><p>${esc(t(wifiGuidance('forget')))}</p><button id="wifi-cancel">${t('ui.cancel')}</button> <button id="wifi-confirm" class="primary">${t('net.forgetAll')}</button>`);
+  patchMarkup(dialog, `<h2 id="wifi-confirm-title">${t('net.forgetAll')}</h2><p>${esc(t(wifiGuidance('forget')))}</p><div class="dialog-actions"><button id="wifi-confirm" class="primary">${t('net.forgetAll')}</button><button id="wifi-cancel" class="quiet">${t('ui.cancel')}</button></div>`);
   document.body.append(dialog); dialog.showModal();
   const close = () => { dialog.close(); dialog.remove(); trigger?.focus(); };
   on(dialog.querySelector('#wifi-cancel')!, 'click', close);

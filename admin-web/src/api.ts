@@ -67,6 +67,7 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 // trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
+  adminFeatures?: ('logs' | 'config-files' | 'update-check')[];
   pathInput?: import('./path/model').PartialInput;
   adminHotspot?: { state: 'up' | 'paused-carlink' | 'waiting-interface' | 'off' | 'failed'; reason: string | null };
   hostAddresses?: HostAddress[]; receiverPort?: number; adminPort?: number; pairingAvailable?: boolean; pairingDeadline?: number | null; screenConnected?: boolean;
