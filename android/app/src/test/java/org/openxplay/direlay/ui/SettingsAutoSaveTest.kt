@@ -28,7 +28,7 @@ class SettingsAutoSaveTest {
         }
     }
 
-    @Test fun teslaEditsAreSilentAndInvalidAddressesBelongToTheCarPage() {
+    @Test fun teslaEditsAreSilentAndInvalidAddressesBelongToTheTeslaPage() {
         val edits = TeslaBrowserMode.entries.map { initial.copy(teslaBrowser = it) } + listOf(
             initial.copy(teslaVirtualAddress = "169.254.88.2"), initial.copy(teslaPublicAddress = "169.254.88.3"),
             initial.copy(teslaMirrorAddress = "100.88.0.2"), initial.copy(teslaAndroidAddress = "3.3.3.2"))
@@ -40,7 +40,10 @@ class SettingsAutoSaveTest {
             val invalid = initial.copy(teslaBrowser = mode, teslaVirtualAddress = "10.0.0.1",
                 teslaPublicAddress = "10.0.0.1", teslaMirrorAddress = "10.0.0.1", teslaAndroidAddress = "10.0.0.1")
             assertEquals(mapOf("teslaAddress" to R.string.tesla_address_invalid), settingsSaveErrors(invalid, true))
-            assertEquals(setOf("settings/car"), settingsInvalidPages(invalid, initial) { true })
+            val pages = settingsInvalidPages(invalid, initial) { true }
+            assertEquals(setOf("settings/tesla"), pages)
+            assertEquals("settings/tesla", firstSettingsErrorPage(pages))
+            assertTrue(settingsInvalidPages(invalid.copy(teslaBrowser = TeslaBrowserMode.OFF), initial) { true }.isEmpty())
             val published = mutableListOf<RelaySettings>()
             val saver = SettingsAutoSave(initial, published::add)
             assertFalse(saver.apply(invalid, true))
@@ -82,9 +85,10 @@ class SettingsAutoSaveTest {
     @Test fun menuErrorsIdentifyEveryInvalidPageEvenWhenAnotherGroupIsInvalid() {
         val invalid = initial.copy(carlinkDeviceName = "", carlinkDeviceModel = "", webPort = 80,
             display = DisplayProfile(1, 2, 3), mfiTarget = MfiTarget.REMOTE, remoteServer = "invalid",
+            teslaBrowser = TeslaBrowserMode.TESLAMIRROR, teslaMirrorAddress = "10.0.0.1",
             wirelessNetwork = initial.wirelessNetwork.copy(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
                 manualSsid = "", manualPassphrase = "short"))
-        assertEquals(setOf("settings/output", "settings/connection/network", "developer/video",
+        assertEquals(setOf("settings/output", "settings/tesla", "settings/connection/network", "developer/video",
             "developer/connection", "settings/identity"), settingsInvalidPages(invalid, initial) { true })
         assertTrue(settingsInvalidPages(initial, initial) { true }.isEmpty())
     }

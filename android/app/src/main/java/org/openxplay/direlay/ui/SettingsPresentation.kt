@@ -5,9 +5,18 @@ package org.openxplay.direlay.ui
 
 import org.openxplay.direlay.R
 import org.openxplay.direlay.settings.RelaySettings
+import org.openxplay.direlay.settings.TeslaBrowserMode
 import org.openxplay.direlay.settings.WirelessNetworkChoice
 
 data class RadioOption(val title: Int, val supporting: Int)
+val teslaBrowserOptions = listOf(
+    TeslaBrowserMode.TESLAMIRROR to RadioOption(R.string.tesla_mirror, R.string.tesla_virtual_name_hint),
+    TeslaBrowserMode.VIRTUAL_NAME to RadioOption(R.string.tesla_virtual_name, R.string.tesla_virtual_name_hint),
+    TeslaBrowserMode.PUBLIC_ADDRESS to RadioOption(R.string.tesla_public_address, R.string.tesla_public_address_hint),
+    TeslaBrowserMode.TESLA_ANDROID to RadioOption(R.string.tesla_android, R.string.tesla_public_address_hint),
+    TeslaBrowserMode.OFF to RadioOption(R.string.tesla_off, R.string.tesla_intro))
+fun teslaBrowserOption(mode: TeslaBrowserMode) = teslaBrowserOptions.first { it.first == mode }.second
+
 val outputOptions = listOf(RadioOption(R.string.ui_browser, R.string.option_browser_hint),
     RadioOption(R.string.ui_carlink, R.string.option_carlink_hint),
     RadioOption(R.string.wireless_display, R.string.option_wireless_display_hint))
