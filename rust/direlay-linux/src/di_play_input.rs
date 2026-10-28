@@ -678,7 +678,7 @@ impl DiPlayInput {
     }
     pub fn clear_receiver_capabilities(&self) {
         self.events.facts.lock().unwrap().picture_on_car = false;
-        self.display.lock().unwrap().connected = false;
+        self.display.lock().unwrap().disconnected();
         self.context_disconnected();
         self.set_video_decision(oxp_core::video_codec_policy::resolve(&[], false));
     }
@@ -938,9 +938,10 @@ impl DiPlayInput {
         let mut d = self.display.lock().unwrap();
         if d.saved.select_car(settings.car().key()) {
             d.pictures.automatic_canvas = None;
-            d.connected = false;
+            d.disconnected();
             d.persist()?;
         }
+        d.configure(settings);
         d.fallback = settings.car().built_in();
         if d.picture_default != settings.carlink_picture_default
             && (d.pictures.trial.is_some() || self.session_active())
@@ -988,7 +989,7 @@ impl DiPlayInput {
     }
     pub fn screen_known(&self) -> bool {
         let d = self.display.lock().unwrap();
-        d.saved.head_unit.is_some() || d.fallback.is_some()
+        d.head().is_some()
     }
     pub fn screen_reported(&self) -> bool {
         self.display.lock().unwrap().connected
@@ -1036,7 +1037,15 @@ impl DiPlayInput {
             width: h.screen.width,
             height: h.screen.height,
         });
-        facts.screen = facts.saved_screen.filter(|_| d.connected);
+        facts.screen = d
+            .live_head
+            .as_ref()
+            .or(d.saved.head_unit.as_ref())
+            .filter(|_| d.connected)
+            .map(|h| crate::display::Size {
+                width: h.screen.width,
+                height: h.screen.height,
+            });
         facts.built_in_screen = d.fallback.as_ref().map(|(h, _)| crate::display::Size {
             width: h.screen.width,
             height: h.screen.height,
@@ -1198,7 +1207,7 @@ impl DiPlayInput {
             .zip(number(&report["densityDpi"]))
             .map(|((w, h), d)| (w, h, d))
         else {
-            self.display.lock().unwrap().connected = false;
+            self.display.lock().unwrap().disconnected();
             return Ok(());
         };
         let viewport = number(&report["viewport"]["widthPx"])
@@ -1236,11 +1245,29 @@ impl DiPlayInput {
         if let Some(size) = viewport {
             d.resize.window_size(size);
         }
-        if d.saved.observe(head, limit, now) {
+        if d.observe(head, limit, now) {
             d.persist()?;
         }
         d.switch_due((self.clock)());
         Ok(())
+    }
+    pub(crate) fn show_view_area(&self, index: usize) -> bool {
+        let mut d = self.display.lock().unwrap();
+        let (id, control) = {
+            let s = self.state.lock().unwrap();
+            (s.current, s.control.clone().filter(|_| s.active))
+        };
+        let queued = index < d.areas.len()
+            && d.view_areas_enabled()
+            && control.is_some_and(|c| c.show_view_area(index));
+        let mut s = self.state.lock().unwrap();
+        let accepted = queued && s.current == id && s.active;
+        if accepted {
+            d.active = index;
+            Self::publish_locked(&mut s, "display-view-area", d.area_message());
+        }
+        d.record_switch(index, accepted);
+        accepted
     }
     fn poll_view_area(&self) {
         Self::poll_view_area_state(&self.display, &self.state, (self.clock)());
@@ -1262,6 +1289,7 @@ impl DiPlayInput {
             let mut s = state.lock().unwrap();
             if s.current == id && s.active {
                 d.active = index;
+                d.record_switch(index, true);
                 Self::publish_locked(&mut s, "display-view-area", d.area_message());
             }
         }
@@ -2238,6 +2266,52 @@ mod display_tests {
             self.0.lock().unwrap().push(index);
             true
         }
+    }
+    #[test]
+    fn manual_view_area_switch_publishes_crop_and_full_canvas_with_bounded_results() {
+        let (input, _) = fixture();
+        let control = Arc::new(AreaControl(Mutex::new(vec![])));
+        input.begin(control.clone()).unwrap();
+        input.state.lock().unwrap().active = true;
+        input.display.lock().unwrap().areas = vec![
+            crate::display::Area {
+                size: crate::display::Size {
+                    width: 1920,
+                    height: 960,
+                },
+                fullscreen: true,
+                windowed: true,
+            },
+            crate::display::Area {
+                size: crate::display::Size {
+                    width: 1450,
+                    height: 960,
+                },
+                fullscreen: false,
+                windowed: true,
+            },
+        ];
+        assert!(input.show_view_area(1));
+        let Message::Json(crop) =
+            input.state.lock().unwrap().declarations["display-view-area"].clone()
+        else {
+            panic!()
+        };
+        assert_eq!(crop["area"]["width"], 1450);
+        assert!(input.show_view_area(0));
+        let Message::Json(full) =
+            input.state.lock().unwrap().declarations["display-view-area"].clone()
+        else {
+            panic!()
+        };
+        assert!(full["area"].is_null());
+        assert_eq!(*control.0.lock().unwrap(), vec![1, 0]);
+        for _ in 0..40 {
+            assert!(!input.show_view_area(7));
+        }
+        let d = input.display.lock().unwrap();
+        assert_eq!(d.area_switches.len(), 32);
+        assert_eq!(d.area_switches.back().unwrap()["accepted"], false);
     }
     #[test]
     fn planned_display_reaches_airplay_and_switch_announces_after_debounce() {

@@ -175,6 +175,57 @@
     "https://10.42.0.1:8443/"
   ],
   "running": true,
+  "screenData": {
+    "active": 0,
+    "areas": [
+      {
+        "fullscreen": true,
+        "height": 960,
+        "index": 0,
+        "width": 1920,
+        "windowed": true
+      },
+      {
+        "fullscreen": true,
+        "height": 960,
+        "index": 1,
+        "width": 1450,
+        "windowed": false
+      }
+    ],
+    "builtIn": false,
+    "connected": true,
+    "detected": {
+      "densityDpi": 280,
+      "height": 1201,
+      "width": 2401
+    },
+    "enabled": true,
+    "preference": true,
+    "records": [
+      {
+        "count": 1,
+        "fullscreen": true,
+        "lastSeen": 1792999999000,
+        "screen": {
+          "densityDpi": 280,
+          "height": 1201,
+          "width": 2401
+        },
+        "size": {
+          "height": 1014,
+          "width": 1533
+        }
+      }
+    ],
+    "savedCanvas": {
+      "densityDpi": 240,
+      "height": 960,
+      "source": "remembered",
+      "width": 1920
+    },
+    "switches": []
+  },
   "state": "Idle",
   "version": "0.1.6-beta.1",
   "video": {

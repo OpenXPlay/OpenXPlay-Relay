@@ -32,6 +32,7 @@ enum Operation {
     Forget,
     ForgetCarlink,
     ClearSavedHeadUnit,
+    RegeneratePairingCode,
     ConnectCarlink(Option<ArmedPin>),
     Join(String, String),
     /// The startup provisioning: like `Initialize`, but in device-hotspot mode the controller
@@ -1141,16 +1142,14 @@ impl LinuxRelayAdmin {
                     s.start()?;
                 }
             }
-            Operation::ClearSavedHeadUnit => {
-                if self.input.session_active() {
-                    return Err(std::io::Error::other("error.sessionActive"));
+            Operation::RegeneratePairingCode => {
+                if let Some(mut supervisor) = self.supervisor.lock().unwrap().take() {
+                    supervisor.stop();
                 }
-                let mut display = self.input.display.lock().unwrap();
-                let settings = display.saved.settings();
-                display.saved = crate::display::DisplayState::default();
-                display.saved.set_settings(&settings);
-                display.persist()?;
-                display.freeze();
+                self.start_supervisor()?;
+            }
+            Operation::ClearSavedHeadUnit => {
+                self.input.display.lock().unwrap().clear_saved()?;
             }
             Operation::ForgetCarlink => {
                 *self.armed_pin.lock().unwrap() = None;
@@ -2139,6 +2138,72 @@ fn picture_section() -> Section {
         .collect(),
     }
 }
+fn display_overrides_section() -> Section {
+    let mut section = runtime_section(
+        "display",
+        &[
+            ("developerActive", "bool"),
+            ("displayMode", "choice"),
+            ("displayWidth", "number"),
+            ("displayHeight", "number"),
+            ("displayDensity", "number"),
+            ("physicalWidthEnabled", "bool"),
+            ("physicalWidthOverrideMm", "choice"),
+        ],
+    );
+    for field in &mut section.fields {
+        if field.key == "displayMode" {
+            field.options = Some(
+                ["automatic", "fixed"]
+                    .iter()
+                    .map(|v| FieldOption {
+                        value: (*v).into(),
+                        label_key: format!("option.displayMode.{v}"),
+                        labels: None,
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            );
+            field.hint_key = Some("hint.displayMode".into());
+        } else if field.key == "physicalWidthOverrideMm" {
+            field.options = Some(
+                (100..=400)
+                    .step_by(25)
+                    .map(|v| FieldOption {
+                        value: serde_json::json!(v),
+                        label_key: String::new(),
+                        labels: Some(BTreeMap::from([
+                            ("en".into(), format!("{v} mm")),
+                            ("zh-CN".into(), format!("{v} mm")),
+                        ])),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            );
+            field.visible_when = Some(VisibleWhen {
+                key: "physicalWidthEnabled".into(),
+                equals: vec![serde_json::json!(true)],
+            });
+        } else if field.key == "physicalWidthEnabled" {
+            field.hint_key = Some("hint.physicalWidth".into());
+        } else if field.key.starts_with("display") {
+            let (min, max) = match field.key.as_str() {
+                "displayWidth" => (320., 3840.),
+                "displayHeight" => (240., 2160.),
+                _ => (120., 640.),
+            };
+            field.min = Some(min);
+            field.max = Some(max);
+            field.visible_when = Some(VisibleWhen {
+                key: "displayMode".into(),
+                equals: vec!["fixed".into()],
+            });
+        }
+    }
+    section
+}
 fn tesla_section() -> Section {
     let mut section = runtime_section(
         "tesla",
@@ -2275,6 +2340,7 @@ fn car_section(car: &crate::car_models::CarSelection) -> Section {
             ("carModel", "choice"),
             ("carModelText", "text"),
             ("carYear", "choice"),
+            ("carYearText", "text"),
         ],
     );
     for field in &mut section.fields {
@@ -2316,12 +2382,17 @@ fn car_section(car: &crate::car_models::CarSelection) -> Section {
             });
             field.options = Some(options);
         }
-        if matches!(field.key.as_str(), "carBrandText" | "carModelText") {
+        if matches!(
+            field.key.as_str(),
+            "carBrandText" | "carModelText" | "carYearText"
+        ) {
             field.visible_when = Some(VisibleWhen {
                 key: if field.key == "carBrandText" {
                     "carBrand"
-                } else {
+                } else if field.key == "carModelText" {
                     "carModel"
+                } else {
+                    "carYear"
                 }
                 .into(),
                 equals: vec!["other".into()],
@@ -2537,6 +2608,7 @@ pub fn settings_schema() -> Vec<Section> {
             ],
         ),
         car_section(&Default::default()),
+        display_overrides_section(),
         runtime_section(
             "experimental",
             &[
@@ -2596,8 +2668,38 @@ fn failure_secrets(settings: &Settings, state_dir: &std::path::Path) -> Vec<Stri
 
 pub fn update_settings(
     current: &Settings,
-    values: Values,
+    mut values: Values,
 ) -> std::result::Result<Settings, BTreeMap<String, String>> {
+    // A picker change clears its descendants; a complete import can supply them together.
+    for (key, previous, descendants) in [
+        (
+            "carBrand",
+            &current.car_brand,
+            &[
+                "carBrandText",
+                "carModel",
+                "carModelText",
+                "carYear",
+                "carYearText",
+            ][..],
+        ),
+        (
+            "carModel",
+            &current.car_model,
+            &["carModelText", "carYear", "carYearText"][..],
+        ),
+        ("carYear", &current.car_year, &["carYearText"][..]),
+    ] {
+        if values
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|v| v != previous)
+        {
+            for key in descendants {
+                values.entry((*key).to_owned()).or_insert_with(|| "".into());
+            }
+        }
+    }
     let mut merged = serde_json::to_value(current).unwrap();
     let mut errors = BTreeMap::new();
     for (k, mut v) in values {
@@ -2688,6 +2790,12 @@ pub fn update_settings(
             "teslaBrowser".into(),
             "error.invalid".into(),
         )]));
+    }
+    if merged["physicalWidthEnabled"] == true
+        && !current.physical_width_enabled
+        && merged["physicalWidthOverrideMm"] == 0
+    {
+        merged["physicalWidthOverrideMm"] = serde_json::json!(200);
     }
     match serde_json::from_value::<Settings>(merged)
         .map_err(std::io::Error::other)
@@ -3134,6 +3242,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .collect(),
             receivers: None,
             receiver_history: None,
+            screen_data: Some(self.input.display.lock().unwrap().admin_status()),
             bluetooth_guard: crate::bluetooth_guard::read(&options.bluetooth_guard_status),
             bluetooth_secure_connections: self.secure_connections.enabled(),
             platform: "linux".into(),
@@ -3465,7 +3574,11 @@ impl RelayAdmin for LinuxRelayAdmin {
                     // Read when the controller builds the AirPlay receiver for the iPhone.
                     || next.car_bluetooth_audio != current.car_bluetooth_audio
                     || next.carlink_picture_default!=current.carlink_picture_default
-                    || next.carlink_picture_size!=current.carlink_picture_size;
+                    || next.carlink_picture_size!=current.carlink_picture_size || next.developer_active != current.developer_active
+                    || next.display_mode != current.display_mode || next.display_width != current.display_width
+                    || next.display_height != current.display_height || next.display_density != current.display_density
+                    || next.physical_width_enabled != current.physical_width_enabled
+                    || next.physical_width_override_mm != current.physical_width_override_mm;
                 let network = if network_update {
                     let ssid = self
                         .provision
@@ -3584,11 +3697,21 @@ impl RelayAdmin for LinuxRelayAdmin {
             "restart" => self.defer(Operation::Restart),
             "forget-wifi" => self.defer(Operation::Forget),
             "forget-carlink" => self.defer(Operation::ForgetCarlink),
-            "clear-saved-head-unit" => {
-                if self.input.session_active() {
-                    return Err("error.sessionActive".into());
+            "clear-saved-head-unit" => self.defer(Operation::ClearSavedHeadUnit),
+            "clear-window-records" => self
+                .input
+                .display
+                .lock()
+                .unwrap()
+                .clear_records()
+                .map_err(|_| "error.request".into()),
+            // The child generates a new random browser code on each output start.
+            "regenerate-pairing-code" => {
+                let settings = self.settings.lock().unwrap();
+                if !settings.require_pairing_code || settings.output == "carlink" {
+                    return Err("error.action".into());
                 }
-                self.defer(Operation::ClearSavedHeadUnit)
+                self.defer(Operation::RegeneratePairingCode)
             }
             "public-name-renew" => {
                 self.public_name.renew();
@@ -3694,6 +3817,13 @@ impl RelayAdmin for LinuxRelayAdmin {
     }
     fn receivers(&self) -> Vec<serde_json::Value> {
         self.receivers.snapshot(std::time::Instant::now())
+    }
+    fn show_view_area(&self, index: usize) -> AdminResult {
+        if self.input.show_view_area(index) {
+            Ok(())
+        } else {
+            Err("error.viewArea".into())
+        }
     }
     fn receiver_history(&self) -> serde_json::Value {
         self.receivers.history()
@@ -4828,7 +4958,123 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn clear_saved_head_unit_removes_records_and_rejects_active_sessions() {
+    fn changing_car_levels_clears_descendants_but_complete_imports_keep_year_text() {
+        let current = Settings {
+            car_brand: "xpeng".into(),
+            car_model: "g6".into(),
+            car_year: "other".into(),
+            car_year_text: "2027".into(),
+            ..Default::default()
+        };
+        let next = update_settings(
+            &current,
+            serde_json::json!({"carModel":"p7"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            (&*next.car_model, &*next.car_year, &*next.car_year_text),
+            ("p7", "", "")
+        );
+        let same = update_settings(
+            &current,
+            serde_json::json!({"carModel":"g6"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(same.car_year_text, "2027");
+        let brand = update_settings(
+            &current,
+            serde_json::json!({"carBrand":"zeekr"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!((&*brand.car_model, &*brand.car_year_text), ("", ""));
+        let imported=update_settings(&current,serde_json::json!({"carBrand":"zeekr","carModel":"001","carYear":"other","carYearText":"2028"}).as_object().unwrap().clone()).unwrap();
+        assert_eq!(imported.car_year_text, "2028");
+        let calibration = update_settings(
+            &Settings::default(),
+            serde_json::json!({"physicalWidthEnabled":true})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(calibration.physical_width_override_mm, 200);
+    }
+    #[test]
+    fn screen_actions_route_with_auth_and_code_regeneration_restarts_outputs() {
+        let (a, dir) = fake();
+        let mut auth = AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap();
+        let token = auth
+            .login("127.0.0.1".parse().unwrap(), "openxplay", 100)
+            .ok()
+            .unwrap();
+        let server = AdminServer::new(
+            a.clone(),
+            auth,
+            AdminServerConfig::new(dir.clone(), dir.clone(), vec![]),
+        );
+        let mut request = Request {
+            method: "POST".into(),
+            path: "/api/v0/actions/clear-saved-head-unit".into(),
+            headers: BTreeMap::from([
+                ("content-type".into(), "application/json".into()),
+                ("x-openxplay-admin".into(), "1".into()),
+            ]),
+            body: b"{}".to_vec(),
+            peer: "127.0.0.1".parse().unwrap(),
+        };
+        assert_eq!(server.route(&request, 100).status, 401);
+        request
+            .headers
+            .insert("cookie".into(), format!("oxp_admin={token}"));
+        assert_eq!(server.route(&request, 100).status, 200);
+        a.response_sent();
+        let rx = a.operation_rx.lock().unwrap().take().unwrap();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Operation::ClearSavedHeadUnit
+        ));
+        a.response_failed();
+        request.path = "/api/v0/actions/clear-window-records".into();
+        assert_eq!(server.route(&request, 100).status, 200);
+        request.path = "/api/v0/view-area".into();
+        for body in [
+            r#"{"index":-1}"#,
+            r#"{"index":7}"#,
+            r#"{"index":1.5}"#,
+            r#"{"index":"0"}"#,
+            r#"{}"#,
+        ] {
+            request.body = body.as_bytes().to_vec();
+            assert_eq!(server.route(&request, 100).status, 422);
+        }
+        request.body = br#"{"index":0}"#.to_vec();
+        assert_eq!(server.route(&request, 100).status, 409);
+        assert_eq!(a.input.display.lock().unwrap().area_switches.len(), 1);
+        request.path = "/api/v0/actions/regenerate-pairing-code".into();
+        request.body = b"{}".to_vec();
+        assert_eq!(server.route(&request, 100).status, 409);
+        a.settings.lock().unwrap().require_pairing_code = true;
+        assert_eq!(server.route(&request, 100).status, 200);
+        a.response_sent();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Operation::RegeneratePairingCode
+        ));
+        a.response_failed();
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn clear_saved_head_unit_preserves_records_during_active_sessions() {
         let (a, dir) = fake();
         {
             let mut d = a.input.display.lock().unwrap();
@@ -4861,11 +5107,6 @@ mod tests {
             d.persist().unwrap();
         }
         a.input.state.lock().unwrap().current = Some(1);
-        assert_eq!(
-            a.action("clear-saved-head-unit"),
-            Err("error.sessionActive".into())
-        );
-        a.input.state.lock().unwrap().current = None;
         a.action("clear-saved-head-unit").unwrap();
         assert!(a.input.display.lock().unwrap().saved.head_unit.is_some());
         let rx = a.operation_rx.lock().unwrap().take().unwrap();
@@ -4873,7 +5114,8 @@ mod tests {
         a.operation(rx.try_recv().unwrap()).unwrap();
         let saved = crate::display::DisplayState::load(&dir.join("display.json"));
         assert!(saved.head_unit.is_none());
-        assert!(saved.records.is_empty());
+        assert_eq!(saved.records.len(), 1);
+        assert_eq!(a.input.state.lock().unwrap().current, Some(1));
         assert_eq!(saved.max_macroblocks, None);
         assert_eq!(saved.canvas, crate::display::DisplayState::default().canvas);
         a.shutdown();

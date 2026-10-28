@@ -761,10 +761,210 @@
             }
           ],
           "type": "choice"
+        },
+        {
+          "key": "carYearText",
+          "labelKey": "field.carYearText",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "other"
+            ],
+            "key": "carYear"
+          }
         }
       ],
       "id": "car",
       "titleKey": "section.car"
+    },
+    {
+      "fields": [
+        {
+          "key": "developerActive",
+          "labelKey": "field.developerActive",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.displayMode",
+          "key": "displayMode",
+          "labelKey": "field.displayMode",
+          "options": [
+            {
+              "labelKey": "option.displayMode.automatic",
+              "value": "automatic"
+            },
+            {
+              "labelKey": "option.displayMode.fixed",
+              "value": "fixed"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "displayWidth",
+          "labelKey": "field.displayWidth",
+          "max": 3840.0,
+          "min": 320.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "key": "displayHeight",
+          "labelKey": "field.displayHeight",
+          "max": 2160.0,
+          "min": 240.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "key": "displayDensity",
+          "labelKey": "field.displayDensity",
+          "max": 640.0,
+          "min": 120.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "hintKey": "hint.physicalWidth",
+          "key": "physicalWidthEnabled",
+          "labelKey": "field.physicalWidthEnabled",
+          "type": "bool"
+        },
+        {
+          "key": "physicalWidthOverrideMm",
+          "labelKey": "field.physicalWidthOverrideMm",
+          "options": [
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "100 mm",
+                "zh-CN": "100 mm"
+              },
+              "value": 100
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "125 mm",
+                "zh-CN": "125 mm"
+              },
+              "value": 125
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "150 mm",
+                "zh-CN": "150 mm"
+              },
+              "value": 150
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "175 mm",
+                "zh-CN": "175 mm"
+              },
+              "value": 175
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "200 mm",
+                "zh-CN": "200 mm"
+              },
+              "value": 200
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "225 mm",
+                "zh-CN": "225 mm"
+              },
+              "value": 225
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "250 mm",
+                "zh-CN": "250 mm"
+              },
+              "value": 250
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "275 mm",
+                "zh-CN": "275 mm"
+              },
+              "value": 275
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "300 mm",
+                "zh-CN": "300 mm"
+              },
+              "value": 300
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "325 mm",
+                "zh-CN": "325 mm"
+              },
+              "value": 325
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "350 mm",
+                "zh-CN": "350 mm"
+              },
+              "value": 350
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "375 mm",
+                "zh-CN": "375 mm"
+              },
+              "value": 375
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "400 mm",
+                "zh-CN": "400 mm"
+              },
+              "value": 400
+            }
+          ],
+          "type": "choice",
+          "visibleWhen": {
+            "equals": [
+              true
+            ],
+            "key": "physicalWidthEnabled"
+          }
+        }
+      ],
+      "id": "display",
+      "titleKey": "section.display"
     },
     {
       "fields": [
@@ -952,6 +1152,7 @@
     "carModelText": "",
     "carPlayViewAreas": true,
     "carYear": "g6-2023",
+    "carYearText": "",
     "carlinkAddress": null,
     "carlinkAutoReconnect": true,
     "carlinkHeadUnit": "192.168.43.1",
@@ -967,7 +1168,12 @@
     "carlinkPictureTry": null,
     "carlinkReconnectOnResize": false,
     "carlinkTrace": "off",
+    "developerActive": true,
     "devicePreset": "auto",
+    "displayDensity": 160,
+    "displayHeight": 720,
+    "displayMode": "automatic",
+    "displayWidth": 1280,
     "experimentalActive": true,
     "experimentalBluetoothAddress": "",
     "experimentalSendBluetoothAddress": false,
@@ -980,6 +1186,8 @@
       "mode": "auto"
     },
     "output": "both",
+    "physicalWidthEnabled": false,
+    "physicalWidthOverrideMm": 0,
     "plugins": false,
     "pluginsEnabled": [],
     "privacyConfigAvailable": false,

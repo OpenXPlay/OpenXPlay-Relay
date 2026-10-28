@@ -370,6 +370,12 @@ impl AdminServer {
                 }
                 _ => Response::error(422, "error.invalid"),
             },
+            ("POST", "/view-area") => {
+                match body.get("index").and_then(Value::as_u64).filter(|i| *i < 7) {
+                    Some(index) => result(self.admin.show_view_area(index as usize)),
+                    None => Response::error(422, "error.invalid"),
+                }
+            }
             ("POST", path) if path.starts_with("/actions/") => {
                 let name = &path[9..];
                 if ![
@@ -378,6 +384,8 @@ impl AdminServer {
                     "cancel-arrival",
                     "restart",
                     "regenerate-pairing-code",
+                    "clear-saved-head-unit",
+                    "clear-window-records",
                     "forget-wifi",
                     "forget-carlink",
                     "pair-iphone",

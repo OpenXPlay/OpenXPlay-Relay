@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-27
 
 import { stepInfo, sectionView, type ConnectionPath, type StepText, type StepAction, type StepId, type StepState } from './model';
-export interface StageFlags { countdown?: boolean; busy?: boolean; displayChanged?: boolean; carIncomplete?: boolean; setupCompleted?: boolean; overlay?: boolean }
+export interface StageFlags { countdown?: boolean; busy?: boolean; displayChanged?: boolean; carIncomplete?: boolean; trustedHttpsRecommended?: boolean; setupCompleted?: boolean; overlay?: boolean }
 export type StageAction = { type: 'Connect' | 'Stop' | 'NotNow' } | { type: 'Step'; action: StepAction; step: StepId; label: string | null };
 export type Supporting = { type: 'LiveTimer'; sinceMillis: number | null } | { type: 'Elapsed'; sinceMillis: number } | { type: 'Evidence'; text: StepText; copy: boolean } | { type: 'Explanation'; res: string };
 export function focusForPage(path: ConnectionPath) {
@@ -22,7 +22,7 @@ export function presentStage(path: ConnectionPath, flags: StageFlags = {}) {
   const countdown = !path.running && !!flags.countdown && path.canStart;
   const connect: StageAction = { type: 'Connect' }, stop: StageAction = { type: 'Stop' };
   const [primary, secondary]: [StageAction | null, StageAction | null] = countdown ? [connect, { type: 'NotNow' }] : !path.running && focus && ['ACTION', 'FAILED'].includes(focus.state) && fix ? [fix, path.canStart ? connect : null] : !path.running && path.canStart ? [connect, null] : !path.running ? [null, null] : live ? [null, stop] : [fix, stop];
-  const notice = path.running && flags.displayChanged ? 'DISPLAY_CHANGED' : flags.carIncomplete ? 'CHOOSE_CAR' : flags.setupCompleted === false && !path.running ? 'SET_UP' : null;
+  const notice = path.running && flags.displayChanged ? 'DISPLAY_CHANGED' : flags.carIncomplete ? 'CHOOSE_CAR' : flags.trustedHttpsRecommended ? 'TRUSTED_HTTPS' : flags.setupCompleted === false && !path.running ? 'SET_UP' : null;
   const failure = focus?.state === 'FAILED' && focus.code != null ? focus : null;
   return { nodes, headline, supporting, failure: failure?.code ?? null, primary, secondary, notice, segments: path.sections.map(s => ({ section: s.section, ...link(sectionView(s.section, s.steps)) })), failureSinceMillis: failure?.sinceMillis ?? null, primaryEnabled: !flags.busy, countdown, headlineDeadlineMillis: live ? null : focus?.carWaitUntilMillis ?? null };
 }

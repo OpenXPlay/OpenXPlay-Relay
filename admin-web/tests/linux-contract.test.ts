@@ -48,7 +48,8 @@ it('matches Android menu summaries and hides unavailable or empty pages', () => 
   expect(menuSummary(linuxSettings, status, 'settings/picture', 'en', t)).toBe('Automatic · 200 mm · Automatic · Auto · 60 fps');
   const android = { ...status, platform: 'android' as const, adminFeatures: undefined };
   for (const route of ['settings/logs', 'settings/config-files', 'settings/experimental']) expect(pageAvailable(mockSettings(), android, route)).toBe(false);
-  expect(pageAvailable(linuxSettings, status, 'settings/developer/video')).toBe(false);
+  expect(pageAvailable(linuxSettings, status, 'settings/developer/video')).toBe(true);
+  expect(pageAvailable({ ...linuxSettings, schema: [] }, status, 'settings/developer/video')).toBe(false);
 });
 
 it('retains the backend arrival, armed and frozen failure contracts for the startup UI', () => {

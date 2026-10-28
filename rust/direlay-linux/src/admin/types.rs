@@ -46,6 +46,9 @@ pub struct AdminStatus {
     /// Bounded screen information and fullscreen exits retained after live clients expire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_history: Option<Value>,
+    /// Numeric car-screen observations and the session-frozen view-area declarations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_data: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bluetooth_guard: Option<AdminBluetoothGuard>,
     /// Bluetooth Secure Connections as the relay last switched it (off only while pairing);
@@ -556,6 +559,9 @@ pub trait RelayAdmin: Send + Sync + 'static {
     /// Latest receiver-info and recent stats per browser, as `[{client, idleSeconds, info, stats}]`.
     fn receivers(&self) -> Vec<Value> {
         Vec::new()
+    }
+    fn show_view_area(&self, _index: usize) -> AdminResult {
+        Err("error.action".into())
     }
     fn receiver_history(&self) -> Value {
         serde_json::json!({"screens":[],"fullscreenExits":[]})

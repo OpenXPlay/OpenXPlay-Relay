@@ -130,8 +130,12 @@ fn admin_contract_status(state: &str) {
             facts.tesla.activation = Some(crate::tesla_address::Activation::Ready);
             if state == "tesla-ready" {
                 facts.tesla.url = Some("https://169.254.88.1:8443/".into());
-                status.receiver_urls.insert(0, facts.tesla.url.clone().unwrap());
-            } else { facts.tesla.failure = Some("NetworkManager could not add the address".into()); }
+                status
+                    .receiver_urls
+                    .insert(0, facts.tesla.url.clone().unwrap());
+            } else {
+                facts.tesla.failure = Some("NetworkManager could not add the address".into());
+            }
         }
         "iphone-failure" => {
             status.running = true;
@@ -182,12 +186,45 @@ fn admin_contract_status(state: &str) {
         facts.picture_on_car = true;
         facts.chips = vec!["1920×720".into(), "60 fps".into(), "H.265".into()];
     }
+    if state == "live-browser" {
+        let mut d = admin.input.display.lock().unwrap();
+        d.connected = true;
+        d.observe(
+            crate::display::HeadUnit {
+                screen: crate::display::Screen {
+                    width: 2401,
+                    height: 1201,
+                    density_dpi: 280,
+                },
+                viewport: Some(Size {
+                    width: 1533,
+                    height: 1014,
+                }),
+                fullscreen: Some(true),
+                fullscreen_preferred: Some(true),
+            },
+            None,
+            now - 1000,
+        );
+        d.freeze();
+        status.screen_data = Some(d.admin_status());
+    }
     status.output = settings.output.clone();
     crate::path_input::update(&facts, &settings, &mut status, now, true, true);
     let p = &status.path_input;
     if state.starts_with("tesla-") {
-        assert!(p["setup"]["outputs"].as_array().unwrap().contains(&serde_json::json!("TESLA")));
-        assert_eq!(p["car"]["tesla"]["phase"], if state == "tesla-ready" {"READY"} else {"FAILED"});
+        assert!(p["setup"]["outputs"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("TESLA")));
+        assert_eq!(
+            p["car"]["tesla"]["phase"],
+            if state == "tesla-ready" {
+                "READY"
+            } else {
+                "FAILED"
+            }
+        );
         assert_eq!(p["car"]["tesla"]["activation"], "READY");
     }
     assert_eq!(p["platform"], "linux");

@@ -104,6 +104,7 @@ pub fn export_user(settings: &Settings, display: &Value, now: u64) -> Result<Val
         ("carModel", "model"),
         ("carModelText", "modelText"),
         ("carYear", "year"),
+        ("carYearText", "yearText"),
     ]
     .into_iter()
     .filter_map(|(linux, android)| values.get(linux).cloned().map(|v| (android.into(), v)))
@@ -259,6 +260,7 @@ fn restart_key(key: &str) -> bool {
             | "carModel"
             | "carModelText"
             | "carYear"
+            | "carYearText"
             | "experimentalActive"
             | "experimentalBluetoothAddress"
             | "experimentalSendBluetoothAddress"
@@ -314,6 +316,7 @@ fn import_key(
                     ("car", "model") => "carModel",
                     ("car", "modelText") => "carModelText",
                     ("car", "year") => "carYear",
+                    ("car", "yearText") => "carYearText",
                     ("experimental", "active") => "experimentalActive",
                     ("experimental", "bluetoothAddress") => "experimentalBluetoothAddress",
                     ("experimental", "sendBluetoothAddress") => "experimentalSendBluetoothAddress",
@@ -479,6 +482,16 @@ mod tests {
                 assert_eq!(&output["settings"][key], value);
             }
         }
+    }
+    #[test]
+    fn custom_car_year_round_trips_android_envelope() {
+        let file = json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{"car":{"brand":"zeekr","model":"001","year":"other","yearText":"2027"}}});
+        let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+        assert!(p.report.ignored.is_empty());
+        let next = crate::relay_admin::update_settings(&Settings::default(), p.values).unwrap();
+        assert_eq!(next.car_year_text, "2027");
+        let exported = export_user(&next, &json!({}), 1).unwrap();
+        assert_eq!(exported["settings"]["car"]["yearText"], "2027");
     }
     #[test]
     fn linux_round_trip_has_no_identity_or_remote_secrets() {

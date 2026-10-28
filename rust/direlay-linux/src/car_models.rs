@@ -15,6 +15,8 @@ pub struct CarSelection {
     pub model: String,
     pub model_text: String,
     pub year: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub year_text: String,
 }
 #[derive(Deserialize)]
 pub struct CarModels {
@@ -143,7 +145,17 @@ impl CarSelection {
         if c.model == "other" {
             c.model_text = clean(&self.model_text);
         }
+        if c.year == "other" {
+            c.year_text = clean(&self.year_text);
+        }
         c
+    }
+    pub fn complete(&self) -> bool {
+        let c = self.normalized();
+        !c.brand.is_empty()
+            && !c.model.is_empty()
+            && (c.brand != "other" || !c.brand_text.is_empty())
+            && (c.model != "other" || !c.model_text.is_empty())
     }
     pub fn key(&self) -> String {
         let c = self.normalized();
@@ -154,20 +166,25 @@ impl CarSelection {
         }
     }
     pub fn built_in(&self) -> Option<(HeadUnit, Vec<Record>)> {
-        let data = CarModels::embedded().year(self)?.screens.first()?;
-        let records = [(true, &data.fullscreen), (false, &data.windowed)]
-            .into_iter()
-            .flat_map(|(fullscreen, rows)| {
-                rows.iter().map(move |r| Record {
-                    screen: data.screen,
-                    size: Size {
-                        width: r.width,
-                        height: r.height,
-                    },
-                    fullscreen,
-                    count: r.count,
-                    last_seen: 0,
-                })
+        let screens = &CarModels::embedded().year(self)?.screens;
+        let data = screens.first()?;
+        let records = screens
+            .iter()
+            .flat_map(|data| {
+                [(true, &data.fullscreen), (false, &data.windowed)]
+                    .into_iter()
+                    .flat_map(move |(fullscreen, rows)| {
+                        rows.iter().map(move |r| Record {
+                            screen: data.screen,
+                            size: Size {
+                                width: r.width,
+                                height: r.height,
+                            },
+                            fullscreen,
+                            count: r.count,
+                            last_seen: 0,
+                        })
+                    })
             })
             .collect();
         Some((
@@ -185,6 +202,47 @@ impl CarSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn custom_year_is_optional_sanitized_and_scopes_car_memory() {
+        let base = CarSelection {
+            brand: "zeekr".into(),
+            model: "001".into(),
+            ..Default::default()
+        };
+        assert!(base.complete());
+        let other = CarSelection {
+            year: "other".into(),
+            year_text: " 2027\n ".into(),
+            ..base.clone()
+        }
+        .normalized();
+        assert_eq!(other.year_text, "2027");
+        assert!(other.complete());
+        assert_ne!(base.key(), other.key());
+        assert_eq!(
+            CarSelection {
+                year: "001-2021".into(),
+                ..other
+            }
+            .normalized()
+            .year_text,
+            ""
+        );
+        assert!(!CarSelection {
+            brand: "other".into(),
+            ..Default::default()
+        }
+        .complete());
+        assert!(CarSelection {
+            brand: "other".into(),
+            brand_text: "A".into(),
+            model_text: "B".into(),
+            ..Default::default()
+        }
+        .complete());
+        // An empty custom-year field must not invalidate existing per-car display keys.
+        assert!(!base.key().contains("yearText"));
+    }
     #[test]
     fn embedded_asset_format_names_and_fallback() {
         let data = CarModels::parse(ASSET).unwrap();
