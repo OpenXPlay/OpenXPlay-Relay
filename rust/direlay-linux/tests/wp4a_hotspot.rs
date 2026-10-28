@@ -21,6 +21,7 @@ struct Fake {
     /// What NetworkManager reports for the Wi-Fi device's state, one answer per query; `None`
     /// when it does not list the device yet.
     device_states: Mutex<Vec<Option<&'static str>>>,
+    addresses: Mutex<Option<String>>,
 }
 impl CommandRunner for Fake {
     fn run(&self, a: &[String], timeout: Duration) -> openxplay_relay::Result<CommandResult> {
@@ -113,7 +114,11 @@ impl CommandRunner for Fake {
                 }
             )
         } else if a.iter().any(|s| s == "IP4.ADDRESS") {
-            include_str!("fixtures/nmcli-ipv4.txt").into()
+            self.addresses
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| include_str!("fixtures/nmcli-ipv4.txt").into())
         } else if a.iter().any(|s| s == "IN-USE,CHAN,BSSID") {
             include_str!("fixtures/nmcli-wifi.txt").into()
         } else {
@@ -138,6 +143,71 @@ fn manager(p: &std::path::Path, runner: Arc<Fake>) -> LinuxHotspot {
         p.join("nm-keyfiles"),
         openxplay_relay::public_name::local_dns::Paths::in_dir(p.join("dnsmasq-shared.d")),
     )
+}
+#[test]
+fn tesla_host_addresses_never_replace_the_ap_network() {
+    let p = temp();
+    let runner = Arc::new(Fake::default());
+    *runner.addresses.lock().unwrap() = Some("3.3.3.1/32\n10.42.0.1/24".into());
+    let h = manager(&p, runner.clone());
+    assert_eq!(
+        h.start(Duration::from_secs(60)).unwrap().host_address,
+        Some("10.42.0.1".parse().unwrap())
+    );
+    for addresses in [
+        "3.3.3.1/32\n10.42.0.1/24",
+        "10.42.0.1/24\n169.254.88.1/32",
+        "IP4.ADDRESS[1]: 169.254.88.1/32\nIP4.ADDRESS[2]: 10.42.0.1/24",
+        "10.42.0.1/24",
+    ] {
+        *runner.addresses.lock().unwrap() = Some(addresses.into());
+        h.validate_ready().unwrap();
+    }
+    for addresses in [
+        "3.3.3.1/32\n10.42.1.1/24",
+        "10.42.0.1/16\n3.3.3.1/32",
+        "3.3.3.1/32",
+    ] {
+        *runner.addresses.lock().unwrap() = Some(addresses.into());
+        assert_eq!(
+            h.validate_ready().unwrap_err().to_string(),
+            "Hotspot address changed"
+        );
+    }
+    h.close().unwrap();
+    std::fs::remove_dir_all(p).unwrap();
+}
+#[test]
+fn nmcli_pipe_separated_tesla_addresses_keep_the_ap_ready() {
+    for (ap, tesla) in [("10.79.0.1", "10.99.99.1"), ("10.77.0.1", "3.3.3.1")] {
+        let p = temp();
+        let runner = Arc::new(Fake::default());
+        *runner.addresses.lock().unwrap() = Some(format!("{tesla}/32 | {ap}/24"));
+        let h = manager(&p, runner.clone());
+        assert_eq!(
+            h.start(Duration::from_secs(60)).unwrap().host_address,
+            Some(ap.parse().unwrap())
+        );
+        for addresses in [
+            format!("{tesla}/32 | {ap}/24"),
+            format!("{ap}/24 | {tesla}/32"),
+            format!("{tesla}/32\n{ap}/24"),
+            format!("{ap}/24\n{tesla}/32"),
+            format!("{ap}/24"),
+        ] {
+            *runner.addresses.lock().unwrap() = Some(addresses);
+            h.validate_ready().unwrap();
+        }
+        for addresses in [format!("{tesla}/32 | {ap}/16"), format!("{tesla}/32")] {
+            *runner.addresses.lock().unwrap() = Some(addresses);
+            assert_eq!(
+                h.validate_ready().unwrap_err().to_string(),
+                "Hotspot address changed"
+            );
+        }
+        h.close().unwrap();
+        std::fs::remove_dir_all(p).unwrap();
+    }
 }
 #[test]
 fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_ap() {

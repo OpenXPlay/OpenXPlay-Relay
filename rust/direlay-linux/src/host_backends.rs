@@ -160,7 +160,10 @@ impl SecureConnectionsControl for BtmgmtControl {
 pub trait BluetoothBackend: SecureConnectionsControl {
     /// A controller attempt owns its service registration independently of the admin shell.
     fn session(&self) -> Arc<dyn BluetoothBackend>;
+    /// Readiness only: never acquires a profile registration.
     fn check_radio(&self) -> Result<()>;
+    /// Controller-only profile lease; released when the session backend is dropped.
+    fn register_profiles(&self) -> Result<()>;
     fn devices(&self) -> Result<Vec<BondedDevice>>;
     fn select(&self, configured: Option<&str>) -> Result<BondedDevice>;
     fn local_address(&self) -> Result<String>;
@@ -322,12 +325,15 @@ impl StationFactory for NetworkManagerBackend {
             .ok_or_else(|| std::io::Error::other("No saved Wi-Fi is connected or in range"))?;
         Ok((
             network.ssid.clone(),
-            Arc::new(linux_hotspot::ExistingWifiManager::new(
-                self.runner.clone(),
-                interface.into(),
-                network.ssid.clone(),
-                network.password.clone(),
-            )),
+            Arc::new(
+                linux_hotspot::ExistingWifiManager::new(
+                    self.runner.clone(),
+                    interface.into(),
+                    network.ssid.clone(),
+                    network.password.clone(),
+                )
+                .with_addresses(self.paths.network_address_source()),
+            ),
         ))
     }
 }
@@ -409,6 +415,9 @@ impl BluetoothBackend for BluezBackend {
     }
     fn check_radio(&self) -> Result<()> {
         self.bluetooth.check_radio()
+    }
+    fn register_profiles(&self) -> Result<()> {
+        self.bluetooth.register_profiles()
     }
     fn devices(&self) -> Result<Vec<BondedDevice>> {
         self.bluetooth.devices()

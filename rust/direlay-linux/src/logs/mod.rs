@@ -4,11 +4,15 @@
 
 //! Private, short-lived journal exports and explicit, single-attempt uploads.
 pub(crate) mod http;
+pub mod jobs;
+pub mod journal;
 pub mod redactor;
+pub mod timeline;
+mod traces;
 pub mod upload;
 mod zip;
 
-use crate::public_name::http::Http;
+use self::http::Http;
 use redactor::Redactor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,6 +54,10 @@ pub struct Export {
     pub bytes: u64,
     pub sha256: String,
     pub created_millis: u64,
+    pub first_millis: Option<u64>,
+    pub last_millis: Option<u64>,
+    pub empty: bool,
+    pub truncated: bool,
 }
 pub struct Download {
     pub file: File,
@@ -161,10 +169,14 @@ pub struct Service {
     journal: Arc<dyn Journal>,
     http: Arc<dyn Http>,
     gate: Mutex<()>,
+    jobs: Mutex<std::collections::VecDeque<Arc<jobs::Transfer>>>,
     cleanup: Arc<(Mutex<bool>, Condvar)>,
 }
 impl Drop for Service {
     fn drop(&mut self) {
+        for job in self.jobs.lock().unwrap().iter() {
+            job.cancel();
+        }
         let mut closed = self.cleanup.0.lock().unwrap();
         *closed = true;
         self.cleanup.1.notify_all();
@@ -205,6 +217,7 @@ impl Service {
             journal,
             http,
             gate: Mutex::new(()),
+            jobs: Mutex::default(),
             cleanup,
         }
     }
@@ -235,24 +248,57 @@ impl Service {
         }
         redactor.reset_stream();
         let mut log = redact_lines(&mut redactor, &journal_text);
-        if journal.truncated {
+        let log_limited = cap_lines(&mut log, 32 * 1024 * 1024);
+        if journal.truncated || log_limited {
             log.push_str("[Journal output limited to 32 MiB; later lines omitted]\n");
         }
+        let since = now.saturating_sub(range.seconds() * 1000);
         let mut timeline_text = journal_timeline(&log);
         if !timeline.is_empty() {
-            timeline_text.push_str(&redact_lines(&mut redactor, timeline));
+            let selected = timeline
+                .lines()
+                .filter(|line| {
+                    line.split_whitespace()
+                        .next()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .is_some_and(|at| at >= since && at <= now)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            timeline_text.push_str(&redact_lines(&mut redactor, &selected));
         }
-        let info = redact_lines(&mut redactor,&format!("OpenXPlay Linux {}\nExported: {now} ms since Unix epoch\nRange: {} seconds\n{info}\nPrivate values use install-scoped HMAC-SHA256 tokens; matching tokens identify matching values without revealing them.\n",env!("CARGO_PKG_VERSION"),range.seconds()));
-        let summary = latest_trace_summary(&self.state.join("carlink-trace"), &mut redactor)?;
-        let mut entries = vec![
-            ("relay.log", log.as_bytes()),
-            ("info.txt", info.as_bytes()),
-            ("timeline.txt", timeline_text.as_bytes()),
+        let timeline_limited = cap_lines(&mut timeline_text, 8 * 1024 * 1024);
+        let traces = traces::collect(
+            &self.state.join("carlink-trace"),
+            since,
+            now,
+            (48 * 1024 * 1024_usize).saturating_sub(log.len() + timeline_text.len() + 64 * 1024),
+            &mut redactor,
+        )?;
+        let times: Vec<_> = log.lines().filter_map(line_time).collect();
+        let first_millis = times.iter().copied().chain(traces.first).min();
+        let last_millis = times.iter().copied().chain(traces.last).max();
+        let empty = times.is_empty()
+            && traces.entries.is_empty()
+            && journal_text
+                .lines()
+                .all(|line| line.trim().is_empty() || line.starts_with("-- "));
+        let truncated = journal.truncated || log_limited || timeline_limited || traces.omitted > 0;
+        let info = redact_lines(&mut redactor, &format!("OpenXPlay Linux {}\nExported: {now} ms since Unix epoch\nSelected range: {since}..{now} ms\nFirst line: {first_millis:?}\nLast line: {last_millis:?}\nEmpty range: {empty}\nJournal limited: {}\nTrace segments omitted (legacy or size cap): {}\n{}\n{info}\nLogs are stored in this relay's system journal; its retention is controlled by the system. Private values are redacted on export. Network names and addresses are retained. Tokens are installation-scoped. Complete overlapping trace segments may extend beyond the selected range.\n", env!("CARGO_PKG_VERSION"), truncated, traces.omitted, build_details()));
+        let mut owned = vec![
+            ("relay.log".to_owned(), log.into_bytes()),
+            ("info.txt".into(), info.into_bytes()),
+            ("timeline.txt".into(), timeline_text.into_bytes()),
         ];
-        if let Some(summary) = &summary {
-            entries.push(("carlink-summary.txt", summary.as_bytes()));
-        }
+        owned.extend(traces.entries);
+        let entries: Vec<_> = owned
+            .iter()
+            .map(|(name, body)| (name.as_str(), body.as_slice()))
+            .collect();
         let zip = zip::archive(&entries, now / 1000)?;
+        if zip.len() > upload::MAX_FILE_BYTES {
+            return Err(io::Error::other("Archive exceeds 50 MiB"));
+        }
         let id = format!("{now}-{}", crate::admin::auth::random_hex(16)?);
         crate::platform::private_state_file(&dir.join(format!("{id}.zip")), &zip)?;
         prune(&dir, now, 2)?;
@@ -263,6 +309,10 @@ impl Service {
             bytes: zip.len() as u64,
             sha256: upload::sha256(&zip),
             created_millis: now,
+            first_millis,
+            last_millis,
+            empty,
+            truncated,
         })
     }
     pub fn download(&self, id: &str) -> io::Result<Download> {
@@ -290,31 +340,73 @@ impl Service {
             name: format!("openxplay-linux-logs-{time}.zip"),
         })
     }
-    pub fn upload(&self, id: &str) -> Result<upload::Receipt, upload::UploadError> {
+    pub fn upload(&self, id: &str) -> Result<jobs::Status, upload::UploadError> {
         let _gate = self.gate.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap();
+        if jobs.iter().any(|job| !job.worker_done()) {
+            return Err(upload::UploadError::Rejected);
+        }
         let download = self
             .open_export(id, now_millis())
             .map_err(|_| upload::UploadError::Rejected)?;
         if download.bytes > upload::MAX_FILE_BYTES as u64 {
             return Err(upload::UploadError::TooLarge);
         }
-        let mut bytes = Vec::new();
-        download
-            .file
-            .take(upload::MAX_FILE_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
+        let transfer = jobs::Transfer::new(
+            crate::admin::auth::random_hex(16).map_err(|_| upload::UploadError::Rejected)?,
+            id.into(),
+            download.bytes,
+        );
+        let job = transfer.clone();
+        let http = self.http.clone();
+        let state = self.state.clone();
+        std::thread::Builder::new()
+            .name("log-upload".into())
+            .spawn(move || {
+                let result = (|| {
+                    if job.cancelled() {
+                        return Err(upload::UploadError::Rejected);
+                    }
+                    let mut bytes = Vec::new();
+                    download
+                        .file
+                        .take(upload::MAX_FILE_BYTES as u64 + 1)
+                        .read_to_end(&mut bytes)
+                        .map_err(|_| upload::UploadError::Rejected)?;
+                    let identity =
+                        upload::user_id(&state).map_err(|_| upload::UploadError::Rejected)?;
+                    if job.cancelled() {
+                        return Err(upload::UploadError::Rejected);
+                    }
+                    upload::upload(
+                        &job,
+                        http.as_ref(),
+                        &bytes,
+                        &download.name,
+                        &identity,
+                        env!("CARGO_PKG_VERSION"),
+                    )
+                })();
+                if let Ok(receipt) = &result {
+                    let _ = upload::save(&state, receipt);
+                }
+                job.finish(result);
+            })
             .map_err(|_| upload::UploadError::Rejected)?;
-        let identity = upload::user_id(&self.state).map_err(|_| upload::UploadError::Rejected)?;
-        let receipt = upload::upload(
-            self.http.as_ref(),
-            &bytes,
-            &download.name,
-            &identity,
-            env!("CARGO_PKG_VERSION"),
-        )?;
-        // Like Android, a validated receipt is useful even if the state disk has filled up.
-        let _ = upload::save(&self.state, &receipt);
-        Ok(receipt)
+        let status = transfer.status();
+        if jobs.len() == 8 {
+            jobs.pop_front();
+        }
+        jobs.push_back(transfer);
+        Ok(status)
+    }
+    pub fn upload_status(&self, id: &str, cancel: bool) -> Option<jobs::Status> {
+        self.jobs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|job| job.status().id == id)
+            .map(|job| if cancel { job.cancel() } else { job.status() })
     }
     pub fn receipt(&self) -> io::Result<Option<upload::Receipt>> {
         upload::latest(&self.state, now_millis())
@@ -406,6 +498,17 @@ fn prune(dir: &Path, now: u64, keep: usize) -> io::Result<u64> {
     }
     Ok(next)
 }
+fn cap_lines(text: &mut String, limit: usize) -> bool {
+    if text.len() <= limit {
+        return false;
+    }
+    let end = text.as_bytes()[..limit]
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |n| n + 1);
+    text.truncate(end);
+    true
+}
 fn redact_lines(redactor: &mut Redactor, text: &str) -> String {
     let mut result = String::new();
     for line in text.lines() {
@@ -443,66 +546,50 @@ pub fn journal_timeline(redacted_journal: &str) -> String {
     }
     timeline
 }
-fn latest_trace_summary(dir: &Path, redactor: &mut Redactor) -> io::Result<Option<String>> {
-    let entries = crate::admin::server::trace_files::listing(dir)?;
-    let Some(entry) = entries.iter().rev().find(|v| v["kind"] == "trace") else {
-        return Ok(None);
-    };
-    let name = entry["name"].as_str().unwrap();
-    let mut file = crate::admin::server::trace_files::open(dir, name)?;
-    use std::io::{Seek, SeekFrom};
-    let length = crate::admin::server::trace_files::snapshot_length(&mut file, true)?;
-    let start = length.saturating_sub(256 * 1024);
-    file.seek(SeekFrom::Start(start))?;
-    let mut bytes = Vec::new();
-    file.take(length - start).read_to_end(&mut bytes)?;
-    let bytes = if start > 0 {
-        bytes.splitn(2, |b| *b == b'\n').nth(1).unwrap_or(&[])
+fn line_time(line: &str) -> Option<u64> {
+    let first = line.split_whitespace().next()?;
+    let normalized = if first.len() >= 5
+        && first.as_bytes()[first.len() - 5..]
+            .first()
+            .is_some_and(|b| matches!(b, b'+' | b'-'))
+        && first.as_bytes()[first.len() - 4..]
+            .iter()
+            .all(u8::is_ascii_digit)
+    {
+        format!(
+            "{}:{}",
+            &first[..first.len() - 2],
+            &first[first.len() - 2..]
+        )
     } else {
-        &bytes
+        first.to_owned()
     };
-    let mut summary = format!("Latest Carlink trace: {name}\nSummary of complete records in the last 256 KiB; payloads excluded.\n");
-    // An allowlist prevents traces' raw sensor/control payloads from entering exports.
-    for line in String::from_utf8_lossy(bytes).lines() {
-        if let Ok(Value::Object(value)) = serde_json::from_str::<Value>(line) {
-            let safe: serde_json::Map<String, Value> = value
-                .into_iter()
-                .filter(|(key, value)| {
-                    [
-                        "type",
-                        "event",
-                        "time",
-                        "timestamp",
-                        "atNanos",
-                        "session",
-                        "stage",
-                        "direction",
-                        "millis",
-                        "elapsed",
-                        "phase",
-                        "state",
-                        "code",
-                        "reason",
-                        "codec",
-                        "width",
-                        "height",
-                        "joinMethod",
-                        "model",
-                        "modelId",
-                        "duration",
-                    ]
-                    .contains(&key.as_str())
-                        && !value.is_object()
-                        && !value.is_array()
-                })
-                .collect();
-            if !safe.is_empty() {
-                summary.push_str(&redactor.redact(&Value::Object(safe).to_string()));
-                summary.push('\n');
-            }
-        }
-    }
-    Ok(Some(summary))
+    upload::rfc3339_millis(&normalized).or_else(|| {
+        serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|v| v["time"].as_str().and_then(upload::rfc3339_millis))
+    })
+}
+
+fn build_details() -> String {
+    let os = fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let os = os
+        .lines()
+        .filter(|line| {
+            ["PRETTY_NAME=", "VERSION_ID=", "ID="]
+                .iter()
+                .any(|key| line.starts_with(key))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let kernel = fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+    format!(
+        "OS: {}\nArchitecture: {}\nKernel: {}\n{os}\nBuild: {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        kernel.trim(),
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 #[cfg(test)]
@@ -532,11 +619,16 @@ mod tests {
         );
         crate::platform::private_state_file(
             &dir.join("carlink-trace/trace-00000001-0-00000001.jsonl"),
-            b"{\"type\":\"phase\",\"codec\":\"h264\",\"payload\":\"private-gps\"}\n",
+            format!("{{\"type\":\"phase\",\"atMillis\":{},\"codec\":\"h264\",\"service\":\"sensor\",\"payload\":\"private-gps\"}}\n", now_millis()).as_bytes(),
         )
         .unwrap();
         let export = service
-            .export(Range::TenMinutes, "model=Test", &[], "runtime stage=ready")
+            .export(
+                Range::TenMinutes,
+                "model=Test",
+                &[],
+                &format!("{} runtime stage=ready", now_millis()),
+            )
             .unwrap();
         let mut file = service.download(&export.id).unwrap().file;
         let mut bytes = Vec::new();
@@ -550,7 +642,7 @@ mod tests {
                 "relay.log",
                 "info.txt",
                 "timeline.txt",
-                "carlink-summary.txt"
+                "carlink-trace/trace-00000001-0-00000001.jsonl"
             ]
         );
         let text = entries
@@ -558,11 +650,13 @@ mod tests {
             .map(|(_, b)| String::from_utf8_lossy(b))
             .collect::<Vec<_>>()
             .join("\n");
-        for private in ["PrivateWifi", "topsecret", "8.8.8.8", "private-gps"] {
+        for private in ["topsecret", "private-gps"] {
             assert!(!text.contains(private));
         }
         assert!(text.contains("runtime stage=ready"));
         assert!(text.contains("h264"));
+        assert!(text.contains("PrivateWifi"));
+        assert!(text.contains("8.8.8.8"));
         let times = journal.0.lock().unwrap();
         assert_eq!(times[0].1 - times[0].0, 600);
         drop(times);
@@ -596,6 +690,18 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn coverage_accepts_journald_timezone_offsets_and_json_clock() {
+        assert_eq!(line_time("+中x"), None);
+        assert_eq!(
+            line_time("2026-10-27T12:00:00.123456+0800 host service: message"),
+            upload::rfc3339_millis("2026-10-27T04:00:00.123Z")
+        );
+        assert_eq!(
+            line_time(r#"{"time":"2026-10-27T12:00:00.123Z","event":"stage"}"#),
+            upload::rfc3339_millis("2026-10-27T12:00:00.123Z")
+        );
+    }
+    #[test]
     fn journal_command_caps_output_and_times_out() {
         let mut command = std::process::Command::new("sh");
         command.args(["-c", "printf 'one\ntwo\nthree\n'"]);
@@ -611,5 +717,116 @@ mod tests {
                 .kind(),
             io::ErrorKind::TimedOut
         );
+    }
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::*;
+    use crate::public_name::http::{Failure, Request, Response};
+    use std::sync::mpsc;
+    struct Empty;
+    impl Journal for Empty {
+        fn read(&self, _: u64, _: u64) -> io::Result<JournalSlice> {
+            Ok(JournalSlice {
+                bytes: b"-- No entries --\n".to_vec(),
+                truncated: false,
+            })
+        }
+    }
+    struct Controlled {
+        ready: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        receipt: Mutex<Value>,
+    }
+    impl Http for Controlled {
+        fn send(
+            &self,
+            _: Request,
+            transfer: &Arc<jobs::Transfer>,
+            _: std::ops::Range<usize>,
+        ) -> Result<Response, Failure> {
+            let total = transfer.status().total;
+            for (sent, awaiting) in [(0, false), (total, false), (total, true)] {
+                transfer.progress(sent, awaiting);
+                self.ready.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+            }
+            Ok(Response {
+                status: 201,
+                body: serde_json::to_vec(&*self.receipt.lock().unwrap()).unwrap(),
+                ..Default::default()
+            })
+        }
+    }
+    #[test]
+    fn background_job_keeps_zip_and_late_receipt_on_cancel_without_repeating_upload() {
+        let dir = std::env::temp_dir().join(format!(
+            "log-job-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let (ready, wait) = mpsc::channel();
+        let (next, release) = mpsc::channel();
+        let http = Arc::new(Controlled {
+            ready,
+            release: Mutex::new(release),
+            receipt: Mutex::new(Value::Null),
+        });
+        let service = Service::with_sources(dir.clone(), Arc::new(Empty), http.clone());
+        let export = service.export(Range::TenMinutes, "", &[], "").unwrap();
+        assert!(export.empty);
+        assert_eq!(export.first_millis, None);
+        assert_eq!(export.last_millis, None);
+        let identity = upload::user_id(&dir).unwrap();
+        *http.receipt.lock().unwrap() = serde_json::json!({"id":"a".repeat(32),"user_id":identity,"bytes":export.bytes,"sha256":export.sha256,
+            "tracking_url":format!("{}/r/{}",upload::ORIGIN,"a".repeat(32)), "qr_code_url":format!("{}/qr/{}.png",upload::ORIGIN,"a".repeat(32)),"expires_at":"2099-01-01T00:00:00Z"});
+        let job = service.upload(&export.id).unwrap();
+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            service.upload_status(&job.id, false).unwrap().phase,
+            "Sending"
+        );
+        assert!(service.upload(&export.id).is_err());
+        next.send(()).unwrap();
+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        let sending = service.upload_status(&job.id, false).unwrap();
+        assert_eq!(sending.sent, export.bytes);
+        assert!(sending.receipt.is_none());
+        assert_eq!(sending.state, "running");
+        next.send(()).unwrap();
+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            service.upload_status(&job.id, false).unwrap().phase,
+            "AwaitingReceipt"
+        );
+        assert_eq!(
+            service.upload_status(&job.id, true).unwrap().state,
+            "cancelled"
+        );
+        let retained = service.download(&export.id).unwrap();
+        assert_eq!(retained.bytes, export.bytes);
+        next.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while service
+            .upload_status(&job.id, false)
+            .unwrap()
+            .receipt
+            .is_none()
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(service.receipt().unwrap().is_some());
+        assert_eq!(
+            service.upload_status(&job.id, false).unwrap().state,
+            "cancelled"
+        );
+        assert!(service.upload_status("invalid", true).is_none());
+        drop(service);
+        fs::remove_dir_all(dir).unwrap();
     }
 }

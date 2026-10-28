@@ -8,6 +8,15 @@ use crate::{
 };
 use std::net::Ipv4Addr;
 
+/// Both outputs share the iPhone stream until a hardware encoder is available.
+pub fn carlink_hevc<'a>(settings: &'a crate::settings::Settings, video_codec: &str) -> &'a str {
+    if settings.output == "carlink" && video_codec != "h264" {
+        &settings.carlink_hevc
+    } else {
+        "off"
+    }
+}
+
 /// Pure assembly: callers supply the current host observations.
 pub fn supervisor_settings(
     o: &Options,
@@ -17,6 +26,12 @@ pub fn supervisor_settings(
     ble_adapter: Option<String>,
     station_5ghz: bool,
 ) -> SupervisorSettings {
+    let mut effective = o.clone();
+    effective.settings = o.settings.effective_developer();
+    let o = &effective;
+    if let Some(address) = crate::tesla_address::tls_address(&o.settings) {
+        addresses.push(address);
+    }
     addresses.push(Ipv4Addr::new(10, 78, 0, 1));
     if let Ok(a) = HotspotAddressPolicy::select_subnet(occupied) {
         addresses.push(a);
@@ -25,17 +40,13 @@ pub fn supervisor_settings(
         Some(CarlinkSettings {
             name: o.settings.carlink_name.clone(),
             trace: o.settings.carlink_trace == "on",
+            vehicle_data: o.settings.vehicle_information,
+            picture: o.settings.carlink_picture_default,
             model: o.settings.carlink_model.clone(),
-            // Linux has no H.265 encoder; both outputs share the iPhone stream.
-            hevc: if o.settings.carlink_hevc == "auto"
-                && o.settings.output == "carlink"
-                && crate::display::DisplayState::load(&o.state_dir.join("display.json")).video_codec
-                    != "h264"
-            {
-                "auto"
-            } else {
-                "off"
-            }
+            hevc: carlink_hevc(
+                &o.settings,
+                &crate::display::DisplayState::load(&o.state_dir.join("display.json")).video_codec,
+            )
             .into(),
             auto_reconnect: o.settings.carlink_auto_reconnect,
             ble: if o.settings.carlink_link == "ble" {
@@ -45,6 +56,9 @@ pub fn supervisor_settings(
                     address: o.settings.carlink_address.clone(),
                     id: pairing_id,
                     band: station_5ghz as u8,
+                    default_phone_mac: crate::carlink_policy::bluetooth_address(
+                        &o.settings.experimental_bluetooth_address,
+                    ),
                     phone_mac: (o.settings.experimental_active
                         && o.settings.experimental_send_bluetooth_address)
                         .then(|| {
@@ -98,6 +112,67 @@ pub fn supervisor_settings(
 mod tests {
     use super::*;
     #[test]
+    fn carlink_reconnect_captures_latest_address_without_changing_the_running_arguments() {
+        let dir = std::env::temp_dir().join(format!(
+            "w13-mac-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let mut o =
+            Options::parse(&["--state-dir".into(), dir.to_string_lossy().into_owned()]).unwrap();
+        o.settings.output = "both".into();
+        o.settings.experimental_bluetooth_address = "02:12:34:56:78:9a".into();
+        o.settings.save(&dir).unwrap();
+        let supervisor = supervisor_settings(&o, vec![], &[], "id".into(), None, false);
+        let first = supervisor.arguments();
+        assert!(first
+            .windows(2)
+            .any(|a| a[0] == "--clink-phone-mac" && a[1] == "02:12:34:56:78:9a"));
+        o.settings.experimental_active = false;
+        o.settings.save(&dir).unwrap();
+        assert!(!supervisor
+            .arguments()
+            .iter()
+            .any(|a| a == "--clink-phone-mac"));
+        assert!(first.iter().any(|a| a == "--clink-phone-mac"));
+        o.settings.experimental_active = true;
+        o.settings.experimental_bluetooth_address = "02:ab:cd:ef:12:34".into();
+        o.settings.save(&dir).unwrap();
+        assert!(supervisor
+            .arguments()
+            .windows(2)
+            .any(|a| a[0] == "--clink-phone-mac" && a[1] == "02:ab:cd:ef:12:34"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn tesla_direct_sans_are_prepared_before_the_address_is_established() {
+        use crate::tesla_address::Mode;
+        let dir = std::env::temp_dir().join(format!(
+            "tesla-sans-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let mut o =
+            Options::parse(&["--state-dir".into(), dir.to_string_lossy().into_owned()]).unwrap();
+        for mode in [
+            Mode::Off,
+            Mode::VirtualName,
+            Mode::PublicAddress,
+            Mode::Teslamirror,
+            Mode::TeslaAndroid,
+        ] {
+            o.settings.tesla_browser = mode;
+            let settings = supervisor_settings(&o, vec![], &[], String::new(), None, false);
+            let args = settings.arguments();
+            let address = o.settings.tesla_address().unwrap_or("169.254.88.1");
+            assert_eq!(
+                args.windows(2)
+                    .any(|a| a[0] == "--tls-san" && a[1] == address),
+                mode != Mode::Off && !mode.uses_name()
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn runtime_flags_use_root_state_and_only_an_enabled_valid_bluetooth_override() {
         let root = std::env::temp_dir().join(format!(
             "supervisor-runtime-{}",
@@ -115,6 +190,11 @@ mod tests {
             o.settings.experimental_active = active;
             o.settings.experimental_send_bluetooth_address = send;
             o.settings.experimental_bluetooth_address = address.into();
+            std::fs::write(
+                root.join("settings.json"),
+                serde_json::to_vec(&o.settings).unwrap(),
+            )
+            .unwrap();
             let args = supervisor_settings(&o, vec![], &[], String::new(), None, false).arguments();
             assert!(args.iter().any(|a| a == "--host-ui"));
             assert!(args
@@ -135,7 +215,7 @@ mod tests {
         ));
         let mut options =
             Options::parse(&["--state-dir".into(), root.to_string_lossy().into_owned()]).unwrap();
-        for hevc in ["auto", "off"] {
+        for hevc in ["auto", "off", "signal"] {
             for output in ["web", "carlink", "both"] {
                 for codec in ["auto", "h264", "h265"] {
                     options.settings.carlink_hevc = hevc.into();
@@ -151,8 +231,8 @@ mod tests {
                     if output == "web" {
                         assert!(!args.iter().any(|a| a == "--clink-hevc"));
                     } else {
-                        let expected = if hevc == "auto" && output == "carlink" && codec != "h264" {
-                            "auto"
+                        let expected = if hevc != "off" && output == "carlink" && codec != "h264" {
+                            hevc
                         } else {
                             "off"
                         };

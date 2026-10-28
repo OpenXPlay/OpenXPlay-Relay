@@ -214,6 +214,29 @@
           }
         },
         {
+          "key": "hotspotSecurity",
+          "labelKey": "field.hotspotSecurity",
+          "options": [
+            {
+              "labelKey": "option.hotspotSecurity.open",
+              "value": "open"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa2",
+              "value": "wpa2"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa3-transition",
+              "value": "wpa3-transition"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa3",
+              "value": "wpa3"
+            }
+          ],
+          "type": "choice"
+        },
+        {
           "hintKey": "hint.field.hotspotChannel",
           "key": "hotspotChannel",
           "labelKey": "field.wifiChannel",
@@ -311,6 +334,11 @@
           }
         },
         {
+          "key": "vehicleInformation",
+          "labelKey": "field.vehicleInformation",
+          "type": "bool"
+        },
+        {
           "hintKey": "hint.field.carlinkReconnectOnResize",
           "key": "carlinkReconnectOnResize",
           "labelKey": "field.carlinkReconnectOnResize",
@@ -335,6 +363,10 @@
             {
               "labelKey": "option.carlinkHevc.off",
               "value": "off"
+            },
+            {
+              "labelKey": "option.carlinkHevc.signal",
+              "value": "signal"
             }
           ],
           "type": "choice",
@@ -368,6 +400,12 @@
           "type": "bool"
         },
         {
+          "key": "bootStart",
+          "labelKey": "field.bootStart",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.videoStats",
           "key": "videoStats",
           "labelKey": "field.videoStats",
           "options": [
@@ -755,6 +793,17 @@
             }
           ],
           "type": "choice"
+        },
+        {
+          "key": "carYearText",
+          "labelKey": "field.carYearText",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "other"
+            ],
+            "key": "carYear"
+          }
         }
       ],
       "id": "car",
@@ -763,16 +812,239 @@
     {
       "fields": [
         {
+          "hintKey": "hint.displayMode",
+          "key": "displayMode",
+          "labelKey": "field.displayMode",
+          "options": [
+            {
+              "labelKey": "option.displayMode.automatic",
+              "value": "automatic"
+            },
+            {
+              "labelKey": "option.displayMode.fixed",
+              "value": "fixed"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "displayWidth",
+          "labelKey": "field.displayWidth",
+          "max": 3840.0,
+          "min": 320.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "key": "displayHeight",
+          "labelKey": "field.displayHeight",
+          "max": 2160.0,
+          "min": 240.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "key": "displayDensity",
+          "labelKey": "field.displayDensity",
+          "max": 640.0,
+          "min": 120.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "hintKey": "hint.physicalWidth",
+          "key": "physicalWidthEnabled",
+          "labelKey": "field.physicalWidthEnabled",
+          "type": "bool"
+        },
+        {
+          "key": "physicalWidthOverrideMm",
+          "labelKey": "field.physicalWidthOverrideMm",
+          "options": [
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "100 mm",
+                "zh-CN": "100 mm"
+              },
+              "value": 100
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "125 mm",
+                "zh-CN": "125 mm"
+              },
+              "value": 125
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "150 mm",
+                "zh-CN": "150 mm"
+              },
+              "value": 150
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "175 mm",
+                "zh-CN": "175 mm"
+              },
+              "value": 175
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "200 mm",
+                "zh-CN": "200 mm"
+              },
+              "value": 200
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "225 mm",
+                "zh-CN": "225 mm"
+              },
+              "value": 225
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "250 mm",
+                "zh-CN": "250 mm"
+              },
+              "value": 250
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "275 mm",
+                "zh-CN": "275 mm"
+              },
+              "value": 275
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "300 mm",
+                "zh-CN": "300 mm"
+              },
+              "value": 300
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "325 mm",
+                "zh-CN": "325 mm"
+              },
+              "value": 325
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "350 mm",
+                "zh-CN": "350 mm"
+              },
+              "value": 350
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "375 mm",
+                "zh-CN": "375 mm"
+              },
+              "value": 375
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "400 mm",
+                "zh-CN": "400 mm"
+              },
+              "value": 400
+            }
+          ],
+          "type": "choice",
+          "visibleWhen": {
+            "equals": [
+              true
+            ],
+            "key": "physicalWidthEnabled"
+          }
+        }
+      ],
+      "id": "display",
+      "titleKey": "section.display"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.field.experimentalActive",
           "key": "experimentalActive",
           "labelKey": "field.experimentalActive",
           "type": "bool"
         },
         {
+          "hintKey": "hint.field.experimentalScreenSessionIsolation",
+          "key": "experimentalScreenSessionIsolation",
+          "labelKey": "field.experimentalScreenSessionIsolation",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalScreenReconnectReset",
+          "key": "experimentalScreenReconnectReset",
+          "labelKey": "field.experimentalScreenReconnectReset",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalScreenDeliverySerialization",
+          "key": "experimentalScreenDeliverySerialization",
+          "labelKey": "field.experimentalScreenDeliverySerialization",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalRemotePlaybackProof",
+          "key": "experimentalRemotePlaybackProof",
+          "labelKey": "field.experimentalRemotePlaybackProof",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalStartupStatus",
+          "key": "experimentalStartupStatus",
+          "labelKey": "field.experimentalStartupStatus",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalStartupDiagnostics",
+          "key": "experimentalStartupDiagnostics",
+          "labelKey": "field.experimentalStartupDiagnostics",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalSendBluetoothAddress",
           "key": "experimentalSendBluetoothAddress",
           "labelKey": "field.experimentalSendBluetoothAddress",
           "type": "bool"
         },
         {
+          "hintKey": "hint.field.experimentalBluetoothAddress",
           "key": "experimentalBluetoothAddress",
           "labelKey": "field.experimentalBluetoothAddress",
           "type": "text"
@@ -780,6 +1052,99 @@
       ],
       "id": "experimental",
       "titleKey": "section.experimental"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.field.developerActive",
+          "key": "developerActive",
+          "labelKey": "field.developerActive",
+          "type": "bool"
+        }
+      ],
+      "id": "developer",
+      "titleKey": "section.developer"
+    },
+    {
+      "fields": [
+        {
+          "key": "teslaBrowser",
+          "labelKey": "tesla.mode",
+          "options": [
+            {
+              "hintKey": "tesla.nameHint",
+              "labelKey": "tesla.mode.teslamirror",
+              "value": "teslamirror"
+            },
+            {
+              "hintKey": "tesla.nameHint",
+              "labelKey": "tesla.mode.virtual-name",
+              "value": "virtual-name"
+            },
+            {
+              "hintKey": "tesla.directHint",
+              "labelKey": "tesla.mode.public-address",
+              "value": "public-address"
+            },
+            {
+              "hintKey": "tesla.directHint",
+              "labelKey": "tesla.mode.tesla-android",
+              "value": "tesla-android"
+            },
+            {
+              "labelKey": "tesla.mode.off",
+              "value": "off"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "teslaVirtualAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "virtual-name"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaPublicAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "public-address"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaMirrorAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "teslamirror"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaAndroidAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "tesla-android"
+            ],
+            "key": "teslaBrowser"
+          }
+        }
+      ],
+      "id": "tesla",
+      "titleKey": "tesla.title"
     },
     {
       "fields": [
@@ -802,48 +1167,24 @@
               "value": "dynv6"
             }
           ],
-          "type": "choice",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "choice"
         },
         {
           "hintKey": "publicName.nameHint",
           "key": "publicName",
           "labelKey": "publicName.name",
-          "type": "text",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "text"
         },
         {
           "hintKey": "publicName.tokenHint",
           "key": "publicNameToken",
           "labelKey": "publicName.token",
-          "type": "secret",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "secret"
         },
         {
           "key": "publicNameAgreeTerms",
           "labelKey": "publicName.terms",
-          "type": "bool",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "bool"
         }
       ],
       "id": "publicName",
@@ -881,6 +1222,7 @@
   ],
   "values": {
     "autoStart": true,
+    "bootStart": true,
     "carBluetoothAudio": true,
     "carBrand": "xpeng",
     "carBrandText": "",
@@ -888,6 +1230,7 @@
     "carModelText": "",
     "carPlayViewAreas": true,
     "carYear": "g6-2023",
+    "carYearText": "",
     "carlinkAddress": null,
     "carlinkAutoReconnect": true,
     "carlinkHeadUnit": "192.168.43.1",
@@ -903,21 +1246,36 @@
     "carlinkPictureTry": null,
     "carlinkReconnectOnResize": false,
     "carlinkTrace": "off",
+    "developerActive": true,
     "devicePreset": "auto",
+    "displayDensity": 160,
+    "displayHeight": 720,
+    "displayMode": "automatic",
+    "displayWidth": 1280,
     "experimentalActive": true,
     "experimentalBluetoothAddress": "",
-    "experimentalSendBluetoothAddress": false,
+    "experimentalRemotePlaybackProof": true,
+    "experimentalScreenDeliverySerialization": true,
+    "experimentalScreenReconnectReset": true,
+    "experimentalScreenSessionIsolation": true,
+    "experimentalSendBluetoothAddress": true,
+    "experimentalStartupDiagnostics": true,
+    "experimentalStartupStatus": true,
     "frameRate": "auto",
     "hotspotBand": "auto",
     "hotspotChannel": 0,
+    "hotspotSecurity": "wpa2",
     "iphone": "auto",
     "networkMode": "device-hotspot",
     "networkRoles": {
       "mode": "auto"
     },
     "output": "both",
+    "physicalWidthEnabled": false,
+    "physicalWidthOverrideMm": 0,
     "plugins": false,
     "pluginsEnabled": [],
+    "privacyConfigAvailable": false,
     "publicName": "",
     "publicNameAgreeTerms": false,
     "publicNameEnabled": false,
@@ -940,6 +1298,12 @@
     "rfcommChannel": null,
     "screenWidth": 200,
     "sharedWifiNetworks": [],
+    "teslaAndroidAddress": "3.3.3.1",
+    "teslaBrowser": "off",
+    "teslaMirrorAddress": "100.88.0.1",
+    "teslaPublicAddress": "169.254.88.1",
+    "teslaVirtualAddress": "169.254.88.1",
+    "vehicleInformation": false,
     "videoCodec": "auto",
     "videoStats": "off",
     "wifiCountry": "system",

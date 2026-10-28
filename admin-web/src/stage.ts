@@ -104,7 +104,7 @@ export function mountStage(target: HTMLElement, options: { t: Translate; action:
       target.querySelector('.connection-stage')!.classList.toggle('live', view.nodes.live);
       updateTimers(); node('stage-failure').textContent = view.failure ? `${view.failure}${view.failureSinceMillis != null ? ` · ${clockTime(view.failureSinceMillis)}` : ''}` : '';
       for (const [id, action] of [['stage-primary', permitted(view.primary)], ['stage-secondary', permitted(view.secondary)]] as const) { const button = node<HTMLButtonElement>(id); button.hidden = !action; if (action) button.textContent = label(action); button.dataset.action = action?.type === 'Step' ? action.action : action?.type ?? ''; if (id === 'stage-primary') button.style.width = action?.type === 'Connect' ? '100%' : '94%'; button.disabled = !!flags.busy; }
-      node('stage-notice').hidden = !view.notice; node('stage-notice').textContent = view.notice ? t(view.notice === 'CHOOSE_CAR' ? 'stage_notice_car' : view.notice === 'DISPLAY_CHANGED' ? 'stage_notice_display' : 'ui.settings') : '';
+      node('stage-notice').hidden = !view.notice; node('stage-notice').textContent = view.notice ? t(view.notice === 'CHOOSE_CAR' ? 'stage_notice_car' : view.notice === 'DISPLAY_CHANGED' ? 'stage_notice_display' : view.notice === 'TRUSTED_HTTPS' ? 'car.zeekrHttps' : 'ui.settings') : '';
       node('action-result').textContent = error ? t(error) : '';
       updateSegments(); if (drawer) drawDetails();
       timerVisible = view.headlineDeadlineMillis != null || view.supporting?.type === 'LiveTimer' && view.supporting.sinceMillis != null || view.supporting?.type === 'Elapsed';

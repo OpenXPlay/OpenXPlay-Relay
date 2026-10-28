@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
-use crate::public_name::http::{Failure, Http, Request};
+use super::{http::Http, jobs::Transfer};
+use crate::public_name::http::{Failure, Request};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -11,20 +12,25 @@ use std::{io, path::Path};
 pub const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
 pub const ORIGIN: &str = "https://logs.openxplay.org";
 pub const USER_AGENT: &str = "OpenXPlay-Log-Client/1.0";
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UploadError {
     Offline,
     TooLarge,
     Rejected,
     Timeout,
+    Http {
+        status: u16,
+        retry_after_seconds: Option<u64>,
+    },
 }
 impl UploadError {
-    pub fn code(self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::Offline => "offline",
             Self::TooLarge => "too_large",
             Self::Rejected => "rejected",
             Self::Timeout => "timeout",
+            Self::Http { .. } => "http",
         }
     }
 }
@@ -66,13 +72,34 @@ pub fn sha256(bytes: &[u8]) -> String {
 }
 /// Persist the random installation identity before sending any request.
 pub fn user_id(state: &Path) -> io::Result<String> {
+    static IDENTITY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = IDENTITY.lock().unwrap();
     let path = state.join("log-upload-user-id");
-    if let Some(value) = super::read_private(&path, 128)? {
-        let value = String::from_utf8(value).map_err(io::Error::other)?;
-        if valid_user_id(&value) {
-            return Ok(value);
+    use std::{
+        fs::OpenOptions,
+        io::Read,
+        os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    };
+    match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&path)
+    {
+        Ok(file) => {
+            if !file.metadata()?.is_file() {
+                return Err(io::Error::other("Invalid upload identity file"));
+            }
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            let mut bytes = Vec::new();
+            file.take(129).read_to_end(&mut bytes)?;
+            if let Ok(value) = String::from_utf8(bytes) {
+                if valid_user_id(&value) {
+                    return Ok(value);
+                }
+            }
         }
-        return Err(io::Error::other("Invalid log upload identity"));
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
     let value = crate::admin::auth::random_hex(16)?;
     crate::platform::private_state_file(&path, value.as_bytes())?;
@@ -87,6 +114,7 @@ fn valid_user_id(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
 }
 pub fn upload(
+    transfer: &std::sync::Arc<Transfer>,
     http: &dyn Http,
     bytes: &[u8],
     name: &str,
@@ -123,20 +151,38 @@ pub fn upload(
         );
     }
     body.extend(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/zip\r\n\r\n").as_bytes());
+    let payload_start = body.len();
     body.extend(bytes);
     body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
-    let response = http.send(
-        Request::with_body("POST", format!("{ORIGIN}/api/uploads"), body)
-            .header(
-                "Content-Type",
-                format!("multipart/form-data; boundary={boundary}"),
-            )
-            .header("User-Agent", USER_AGENT),
-    )?;
-    if response.status == 413 {
-        return Err(UploadError::TooLarge);
+    let response = http
+        .send(
+            Request::with_body("POST", format!("{ORIGIN}/api/uploads"), body)
+                .header(
+                    "Content-Type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .header("User-Agent", USER_AGENT),
+            transfer,
+            payload_start..payload_start + bytes.len(),
+        )
+        .map_err(|failure| {
+            // Once payload bytes left the relay, a lost connection has an unconfirmed outcome.
+            if transfer.status().sent > 0 && failure == Failure::Unreachable {
+                UploadError::Rejected
+            } else {
+                failure.into()
+            }
+        })?;
+    if response.status != 201 {
+        return Err(UploadError::Http {
+            status: response.status,
+            retry_after_seconds: response
+                .header("retry-after")
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .map(|v| v.min(86_400)),
+        });
     }
-    if response.status != 201 || response.body.len() > 64 * 1024 {
+    if response.body.len() > 64 * 1024 {
         return Err(UploadError::Rejected);
     }
     let value: Value = serde_json::from_slice(&response.body).map_err(|_| UploadError::Rejected)?;
@@ -257,10 +303,31 @@ mod tests {
         response: Result<Response, Failure>,
     }
     impl Http for Fake {
-        fn send(&self, request: Request) -> Result<Response, Failure> {
+        fn send(
+            &self,
+            request: Request,
+            _: &std::sync::Arc<Transfer>,
+            _: std::ops::Range<usize>,
+        ) -> Result<Response, Failure> {
             self.requests.lock().unwrap().push(request);
             self.response.clone()
         }
+    }
+    fn upload(
+        http: &dyn Http,
+        bytes: &[u8],
+        name: &str,
+        user: &str,
+        version: &str,
+    ) -> Result<Receipt, UploadError> {
+        super::upload(
+            &Transfer::new("test".into(), "export".into(), bytes.len() as u64),
+            http,
+            bytes,
+            name,
+            user,
+            version,
+        )
     }
     fn response() -> Value {
         json!({"id":"a".repeat(32),"user_id":"install","bytes":3,"sha256":sha256(b"zip"),"tracking_url":format!("{ORIGIN}/r/{}","a".repeat(32)),"qr_code_url":format!("{ORIGIN}/qr/{}.png","a".repeat(32)),"expires_at":"2026-10-29T12:00:00.123456789Z"})
@@ -316,6 +383,40 @@ mod tests {
         }
     }
     #[test]
+    fn invalid_persisted_identity_is_replaced_before_use_and_rejection_has_retry_detail() {
+        let dir = std::env::temp_dir().join(format!(
+            "invalid-log-id-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        for invalid in [
+            b"invalid id".to_vec(),
+            vec![255],
+            vec![b'a'; 5000],
+            Vec::new(),
+        ] {
+            crate::platform::private_state_file(&dir.join("log-upload-user-id"), &invalid).unwrap();
+            let id = user_id(&dir).unwrap();
+            assert!(valid_user_id(&id));
+            assert_eq!(id.len(), 32);
+            assert_eq!(user_id(&dir).unwrap(), id);
+        }
+        let mut f = fake(429, response());
+        f.response
+            .as_mut()
+            .unwrap()
+            .headers
+            .push(("Retry-After".into(), "999999".into()));
+        assert_eq!(
+            upload(&f, b"zip", "a.zip", "install", "1"),
+            Err(UploadError::Http {
+                status: 429,
+                retry_after_seconds: Some(86400)
+            })
+        );
+        assert_eq!(f.requests.lock().unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn multipart_and_receipt_match_android_and_never_retry() {
         let f = fake(201, response());
         let receipt = upload(&f, b"zip", "logs.zip", "install", "0.2.1").unwrap();
@@ -358,13 +459,19 @@ mod tests {
             let f = fake(status, response());
             assert_eq!(
                 upload(&f, b"zip", "a.zip", "install", "1"),
-                Err(UploadError::Rejected)
+                Err(UploadError::Http {
+                    status,
+                    retry_after_seconds: None
+                })
             );
             assert_eq!(f.requests.lock().unwrap().len(), 1);
         }
         assert_eq!(
             upload(&fake(413, response()), b"zip", "a.zip", "install", "1"),
-            Err(UploadError::TooLarge)
+            Err(UploadError::Http {
+                status: 413,
+                retry_after_seconds: None
+            })
         );
         for (failure, expected) in [
             (Failure::Timeout, UploadError::Timeout),

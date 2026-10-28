@@ -10,7 +10,9 @@ use openxplay_relay::{
     bluetooth_wake::{BluetoothChange, BluetoothListener, BluetoothSubscription, BluetoothWake},
     boot_timing::Milestone,
     hotspot_lifetime::HotspotLifetime,
-    linux_car_play_controller::{BLUETOOTH_RETRY_INITIAL, BLUETOOTH_RETRY_MAX},
+    linux_car_play_controller::{
+        BLUETOOTH_RETRY_INITIAL, BLUETOOTH_RETRY_MAX, IPHONE_RETRY_INITIAL, IPHONE_RETRY_MAX,
+    },
     *,
 };
 use std::{
@@ -46,6 +48,8 @@ impl MfiAuthenticator for Mfi {
     }
 }
 struct Shared {
+    live_hotspot: Option<Arc<dyn WirelessHotspotManager>>,
+    network_watch: bool,
     lifetime: Option<Arc<openxplay_relay::hotspot_lifetime::HotspotLifetime>>,
     hotspot_starts: AtomicUsize,
     closed: Mutex<Vec<String>>,
@@ -53,6 +57,7 @@ struct Shared {
     network_started: AtomicBool,
     gate_enabled: AtomicBool,
     gate_ready: AtomicBool,
+    gate_failure: AtomicBool,
     connecting: AtomicBool,
     connected: AtomicBool,
     establish: AtomicBool,
@@ -64,6 +69,11 @@ struct Shared {
     hotspot_failures: AtomicUsize,
     validate_failures: AtomicUsize,
     bluetooth_error: AtomicBool,
+    unreachable: AtomicBool,
+    selection_absent: AtomicBool,
+    sdp_absent: AtomicBool,
+    bootstrap_error: AtomicBool,
+    absent_after_bootstrap: AtomicUsize,
     pairing: AtomicBool,
     pair_starts: AtomicUsize,
     bt_state: (Mutex<bool>, Condvar),
@@ -98,6 +108,8 @@ struct Shared {
 impl Default for Shared {
     fn default() -> Self {
         Self {
+            live_hotspot: None,
+            network_watch: false,
             lifetime: None,
             hotspot_starts: AtomicUsize::new(0),
             closed: Mutex::new(Vec::new()),
@@ -105,6 +117,7 @@ impl Default for Shared {
             network_started: AtomicBool::new(false),
             gate_enabled: AtomicBool::new(false),
             gate_ready: AtomicBool::new(false),
+            gate_failure: AtomicBool::new(false),
             connecting: AtomicBool::new(false),
             connected: AtomicBool::new(false),
             establish: AtomicBool::new(true),
@@ -115,6 +128,11 @@ impl Default for Shared {
             hotspot_failures: AtomicUsize::new(0),
             validate_failures: AtomicUsize::new(0),
             bluetooth_error: AtomicBool::new(false),
+            unreachable: AtomicBool::new(false),
+            selection_absent: AtomicBool::new(false),
+            sdp_absent: AtomicBool::new(false),
+            bootstrap_error: AtomicBool::new(false),
+            absent_after_bootstrap: AtomicUsize::new(0),
             pairing: AtomicBool::new(false),
             pair_starts: AtomicUsize::new(0),
             bt_state: (Mutex::new(false), Condvar::new()),
@@ -172,6 +190,9 @@ fn info() -> WirelessHotspotInfo {
 }
 impl WirelessHotspotManager for Hotspot {
     fn start(&self, _: Duration) -> openxplay_relay::Result<WirelessHotspotInfo> {
+        if let Some(hotspot) = &self.0.live_hotspot {
+            return hotspot.start(Duration::from_secs(2));
+        }
         self.0.hotspot_starts.fetch_add(1, Ordering::SeqCst);
         self.0
             .hotspot_log
@@ -204,6 +225,9 @@ impl WirelessHotspotManager for Hotspot {
         }
     }
     fn validate_ready(&self) -> openxplay_relay::Result<()> {
+        if let Some(hotspot) = &self.0.live_hotspot {
+            return hotspot.validate_ready();
+        }
         if take_failure(&self.0.validate_failures) {
             Err(std::io::Error::other("hotspot address changed"))
         } else {
@@ -214,6 +238,9 @@ impl WirelessHotspotManager for Hotspot {
         Ok(())
     }
     fn close(&self) -> openxplay_relay::Result<()> {
+        if let Some(hotspot) = &self.0.live_hotspot {
+            hotspot.close()?;
+        }
         // Closing cancels a start in progress.
         self.0.ap_cancelled.store(true, Ordering::Release);
         self.0.hold_hotspot(false);
@@ -228,6 +255,12 @@ impl WirelessHotspotManager for Hotspot {
 }
 struct Network(Arc<Shared>);
 impl NetworkAttachment for Network {
+    fn validate_ready(&self) -> openxplay_relay::Result<()> {
+        self.0
+            .live_hotspot
+            .as_ref()
+            .map_or(Ok(()), |hotspot| hotspot.validate_ready())
+    }
     fn start(&self) -> openxplay_relay::Result<()> {
         self.0.network_started.store(true, Ordering::Release);
         Ok(())
@@ -274,6 +307,12 @@ impl BluetoothConnection for Bluetooth {
         if self.0.bluetooth_error.load(Ordering::Acquire) {
             return Err(std::io::Error::other("connect failed"));
         }
+        if self.0.unreachable.load(Ordering::Acquire) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "iPhone absent",
+            ));
+        }
         self.0.connected.store(true, Ordering::Release);
         Ok(())
     }
@@ -286,7 +325,15 @@ impl CloseResource for Pairing {
     }
 }
 impl WirelessPlatform for Platform {
+    fn network_watch_enabled(&self) -> bool {
+        self.0.network_watch
+    }
     fn car_ready(&self) -> openxplay_relay::Result<bool> {
+        if self.0.gate_failure.load(Ordering::SeqCst) {
+            return Err(std::io::Error::other(
+                "Carlink output did not become ready before CarPlay startup",
+            ));
+        }
         Ok(!self.0.gate_enabled.load(Ordering::SeqCst) || self.0.gate_ready.load(Ordering::SeqCst))
     }
     fn check_bluetooth_radio(&self) -> openxplay_relay::Result<()> {
@@ -357,6 +404,9 @@ impl WirelessPlatform for Platform {
         }
     }
     fn select_iphone(&self) -> openxplay_relay::Result<BondedDevice> {
+        if self.0.selection_absent.load(Ordering::Acquire) {
+            return openxplay_relay::linux_bluetooth::select_iphone(&[], None);
+        }
         if self.0.phone_error.load(Ordering::Acquire) {
             Err(std::io::Error::other(
                 "No unambiguous bonded iPhone found; pair one iPhone",
@@ -374,6 +424,9 @@ impl WirelessPlatform for Platform {
         &self,
         _: &BondedDevice,
     ) -> openxplay_relay::Result<Arc<dyn BluetoothConnection>> {
+        if self.0.sdp_absent.load(Ordering::Acquire) {
+            return Err(openxplay_relay::linux_bluetooth::rfcomm_channel("").unwrap_err());
+        }
         Ok(Arc::new(Bluetooth(self.0.clone())))
     }
     fn create_network(
@@ -394,6 +447,21 @@ impl WirelessPlatform for Platform {
         _: Arc<dyn MfiAuthenticator>,
         callbacks: BootstrapCallbacks,
     ) -> openxplay_relay::Result<()> {
+        if self.0.bootstrap_error.load(Ordering::Acquire) {
+            if self
+                .0
+                .absent_after_bootstrap
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                == Ok(1)
+            {
+                self.0.unreachable.store(true, Ordering::Release);
+            }
+            // A reachability kind after RFCOMM connected must still spend the budget.
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "iAP2 authentication timed out",
+            ));
+        }
         *self.0.identified.lock().unwrap() = Some(network.ssid(Duration::from_secs(2))?);
         self.0
             .authenticated
@@ -526,6 +594,104 @@ impl Drop for Run {
         if self.thread.is_some() {
             self.stop();
         }
+    }
+}
+#[test]
+fn tesla_address_on_the_ap_does_not_retry_but_a_real_ap_change_does() {
+    #[derive(Default)]
+    struct Runner {
+        profile: Mutex<String>,
+        addresses: Mutex<String>,
+        reads: AtomicUsize,
+    }
+    impl CommandRunner for Runner {
+        fn run(&self, args: &[String], _: Duration) -> openxplay_relay::Result<CommandResult> {
+            let output = if args.get(2).is_some_and(|s| s == "load") {
+                *self.profile.lock().unwrap() = std::fs::read_to_string(&args[3])?;
+                String::new()
+            } else if args.iter().any(|s| s == "IP4.ADDRESS") {
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                self.addresses.lock().unwrap().clone()
+            } else if args.iter().any(|s| s == "GENERAL.CONNECTION") {
+                self.profile
+                    .lock()
+                    .unwrap()
+                    .lines()
+                    .find_map(|s| s.strip_prefix("id="))
+                    .unwrap()
+                    .into()
+            } else if args.iter().any(|s| s.starts_with("802-11-wireless.ssid,")) {
+                let profile = self.profile.lock().unwrap();
+                let ssid = profile
+                    .lines()
+                    .find_map(|s| s.strip_prefix("ssid="))
+                    .unwrap();
+                let ssid = String::from_utf8(
+                    ssid.split(';')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.parse::<u8>().unwrap())
+                        .collect(),
+                )
+                .unwrap();
+                format!("{ssid}\n36\nwpa-psk")
+            } else if args[0] == "iw" {
+                "addr dc:a6:32:11:22:33\nchannel 36 (5180 MHz)".into()
+            } else {
+                String::new()
+            };
+            Ok(CommandResult {
+                exit_code: 0,
+                output,
+            })
+        }
+    }
+    for network_watch in [false, true] {
+        let dir = std::env::temp_dir().join(format!(
+            "tesla-ap-loop-{}",
+            admin::auth::random_hex(8).unwrap()
+        ));
+        let runner = Arc::new(Runner::default());
+        *runner.addresses.lock().unwrap() = "10.77.0.1/24".into();
+        let hotspot = Arc::new(
+            LinuxHotspot::new(dir.clone(), runner.clone(), "wlan0".into(), 36).with_runtime_dirs(
+                dir.join("keyfiles"),
+                public_name::local_dns::Paths::in_dir(dir.join("dns")),
+            ),
+        );
+        let f = Arc::new(Shared {
+            live_hotspot: Some(hotspot),
+            network_watch,
+            planned_ssid: Mutex::new(None),
+            ..Default::default()
+        });
+        let mut run = Run::new(f, Duration::from_secs(2));
+        wait_for(|| run.controller.stage() == "WirelessActive");
+        // This is the N1 ordering immediately after tesla-address READY.
+        *runner.addresses.lock().unwrap() = "3.3.3.1/32 | 10.77.0.1/24".into();
+        let before = runner.reads.load(Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(7);
+        while runner.reads.load(Ordering::SeqCst) < before + 4 {
+            assert!(
+                Instant::now() < deadline,
+                "one-second polling must continue"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!run.has_event("retry"));
+        assert_eq!(run.controller.stage(), "WirelessActive");
+        assert_eq!(run.hotspot_ready().len(), 1);
+        *runner.addresses.lock().unwrap() = "3.3.3.1/32 | 10.77.1.1/24".into();
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while !run.has_event("retry") {
+            assert!(Instant::now() < deadline, "real AP changes must retry");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            run.matching(|v| v["event"] == "retry")[0]["reason"],
+            "Hotspot address changed"
+        );
+        run.stop();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 #[test]
@@ -769,7 +935,7 @@ fn hard_stop_during_retry_wait_closes_the_retained_ap() {
 }
 
 #[test]
-fn retry_delay_starts_over_after_an_active_session() {
+fn short_active_session_does_not_reset_retry_backoff() {
     let f = Arc::new(Shared::default());
     f.hotspot_failures.store(2, Ordering::SeqCst);
     let mut run = Run::with_retry(
@@ -787,7 +953,7 @@ fn retry_delay_starts_over_after_an_active_session() {
         .iter()
         .map(|v| v["retryMillis"].as_u64().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(delays, [10, 20, 10]);
+    assert_eq!(delays, [10, 20, 40]);
     run.stop();
 }
 
@@ -1350,4 +1516,317 @@ fn screen_wait_prepares_hotspot_before_airplay_and_is_cancelable() {
         run.stop();
         assert!(start.elapsed() < Duration::from_secs(1));
     }
+}
+
+#[test]
+fn startup_stops_after_five_retries_including_bluetooth_waits() {
+    let f = Arc::new(Shared::default());
+    f.phone_error.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    wait_for(|| run.controller.stage() == "Failed");
+    assert_eq!(run.matching(|v| v["event"] == "retry").len(), 5);
+    assert_eq!(run.matching(|v| v["event"] == "startup-failed").len(), 1);
+    assert!(!run.controller.running());
+    assert!(run.controller.hotspot_info().is_none());
+    let failure = run.json.runtime_path_facts().iphone.failure.unwrap();
+    assert!(!failure.retrying);
+    assert!(!failure.trail.is_empty());
+    run.stop();
+}
+
+#[test]
+fn absent_iphone_keeps_waiting_for_twenty_attempts_and_stop_cancels_retries() {
+    assert_eq!(IPHONE_RETRY_INITIAL, Duration::from_secs(10));
+    assert_eq!(IPHONE_RETRY_MAX, Duration::from_secs(30));
+    let wake = Arc::new(BluetoothWake::default());
+    let f = Arc::new(Shared {
+        wake: Some(wake.clone()),
+        ..Default::default()
+    });
+    f.unreachable.store(true, Ordering::Release);
+    // One millisecond represents one second of the production cadence.
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(10),
+        Duration::from_millis(30),
+    );
+    wait_for(|| retry_millis(&run, "WaitingForPairedIphone").len() >= 20);
+    let delays = retry_millis(&run, "WaitingForPairedIphone");
+    assert_eq!(&delays[..3], [10, 20, 30]);
+    assert!(delays[3..].iter().all(|d| *d == 30));
+    assert!(run.controller.running());
+    assert!(!run.controller.failed());
+    assert_eq!(run.json.runtime_path_facts().iphone.step, "WAITING_IPHONE");
+    assert!(run.json.runtime_path_facts().iphone.failure.is_none());
+    assert!(!run.has_event("startup-failed"));
+    assert!(!run.has_event("retry"));
+    assert_eq!(f.hotspot_starts.load(Ordering::SeqCst), 1);
+    run.stop();
+    let attempts = f.connects.load(Ordering::SeqCst);
+    f.unreachable.store(false, Ordering::Release);
+    wake.publish(&BluetoothChange::AdapterReady);
+    wake.publish(&BluetoothChange::DeviceConnected(
+        "AA:BB:CC:DD:EE:01".into(),
+    ));
+    run.controller.readiness_restored();
+    assert_eq!(f.connects.load(Ordering::SeqCst), attempts);
+    assert_eq!(run.controller.stage(), "Stopped");
+}
+
+#[test]
+fn iphone_appearing_after_fifteen_minutes_connects_on_next_poll_without_an_edge() {
+    let f = Arc::new(Shared::default());
+    f.unreachable.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(10),
+        Duration::from_millis(30),
+    );
+    // Scale seconds to milliseconds. Completed waits cover at least fifteen minutes.
+    wait_for(|| {
+        retry_millis(&run, "WaitingForPairedIphone")
+            .iter()
+            .rev()
+            .skip(1)
+            .sum::<u64>()
+            >= 900
+    });
+    let attempts = f.connects.load(Ordering::SeqCst);
+    f.unreachable.store(false, Ordering::Release);
+    wait_for(|| run.controller.stage() == "WirelessActive");
+    assert_eq!(f.connects.load(Ordering::SeqCst), attempts + 1);
+    assert!(!run.has_event("startup-failed"));
+    assert!(run.json.runtime_path_facts().iphone.failure.is_none());
+    run.stop();
+}
+
+#[test]
+fn unreachable_iphone_does_not_spend_or_reset_the_post_connect_budget() {
+    let f = Arc::new(Shared::default());
+    f.bootstrap_error.store(true, Ordering::Release);
+    f.absent_after_bootstrap.store(2, Ordering::Release);
+    let mut run = Run::build(
+        f.clone(),
+        Duration::from_secs(1),
+        (Duration::from_millis(1), Duration::from_millis(2)),
+        (Duration::from_millis(1), Duration::from_millis(2)),
+    );
+    wait_for(|| retry_millis(&run, "WaitingForPairedIphone").len() >= 20);
+    assert_eq!(run.matching(|v| v["event"] == "retry").len(), 2);
+    assert!(run.json.runtime_path_facts().iphone.failure.is_none());
+    f.unreachable.store(false, Ordering::Release);
+    wait_for(|| run.controller.stage() == "Failed");
+    assert!(f.connected.load(Ordering::Acquire));
+    assert_eq!(run.matching(|v| v["event"] == "retry").len(), 5);
+    assert_eq!(run.matching(|v| v["event"] == "startup-failed").len(), 1);
+    assert!(!run.controller.running());
+    assert!(
+        !run.json
+            .runtime_path_facts()
+            .iphone
+            .failure
+            .unwrap()
+            .retrying
+    );
+    run.stop();
+}
+
+#[test]
+fn missing_selection_and_sdp_keep_waiting_without_using_startup_retries() {
+    for sdp in [false, true] {
+        let f = Arc::new(Shared::default());
+        f.selection_absent.store(!sdp, Ordering::Release);
+        f.sdp_absent.store(sdp, Ordering::Release);
+        let mut run = Run::with_bluetooth_retry(
+            f.clone(),
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+        );
+        wait_for(|| retry_millis(&run, "WaitingForPairedIphone").len() >= 20);
+        assert_eq!(run.json.runtime_path_facts().iphone.step, "WAITING_IPHONE");
+        assert!(run.json.runtime_path_facts().iphone.failure.is_none());
+        assert!(!run.has_event("startup-failed"));
+        assert!(!run.has_event("retry"));
+        f.selection_absent.store(false, Ordering::Release);
+        f.sdp_absent.store(false, Ordering::Release);
+        wait_for(|| run.controller.stage() == "WirelessActive");
+        run.stop();
+    }
+}
+
+#[test]
+fn iphone_and_adapter_edges_reset_the_unreachable_cadence() {
+    for change in [
+        BluetoothChange::AdapterReady,
+        BluetoothChange::DeviceConnected("AA:BB:CC:DD:EE:01".into()),
+    ] {
+        let wake = Arc::new(BluetoothWake::default());
+        let f = Arc::new(Shared {
+            wake: Some(wake.clone()),
+            ..Default::default()
+        });
+        f.unreachable.store(true, Ordering::Release);
+        let mut run = Run::with_bluetooth_retry(
+            f.clone(),
+            Duration::from_millis(100),
+            Duration::from_millis(300),
+        );
+        wait_for(|| retry_millis(&run, "WaitingForPairedIphone").len() >= 3);
+        // Repeat until the armed wait observes it, avoiding the connection-attempt boundary.
+        wait_for(|| {
+            wake.publish(&change);
+            retry_millis(&run, "WaitingForPairedIphone").get(3) == Some(&100)
+        });
+        assert!(!run.has_event("startup-failed"));
+        run.stop();
+    }
+}
+
+#[test]
+fn changing_the_selected_iphone_resets_the_unreachable_cadence() {
+    let f = Arc::new(Shared::default());
+    f.unreachable.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(100),
+        Duration::from_millis(300),
+    );
+    wait_for(|| retry_millis(&run, "WaitingForPairedIphone").len() >= 3);
+    f.selection_absent.store(true, Ordering::Release);
+    wait_for(|| retry_millis(&run, "WaitingForPairedIphone").len() >= 4);
+    assert_eq!(retry_millis(&run, "WaitingForPairedIphone")[3], 100);
+    f.selection_absent.store(false, Ordering::Release);
+    wait_for(|| retry_millis(&run, "WaitingForPairedIphone")[4..].contains(&100));
+    assert!(!run.has_event("startup-failed"));
+    run.stop();
+}
+
+#[test]
+fn exhausted_budget_waits_for_matching_iphone_edges_and_stop_wins() {
+    let wake = Arc::new(BluetoothWake::default());
+    let f = Arc::new(Shared {
+        wake: Some(wake.clone()),
+        lifetime: Some(Arc::new(HotspotLifetime::default())),
+        ..Default::default()
+    });
+    f.bluetooth_error.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    assert!(run.controller.running());
+    assert!(
+        !run.json
+            .runtime_path_facts()
+            .iphone
+            .failure
+            .unwrap()
+            .retrying
+    );
+    let attempts = f.connects.load(Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(30));
+    assert_eq!(
+        f.connects.load(Ordering::SeqCst),
+        attempts,
+        "timers cannot reset the budget"
+    );
+    wake.publish(&BluetoothChange::DeviceConnected(
+        "AA:BB:CC:DD:EE:02".into(),
+    ));
+    assert!(run.controller.armed());
+    // A real edge earns another bounded budget, including after the first rescue.
+    for _ in 0..2 {
+        let before = run.matching(|v| v["event"] == "startup-failed").len();
+        wake.publish(&BluetoothChange::DeviceConnected(
+            "AA:BB:CC:DD:EE:01".into(),
+        ));
+        wait_for(|| {
+            run.controller.armed()
+                && run.matching(|v| v["event"] == "startup-failed").len() > before
+        });
+    }
+    f.bluetooth_error.store(false, Ordering::Release);
+    wake.publish(&BluetoothChange::DeviceConnected(
+        "AA:BB:CC:DD:EE:01".into(),
+    ));
+    wait_for(|| run.controller.stage() == "WirelessActive");
+    assert!(run.json.runtime_path_facts().iphone.failure.is_none());
+    assert_eq!(
+        f.hotspot_starts.load(Ordering::SeqCst),
+        1,
+        "armed recovery retains the AP"
+    );
+    run.stop();
+    let attempts = f.connects.load(Ordering::SeqCst);
+    wake.publish(&BluetoothChange::AdapterReady);
+    assert_eq!(f.connects.load(Ordering::SeqCst), attempts);
+    assert!(!run.controller.armed());
+}
+#[test]
+fn exhausted_adapter_budget_recovers_on_adapter_return_and_stop_cancels_armed_wait() {
+    let wake = Arc::new(BluetoothWake::default());
+    let f = Arc::new(Shared {
+        wake: Some(wake.clone()),
+        ..Default::default()
+    });
+    f.radio_down.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    f.radio_down.store(false, Ordering::Release);
+    wake.publish(&BluetoothChange::AdapterReady);
+    wait_for(|| run.controller.stage() == "WirelessActive");
+    run.stop();
+    let f = Arc::new(Shared::default());
+    f.radio_down.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    f.radio_down.store(false, Ordering::Release);
+    run.controller.readiness_restored();
+    run.controller.readiness_restored();
+    wait_for(|| run.controller.stage() == "WirelessActive");
+    run.stop();
+    // A different armed run can still be closed promptly without any restoration.
+    f.radio_down.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(f, Duration::from_millis(1), Duration::from_millis(2));
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    run.stop();
+    assert!(!run.controller.running());
+    assert!(!run.controller.armed());
+}
+#[test]
+fn carlink_gate_failure_on_network_worker_fails_only_the_start() {
+    let f = Arc::new(Shared::default());
+    f.gate_failure.store(true, Ordering::SeqCst);
+    let mut run = Run::with_retry(
+        f.clone(),
+        Duration::from_secs(1),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    wait_for(|| run.controller.stage() == "Failed");
+    assert!(!run.controller.running());
+    assert!(!f.network_started.load(Ordering::SeqCst));
+    let failure = run.json.runtime_path_facts().iphone.failure.unwrap();
+    assert_eq!(failure.code, "carlink_not_ready");
+    assert!(!failure.retrying);
+    assert!(run.matching(|v| v["event"] == "retry").is_empty());
+    run.stop();
 }

@@ -456,8 +456,8 @@ fn replay_reaches_the_stream_consumer_and_follows_codec_and_rate_restarts() {
     relay.send(&Message::Json(json!({"type":"keyframe","screen":0})));
     relay.format("H264");
     relay.key_frame();
-    assert!(relay.logged("Keyframe requested for screen 0 forwarded=true"));
-    assert!(relay.logged("Replay answers a key-frame request in 0 ms"));
+    wait_for(|| relay.logged("Keyframe requested for screen 0 forwarded=true"));
+    wait_for(|| relay.logged("Replay answers a key-frame request in 0 ms"));
 
     // Touches and keys reach the simulated iPhone, are logged and counted.
     relay.send(&touch(true));

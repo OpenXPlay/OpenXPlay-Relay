@@ -35,17 +35,24 @@ pub struct Settings {
     pub carlink_interface: String,
     pub hotspot_channel: u8,
     pub hotspot_band: String,
+    pub hotspot_security: String,
     pub iphone: Option<String>,
     pub rfcomm_channel: Option<u8>,
     pub receiver_port: u16,
     pub require_pairing_code: bool,
     pub output: String,
+    pub tesla_browser: crate::tesla_address::Mode,
+    pub tesla_virtual_address: String,
+    pub tesla_public_address: String,
+    pub tesla_mirror_address: String,
+    pub tesla_android_address: String,
     pub carlink_name: String,
     pub carlink_model: String,
     pub carlink_auto_reconnect: bool,
     pub carlink_reconnect_on_resize: bool,
     pub carlink_hevc: String,
     pub carlink_trace: String,
+    pub vehicle_information: bool,
     pub frame_rate: String,
     pub carlink_picture_size: String,
     pub carlink_picture_sizes: Vec<crate::display::Size>,
@@ -55,10 +62,30 @@ pub struct Settings {
     pub car_model: String,
     pub car_model_text: String,
     pub car_year: String,
+    pub car_year_text: String,
+    /// Developer width calibration remains parked while this master is off.
+    /// The display runtime captures effective overrides at the next CarPlay start.
+    pub developer_active: bool,
+    pub display_mode: String,
+    pub display_width: u32,
+    pub display_height: u32,
+    pub display_density: u32,
+    pub physical_width_enabled: bool,
+    pub physical_width_override_mm: u32,
     pub experimental_active: bool,
+    pub experimental_screen_session_isolation: bool,
+    pub experimental_screen_reconnect_reset: bool,
+    pub experimental_screen_delivery_serialization: bool,
+    pub experimental_remote_playback_proof: bool,
+    pub experimental_startup_status: bool,
+    pub experimental_startup_diagnostics: bool,
+
     pub experimental_send_bluetooth_address: bool,
     pub experimental_bluetooth_address: String,
+    #[serde(alias = "autoStartWhenReady")]
     pub auto_start: bool,
+    #[serde(alias = "autoStartOnBoot")]
+    pub boot_start: bool,
     pub video_stats: String,
     #[serde(rename = "carPlayViewAreas")]
     pub car_play_view_areas: bool,
@@ -91,17 +118,24 @@ impl Default for Settings {
             carlink_interface: String::new(),
             hotspot_channel: 0,
             hotspot_band: "auto".into(),
+            hotspot_security: "wpa2".into(),
             iphone: None,
             rfcomm_channel: None,
             receiver_port: 8443,
             require_pairing_code: false,
             output: "web".into(),
+            tesla_browser: Default::default(),
+            tesla_virtual_address: "169.254.88.1".into(),
+            tesla_public_address: "169.254.88.1".into(),
+            tesla_mirror_address: "100.88.0.1".into(),
+            tesla_android_address: "3.3.3.1".into(),
             carlink_name: crate::branding::DEVICE_NAME.into(),
             carlink_model: crate::branding::MODEL.into(),
             carlink_auto_reconnect: true,
             carlink_reconnect_on_resize: false,
             carlink_hevc: "auto".into(),
             carlink_trace: "off".into(),
+            vehicle_information: false,
             frame_rate: "auto".into(),
             carlink_picture_size: "window".into(),
             carlink_picture_sizes: vec![],
@@ -111,10 +145,26 @@ impl Default for Settings {
             car_model: String::new(),
             car_model_text: String::new(),
             car_year: String::new(),
+            car_year_text: String::new(),
+            developer_active: true,
+            display_mode: "automatic".into(),
+            display_width: 1280,
+            display_height: 720,
+            display_density: 160,
+            physical_width_enabled: false,
+            physical_width_override_mm: 0,
             experimental_active: true,
-            experimental_send_bluetooth_address: false,
+            experimental_screen_session_isolation: true,
+            experimental_screen_reconnect_reset: true,
+            experimental_screen_delivery_serialization: true,
+            experimental_remote_playback_proof: true,
+            experimental_startup_status: true,
+            experimental_startup_diagnostics: true,
+
+            experimental_send_bluetooth_address: true,
             experimental_bluetooth_address: String::new(),
             auto_start: true,
+            boot_start: false,
             video_stats: "off".into(),
             car_play_view_areas: true,
             car_bluetooth_audio_defaulted: true,
@@ -144,6 +194,37 @@ fn persist_loaded_settings(dir: &Path, bytes: &[u8]) {
     }
 }
 impl Settings {
+    /// Resolve parked developer choices only on a runtime copy; never save this copy.
+    pub fn effective_developer(&self) -> Self {
+        let mut value = self.clone();
+        if !self.developer_active {
+            let defaults = Self::default();
+            value.carlink_trace = defaults.carlink_trace;
+            value.carlink_hevc = defaults.carlink_hevc;
+            value.carlink_picture_size = defaults.carlink_picture_size;
+            value.carlink_model = defaults.carlink_model;
+            value.receiver_port = defaults.receiver_port;
+            value.rfcomm_channel = defaults.rfcomm_channel;
+            value.device_preset = defaults.device_preset;
+            value.carlink_link = defaults.carlink_link;
+            value.carlink_address = defaults.carlink_address;
+            value.carlink_head_unit = defaults.carlink_head_unit;
+            value.carlink_local = defaults.carlink_local;
+            value.carlink_pin = defaults.carlink_pin;
+            value.carlink_ports = defaults.carlink_ports;
+        }
+        value
+    }
+    pub fn tesla_address(&self) -> Option<&str> {
+        use crate::tesla_address::Mode;
+        match self.tesla_browser {
+            Mode::Off => None,
+            Mode::VirtualName => Some(&self.tesla_virtual_address),
+            Mode::PublicAddress => Some(&self.tesla_public_address),
+            Mode::Teslamirror => Some(&self.tesla_mirror_address),
+            Mode::TeslaAndroid => Some(&self.tesla_android_address),
+        }
+    }
     pub fn car(&self) -> crate::car_models::CarSelection {
         crate::car_models::CarSelection {
             brand: self.car_brand.clone(),
@@ -151,6 +232,7 @@ impl Settings {
             model: self.car_model.clone(),
             model_text: self.car_model_text.clone(),
             year: self.car_year.clone(),
+            year_text: self.car_year_text.clone(),
         }
         .normalized()
     }
@@ -161,6 +243,7 @@ impl Settings {
         self.car_model = c.model;
         self.car_model_text = c.model_text;
         self.car_year = c.year;
+        self.car_year_text = c.year_text;
     }
     pub fn load(dir: &Path) -> Result<Self> {
         Self::load_with_defaults(dir, &Self::default())
@@ -176,8 +259,16 @@ impl Settings {
                     value["carBluetoothAudio"] = true.into();
                     value["carBluetoothAudioDefaulted"] = true.into();
                 }
-                // Persist only the migration, leaving absent profile-derived settings absent.
-                let migrated = migrate_audio.then(|| value.clone());
+                let migrate_startup =
+                    value.get("bootStart").is_none() && value.get("autoStartOnBoot").is_none();
+                if migrate_startup {
+                    value["bootStart"] = value
+                        .get("autoStart")
+                        .cloned()
+                        .unwrap_or(defaults.boot_start.into());
+                }
+                // Persist only migrations, leaving absent profile-derived settings absent.
+                let migrated = (migrate_audio || migrate_startup).then(|| value.clone());
                 if let Some(object) = value.as_object_mut() {
                     object
                         .entry("devicePreset")
@@ -262,16 +353,35 @@ impl Settings {
         {
             return Err(invalid("Invalid experimentalBluetoothAddress"));
         }
+        if !["automatic", "fixed"].contains(&self.display_mode.as_str())
+            || !(320..=3840).contains(&self.display_width)
+            || !self.display_width.is_multiple_of(2)
+            || !(240..=2160).contains(&self.display_height)
+            || !self.display_height.is_multiple_of(2)
+            || !(120..=640).contains(&self.display_density)
+            || (self.physical_width_override_mm != 0
+                && (!(100..=400).contains(&self.physical_width_override_mm)
+                    || !self.physical_width_override_mm.is_multiple_of(25)))
+        {
+            return Err(invalid("error.displayProfile"));
+        }
         for text in [
             &self.car_brand,
             &self.car_brand_text,
             &self.car_model,
             &self.car_model_text,
             &self.car_year,
+            &self.car_year_text,
         ] {
             if text.chars().count() > 128 || text.chars().any(char::is_control) {
                 return Err(invalid("Invalid car selection"));
             }
+        }
+        if self
+            .tesla_address()
+            .is_some_and(|a| !crate::tesla_address::valid(a))
+        {
+            return Err(invalid("error.teslaAddress"));
         }
         self.network_roles.validate()?;
         if !crate::network_roles::valid_country(&self.wifi_country) {
@@ -304,6 +414,9 @@ impl Settings {
         }
         if !crate::device_preset::valid_selection(&self.device_preset) {
             return Err(invalid("Invalid devicePreset"));
+        }
+        if !["open", "wpa2", "wpa3-transition", "wpa3"].contains(&self.hotspot_security.as_str()) {
+            return Err(invalid("Invalid hotspotSecurity"));
         }
         if !["auto", "2.4", "5"].contains(&self.hotspot_band.as_str()) {
             return Err(invalid("Invalid hotspotBand"));
@@ -347,7 +460,7 @@ impl Settings {
                 return Err(invalid(key));
             }
         }
-        if !["auto", "off"].contains(&self.carlink_hevc.as_str()) {
+        if !["auto", "off", "signal"].contains(&self.carlink_hevc.as_str()) {
             return Err(invalid("Invalid carlinkHevc"));
         }
         if !["off", "on"].contains(&self.carlink_trace.as_str()) {
@@ -397,6 +510,64 @@ impl Settings {
 mod tests {
     use super::*;
     #[test]
+    fn developer_master_parks_choices_and_round_trips_them() {
+        let parked = Settings {
+            developer_active: false,
+            carlink_trace: "on".into(),
+            carlink_hevc: "off".into(),
+            carlink_picture_size: "mode".into(),
+            carlink_model: "My relay".into(),
+            receiver_port: 9443,
+            rfcomm_channel: Some(7),
+            device_preset: "phicomm-n1".into(),
+            hotspot_security: "open".into(),
+            ..Default::default()
+        };
+        let saved: Settings =
+            serde_json::from_value(serde_json::to_value(&parked).unwrap()).unwrap();
+        assert_eq!(saved, parked);
+        let effective = saved.effective_developer();
+        let defaults = Settings::default();
+        assert_eq!(effective.carlink_trace, defaults.carlink_trace);
+        assert_eq!(effective.carlink_hevc, defaults.carlink_hevc);
+        assert_eq!(
+            effective.carlink_picture_size,
+            defaults.carlink_picture_size
+        );
+        assert_eq!(effective.carlink_model, defaults.carlink_model);
+        assert_eq!(effective.receiver_port, defaults.receiver_port);
+        assert_eq!(effective.rfcomm_channel, None);
+        assert_eq!(effective.device_preset, defaults.device_preset);
+        assert_eq!(effective.hotspot_security, "open");
+        let mut restored = saved;
+        restored.developer_active = true;
+        assert_eq!(restored.effective_developer(), restored);
+        assert_eq!(restored.carlink_model, "My relay");
+        assert_eq!(restored.receiver_port, 9443);
+    }
+
+    #[test]
+    fn legacy_auto_start_migrates_boot_preference_without_coupling_future_edits() {
+        let dir = std::env::temp_dir().join(format!(
+            "w11-settings-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), br#"{"autoStart":false}"#).unwrap();
+        let mut settings = Settings::load(&dir).unwrap();
+        assert!(!settings.auto_start && !settings.boot_start);
+        settings.boot_start = true;
+        settings.save(&dir).unwrap();
+        let settings = Settings::load(&dir).unwrap();
+        assert!(!settings.auto_start && settings.boot_start);
+        let aliases: Settings = serde_json::from_value(
+            serde_json::json!({"autoStartOnBoot":false,"autoStartWhenReady":true}),
+        )
+        .unwrap();
+        assert!(!aliases.boot_start && aliases.auto_start);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn linux_car_settings_defaults_validation_and_round_trip() {
         let defaults = Settings::default();
         let json = serde_json::to_value(&defaults).unwrap();
@@ -411,6 +582,7 @@ mod tests {
             ("carlinkHevc", serde_json::json!("auto")),
             ("carlinkTrace", serde_json::json!("off")),
             ("autoStart", serde_json::json!(true)),
+            ("bootStart", serde_json::json!(false)),
             ("videoStats", serde_json::json!("off")),
             ("carPlayViewAreas", serde_json::json!(true)),
             ("carBluetoothAudio", serde_json::json!(true)),
@@ -457,7 +629,7 @@ mod tests {
             assert!(serde_json::from_value::<Settings>(v).is_err());
         }
         for (key, values) in [
-            ("carlinkHevc", vec!["auto", "off"]),
+            ("carlinkHevc", vec!["auto", "off", "signal"]),
             ("carlinkTrace", vec!["off", "on"]),
             ("videoStats", vec!["off", "5", "15"]),
         ] {
@@ -465,7 +637,7 @@ mod tests {
                 let mut v = json.clone();
                 v[key] = value.into();
                 let valid = if key == "carlinkHevc" {
-                    ["auto", "off"].contains(&value)
+                    ["auto", "off", "signal"].contains(&value)
                 } else if key == "carlinkTrace" {
                     ["off", "on"].contains(&value)
                 } else {

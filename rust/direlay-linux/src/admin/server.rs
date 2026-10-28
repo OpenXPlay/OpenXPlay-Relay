@@ -200,6 +200,9 @@ impl AdminServer {
             {
                 return Response::error(403, "error.request");
             }
+            if path == "/config/import" {
+                return self.file_route(request, path, &Values::new()).unwrap();
+            }
             match serde_json::from_slice::<Value>(if request.body.is_empty() {
                 b"{}"
             } else {
@@ -266,6 +269,7 @@ impl AdminServer {
                     .is_some_and(|(_, query)| query.split('&').any(|pair| pair == "diagnostics=1"))
                 {
                     status.receivers = Some(self.admin.receivers());
+                    status.receiver_history = Some(self.admin.receiver_history());
                 }
                 Response::json(200, json!(status))
             }
@@ -293,6 +297,26 @@ impl AdminServer {
                     }
                     _ => Response::error(422, "error.carlinkPin"),
                 }
+            }
+            ("POST", "/vehicle/sample") => match body.get("enabled").and_then(Value::as_bool) {
+                Some(enabled) => result(self.admin.vehicle_sample(enabled)),
+                None => Response::error(422, "error.invalid"),
+            },
+            ("GET", "/vehicle") => Response::json(200, self.admin.vehicle()),
+            ("POST", "/carlink/pairing") => {
+                let Some(request) = body.get("request").and_then(Value::as_u64) else {
+                    return Response::error(422, "error.invalid");
+                };
+                let Some(generation) = body.get("generation").and_then(Value::as_u64) else {
+                    return Response::error(422, "error.invalid");
+                };
+                let Some(action) = string("action") else {
+                    return Response::error(422, "error.invalid");
+                };
+                result(
+                    self.admin
+                        .carlink_pairing(request, generation, action, string("pin")),
+                )
             }
             ("GET", "/settings") => Response::json(200, json!(self.admin.settings())),
             ("POST", "/public-name/import") => {
@@ -339,6 +363,15 @@ impl AdminServer {
                 }
             }
             ("PUT", "/hotspot") => match (string("ssid"), string("password")) {
+                _ if body.get("security").is_some_and(|s| {
+                    !matches!(
+                        s.as_str(),
+                        Some("open" | "wpa2" | "wpa3-transition" | "wpa3")
+                    )
+                }) =>
+                {
+                    Response::error(422, "error.invalid")
+                }
                 _ if body
                     .get("band")
                     .is_some_and(|b| !matches!(b.as_str(), Some("auto" | "2.4" | "5"))) =>
@@ -346,8 +379,20 @@ impl AdminServer {
                     Response::error(422, "error.invalid")
                 }
                 (Some(ssid), Some(password)) => {
-                    match validate_hotspot_credentials(ssid, password) {
-                        Ok(()) => result(self.admin.hotspot_update(ssid, password, string("band"))),
+                    match validate_hotspot_credentials(
+                        ssid,
+                        if password.is_empty() {
+                            "openxplay"
+                        } else {
+                            password
+                        },
+                    ) {
+                        Ok(()) => result(self.admin.hotspot_update(
+                            ssid,
+                            password,
+                            string("band"),
+                            string("security"),
+                        )),
                         Err(key) => Response::error(422, key),
                     }
                 }
@@ -369,14 +414,24 @@ impl AdminServer {
                 }
                 _ => Response::error(422, "error.invalid"),
             },
+            ("POST", "/view-area") => {
+                match body.get("index").and_then(Value::as_u64).filter(|i| *i < 7) {
+                    Some(index) => result(self.admin.show_view_area(index as usize)),
+                    None => Response::error(422, "error.invalid"),
+                }
+            }
             ("POST", path) if path.starts_with("/actions/") => {
                 let name = &path[9..];
                 if ![
                     "start",
                     "stop",
+                    "cancel-arrival",
                     "restart",
                     "regenerate-pairing-code",
+                    "clear-saved-head-unit",
+                    "clear-window-records",
                     "forget-wifi",
+                    "clear-vehicle-history",
                     "forget-carlink",
                     "pair-iphone",
                     "cancel-pairing",
@@ -409,7 +464,7 @@ impl AdminServer {
             },
             ("GET", "/carlink-trace/tail") => {
                 let mut filter = None;
-                let mut limit = 200;
+                let mut limit = 5000;
                 for pair in request
                     .path
                     .split_once('?')
@@ -435,7 +490,7 @@ impl AdminServer {
                             filter = Some(t)
                         }
                         Some(("limit", n)) => match n.parse::<usize>() {
-                            Ok(n) if n <= 500 => limit = n,
+                            Ok(n) if n <= 5000 => limit = n,
                             _ => return Response::error(422, "error.invalid"),
                         },
                         _ => return Response::error(422, "error.invalid"),

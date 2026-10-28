@@ -103,8 +103,11 @@ impl CommandRunner for ProcessCommandRunner {
 }
 type StartupListener = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct JsonEvents {
+    failure_secrets: Mutex<Vec<String>>,
+    startup_diagnostics: std::sync::atomic::AtomicBool,
     output: Arc<dyn Fn(String) + Send + Sync>,
     gate: Mutex<()>,
+    log_timeline: Mutex<crate::logs::timeline::Timeline>,
     follow_timeline: Mutex<Option<(Instant, Instant, bool)>>,
     timing: crate::boot_timing::BootTiming,
     pub(crate) facts: Arc<Mutex<crate::path_facts::RuntimePathFacts>>,
@@ -113,8 +116,11 @@ pub struct JsonEvents {
 impl JsonEvents {
     pub fn new(output: Arc<dyn Fn(String) + Send + Sync>) -> Self {
         Self {
+            failure_secrets: Mutex::default(),
+            startup_diagnostics: std::sync::atomic::AtomicBool::new(true),
             output,
             gate: Mutex::new(()),
+            log_timeline: Mutex::default(),
             follow_timeline: Mutex::new(None),
             timing: Default::default(),
             facts: Arc::default(),
@@ -124,6 +130,12 @@ impl JsonEvents {
     /// Records a step towards a CarPlay session; the first ACTIVE session of a controller
     /// attempt logs the attempt's steps as one `boot-timing` event.
     pub fn milestone(&self, milestone: crate::boot_timing::Milestone) {
+        if !self
+            .startup_diagnostics
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
         if let Some(fields) = self.timing.mark(milestone) {
             self.emit("boot-timing", &fields);
         }
@@ -167,9 +179,92 @@ impl JsonEvents {
         *self.startup.lock().unwrap() = Some(listener);
     }
     pub fn startup_milestone(&self, name: &str) {
-        self.emit("airplay-milestone", &serde_json::json!({"name":name}));
+        if self
+            .startup_diagnostics
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.emit("airplay-milestone", &serde_json::json!({"name":name}));
+        } else if name == "first_video_received" {
+            self.facts
+                .lock()
+                .unwrap()
+                .video_received(wall_clock().as_millis() as u64, Instant::now());
+        }
+    }
+    /// W13 can apply the effective startup-diagnostics experiment at the next connection.
+    pub fn set_startup_diagnostics(&self, enabled: bool) {
+        self.startup_diagnostics
+            .store(enabled, std::sync::atomic::Ordering::Release);
+    }
+    pub fn failure_secrets(&self, values: Vec<String>) {
+        *self.failure_secrets.lock().unwrap() =
+            values.into_iter().filter(|s| !s.is_empty()).collect();
+    }
+    pub fn iap2_frame(&self) {
+        if !self
+            .startup_diagnostics
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
+        let count = {
+            let mut facts = self.facts.lock().unwrap();
+            facts.iphone.runtime_iap2_frames = facts.iphone.runtime_iap2_frames.saturating_add(1);
+            facts.iphone.runtime_iap2_frames
+        };
+        if count.is_power_of_two() {
+            self.emit("runtime-iap2", &serde_json::json!({"frames":count}));
+        }
+    }
+    pub fn filtered(&self, fields: &serde_json::Value) -> serde_json::Value {
+        let mut fields = fields.clone();
+        let secrets = self.failure_secrets.lock().unwrap();
+        fn filter(value: &mut serde_json::Value, secrets: &[String]) {
+            match value {
+                serde_json::Value::String(text) => {
+                    *text = crate::failure_text::redact(text, secrets)
+                }
+                serde_json::Value::Array(values) => {
+                    values.iter_mut().for_each(|v| filter(v, secrets))
+                }
+                serde_json::Value::Object(values) => {
+                    values.values_mut().for_each(|v| filter(v, secrets))
+                }
+                _ => {}
+            }
+        }
+        filter(&mut fields, &secrets);
+        drop(secrets);
+        crate::logs::journal::value(&mut fields);
+        fields
+    }
+    /// Observations that need accounting but must not put periodic stats in the journal.
+    pub fn log_observation(&self, event: &str, fields: &serde_json::Value) {
+        let at = Instant::now();
+        let fields = self.filtered(fields);
+        let mut timeline = self.log_timeline.lock().unwrap();
+        let records = if event == "network-observed" {
+            timeline.observe(event, &fields, at)
+        } else {
+            timeline.browser(event, &fields, at)
+        };
+        drop(timeline);
+        if records.is_empty() {
+            return;
+        }
+        let _gate = self.gate.lock().unwrap();
+        for mut record in records {
+            record["time"] = serde_json::json!(timestamp());
+            (self.output)(record.to_string());
+        }
     }
     pub fn emit(&self, event: &str, fields: &serde_json::Value) {
+        // Raw vehicle data belongs to the opt-in history consumer, never to journald.
+        if event == "clink-vehicle" {
+            return;
+        }
+        let observed_at = Instant::now();
+        let fields = self.filtered(fields);
         if event == "stage" && fields["stage"] == "WirelessActive" {
             self.follow_over("iphone-connected");
         }
@@ -177,7 +272,7 @@ impl JsonEvents {
             self.facts
                 .lock()
                 .unwrap()
-                .observe(event, fields, wall_clock().as_millis() as u64);
+                .observe(event, &fields, wall_clock().as_millis() as u64);
         if let Some(reason) = reason {
             let listener = self.startup.lock().unwrap().clone();
             if let Some(listener) = listener {
@@ -191,7 +286,16 @@ impl JsonEvents {
                 v[k] = x.clone();
             }
         }
+        let timeline = self
+            .log_timeline
+            .lock()
+            .unwrap()
+            .observe(event, &fields, observed_at);
         (self.output)(v.to_string());
+        for mut record in timeline {
+            record["time"] = v["time"].clone();
+            (self.output)(record.to_string());
+        }
     }
     pub fn log(&self, message: &str) {
         self.emit("diagnostic", &serde_json::json!({"message":message}));
@@ -352,5 +456,64 @@ mod timestamp_tests {
             }
         }
         assert_eq!((year, month, day), (2401, 1, 1));
+    }
+}
+
+#[cfg(test)]
+mod runtime_diagnostic_tests {
+    use super::*;
+    #[test]
+    fn liveness_is_counted_and_logged_only_at_powers_of_two() {
+        let output = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let saved = output.clone();
+        let events = JsonEvents::new(Arc::new(move |line| {
+            saved
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(&line).unwrap())
+        }));
+        events.failure_secrets(vec!["unlabelled-secret".into()]);
+        events.emit("stage", &serde_json::json!({"stage":"DiscoveringMfi"}));
+        for _ in 0..10 {
+            events.iap2_frame();
+        }
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 10);
+        let counts: Vec<_> = output
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["event"] == "runtime-iap2")
+            .map(|e| e["frames"].as_u64().unwrap())
+            .collect();
+        assert_eq!(counts, [1, 2, 4, 8]);
+        events.emit(
+            "startup-failed",
+            &serde_json::json!({"reason":"error=17 unlabelled-secret password='secret phrase'"}),
+        );
+        let failure = events.runtime_path_facts().iphone.failure.unwrap();
+        assert!(failure.text.contains("error=17"));
+        assert!(!failure.text.contains("secret"));
+        assert!(failure
+            .trail
+            .iter()
+            .any(|line| line.contains("runtime_iap2 frames=8")));
+        assert!(!serde_json::to_string(&*output.lock().unwrap())
+            .unwrap()
+            .contains("secret"));
+        events.emit("stage", &serde_json::json!({"stage":"DiscoveringMfi"}));
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 0);
+        events.set_startup_diagnostics(false);
+        events.iap2_frame();
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 0);
+        events.startup_milestone("first_video_received");
+        assert_eq!(events.runtime_path_facts().iphone.step, "VIDEO");
+        assert!(events
+            .runtime_path_facts()
+            .stable_video(Instant::now() + crate::start_policy::STABLE_SESSION));
+        assert!(output
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["event"] != "airplay-milestone"));
     }
 }

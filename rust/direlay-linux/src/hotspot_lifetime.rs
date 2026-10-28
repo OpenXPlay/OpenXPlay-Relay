@@ -173,6 +173,12 @@ impl HotspotLifetime {
         }
         Ok(())
     }
+    /// The AP lease can be ready before the controller publishes its network snapshot.
+    pub fn ready_info(&self) -> Option<WirelessHotspotInfo> {
+        let current = self.current.lock().unwrap();
+        let state = current.as_ref()?.state.lock().unwrap();
+        (!state.closed).then(|| state.ready.clone()).flatten()
+    }
     pub fn reused(&self) -> bool {
         self.current
             .lock()

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
+import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRecommended, displayPresets, displayPresetsView } from './car-screen';
+import { teslaHint, teslaNotes } from './tesla';
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
 import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
@@ -12,10 +14,12 @@ import { mountStage, timer } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
 import type { StageAction } from './path/present-stage';
-import { fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons } from './settings-tree';
+import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons, fieldEnabled } from './settings-tree';
+import { mountVehicle, mountVehicleSample } from './vehicle';
 import { mountPictureField } from './picture-sizes';
 import { COUNTRY_CODES } from './wifi-countries';
 import { mountFeaturePage } from './feature-pages';
+import { updates } from './update-check';
 import { connectionsView, editConnections } from './connections';
 import type { NetworkRolesSetting } from './schema';
 import { mountTrace, traceFilters, traceVisible } from './carlink-trace';
@@ -23,7 +27,7 @@ import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDeta
 import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
 import type { SavedNetwork } from './schema';
-import { api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
+import { request, api, ApiError, NetworkError, events, type HotspotBand, type HotspotSecurity, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
 import { isVisible, optionLabel, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, translate, type Language } from './i18n';
 import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
@@ -33,6 +37,7 @@ import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
 import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
+let disposeVehicle: (() => void) | null = null;
 let disposeTrace: (() => void) | null = null;
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let languagePreference = (() => { try { const value = localStorage.getItem('openxplay.language'); return value === 'en' || value === 'zh-CN' ? value : 'auto'; } catch { return 'auto'; } })();
@@ -46,7 +51,7 @@ let currentView = route === 'home' ? 'home' : 'settings';
 let stage: ReturnType<typeof mountStage> | null = null;
 let visibleTimer: ReturnType<typeof setInterval> | undefined;
 const drafts = new Map<string, string>();
-on(window, 'hashchange', () => { route = normalizeRoute(location.hash); currentView = route === 'home' ? 'home' : 'settings'; render(); });
+on(window, 'hashchange', () => { videoStats.reset(); route = normalizeRoute(location.hash); currentView = route === 'home' ? 'home' : 'settings'; render(); });
 function showSettings(target?: string) {
   const next = target?.startsWith('settings') ? target : target === 'current-password' ? 'settings/access/admin' : target?.startsWith('field-') ? fieldRoute(decodeURIComponent(target.slice(6))) : 'settings';
   location.hash = next;
@@ -56,6 +61,7 @@ let handoff: { action: 'forget'; ssid: string; error?: string } | null = null;
 let networks: WifiNetwork[] = [];
 let switching: { target: string; consequences: ReturnType<typeof switchConsequences>; started: number } | null = null;
 let networkAnnouncement = '';
+let disposeFeature: (() => void) | undefined;
 let needsRestart = false;
 let networkError = '';
 let status: Status | null = null;
@@ -69,7 +75,7 @@ const videoStats = new VideoStatsSnapshot();
 let carlinkError = '';
 let connectPin = '';
 let connectBusy = false;
-let dismissedPin: number | null = null;
+let dismissedPin: string | null = null;
 let pairingBusy = false;
 let pairingError = '';
 let publicNameBusy = false;
@@ -106,7 +112,7 @@ function resetSession(next: SessionState) {
 }
 on(events, 'unauthorized', () => { if (session === 'ready' && !handoff) resetSession('login'); });
 // Anchor deadlines on this browser's clock; statistics are fetched only when displayed.
-async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(route === 'settings/developer/diagnostics' || route === 'settings/connection/network/interfaces' || videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
+async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(['settings/developer/diagnostics', 'settings/developer/carlink', 'settings/car'].includes(route) || route === 'settings/connection/network/interfaces' || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
 function errorKey(error: unknown): string { return error instanceof ApiError ? error.key : error instanceof NetworkError ? 'error.network' : 'error.request'; }
 function shell() {
   document.documentElement.lang = language;
@@ -116,7 +122,8 @@ function shell() {
 }
 function render() {
   stage?.destroy(); stage = null; clearInterval(visibleTimer); visibleTimer = undefined;
-  disposeTrace?.(); disposeTrace = null;
+  disposeFeature?.(); disposeFeature = undefined;
+  disposeTrace?.(); disposeTrace = null; disposeVehicle?.(); disposeVehicle = null;
   shell();
   if (switching) renderSwitching();
   else if (handoff) renderHandoff();
@@ -162,10 +169,11 @@ function renderConnections() {
 }
 function menuRow(target: string, title: string, summary = '', name = 'settings'): string {
   const error = fields().filter(f => fieldRoute(f.key) === target || fieldRoute(f.key).startsWith(target + '/')).some(f => { const message = feedback.get(f.key); return !!message && !message.startsWith('ui.'); });
-  return `<a class="inset-row menu-row" href="#${target}"><span class="icon-tile hue-${name}">${icon(name)}</span><span class="row-copy"><span>${esc(t(title))}</span>${summary ? `<small class="muted">${esc(summary)}</small>` : ''}</span>${error ? `<span class="error" aria-label="${t('error.invalid')}">!</span>` : ''}<span aria-hidden="true">›</span></a>`;
+  return `<a class="inset-row menu-row" href="#${target}"><span class="icon-tile hue-${name}">${icon(name)}</span><span class="row-copy"><span>${esc(t(title))}</span>${summary ? `<small class="${target === 'settings/about' && updates.result?.outcome === 'available' ? 'notice' : 'muted'}">${esc(summary)}</small>` : ''}</span>${error ? `<span class="error" aria-label="${t('error.invalid')}">!</span>` : ''}<span aria-hidden="true">›</span></a>`;
 }
 function pageSummary(target: string): string { return menuSummary(settings!, status!, target, language, t); }
 function editorField(field: Field): Field {
+  if (field.key === 'hotspotSecurity') { const supported = status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']; return { ...field, options: field.options?.filter(option => supported.includes(option.value as HotspotSecurity) || option.value === settings?.values.hotspotSecurity) }; }
   if (field.key !== 'wifiCountry') return field;
   const names = new Intl.DisplayNames([language], { type: 'region' });
   return { ...field, type: 'choice', options: [{ value: 'system', labelKey: 'roles.country.system' }, ...COUNTRY_CODES.map(value => ({ value, labelKey: '', labels: { en: names.of(value) ?? value, 'zh-CN': names.of(value) ?? value } }))] };
@@ -174,13 +182,15 @@ function renderReady() {
   if (!pageAvailable(settings!, status!, route) && route !== 'home') { location.hash = parentRoute(route); return; }
   renderRestart();
   const main = document.getElementById('main')!;
+  if (currentView !== 'home') videoStats.reset();
   if (currentView === 'home') {
     patchMarkup(main, '<div id="dashboard"></div>');
     stage = mountStage(document.getElementById('dashboard')!, { t, action: action => void dispatchStage(action), copy: value => void copyStage(value),
       details: () => `${menuRow('settings/car', 'menu.car', pageSummary('settings/car'), 'car')}<div class="inset-group">${fields().filter(f => f.key === 'autoStart').map(f => fieldMarkup({ ...f, labelKey: 'stage.automatic', hintKey: undefined })).join('')}</div>${addressesView(status!, true, t)}${devicesView(status!, true, t)}<div id="pairing-panel" data-preserve></div>${videoStatsView(videoStats.read(status!, videoStatsInterval(settings, status!.platform), performance.now()), t)}${status!.notices.length ? `<div class="inset-group">${status!.notices.map(n => `<p>${esc(t(n))}</p>`).join('')}</div>` : ''}`,
       bindDetails: scope => { bindCopies(scope); const auto = fields().find(f => f.key === 'autoStart'); if (auto) bindField(auto); renderPairingPanel(); syncVisibleTimer(); },
-      notice: notice => { if (notice === 'DISPLAY_CHANGED') void dispatchStage({ type: 'Step', action: 'RETRY', step: 'CARPLAY_START', label: null }); else showSettings(notice === 'CHOOSE_CAR' ? 'settings/car' : 'settings'); },
+      notice: notice => { if (notice === 'DISPLAY_CHANGED') void dispatchStage({ type: 'Step', action: 'RETRY', step: 'CARPLAY_START', label: null }); else showSettings(notice === 'TRUSTED_HTTPS' ? 'settings/access/public-name' : notice === 'CHOOSE_CAR' ? 'settings/car' : 'settings'); },
     });
+    main.insertAdjacentHTML('beforeend', status!.platform === 'linux' ? `<a class="inset-group inset-row" href="#settings/vehicle" data-vehicle-tile>${t('vehicle.title')}</a>` : '');
     updateDashboard(); return;
   }
   patchMarkup(main, `<div class="settings-page"><h1 class="large-title">${esc(t(routeTitle(route)))}</h1><div id="settings"></div></div>`);
@@ -188,13 +198,21 @@ function renderReady() {
   if (route === 'settings') {
     patchMarkup(container, [pages.slice(0, 4), pages.slice(4, 6), pages.slice(6, 9), pages.slice(9)].map(group => `<div class="inset-group menu-group">${group.filter(([page]) => pageAvailable(settings!, status!, 'settings/' + page)).map(([page, title, name]) => menuRow('settings/' + page, title, pageSummary('settings/' + page), name)).join('')}</div>`).join(''));
   } else if (route === 'settings/developer') {
-    patchMarkup(container, `<div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
+    const master = pageFields(settings!, route);
+    patchMarkup(container, `<div class="inset-group">${master.map(fieldMarkup).join('')}</div><div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
+    master.forEach(bindField);
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
-    mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
+    disposeFeature = mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {
+    if (route === 'settings/vehicle') {
+      disposeVehicle = mountVehicle(container, t, errorKey);
+    }
+    if (route === 'settings/output' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/vehicle', 'vehicle.title', t(`vehicle.${(!status!.carlink?.vehicle || status!.carlink.vehicle.state === 'off') ? 'off' : status!.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`), 'car')}</div>`);
+    if (route === 'settings/experimental') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('hint.experimentalScope'))}</p>`);
+    if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
     const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry'].includes(f.key)).map(editorField);
-    patchMarkup(container, `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
+    container.insertAdjacentHTML('beforeend', `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
     list.forEach(bindField);
     if (route === 'settings/connection') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/connection/network', 'menu.connection/network', pageSummary('settings/connection/network'), 'wifi')}</div><div id="pairing-panel"></div>`);
     if (route === 'settings/connection/network') container.insertAdjacentHTML('beforeend', `<div id="network-panel" class="inset-group"></div>${status!.platform === 'linux' ? `<div class="inset-group">${menuRow('settings/connection/network/interfaces', 'menu.connection/network/interfaces', '', 'router')}</div>` : ''}`);
@@ -202,6 +220,7 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', connectionsView(status!, t) || `<div class="inset-group">${fields().filter(f => special.has(f.key) && f.key !== 'sharedWifiNetworks').map(fieldMarkup).join('')}</div>`);
       fields().filter(f => special.has(f.key) && f.key !== 'sharedWifiNetworks').forEach(f => { if (document.getElementById(fieldId(f.key))) bindField(f); }); bindConnections();
     }
+    if (route === 'settings/tesla') { container.insertAdjacentHTML('beforeend', '<div id="tesla-notes"></div>'); renderTesla(); }
     if (route === 'settings/access/public-name') container.insertAdjacentHTML('beforeend', '<div id="public-name-panel" class="inset-group"></div>');
     if (route === 'settings/access') {
       container.insertAdjacentHTML('beforeend', addressesView(status!, true, t) + `<div class="inset-group">${fields().some(f => f.key === 'publicNameEnabled') ? menuRow('settings/access/public-name', 'publicName.title', status!.publicName ? t(`publicName.state.${status!.publicName.state}`) : '', 'lock') : ''}${menuRow('settings/access/admin', 'menu.access/admin', defaultPassword ? t('home.passwordNote') : '', 'lock')}</div>`); bindCopies(container);
@@ -210,11 +229,20 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="password-card"><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form><button id="logout">${t('ui.logout')}</button></section>`);
       bindPassword(); on(document.getElementById('logout')!, 'click', async () => { try { await api.logout(); resetSession('login'); } catch (e) { pageError = errorKey(e); } });
     }
-    if (route === 'settings/car' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group"><div class="inset-row"><span>${t('car.savedScreen')} · ${esc(status!.pathInput?.car?.savedScreen ?? t('stage.noScreen'))}</span></div><button class="quiet full-width" id="clear-saved-head-unit">${t('car.clearSaved')}</button><p id="clear-saved-result" role="status"></p></div>`);
-    on(document.getElementById('clear-saved-head-unit'), 'click', async () => { if (!await confirmSheet(t('carlink.clearSavedHint'), t('car.clearSaved'), t('ui.cancel'))) return; try { await api.action('clear-saved-head-unit'); document.getElementById('clear-saved-result')!.textContent = t('ui.saved'); } catch (e) { document.getElementById('clear-saved-result')!.textContent = t(errorKey(e)); } });
-    if (route === 'settings/developer/diagnostics') { container.insertAdjacentHTML('beforeend', '<div id="diagnostics" class="inset-group"></div>'); renderDiagnostics(); }
+    if (route === 'settings/car' && status!.platform === 'linux') {
+      container.insertAdjacentHTML('beforeend', '<div id="car-notes"></div><div id="car-screen"></div>'); renderCarScreen();
+    }
+    if (route === 'settings/developer/video' && status!.platform === 'linux') {
+      container.insertAdjacentHTML('beforeend', displayPresetsView(t));
+      container.querySelectorAll<HTMLButtonElement>('[data-display-preset]').forEach(button => on(button, 'click', async () => {
+        const profile = displayPresets[Number(button.dataset.displayPreset)];
+        try { const response = await api.save({ displayMode: 'fixed', displayWidth: profile[0], displayHeight: profile[1], displayDensity: profile[2] }); needsRestart ||= restartRequired([], response.applied); settings = await api.settings(); render(); }
+        catch (e) { pageError = errorKey(e); }
+      }));
+    }
+    if (route === 'settings/developer/diagnostics') { container.insertAdjacentHTML('beforeend', '<div id="vehicle-sample" class="inset-group"></div><div id="diagnostics" class="inset-group"></div>'); renderDiagnostics(); if (status!.platform === 'linux') disposeVehicle = mountVehicleSample(document.getElementById('vehicle-sample')!, t, errorKey); }
     if (route === 'settings/developer/connection') {
-      container.insertAdjacentHTML('beforeend', `<div class="inset-group"><button id="developer-restart">${t('home.restart')}</button><button id="forget-all-wifi">${t('net.forgetAll')}</button>${status!.platform === 'linux' ? `<button id="carlink-forget">${t('carlink.forget')}</button><button id="regenerate-code">${t('stage.regenerate')}</button>` : ''}</div>`);
+      container.insertAdjacentHTML('beforeend', `<div class="inset-group"><button id="developer-restart">${t('home.restart')}</button><button id="forget-all-wifi">${t('net.forgetAll')}</button>${status!.platform === 'linux' ? `<button id="carlink-forget">${t('carlink.forget')}</button><button id="regenerate-code" ${settings!.values.requirePairingCode && settings!.values.output !== 'carlink' ? '' : 'disabled'}>${t('stage.regenerate')}</button>` : ''}</div>`);
       on(document.getElementById('developer-restart')!, 'click', async () => { if (await confirmSheet(t('home.restartHint'), t('home.restart'), t('ui.cancel'))) void api.action('restart').then(() => tick()); });
       on(document.getElementById('forget-all-wifi')!, 'click', () => void forgetAllWifi()); on(document.getElementById('carlink-forget')!, 'click', confirmForgetCarlink);
       on(document.getElementById('regenerate-code')!, 'click', () => void api.action('regenerate-pairing-code').then(() => tick()));
@@ -222,8 +250,9 @@ function renderReady() {
     }
     if (route === 'settings/developer/carlink') { container.insertAdjacentHTML('beforeend', `<details class="inset-group"><summary>${t('carlink.connect')}</summary><div id="context-action"></div></details>`); renderCarlink(); }
     if (route === 'settings/developer/carlink' && status!.platform === 'linux') {
+      container.insertAdjacentHTML('beforeend', '<div id="view-areas"></div>'); renderCarScreen();
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="carlink-debug"><h2>${t('trace.title')}</h2><label for="trace-filter">${t('trace.filter')}</label><select id="trace-filter" data-trace-filter>${traceFilters.map((value, i) => `<option value="${value}">${t(['trace.all', 'trace.rtsp', 'trace.frames', 'trace.media', 'trace.link', 'trace.errors'][i])}</option>`).join('')}</select><p class="error" role="alert" data-trace-error></p><div data-trace-content></div></section>`);
-      disposeTrace = mountTrace(document.getElementById('carlink-debug')!, t, errorKey);
+      disposeTrace = mountTrace(document.getElementById('carlink-debug')!, t, errorKey, undefined, () => status?.carlink?.summary);
     }
     if (route === 'settings/output' && pageAvailable(settings!, status!, 'settings/output/plugins')) container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/output/plugins', 'section.plugins', '', 'code')}</div>`);
     renderNetworkPanel(); renderPairingPanel(); updateVisibility(); renderPublicName();
@@ -250,14 +279,20 @@ async function dispatchStage(action: StageAction) {
   }
 }
 function updateDashboard() {
+  const applied = status?.carlink?.appliedPicture;
+  const currentPicture = document.querySelector<HTMLElement>('[data-current-picture]');
+  if (currentPicture) currentPicture.textContent = applied ? `${t('picture.current')}: ${applied.width} × ${applied.height}` : t('picture.pending');
+  const vehicleTile = document.querySelector<HTMLElement>('[data-vehicle-tile]');
+  if (vehicleTile) vehicleTile.textContent = t(`vehicle.${(!status?.carlink?.vehicle || status.carlink.vehicle.state === 'off') ? 'off' : status?.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`);
   if (!status || !stage) { if (status && document.getElementById('context-action')) renderCarlink(); syncPinDialog(); syncVisibleTimer(); return; }
-  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: needsRestart || restartRequired(status.notices), carIncomplete: !status.pathInput?.car?.screen && !status.pathInput?.car?.savedScreen && !settings?.values.carBrand && !settings?.values.carModel }, pageError);
+  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: needsRestart || restartRequired(status.notices), carIncomplete: !!settings && Object.keys(carSelectionErrors(settings.values)).length > 0, trustedHttpsRecommended: !!settings && trustedHttpsRecommended(settings.values) }, pageError);
   syncPinDialog(); syncVisibleTimer();
 }
 function syncVisibleTimer() {
-  const visible = !document.hidden && (!!document.querySelector('#pairing-remaining, #carlink-countdown') || !!stage?.timerVisible);
+  const visible = !document.hidden && (!!document.querySelector('#pairing-remaining, #carlink-countdown') || !!stage?.timerVisible || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0);
   if (visible && !visibleTimer) visibleTimer = setInterval(() => {
     stage?.tick(); syncPinDialog();
+    if (currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0) void tick();
     const seconds = Math.max(0, Math.ceil((status?.pairingDeadline ?? 0) - Date.now() / 1000));
     const panel = document.getElementById('pairing-remaining'); if (panel) panel.textContent = t('pairing.open', { time: formatRemaining(seconds) });
     if (!seconds && status?.pairingDeadline) { status.pairingDeadline = null; renderPairingPanel(); }
@@ -359,7 +394,7 @@ function confirmRemovePublicName() {
 }
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
-  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, status.platform === 'linux' ? status.network : null, language]);
+  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.receiverHistory, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, status.platform === 'linux' ? status.network : null, language]);
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   const open = new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-details]')].filter(d => d.open).map(d => d.dataset.details));
@@ -449,35 +484,45 @@ function renderCarlink() {
 function syncPinDialog() {
   let dialog = document.querySelector<HTMLDialogElement>('#carlink-pin-dialog');
   const view = status && carlinkView(status);
-  const deadline = status?.carlink?.pinDeadline ?? null;
-  if (session !== 'ready' || switching || !view?.pinRequested || dismissedPin === deadline) {
+  const deadline = status?.carlink?.pinRequest ?? status?.carlink?.pinDeadline ?? null;
+  const generation = status?.carlink?.generation ?? 0;
+  const prompt = `${generation}:${deadline}`;
+  const confirmation = status?.carlink?.pinConfirmation === true;
+  if (session !== 'ready' || switching || !view?.pinRequested || dismissedPin === prompt) {
+    if (!view?.pinRequested) dismissedPin = null;
     if (dialog) { dialog.close(); dialog.remove(); }
     return;
   }
-  if (dialog && (dialog.dataset.deadline !== String(deadline) || dialog.dataset.language !== language)) {
+  if (dialog && (dialog.dataset.deadline !== prompt || dialog.dataset.language !== language)) {
     dialog.close(); dialog.remove(); dialog = null;
   }
   if (!dialog) {
     dialog = document.createElement('dialog'); dialog.id = 'carlink-pin-dialog';
-    dialog.dataset.deadline = String(deadline); dialog.dataset.language = language;
+    dialog.dataset.deadline = prompt; dialog.dataset.language = language;
     dialog.setAttribute('aria-labelledby', 'carlink-pin-title');
-    patchMarkup(dialog, `<form><h2 id="carlink-pin-title">${t('carlink.enterPin')}</h2><p>${t('carlink.pinHint')}</p><label for="carlink-pin">${t('carlink.pin')}</label><input id="carlink-pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="off" required aria-describedby="carlink-countdown carlink-pin-error"><p id="carlink-countdown" role="timer"></p><p id="carlink-pin-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="cancel">${t('ui.cancel')}</button><button type="submit" class="primary">${t('carlink.submitPin')}</button></div></form>`);
+    patchMarkup(dialog, `<form><h2 id="carlink-pin-title">${t(confirmation ? 'carlink.confirm' : 'carlink.enterPin')}</h2><p>${esc(confirmation ? t('carlink.confirmHint', { client: status?.carlink?.pinClient ?? '' }) : t('carlink.pinHint'))}</p>${confirmation ? '' : `<label for="carlink-pin">${t('carlink.pin')}</label><input id="carlink-pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="off" required aria-describedby="carlink-countdown carlink-pin-error">`}<p id="carlink-countdown" role="timer"></p><p id="carlink-pin-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="cancel">${t('ui.cancel')}</button><button type="submit" class="primary">${t(confirmation ? 'carlink.approve' : 'carlink.submitPin')}</button></div></form>`);
     document.body.append(dialog); dialog.showModal();
     const currentDialog = dialog;
-    const close = () => { dismissedPin = deadline; currentDialog.close(); currentDialog.remove(); document.getElementById('carlink-enter-pin')?.focus(); };
-    on(dialog.querySelector('.cancel')!, 'click', close);
-    on(dialog, 'cancel', event => { event.preventDefault(); close(); });
+    const close = () => { dismissedPin = prompt; currentDialog.close(); currentDialog.remove(); document.getElementById('carlink-enter-pin')?.focus(); };
+    const answer = async (action: 'approve' | 'pin' | 'cancel', pin?: string) => {
+      if (status?.platform === 'linux') await request('/carlink/pairing', 'POST', { request: deadline, generation, action, ...(pin ? { pin } : {}) });
+      else if (action === 'pin') await api.carlinkPin(pin!);
+      else await request(`/actions/${action === 'cancel' ? 'cancel-carlink-pairing' : 'approve-carlink-pairing'}`, 'POST', {});
+    };
+    const cancel = async () => { try { await answer('cancel'); close(); void tick(); } catch (e) { currentDialog.querySelector('#carlink-pin-error')!.textContent = t(errorKey(e)); } };
+    on(dialog.querySelector('.cancel')!, 'click', () => void cancel());
+    on(dialog, 'cancel', event => { event.preventDefault(); void cancel(); });
     on(dialog.querySelector('form')!, 'submit', async event => {
       event.preventDefault();
       const input = currentDialog.querySelector<HTMLInputElement>('input')!;
       const errorEl = currentDialog.querySelector<HTMLElement>('#carlink-pin-error')!;
-      if (!validCarlinkPin(input.value)) { errorEl.textContent = t('error.carlinkPin'); return; }
+      if (!confirmation && !validCarlinkPin(input.value)) { errorEl.textContent = t('error.carlinkPin'); return; }
       const button = currentDialog.querySelector<HTMLButtonElement>('[type="submit"]')!; button.disabled = true;
       const current = epoch;
       try {
-        await api.carlinkPin(input.value);
-        input.value = '';
-        if (current === epoch && status?.carlink?.pinDeadline === deadline) {
+        await answer(confirmation ? 'approve' : 'pin', input?.value);
+        if (input) input.value = '';
+        if (current === epoch && status?.carlink && (status.carlink.generation ?? 0) === generation && (status.carlink.pinRequest ?? status?.carlink?.pinDeadline) === deadline) {
           status.carlink.pinRequested = false; status.carlink.pinDeadline = null; status.carlink.pinIncorrect = false;
           carlinkError = ''; close(); dismissedPin = null; updateDashboard();
         }
@@ -512,35 +557,66 @@ function topology(mode: Illustration): string {
   const labelTwo = t(phoneHotspot ? 'ui.hotspot' : 'ui.wifi');
   return `<figure class="topology"><svg viewBox="0 0 310 ${shared ? 136 : 94}" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="${links}" stroke-dasharray="4 4"/></g>${shared ? node('router', 155, 16) : ''}${node('smartphone', 45, y)}${node('router', 155, y)}${node('car', 265, y)}<g fill="currentColor" font-size="11" text-anchor="middle">${shared ? `<text x="211" y="23">${t('ui.wifi')}</text>` : `<text x="100" y="29">${labelOne}</text><text x="210" y="29">${labelTwo}</text>`}<text x="45" y="${y + 32}">${t('ui.iphone')}</text><text x="155" y="${y + 32}">${t('ui.relay')}</text><text x="265" y="${y + 32}">${t('ui.screen')}</text></g></svg><figcaption>${t(`ui.topology.${mode}`)}</figcaption></figure>`;
 }
+function renderCarScreen() {
+  if (!status || !settings) return;
+  const notes = document.getElementById('car-notes');
+  if (notes) patchMarkup(notes, carNotes(settings.values, t));
+  const panel = document.getElementById('car-screen'), areas = document.getElementById('view-areas');
+  if (panel) patchMarkup(panel, carScreenView(status, t));
+  if (areas) patchMarkup(areas, viewAreasView(status, t));
+  for (const scope of [panel, areas]) {
+    scope?.querySelectorAll<HTMLButtonElement>('[data-screen-action], [data-show-area], [data-screen-copy]').forEach(button => on(button, 'click', async () => {
+      button.disabled = true;
+      const feedback = scope.querySelector<HTMLElement>('[data-screen-result]');
+      try {
+        if (button.hasAttribute('data-screen-copy')) await copyStage(screenShareText(status!, settings!, language, t));
+        else if (button.dataset.showArea) await api.showViewArea(Number(button.dataset.showArea));
+        else await api.action(button.dataset.screenAction as 'clear-saved-head-unit' | 'clear-window-records');
+        if (feedback) feedback.textContent = t(button.hasAttribute('data-screen-copy') ? 'car.copied' : 'ui.saved');
+        await tick();
+      } catch (e) { if (feedback) feedback.textContent = t(errorKey(e)); }
+      finally { button.disabled = false; }
+    }));
+  }
+}
+function renderTesla() {
+  if (!settings || !status) return;
+  const panel = document.getElementById('tesla-notes');
+  if (panel) patchMarkup(panel, teslaNotes(settings.values, status, t));
+  const hint = document.getElementById(fieldId('teslaBrowser') + '-hint');
+  if (hint) hint.textContent = teslaHint(settings.values, String(settings.values.teslaBrowser), t);
+}
 function fieldMarkup(field: Field): string {
   field = editorField(field);
   const id = fieldId(field.key), value = settings!.values[field.key], draft = drafts.get(field.key);
   const label = esc(t(field.labelKey));
-  const attr = `id="${id}" aria-describedby="${id}-hint ${id}-result"`;
+  const attr = `${fieldEnabled(field.key, settings!.values) ? '' : 'disabled '}id="${id}" aria-describedby="${id}-hint ${id}-result"`;
   let control = '';
   if (field.key === 'carlinkPictureSizes') control = `<div ${attr}></div>`;
   else if (field.type === 'plugins') control = `<div ${attr}>${pluginList(settings!, language, t, true)}</div>`;
   else if (field.type === 'bool' || field.key === 'carlinkTrace') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attr} type="checkbox" role="switch" ${value === true || value === 'on' ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'choice' || field.type === 'phone') {
-    const summary = field.type === 'phone' ? value === 'auto' ? t('ui.automatic') : phoneNames.get(String(value)) ?? value : optionLabel(field.options?.find(o => o.value === value), language, t);
+    const summary = field.key === 'frameRate' && value === 'auto' ? autoFrameRateSummary(status!, t) : field.type === 'phone' ? value === 'auto' ? t('ui.automatic') : phoneNames.get(String(value)) ?? value : optionLabel(field.options?.find(o => o.value === value), language, t);
     control = `<button ${attr} class="inset-row picker-button" aria-haspopup="dialog"><span class="row-copy"><span>${label}</span><small class="muted">${esc(summary)}</small></span><span aria-hidden="true">›</span></button>`;
   } else {
     const object = field.type === 'object' || typeof value === 'object' && value !== null;
     const string = draft ?? (object ? JSON.stringify(value, null, 2) : String(value ?? ''));
-    control = `<label for="${id}">${label}</label><div class="input-row">${object ? `<textarea ${attr} rows="4">${esc(string)}</textarea>` : `<input ${attr} type="${field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'}" value="${esc(string)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1" inputmode="numeric"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''}>`}${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}">${icon('eye')}</button>` : ''}</div><div class="field-edit-actions" ${draft === undefined ? 'hidden' : ''}><button type="button" data-save="${esc(field.key)}">${t('net.save')}</button><button type="button" data-cancel="${esc(field.key)}">${t('ui.cancel')}</button></div>`;
+    control = `<label for="${id}">${label}</label><div class="input-row">${object ? `<textarea ${attr} rows="4">${esc(string)}</textarea>` : `<input ${attr} type="${field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'}" value="${esc(string)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1" inputmode="numeric"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${/^car(Brand|Model|Year)Text$/.test(field.key) ? 'maxlength="40"' : ''}>`}${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}">${icon('eye')}</button>` : ''}</div><div class="field-edit-actions" ${draft === undefined ? 'hidden' : ''}><button type="button" data-save="${esc(field.key)}">${t('net.save')}</button><button type="button" data-cancel="${esc(field.key)}">${t('ui.cancel')}</button></div>`;
   }
-  const hint = field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
+  const hint = field.key === 'teslaBrowser' ? esc(teslaHint(settings!.values, String(value), t)) : field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
   return `<div class="field" data-field="${esc(field.key)}">${control}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result" role="status">${esc(t(feedback.get(field.key) ?? ''))}</p></div>`;
 }
 function bindField(field: Field) {
   field = editorField(field);
   const el = document.getElementById(fieldId(field.key)); if (!el) return;
-  if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.pathInput?.car?.carlink?.picture ?? undefined); return; }
+  el.closest('.field')?.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea').forEach(control => { control.disabled = !fieldEnabled(field.key, settings!.values); });
+  if (!fieldEnabled(field.key, settings!.values)) return;
+  if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.carlink?.appliedPicture ? `${status!.carlink.appliedPicture.width} × ${status!.carlink.appliedPicture.height}` : undefined); return; }
   if (field.type === 'plugins') on(el, 'change', event => { const input = event.target as HTMLInputElement; queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked)); });
   else if (field.type === 'bool' || field.key === 'carlinkTrace') on(el, 'change', () => queueSave(field, field.key === 'carlinkTrace' ? (el as HTMLInputElement).checked ? 'on' : 'off' : (el as HTMLInputElement).checked));
   else if (field.type === 'phone') on(el, 'click', () => void pickPhone(field));
   else if (field.type === 'choice') on(el, 'click', () => {
-    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
+    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : field.key === 'hotspotSecurity' && !(status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']).includes(option.value as HotspotSecurity) ? 'disabled' : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
     dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', async () => {
       const option = field.options![Number(button.dataset.option)];
       if (restartsPicture(field.key) && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
@@ -601,7 +677,7 @@ function renderRestart() {
 }
 function editHotspot() {
   if (!status?.hotspot) return;
-  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t, status.wireless));
+  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t, status.wireless, status.hotspot));
   const name = dialog.querySelector<HTMLInputElement>('#hotspot-name')!;
   const password = dialog.querySelector<HTMLInputElement>('#hotspot-password')!;
   on(dialog.querySelector('#hotspot-reveal')!, 'click', event => {
@@ -611,21 +687,22 @@ function editHotspot() {
   });
   on(dialog.querySelector('form')!, 'submit', event => {
     event.preventDefault();
-    const error = validateHotspot(name.value, password.value);
+    const error = validateHotspot(name.value, password.value, true);
     dialog.querySelector('#hotspot-error')!.textContent = t(error);
     name.setAttribute('aria-invalid', String(error === 'error.hotspotSsid'));
     password.setAttribute('aria-invalid', String(error === 'error.hotspotPassword'));
     if (error) return;
     const ssid = name.value, secret = password.value;
     const band = dialog.querySelector<HTMLSelectElement>('#hotspot-band')!.value as HotspotBand;
+    const security = dialog.querySelector<HTMLSelectElement>('#hotspot-security')!.value as HotspotSecurity;
     const active = status!.network.mode === 'device-hotspot';
     // Keep the form open underneath so Cancel returns to the entered values.
     const confirmation = networkDialog(t('hotspot.confirm'), `<p>${esc(t(active ? 'hotspot.warning' : 'hotspot.later'))}</p><p>${esc(ssid)}</p><p class="error" role="alert"></p><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button data-confirm class="primary">${t('hotspot.apply')}</button></div>`);
     on(confirmation.dialog.querySelector<HTMLButtonElement>('[data-confirm]')!, 'click', async event => {
       const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
       try {
-        await api.hotspot(ssid, secret, band);
-        status!.hotspot = { ...status!.hotspot!, ssid, password: secret, hasPassword: true };
+        await api.hotspot(ssid, secret, band, security);
+        status!.hotspot = { ...status!.hotspot!, ssid, password: secret || status!.hotspot!.password, security, hasPassword: security !== 'open' };
         confirmation.close(); close();
         networkAnnouncement = t(active ? 'hotspot.reconnecting' : 'ui.saved'); renderNetworkPanel(); void tick();
       } catch (error) { confirmation.dialog.querySelector('.error')!.textContent = t(errorKey(error)); }
@@ -758,7 +835,7 @@ function updateVisibility() {
     if (el) el.hidden = !isVisible(field, settings!.values) && !['networkRoles', 'wifiInterface', 'carlinkInterface', 'wifiCountry', 'adminHotspotPassword'].includes(field.key);
   }
   document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = ![...section.children].some(child => !(child as HTMLElement).hidden); });
-  renderPublicName();
+  renderPublicName(); renderTesla(); renderCarScreen();
 }
 async function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
@@ -787,7 +864,7 @@ async function queueSave(field: Field, raw: string | boolean) {
   if (field.key === 'transport' && value === 'wireless' && wifiDirectDisabled(status?.platform, settings!.values, settings!.values.networkMode)) settings!.values.networkMode = 'phone-hotspot';
   if (field.key === 'networkMode' && wifiDirectDisabled(status?.platform, settings!.values, value)) return;
   queueValue(field, value);
-  if (field.key === 'output') render();
+  if (['output', 'developerActive', 'experimentalActive'].includes(field.key)) render();
 }
 function queueValue(field: Field, value: Value) {
   settings!.values[field.key] = value;
@@ -814,7 +891,7 @@ async function save(key: string) {
       if (token) { token.value = String(settings.values.publicNameToken ?? ''); token.placeholder = settings.values.publicNameTokenSet ? t('publicName.tokenSaved') : ''; }
       for (const field of fields().filter(f => f.key.startsWith('publicName'))) result(field.key, 'ui.saved');
     }
-    if (revision === item.revision) { pending.delete(key); if (['carBrand', 'carModel', 'carYear'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
+    if (revision === item.revision) { pending.delete(key); if (['carBrand', 'carModel', 'carYear', 'physicalWidthEnabled'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {
@@ -922,7 +999,9 @@ async function tick() {
     } else if (!status || !settings) await loadReady();
     else {
       const current = epoch; const next = await fetchStatus();
-      if (current === epoch && session === 'ready') { status = next; renderRestart();
+      if (current === epoch && session === 'ready') { status = next;
+        if (currentView === 'home') videoStats.read(status, videoStatsInterval(settings, status.platform), performance.now());
+        renderRestart();
         if (switching && next.network.mode === switching.target && Date.now() - switching.started >= 2000) {
           const joinError = next.notices.find(n => n.startsWith('wifi.joinFailed.'));
           networkError = joinError ?? '';
@@ -931,13 +1010,13 @@ async function tick() {
           for (const [key, item] of pending) settings.values[key] = item.value;
           if (pending.has('publicNameProvider')) publicNameDrafts.select(String(settings.values.publicNameProvider), settings.values);
           switching = null; render(); document.getElementById('network-switch')?.focus();
-        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderConnections(); } }
+        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderTesla(); renderCarScreen(); renderConnections(); } }
     }
   } catch (error) { if (!(error instanceof NetworkError)) { pageError = errorKey(error); if (!status) render(); } }
   finally { polling = false; }
 }
 on(window, 'scroll', () => { document.documentElement.style.setProperty('--collapse', String(Math.min(1, window.scrollY / 64))); });
-on(document, 'visibilitychange', () => { syncVisibleTimer(); if (!document.hidden) void tick(); });
+on(document, 'visibilitychange', () => { if (document.hidden) videoStats.reset(); syncVisibleTimer(); if (!document.hidden) void tick(); });
 on(document, 'keydown', event => {
   if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
   const target = event.target as HTMLElement;
@@ -951,3 +1030,5 @@ on(document, 'keydown', event => {
 });
 enhanceSheets(() => t('ui.close'));
 render(); void tick(); setInterval(() => void tick(), 2000);
+
+updates.subscribe(() => { if (session === 'ready' && route === 'settings') render(); });

@@ -18,9 +18,10 @@ function mediaSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Number((bytes / 1024).toFixed(1))} KB`;
   return `${Number((bytes / (1024 * 1024)).toFixed(1))} MB`;
 }
-export function tracePanel(snapshot: TraceSnapshot | null, lines: string[], media: string | undefined, t: Translate): string {
+export function tracePanel(snapshot: TraceSnapshot | null, lines: string[], media: string | undefined, t: Translate, summary?: Record<string, string>): string {
   const capturing = snapshot?.status?.capture.state === 'capturing';
-  return `<p>${esc(t('trace.counters', { events: lines.length, dropped: snapshot?.status?.dropped ?? 0, bytes: snapshot?.status?.capture.bytes ?? 0 }))}</p>${snapshot?.status?.failure ? `<p class="error">${esc(t('trace.failure', { failure: snapshot.status.failure }))}</p>` : ''}${media ? `<pre>${esc(media)}</pre>` : ''}<div class="dialog-actions"><a class="button" ${snapshot?.files.some(f => f.kind === 'trace') ? 'href="/api/v0/carlink-trace/download" download' : 'aria-disabled="true"'}>${t('trace.download')}</a><button data-trace="clear">${t('trace.clear')}</button><button data-trace="capture" ${snapshot?.enabled || capturing ? '' : 'disabled'}>${t(capturing ? 'trace.stop' : 'trace.start')}</button></div><ul class="trace-files">${snapshot?.files.filter(f => f.kind === 'media').map(f => `<li><a class="button" href="/api/v0/carlink-trace/files/${encodeURIComponent(f.name)}" download>${esc(f.name)}</a><span class="muted">${mediaSize(f.size)}</span></li>`).join('') ?? ''}</ul><pre class="trace-lines">${lines.map(esc).join('\n')}</pre>`;
+  const baseline = summary && Object.keys(summary).length ? `<pre class="trace-summary">${esc(JSON.stringify(summary, null, 2))}</pre>` : '';
+  return `${baseline}<p>${esc(t('trace.counters', { events: Math.min(lines.length, 5000), dropped: snapshot?.status?.dropped ?? 0, bytes: snapshot?.status?.capture.bytes ?? 0 }))}</p>${snapshot?.status?.failure ? `<p class="error">${esc(t('trace.failure', { failure: snapshot.status.failure }))}</p>` : ''}${media ? `<pre>${esc(media)}</pre>` : ''}<div class="dialog-actions"><a class="button" ${snapshot?.files.some(f => f.kind === 'trace') ? 'href="/api/v0/carlink-trace/download" download' : 'aria-disabled="true"'}>${t('trace.download')}</a><button data-trace="clear">${t('trace.clear')}</button><button data-trace="capture" ${snapshot?.enabled || capturing ? '' : 'disabled'}>${t(capturing ? 'trace.stop' : 'trace.start')}</button></div><ul class="trace-files">${snapshot?.files.filter(f => f.kind === 'media').map(f => `<li><a class="button" href="/api/v0/carlink-trace/files/${encodeURIComponent(f.name)}" download>${esc(f.name)}</a><span class="muted">${mediaSize(f.size)}</span></li>`).join('') ?? ''}</ul><pre class="trace-lines">${lines.slice(0, 5000).map(esc).join('\n')}</pre>`;
 }
 
 /** At most one poll in flight; dispose invalidates it and cancels the next tick. */
@@ -38,7 +39,7 @@ export class TracePoller {
   }
   dispose() { this.stopped = true; clearTimeout(this.timer); }
 }
-export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: unknown) => string, patch = patchMarkup): () => void {
+export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: unknown) => string, patch = patchMarkup, summary: () => Record<string, string> | undefined = () => undefined): () => void {
   let disposed = false, filter = '', snapshot: TraceSnapshot | null = null, busy = false;
   const select = card.querySelector<HTMLSelectElement>('select[data-trace-filter]')!;
   const content = card.querySelector<HTMLElement>('[data-trace-content]')!;
@@ -49,7 +50,7 @@ export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: un
     try {
       const [next, tail, lastMedia] = await Promise.all([
         request<TraceSnapshot>('/carlink-trace'),
-        request<{ lines: string[] }>(`/carlink-trace/tail?limit=200${filter ? `&type=${filter}` : ''}`),
+        request<{ lines: string[] }>(`/carlink-trace/tail?limit=5000${filter ? `&type=${filter}` : ''}`),
         request<{ lines: string[] }>('/carlink-trace/tail?type=Media&limit=1'),
       ]);
       if (disposed || current !== revision) return;
@@ -57,7 +58,7 @@ export function mountTrace(card: HTMLElement, t: Translate, errorKey: (error: un
       const focused = content.ownerDocument.activeElement;
       const action = content.querySelectorAll<HTMLButtonElement>('button[data-trace]');
       const focusKey = Array.from(action).find(button => button === focused)?.dataset.trace;
-      snapshot = next; patch(content, tracePanel(next, tail.lines, lastMedia.lines[0], t));
+      snapshot = next; patch(content, tracePanel(next, tail.lines, lastMedia.lines[0], t, summary()));
       content.querySelectorAll<HTMLButtonElement>('button').forEach(b => { b.disabled ||= busy; });
       if (focusKey) Array.from(content.querySelectorAll<HTMLButtonElement>('button[data-trace]')).find(button => button.dataset.trace === focusKey)?.focus({ preventScroll: true });
       const list = content.querySelector<HTMLElement>('.trace-lines');

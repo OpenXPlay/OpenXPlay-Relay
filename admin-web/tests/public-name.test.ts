@@ -27,6 +27,10 @@ it('uses the shared labels exactly, in both languages', () => {
     ['publicName.summary', 'Open the head-unit page without a certificate warning, using a free domain name.', '用免费域名，让车机打开网页时不再出现证书警告。'],
     ['publicName.enabled', 'Use a free domain name', '使用免费域名'],
     ['publicName.provider', 'DNS provider', '域名服务商'],
+    ['publicName.perProvider', 'Each provider keeps its own name and token. Switching shows what is saved for it.', '每个服务商的域名和 Token 分开保存，切换时会显示对应服务商已保存的内容。'],
+    ['publicName.nameInvalid', 'Enter the full domain name. DuckDNS names end in .duckdns.org.', '请输入完整域名。DuckDNS 域名以 .duckdns.org 结尾。'],
+    ['publicName.tokenInvalid', 'This token does not fit the chosen provider.', '这个 Token 与所选服务商不符。'],
+    ['publicName.removeHint', 'Remove every provider’s name and token, and the certificate, from this relay? The address records at the providers stay.', '要从这台中继移除所有服务商的域名和 Token，以及证书吗？服务商那里的地址记录保持不变。'],
     ['publicName.name', 'Domain name', '域名'],
     ['publicName.nameHint', 'For example myrelay.duckdns.org', '例如 myrelay.duckdns.org'],
     ['publicName.token', 'Token', 'Token'],
@@ -67,6 +71,7 @@ it('shows the status line for every state with the address, dates and the CA det
   const ready = publicNameLine(status({ state: 'ready', name: 'myrelay.duckdns.org', trustedName: 'myrelay.duckdns.org', notAfter: now }, ['https://myrelay.duckdns.org:8443/#pair=1']), en, 'en');
   expect(ready).toContain('Ready: https://myrelay.duckdns.org:8443/#pair=1 (certificate valid until ');
   expect(ready).toContain('2027');
+  expect(publicNameLine(status({ state: 'ready', name: 'new.duckdns.org' }), en, 'en')).toBe(en('publicName.state.ready'));
   const error = publicNameLine(status({ state: 'error', error: 'acme-rejected', errorDetail: 'CAA forbids', nextAttempt: now }), zh, 'zh-CN');
   expect(error).toMatch(/^出现问题：Let's Encrypt 拒绝了请求：CAA forbids。将于 .+ 重试。$/);
   expect(publicNameLine(status({ state: 'error', error: 'no-address', nextAttempt: now }), en, 'en')).toMatch(/^Problem: No head-unit network address yet\. Next try at .+\.$/);
@@ -85,6 +90,7 @@ it('places the section after the car screen settings, only when the relay offers
   expect(section.fields.map(f => f.key)).toEqual(['publicNameEnabled', 'publicNameProvider', 'publicName', 'publicNameToken', 'publicNameAgreeTerms']);
   expect(section.fields.find(f => f.key === 'publicNameProvider')!.options!.map(o => o.value)).toEqual(['duckdns', 'dynv6']);
   expect(section.fields.find(f => f.key === 'publicNameToken')!.type).toBe('secret');
+  expect(section.fields.every(f => !f.visibleWhen)).toBe(true);
   // Its fields stay out of the other groups.
   expect(settingsViews(linux, true).filter(s => s.id !== 'publicName').flatMap(s => s.fields).some(f => f.key.startsWith('publicName'))).toBe(false);
   expect(settingsViews(mockSettings(), true).some(s => s.id === 'publicName')).toBe(false);
@@ -96,7 +102,7 @@ it('renders the panel with the agreement link, Request certificate now and Remov
   expect(off).toContain('Off');
   expect(off).not.toContain('public-name-renew');
   expect(off).not.toContain('public-name-remove');
-  expect(off).not.toContain(TERMS_URL);
+  expect(off).toContain(TERMS_URL);
   settings.values.publicNameEnabled = true; settings.values.publicNameTokenSet = true;
   expect(publicNameConfigured(settings.values)).toBe(true);
   const on = publicNamePanel(status({ state: 'error', error: 'token-rejected', nextAttempt: 1_800_000_000 }), settings, true, 'error.request', en, 'en');
@@ -155,6 +161,7 @@ it('shows the provider guidance, name examples and safe external links in both l
     const t = (key: string) => translate(language, key);
     const values = { publicNameProvider: provider };
     const html = publicNameGuidance(values, t, language);
+    expect(html).toContain(t('publicName.perProvider'));
     expect(html).toContain(provider === 'duckdns' ? 'href="https://www.duckdns.org/"' : 'href="https://dynv6.com/"');
     expect(html).toContain(`href="https://openxplay.org/${language === 'en' ? 'en/' : ''}trusted-https"`);
     expect(html.match(/target="_blank" rel="noopener"/g)).toHaveLength(2);
@@ -163,7 +170,7 @@ it('shows the provider guidance, name examples and safe external links in both l
     expect(html).toContain(provider === 'duckdns' ? 'GitHub' : 'HTTP');
     expect(t(publicNameNameHint(values))).toContain(provider === 'duckdns' ? 'myrelay.duckdns.org' : 'myrelay.dynv6.net');
   }
-  expect(publicNameGuidance({ publicNameProvider: '' }, en, 'en')).toBe('');
+  expect(publicNameGuidance({ publicNameProvider: '' }, en, 'en')).toContain(en('publicName.perProvider'));
 });
 
 it('reads the selected file in the browser, sends content once and reports success and every file error', async () => {
@@ -305,4 +312,15 @@ it('the Linux mock retains both providers and activates an imported setup withou
   expect((await call('/public-name/import', 'POST', { content: ' '.repeat(16385) })).data).toEqual({ errors: { file: 'too-large' } });
   await call('/actions/public-name-remove', 'POST');
   expect((await call('/settings')).data.values.publicNameProviders).toEqual({ duckdns: { name: '', tokenSet: false }, dynv6: { name: '', tokenSet: false } });
+});
+
+it('prepares provider configuration while off and reports private-data availability without secrets', async () => {
+  const call = relay(); await call('/login', 'POST', { password: 'openxplay' });
+  expect((await call('/settings')).data.values.privacyConfigAvailable).toBe(false);
+  await call('/settings', 'PUT', { publicNameProvider: 'dynv6', publicName: 'car.example.org', publicNameToken: 'prepared-token' });
+  const saved = (await call('/settings')).data;
+  expect(saved.values).toMatchObject({ publicNameEnabled: false, privacyConfigAvailable: true, publicName: 'car.example.org', publicNameTokenSet: true });
+  expect(JSON.stringify(saved)).not.toContain('prepared-token');
+  expect((await call('/status')).data.publicName).toEqual({ state: 'off' });
+  expect(saved.schema.find((s: { id: string }) => s.id === 'publicName').fields.every((f: { visibleWhen?: unknown }) => !f.visibleWhen)).toBe(true);
 });

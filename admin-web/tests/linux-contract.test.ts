@@ -45,8 +45,32 @@ it('matches Android menu summaries and hides unavailable or empty pages', () => 
   const status = linuxStatusFixtures.ready, t = (key: string) => translate('en', key);
   expect(menuSummary(linuxSettings, status, 'settings/car', 'en', t)).toBe('');
   expect(menuSummary(carlink, status, 'settings/car', 'en', t)).toBe('XPeng · G6 · 2023');
-  expect(menuSummary(linuxSettings, status, 'settings/picture', 'en', t)).toBe('Automatic · 200 mm · Automatic · Auto');
+  expect(menuSummary(linuxSettings, status, 'settings/picture', 'en', t)).toBe('Automatic · 200 mm · Automatic · Auto · 60 fps');
   const android = { ...status, platform: 'android' as const, adminFeatures: undefined };
   for (const route of ['settings/logs', 'settings/config-files', 'settings/experimental']) expect(pageAvailable(mockSettings(), android, route)).toBe(false);
-  expect(pageAvailable(linuxSettings, status, 'settings/developer/video')).toBe(false);
+  expect(pageAvailable(linuxSettings, status, 'settings/developer/video')).toBe(true);
+  expect(pageAvailable({ ...linuxSettings, schema: [] }, status, 'settings/developer/video')).toBe(false);
+});
+
+it('retains the backend arrival, armed and frozen failure contracts for the startup UI', () => {
+  const arrival = linuxStatusFixtures.arrival.pathInput!;
+  expect(arrival.startup?.arrival).toEqual({ pending: true, deadlineMillis: arrival.nowMillis! + 5000, remainingMillis: 5000 });
+  expect(linuxStatusFixtures.armed.pathInput!.iphone!.armed).toBe(true);
+  const failure = linuxStatusFixtures['iphone-failure'].pathInput!.iphone!.failure!;
+  expect(failure.text).toBe('rfcomm timeout');
+  expect(failure.trail.some(line => line.startsWith('+2.000s '))).toBe(true);
+  expect(linuxSettings.values.bootStart).toBe(true);
+});
+
+it('presents an unreachable iPhone as waiting in English and Simplified Chinese', () => {
+  const input = linuxStatusFixtures['iphone-waiting'].pathInput!;
+  expect(input.iphone!.step).toBe('WAITING_IPHONE');
+  expect(input.iphone!.failure).toBeNull();
+  const path = presentPath(input), stage = presentStage(path);
+  expect(path.running).toBe(true);
+  expect(path.tone).toBe('PROGRESS');
+  expect(stage.failure).toBeNull();
+  expect(stage.headline).toEqual({ res: 'state.waiting', args: [] });
+  expect(translate('en', stage.headline.res!)).toBe('Waiting for iPhone');
+  expect(translate('zh-CN', stage.headline.res!)).toBe('等待 iPhone');
 });

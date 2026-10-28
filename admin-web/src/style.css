@@ -198,3 +198,5 @@ dialog button.confirm { background: var(--ok); color: var(--primary-ink); }
 .inset-group[hidden], input[hidden] { display: none; }
 
 .privacy .inset-row { justify-content: space-between; }
+
+.config-feedback { white-space: pre-line; }

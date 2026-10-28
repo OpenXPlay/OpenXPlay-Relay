@@ -220,7 +220,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
         self.start_gate.as_ref().map_or(Ok(true), |g| g())
     }
     fn check_bluetooth_radio(&self) -> Result<()> {
-        self.backends.bluetooth.check_radio()?;
+        self.backends.bluetooth.register_profiles()?;
         // A bonded iPhone reconnects only with Secure Connections on: a switch the policy is
         // making for this adapter, e.g. at startup or after BlueZ reset it, completes first.
         if let Some(policy) = &self.secure_connections {
@@ -509,6 +509,10 @@ impl WirelessControlEvents for ControlEvents {
         self.before_start_session()
     }
     fn on_incoming(&self, frame: &Iap2Frame) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        self.events.iap2_frame();
         if let Some(input) = &self.input {
             input.iap2_context(frame);
         }
@@ -810,7 +814,13 @@ impl NetworkAttachment for LinuxNetwork {
             self.sink.clone(),
             transport.clone(),
             true,
-            crate::carplay_policy::screen_session_policy(),
+            crate::carplay_policy::screen_session_policy(
+                &self
+                    .input
+                    .as_ref()
+                    .map(|(input, _, _)| input.connection_settings())
+                    .unwrap_or_default(),
+            ),
         ));
         let endpoint = Arc::new(Mutex::new(None));
         let handler = Arc::new(TunnelHandler {
@@ -860,7 +870,7 @@ impl NetworkAttachment for LinuxNetwork {
                     bridge,
                     transport,
                     true,
-                    crate::carplay_policy::screen_session_policy(),
+                    crate::carplay_policy::screen_session_policy(&input.connection_settings()),
                 ));
                 let _ = engine.set_iap_tunnel_handler(Some(handler.clone()));
                 engine
@@ -1012,6 +1022,15 @@ mod network_tests {
         assert!(controls.before_start_session().is_err());
         controls.on_stage_changed(Iap2WirelessControlStage::WifiConfigSent);
         assert_eq!(events.runtime_path_facts().iphone.step, "WIFI_SENT");
+        let frame = Iap2Frame {
+            message_id: 0,
+            payload: Vec::new(),
+        };
+        controls.on_incoming(&frame);
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 1);
+        controls.closed.store(true, Ordering::Release);
+        controls.on_incoming(&frame);
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 1);
     }
     #[test]
     fn external_accepts_feed_the_listener_watchdog_and_retirement_fences_them() {

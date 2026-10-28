@@ -38,7 +38,12 @@
     "hasPassword": true,
     "ip": "10.42.0.1",
     "password": "openxplay123",
-    "ssid": "OpenXPlay-1A2B"
+    "security": "wpa2",
+    "ssid": "OpenXPlay-1A2B",
+    "supportedSecurity": [
+      "open",
+      "wpa2"
+    ]
   },
   "iphone": {
     "name": "iPhone",
@@ -90,6 +95,7 @@
       "savedScreen": "1920×720",
       "screen": "1920×720",
       "tesla": {
+        "activation": null,
         "code": null,
         "name": null,
         "phase": "OFF",
@@ -111,18 +117,23 @@
         "code": "rfcomm_timeout",
         "retrying": true,
         "step": "BLUETOOTH",
-        "text": "The Bluetooth connection timed out",
+        "text": "rfcomm timeout",
         "trail": [
-          "1792999997000 ConnectingBluetooth",
-          "1792999999000 failed rfcomm_timeout"
+          "07:33:17.000 status=ConnectingBluetooth",
+          "+2.000s status=Failed reason=rfcomm_timeout retrying=true"
         ]
       },
       "name": "iPhone",
       "pick": "PICKED",
+      "runtimeIap2Frames": 0,
       "started": true,
       "step": "BLUETOOTH",
       "stepDetail": null,
       "stepSinceMillis": 1792999997000,
+      "trail": [
+        "07:33:17.000 status=ConnectingBluetooth",
+        "+2.000s status=Failed reason=rfcomm_timeout retrying=true"
+      ],
       "usb": "UNKNOWN"
     },
     "live": {
@@ -157,6 +168,16 @@
       "summary": "",
       "valid": true
     },
+    "startup": {
+      "arrival": {
+        "deadlineMillis": null,
+        "pending": false,
+        "remainingMillis": null
+      },
+      "automatic": true,
+      "bootStart": true,
+      "paused": true
+    },
     "version": "0.1.6-beta.1"
   },
   "platform": "linux",
@@ -168,13 +189,38 @@
     "https://10.42.0.1:8443/"
   ],
   "running": true,
+  "screenData": {
+    "active": 0,
+    "areas": [],
+    "builtIn": false,
+    "connected": false,
+    "detected": null,
+    "enabled": true,
+    "preference": null,
+    "records": [],
+    "savedCanvas": {
+      "densityDpi": 160,
+      "height": 720,
+      "source": "default",
+      "width": 1280
+    },
+    "switches": []
+  },
   "state": "Idle",
   "version": "0.1.6-beta.1",
   "video": {
+    "active": false,
+    "appliedFps": 60,
+    "bytes": 0,
+    "bytesMeasured": false,
     "codec": "H264",
     "codecString": null,
+    "frames": 0,
     "height": null,
+    "hevcFailure": null,
     "reason": "no-main-screen-output",
+    "requestedFps": 60,
+    "session": null,
     "width": null
   },
   "wifiClient": {

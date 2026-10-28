@@ -20,6 +20,8 @@ use std::{
 };
 #[path = "carlink_follow.rs"]
 pub(crate) mod carlink_follow;
+#[path = "carlink_vehicle.rs"]
+mod carlink_vehicle;
 use crate::runtime_paths::InventoryRefresh;
 use carlink_follow::CarlinkFollow;
 type Provision = Box<dyn crate::host_backends::StationBackend>;
@@ -32,6 +34,7 @@ enum Operation {
     Forget,
     ForgetCarlink,
     ClearSavedHeadUnit,
+    RegeneratePairingCode,
     ConnectCarlink(Option<ArmedPin>),
     Join(String, String),
     /// The startup provisioning: like `Initialize`, but in device-hotspot mode the controller
@@ -39,9 +42,10 @@ enum Operation {
     Startup,
     Initialize,
     Outputs(Option<Box<Operation>>),
-    /// The head-unit page's certificate changed (trusted HTTPS): restart its child.
+    /// Apply the complete receiver TLS set, coalescing certificate and address changes.
     ReceiverTls,
-    Hotspot,
+    Carlink,
+    Hotspot(Option<Box<Operation>>),
     Roles(Vec<String>),
     Network {
         mode_changed: bool,
@@ -65,39 +69,60 @@ fn apply_carlink_event(
     armed: &mut Option<ArmedPin>,
     state: &std::path::Path,
     event: &serde_json::Value,
-) {
+) -> Option<serde_json::Value> {
+    let _ = state;
     expire_pin(armed);
     status.apply_event(event, crate::admin::auth::monotonic_seconds());
-    if event["type"] == "pin-request" {
-        if let Some(pin) = armed.take() {
-            if crate::platform::private_state_file(&carlink_pin_path(state), pin.pin.as_bytes())
-                .is_ok()
-            {
-                status.clear_pin();
-                status.pin_incorrect = false;
-            }
-        }
-    }
+    let response = if (event["type"] == "pin-request"
+        || event["type"] == "receiver-started" && status.pin_requested)
+        && !status.pin_confirmation
+    {
+        armed.take().and_then(|pin| status.pin_request.map(|request| serde_json::json!({"type":"clink-pairing","request":request,"action":"pin","pin":pin.pin})))
+    } else {
+        None
+    };
     if carlink_attempt_failed(event)
         || (event["type"] == "state"
             && matches!(status.state.as_str(), "playing" | "active" | "connected"))
     {
         *armed = None;
     }
+    response
 }
 fn carlink_event_sink(
     carlink: Arc<Mutex<AdminCarlink>>,
     armed: Arc<Mutex<Option<ArmedPin>>>,
     state_dir: std::path::PathBuf,
     events: Arc<JsonEvents>,
+    controls: Arc<Mutex<Option<ControlPipe>>>,
 ) -> EventSink {
     Arc::new(move |v| {
-        apply_carlink_event(
-            &mut carlink.lock().unwrap(),
-            &mut armed.lock().unwrap(),
-            &state_dir,
-            &v,
-        );
+        let v = events.filtered(&v);
+        let response = if controls.lock().unwrap().is_some() {
+            apply_carlink_event(
+                &mut carlink.lock().unwrap(),
+                &mut armed.lock().unwrap(),
+                &state_dir,
+                &v,
+            )
+        } else {
+            carlink
+                .lock()
+                .unwrap()
+                .apply_event(&v, crate::admin::auth::monotonic_seconds());
+            expire_pin(&mut armed.lock().unwrap());
+            None
+        };
+        if let Some(response) = response {
+            if controls
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|p| p.send_control(&response).is_ok())
+            {
+                carlink.lock().unwrap().clear_pin();
+            }
+        }
         let name = v["type"]
             .as_str()
             .or_else(|| v["event"].as_str())
@@ -158,6 +183,9 @@ pub struct LinuxRelayAdmin {
     lifecycle: Mutex<()>,
     sink: Arc<RecordingMediaSink>,
     desired: Arc<AtomicBool>,
+    auto_start_gate: Mutex<crate::start_policy::AutoStartGate>,
+    arrival: Mutex<crate::start_policy::Arrival>,
+    recovery: Mutex<crate::start_policy::RecoverOnce>,
     start_policy: Arc<Mutex<crate::start_policy::StartPolicy>>,
     operations: std::sync::mpsc::SyncSender<Operation>,
     pending: Mutex<HashMap<std::thread::ThreadId, Operation>>,
@@ -168,6 +196,7 @@ pub struct LinuxRelayAdmin {
     apply_pending: AtomicBool,
     carlink: Arc<Mutex<AdminCarlink>>,
     armed_pin: Arc<Mutex<Option<ArmedPin>>>,
+    vehicle: Arc<Mutex<carlink_vehicle::Recorder>>,
     receivers: Arc<crate::receiver_diagnostics::ReceiverDiagnostics>,
     trace_status: Arc<crate::admin::server::trace_files::TraceStatus>,
     /// Set when an admin operation finished: the main loop ticks at once.
@@ -180,9 +209,14 @@ pub struct LinuxRelayAdmin {
     admin_certificate: crate::admin::server::NamedCertificate,
     /// What the running head-unit page serves; `None` while there is no web output.
     receiver_tls: Mutex<Option<Option<crate::public_name::Served>>>,
+    /// Self-signed IP SANs frozen with the running child (up to 16, retaining old networks).
+    receiver_tls_sans: Mutex<Vec<std::net::Ipv4Addr>>,
     /// The public-name generation the admin certificate follows.
     public_name_generation: std::sync::atomic::AtomicU64,
     receiver_tls_queued: AtomicBool,
+    tesla: Mutex<crate::tesla_address::Session>,
+    /// Selected direct Tesla SAN covered by the currently spawned receiver.
+    receiver_tesla_tls: Mutex<Option<std::net::Ipv4Addr>>,
 }
 /// The relay as the trusted-HTTPS worker sees it.
 struct RelayHost(std::sync::Weak<LinuxRelayAdmin>);
@@ -338,13 +372,20 @@ impl LinuxRelayAdmin {
         ));
         let inventory = Arc::new(
             crate::net_inventory::InventoryCache::new(runtime.runner.clone(), runtime.root.clone())
-                .with_addresses(runtime.addresses.clone())
+                .with_addresses(runtime.network_address_source())
                 .with_refresh(runtime.inventory_refresh != InventoryRefresh::Manual),
         );
         if runtime.inventory_refresh == InventoryRefresh::Automatic {
             inventory.refresh();
         }
+        let auto_start_gate =
+            crate::start_policy::AutoStartGate::load(&options.state_dir, &runtime.root)?;
+        let desired = settings.boot_start && !auto_start_gate.paused();
+        events.failure_secrets(failure_secrets(&settings, &options.state_dir));
         Ok(Self {
+            auto_start_gate: Mutex::new(auto_start_gate),
+            arrival: Mutex::default(),
+            recovery: Mutex::default(),
             log_exports: crate::logs::Service::new(options.state_dir.clone()),
             release_checks: crate::update_check::Checker::default(),
             admin_hotspot: Arc::new(
@@ -363,8 +404,14 @@ impl LinuxRelayAdmin {
             public_name,
             admin_certificate: Default::default(),
             receiver_tls: Mutex::new(None),
+            receiver_tls_sans: Mutex::new(Vec::new()),
             public_name_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             receiver_tls_queued: AtomicBool::new(false),
+            tesla: Mutex::new(
+                crate::tesla_address::Session::new(Arc::new(crate::tesla_address::KernelAddresses))
+                    .with_ownership(runtime.tesla_address.clone()),
+            ),
+            receiver_tesla_tls: Mutex::new(None),
             pairing: Mutex::new(None),
             pairing_backend: backends.bluetooth.pairing(),
             backends,
@@ -373,6 +420,10 @@ impl LinuxRelayAdmin {
             provision_interface: Mutex::new(options.wifi_interface.clone()),
             net_root: runtime.root.join("sys/class/net"),
             runtime,
+            vehicle: Arc::new(Mutex::new(carlink_vehicle::Recorder::new(
+                &options.state_dir,
+                options.settings.vehicle_information,
+            ))),
             options,
             settings: Arc::new(Mutex::new(settings.clone())),
             state,
@@ -393,7 +444,7 @@ impl LinuxRelayAdmin {
             network_override: Mutex::new(None),
             lifecycle: Mutex::new(()),
             sink,
-            desired: Arc::new(AtomicBool::new(settings.auto_start)),
+            desired: Arc::new(AtomicBool::new(desired)),
             start_policy: Arc::default(),
             operations: tx,
             pending: Mutex::new(HashMap::new()),
@@ -575,6 +626,34 @@ impl LinuxRelayAdmin {
             applied: save.then_some(true),
         }))
     }
+    fn validate_hotspot_security_change(
+        &self,
+        current: &Settings,
+        next: &Settings,
+    ) -> std::result::Result<(), BTreeMap<String, String>> {
+        if next.hotspot_security != current.hotspot_security
+            && !crate::linux_hotspot::security_supported(
+                &next.hotspot_security,
+                &self.supported_hotspot_security(&next.wifi_interface),
+            )
+        {
+            return Err(BTreeMap::from([(
+                "hotspotSecurity".into(),
+                "error.hotspotSecurity".into(),
+            )]));
+        }
+        Ok(())
+    }
+    pub fn receiver_port(&self) -> Result<u16> {
+        Ok(self.effective_options()?.settings.receiver_port)
+    }
+    fn supported_hotspot_security(&self, interface: &str) -> Vec<String> {
+        self.capabilities
+            .cached_wifi(interface)
+            .map(|c| c.hotspot_security)
+            .filter(|values| !values.is_empty())
+            .unwrap_or_else(|| vec!["open".into(), "wpa2".into()])
+    }
     fn effective_options(&self) -> Result<Options> {
         Ok(self.effective_options_with_status()?.0)
     }
@@ -582,7 +661,7 @@ impl LinuxRelayAdmin {
         &self,
     ) -> Result<(Options, crate::network_roles::NetworkStatus)> {
         let mut o = self.options.clone();
-        o.settings = self.settings.lock().unwrap().clone();
+        o.settings = self.settings.lock().unwrap().effective_developer();
         o.apply_overrides()?;
         let status = self.network_status(&o.settings);
         if status.probing {
@@ -615,6 +694,11 @@ impl LinuxRelayAdmin {
             self.admin_hotspot.prepare()?;
         }
         self.inventory.wait_for_probe(timeout);
+        let mut settings = self.effective_options()?.settings;
+        if let Some((interface, _)) = self.active_hotspot() {
+            settings.wifi_interface = interface;
+        }
+        self.tesla.lock().unwrap().cleanup_stale(&settings);
         // Secure Connections on from the start, and again whenever bluetoothd resets the adapter.
         self.secure_connections.start(Some(&self.bluetooth_wake))?;
         self.stream.start()?;
@@ -693,12 +777,10 @@ impl LinuxRelayAdmin {
             self.reconcile_carlink_network()?;
         }
         self.input.set_plugins_enabled(o.settings.plugins);
-        let addresses = (self.runtime.addresses)()?
-            .into_iter()
-            .filter(|(_, a, _)| !a.is_loopback())
-            .map(|(_, a, _)| a)
-            .collect::<Vec<_>>();
-        let occupied = (self.runtime.addresses)()?
+        let addresses = self.receiver_sans()?;
+        let occupied = self
+            .runtime
+            .network_addresses()?
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
             .collect::<Vec<_>>();
@@ -739,25 +821,50 @@ impl LinuxRelayAdmin {
             ble_adapter,
             station_5ghz,
         );
+        if let Some(ble) = settings.carlink.as_mut().and_then(|c| c.ble.as_mut()) {
+            ble.default_phone_mac = self
+                .backends
+                .bluetooth
+                .selected_adapter()
+                .and_then(|adapter| crate::carlink_policy::bluetooth_address(&adapter.address));
+        }
+        settings.addresses.sort();
+        settings.addresses.dedup();
+        settings.addresses.truncate(16);
         if !self.wifi_present(o.carlink_interface()) {
             settings.carlink = None;
         }
-        let served = self.public_name.served();
+        let tesla_tls = crate::tesla_address::tls_address(&o.settings);
+        let served = self
+            .public_name
+            .certificate_snapshot(&self.options.state_dir)?;
         settings.pem_tls = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
             cert: s.cert.clone(),
             key: s.key.clone(),
         });
-        *self.receiver_tls.lock().unwrap() = (settings.web_port != 0).then_some(served);
+        if served.is_none() {
+            for name in ["named-cert.pem", "named-key.pem"] {
+                match std::fs::remove_file(self.options.state_dir.join("receiver-tls").join(name)) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                    _ => {}
+                }
+            }
+        }
+        let receiver_tls = (settings.web_port != 0).then_some(served);
+        let receiver_sans = settings.addresses.clone();
         *self.carlink.lock().unwrap() = AdminCarlink {
             state: "waiting".into(),
             ..Default::default()
         };
+        let controls = Arc::new(Mutex::new(None));
+        let vehicle = self.vehicle.clone();
         let event_sink = carlink_event_sink(
             self.carlink.clone(),
             self.armed_pin.clone(),
             self.options.state_dir.clone(),
             self.events.clone(),
+            controls.clone(),
         );
         {
             let mut display = self.input.display.lock().unwrap();
@@ -792,8 +899,15 @@ impl LinuxRelayAdmin {
         let trace_status = self.trace_status.clone();
         let hotspot = self.hotspot_lifetime.clone();
         let admin_hotspot = self.admin_hotspot.clone();
-        let addresses = self.runtime.addresses.clone();
+        let addresses = self.runtime.network_address_source();
         let event_sink: EventSink = Arc::new(move |mut event| {
+            if vehicle
+                .lock()
+                .unwrap()
+                .observe(&event, std::time::Instant::now())
+            {
+                return;
+            }
             if event["type"] == "pairing-url" {
                 let rows = addresses().unwrap_or_default();
                 if let Some(target) = browser_target.lock().unwrap().as_deref() {
@@ -837,16 +951,17 @@ impl LinuxRelayAdmin {
                     if event["type"] == "receiver-restarting" && carlink_retry {
                         facts.carlink.retrying = true;
                     }
-                    facts.carlink_event(&event, now)
+                    facts.carlink_event(&timeline_events.filtered(&event), now)
                 };
                 if let Some(summary) = summary {
                     timeline_events.log(&summary);
                 }
             }
+            timeline_events.log_observation(event["type"].as_str().unwrap_or(""), &event);
             if receiver_event(&receivers, &event) {
                 return;
             }
-            if event["type"] == "receiver-starting" {
+            if event["type"] == "receiver-starting" || event["type"] == "carlink-starting" {
                 input.display.lock().unwrap().resize.start_session();
             }
             if event["type"] == "receiver-started" {
@@ -886,9 +1001,13 @@ impl LinuxRelayAdmin {
             event_sink(event);
         });
         let mut supervisor = RelaySupervisor::new(settings, self.child_factory.clone(), event_sink)
+            .with_control_handle(controls)
             .with_carlink_backoff(self.carlink_backoff.lock().unwrap().clone())
             .with_hevc_disabled(self.carlink_hevc_disabled.clone());
         supervisor.start()?;
+        *self.receiver_tesla_tls.lock().unwrap() = tesla_tls.filter(|a| receiver_sans.contains(a));
+        *self.receiver_tls.lock().unwrap() = receiver_tls;
+        *self.receiver_tls_sans.lock().unwrap() = receiver_sans;
         *self.supervisor.lock().unwrap() = Some(supervisor);
         *self.running_links.lock().unwrap() = Some(running_links);
         Ok(())
@@ -911,6 +1030,16 @@ impl LinuxRelayAdmin {
         self.stop_controller_for_restart(false);
     }
     fn stop_controller_for_restart(&self, keep_hotspot: bool) {
+        self.input.expect_stop();
+        let settings = self.settings.lock().unwrap().clone();
+        let mut tesla = self.tesla.lock().unwrap();
+        tesla.stop(crate::platform::wall_clock().as_millis() as u64);
+        let changes = tesla.journal_changes(&settings);
+        drop(tesla);
+        for change in changes {
+            self.events.emit("tesla-address", &change);
+        }
+        self.public_name.published_address_override(None);
         if keep_hotspot {
             self.hotspot_lifetime.keep_for_restart();
         }
@@ -932,113 +1061,49 @@ impl LinuxRelayAdmin {
         self.inventory.refresh_now();
         result
     }
+    // Chained actions share a 256 KiB worker stack; keep their Options snapshots in separate handlers.
     fn perform_operation(&self, op: Operation) -> Result<()> {
         match op {
-            Operation::Roles(mut changes) => {
-                if changes.iter().any(|c| c == "wifiCountry") {
-                    self.apply_wifi_country();
-                    let (options, status) = self.effective_options_with_status()?;
-                    if let Some(old) = self.running_links.lock().unwrap().as_ref() {
-                        for change in old.changes(&self.links(&options, &status)) {
-                            if !changes.contains(&change) {
-                                changes.push(change);
-                            }
-                        }
-                    }
-                }
-                let network =
-                    changes
-                        .iter()
-                        .any(|c| c == "controller")
-                        .then_some(Operation::Network {
-                            mode_changed: true,
-                            reconnect: true,
-                        });
-                if changes.iter().any(|c| c == "carlink") {
-                    self.operation(Operation::Outputs(network.map(Box::new)))?;
-                } else if let Some(network) = network {
-                    self.operation(network)?;
-                }
-                let (options, status) = self.effective_options_with_status()?;
-                if !status.probing {
-                    *self.running_links.lock().unwrap() = Some(self.links(&options, &status));
-                }
-                self.public_name.head_unit_address(self.head_unit_address());
-                self.reconcile_admin_hotspot();
-            }
-            Operation::Startup => {
-                if !self.prepare_wifi()? {
-                    return Ok(());
-                }
-                // In device-hotspot mode the provisioning only takes the saved Wi-Fi client
-                // connections down, which matters to the AP alone; at boot its nmcli calls end
-                // once NetworkManager has set wlan0 up. So the controller starts now, Bluetooth
-                // and iAP2 go ahead, and only the AP's activation waits for the provisioning.
-                // In shared-Wi-Fi mode the provisioning brings the network up and decides
-                // whether CarPlay runs at all, so the controller still follows it.
-                let early = self.network_override.lock().unwrap().is_none()
-                    && self.desired.load(Ordering::Acquire)
-                    && self.effective_options()?.settings.network_mode == "device-hotspot";
-                let _provisioning = early.then(|| self.provisioning.hold());
-                if early {
-                    if let Err(e) = self.ensure_controller() {
-                        self.events
-                            .emit("error", &serde_json::json!({"message":e.to_string()}));
-                    }
-                }
-                self.operation(Operation::Initialize)?;
-            }
-            Operation::Initialize => {
-                if self.network_override.lock().unwrap().is_some() {
-                    return Ok(());
-                }
-                let options = self.effective_options()?;
-                if !self.prepare_wifi()? {
-                    return Ok(());
-                }
-                let mut provision_guard = self.provision.lock().unwrap();
-                let provision = provision_guard.as_mut().unwrap();
-                provision.sync(&options.settings.shared_wifi_networks)?;
-                if options.settings.network_mode == "shared-wifi" {
-                    provision.start()?;
-                } else {
-                    provision.stop()?;
-                }
-            }
+            Operation::Roles(changes) => self.apply_roles(changes)?,
+            Operation::Startup => self.startup()?,
+            Operation::Initialize => self.initialize_network()?,
             Operation::Start => {
                 if self.start_policy.lock().unwrap().waiting() {
                     self.start_policy.lock().unwrap().skip();
                     self.desired.store(true, Ordering::Release);
                     return Ok(());
                 }
+                self.resume_start()?;
                 self.start_policy.lock().unwrap().cancel();
                 self.stop_controller();
                 self.operation(Operation::Initialize)?;
-                if let Some(mut s) = self.supervisor.lock().unwrap().take() {
-                    s.stop();
-                }
+                self.stop_supervisor();
                 self.start_supervisor()?;
                 self.desired.store(true, Ordering::Release);
             }
             Operation::Stop => {
+                // Persist before changing resources: a failed write must not pretend Stop survived.
+                self.auto_start_gate.lock().unwrap().set_paused(true)?;
+                self.arrival.lock().unwrap().cancel();
                 self.desired.store(false, Ordering::Release);
                 self.start_policy.lock().unwrap().cancel();
                 self.input.clear_picture_trial();
                 self.stop_controller();
             }
-            Operation::Hotspot => {
+            Operation::Hotspot(after) => {
                 if self.effective_options()?.settings.network_mode == "device-hotspot"
                     && self.network_override.lock().unwrap().is_none()
                 {
                     self.stop_controller();
                 }
                 self.apply_pending.store(false, Ordering::Release);
+                if let Some(after) = after {
+                    self.operation(*after)?;
+                }
             }
             Operation::Outputs(network) => {
                 // Output processes can be replaced while the controller and AP keep running.
-                if let Some(mut supervisor) = self.supervisor.lock().unwrap().take() {
-                    supervisor.stop();
-                }
+                self.stop_supervisor();
                 self.carlink_hevc_disabled.store(false, Ordering::Release);
                 self.reconcile_carlink_network()?;
                 if let Some(network) = network {
@@ -1047,26 +1112,45 @@ impl LinuxRelayAdmin {
                 self.start_supervisor()?;
                 self.apply_pending.store(false, Ordering::Release);
             }
-            Operation::ReceiverTls => {
-                self.receiver_tls_queued.store(false, Ordering::Release);
-                let running = self.supervisor.lock().unwrap().take();
-                // Nothing to compare until a supervisor runs again.
-                *self.receiver_tls.lock().unwrap() = None;
-                if let Some(mut supervisor) = running {
-                    supervisor.stop();
-                    self.start_supervisor()?;
+            Operation::Carlink => {
+                let settings = self.settings.lock().unwrap().clone();
+                self.carlink_hevc_disabled.store(false, Ordering::Release);
+                self.vehicle
+                    .lock()
+                    .unwrap()
+                    .enable(settings.vehicle_information);
+                let (picture, hevc) = {
+                    let d = self.input.display.lock().unwrap();
+                    (
+                        d.pictures.trial.unwrap_or(d.picture_default),
+                        crate::supervisor_settings::carlink_hevc(&settings, &d.saved.video_codec)
+                            .to_owned(),
+                    )
+                };
+                if let Some(s) = self
+                    .supervisor
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .filter(|_| settings.output != "web")
+                {
+                    s.restart_carlink(picture, &hevc, settings.vehicle_information)?;
                 }
             }
+            Operation::ReceiverTls => {
+                let result = self.update_receiver_tls(Duration::from_secs(3));
+                self.receiver_tls_queued.store(false, Ordering::Release);
+                result?;
+            }
             Operation::Restart => {
+                self.resume_start()?;
                 self.input.accept_picture_default();
                 self.start_policy.lock().unwrap().cancel();
                 // An explicit restart starts over like Start, closing the AP too; only receiver
                 // renegotiation keeps it (see tick).
                 self.stop_controller();
                 self.operation(Operation::Initialize)?;
-                if let Some(mut s) = self.supervisor.lock().unwrap().take() {
-                    s.stop();
-                }
+                self.stop_supervisor();
                 self.start_supervisor()?;
                 self.desired.store(true, Ordering::Release);
                 self.restart_required.store(false, Ordering::Release);
@@ -1087,79 +1171,27 @@ impl LinuxRelayAdmin {
                 if supplied && pin.is_none() {
                     return Err(std::io::Error::other("Pairing code expired"));
                 }
-                let mut supervisor = self.supervisor.lock().unwrap();
-                if let Some(s) = supervisor.as_mut() {
-                    // Drain the old child's events before arming the next attempt's code.
-                    s.stop();
-                }
                 remove_carlink_pin(&self.options.state_dir)?;
                 if pin.is_some() {
                     self.carlink.lock().unwrap().pin_incorrect = false;
                 }
                 *self.armed_pin.lock().unwrap() = pin;
-                if let Some(s) = supervisor.as_mut() {
+                if let Some(s) = self.supervisor.lock().unwrap().as_ref() {
                     s.connect_carlink();
-                    s.start()?;
                 }
+            }
+            Operation::RegeneratePairingCode => {
+                self.stop_supervisor();
+                self.start_supervisor()?;
             }
             Operation::ClearSavedHeadUnit => {
-                if self.input.session_active() {
-                    return Err(std::io::Error::other("error.sessionActive"));
-                }
-                let mut display = self.input.display.lock().unwrap();
-                let settings = display.saved.settings();
-                display.saved = crate::display::DisplayState::default();
-                display.saved.set_settings(&settings);
-                display.persist()?;
-                display.freeze();
+                self.input.display.lock().unwrap().clear_saved()?;
             }
-            Operation::ForgetCarlink => {
-                *self.armed_pin.lock().unwrap() = None;
-                let supervisor = self.supervisor.lock().unwrap().take();
-                let restart = supervisor.is_some();
-                if let Some(mut supervisor) = supervisor {
-                    supervisor.stop();
-                }
-                // The band escalation belonged to the forgotten head unit.
-                *self.carlink_backoff.lock().unwrap() = CarlinkBackoff::default();
-                let mut carlink = self.carlink.lock().unwrap();
-                *carlink = AdminCarlink {
-                    state: "idle".into(),
-                    ..Default::default()
-                };
-                remove_carlink_pin(&self.options.state_dir)?;
-                clear_carlink_trust(&self.options.state_dir)?;
-                let mut settings = self.settings.lock().unwrap();
-                settings.carlink_address = None;
-                settings.save(&self.options.state_dir)?;
-                drop(settings);
-                drop(carlink);
-                if restart {
-                    self.start_supervisor()?;
-                }
-            }
+            Operation::ForgetCarlink => self.forget_carlink()?,
             Operation::Network {
                 mode_changed,
                 reconnect,
-            } => {
-                if mode_changed || reconnect {
-                    self.stop_controller();
-                }
-                let options = self.effective_options()?;
-                if !self.prepare_wifi()? {
-                    return Ok(());
-                }
-                let mut provision_guard = self.provision.lock().unwrap();
-                let provision = provision_guard.as_mut().unwrap();
-                provision.sync(&options.settings.shared_wifi_networks)?;
-                if options.settings.network_mode == "shared-wifi" {
-                    if mode_changed || reconnect || provision.status().ssid.is_none() {
-                        provision.start()?;
-                    }
-                } else if mode_changed {
-                    provision.stop()?;
-                }
-            }
+            } => self.change_network(mode_changed, reconnect)?,
             Operation::Join(ssid, password) => {
                 self.stop_controller();
                 self.provision
@@ -1186,13 +1218,138 @@ impl LinuxRelayAdmin {
         }
         Ok(())
     }
+    fn forget_carlink(&self) -> Result<()> {
+        *self.armed_pin.lock().unwrap() = None;
+        let supervisor = self.supervisor.lock().unwrap().take();
+        let restart = supervisor.is_some();
+        if let Some(mut supervisor) = supervisor {
+            supervisor.stop();
+        }
+        // The band escalation belonged to the forgotten head unit.
+        *self.carlink_backoff.lock().unwrap() = CarlinkBackoff::default();
+        let mut carlink = self.carlink.lock().unwrap();
+        *carlink = AdminCarlink {
+            state: "idle".into(),
+            ..Default::default()
+        };
+        remove_carlink_pin(&self.options.state_dir)?;
+        clear_carlink_trust(&self.options.state_dir)?;
+        let mut settings = self.settings.lock().unwrap();
+        settings.carlink_address = None;
+        settings.save(&self.options.state_dir)?;
+        drop(settings);
+        drop(carlink);
+        if restart {
+            self.start_supervisor()?;
+        }
+        Ok(())
+    }
+    fn stop_supervisor(&self) {
+        if let Some(mut supervisor) = self.supervisor.lock().unwrap().take() {
+            supervisor.stop();
+        }
+    }
+    fn apply_roles(&self, mut changes: Vec<String>) -> Result<()> {
+        if changes.iter().any(|c| c == "wifiCountry") {
+            self.apply_wifi_country();
+            let (options, status) = self.effective_options_with_status()?;
+            if let Some(old) = self.running_links.lock().unwrap().as_ref() {
+                for change in old.changes(&self.links(&options, &status)) {
+                    if !changes.contains(&change) {
+                        changes.push(change);
+                    }
+                }
+            }
+        }
+        let network = changes
+            .iter()
+            .any(|c| c == "controller")
+            .then_some(Operation::Network {
+                mode_changed: true,
+                reconnect: true,
+            });
+        if changes.iter().any(|c| c == "carlink") {
+            self.operation(Operation::Outputs(network.map(Box::new)))?;
+        } else if let Some(network) = network {
+            self.operation(network)?;
+        }
+        let (options, status) = self.effective_options_with_status()?;
+        if !status.probing {
+            *self.running_links.lock().unwrap() = Some(self.links(&options, &status));
+        }
+        self.public_name.head_unit_address(self.head_unit_address());
+        self.reconcile_admin_hotspot();
+        Ok(())
+    }
+    fn startup(&self) -> Result<()> {
+        if !self.prepare_wifi()? {
+            return Ok(());
+        }
+        // In device-hotspot mode the provisioning only takes the saved Wi-Fi client
+        // connections down, which matters to the AP alone; at boot its nmcli calls end
+        // once NetworkManager has set wlan0 up. So the controller starts now, Bluetooth
+        // and iAP2 go ahead, and only the AP's activation waits for the provisioning.
+        // In shared-Wi-Fi mode the provisioning brings the network up and decides
+        // whether CarPlay runs at all, so the controller still follows it.
+        let early = self.network_override.lock().unwrap().is_none()
+            && self.desired.load(Ordering::Acquire)
+            && self.effective_options()?.settings.network_mode == "device-hotspot";
+        let _provisioning = early.then(|| self.provisioning.hold());
+        if early {
+            if let Err(e) = self.ensure_controller() {
+                self.fail_start(&e);
+            }
+        }
+        self.operation(Operation::Initialize)?;
+        Ok(())
+    }
+    fn initialize_network(&self) -> Result<()> {
+        if self.network_override.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        let options = self.effective_options()?;
+        if !self.prepare_wifi()? {
+            return Ok(());
+        }
+        let mut provision_guard = self.provision.lock().unwrap();
+        let provision = provision_guard.as_mut().unwrap();
+        provision.sync(&options.settings.shared_wifi_networks)?;
+        if options.settings.network_mode == "shared-wifi" {
+            provision.start()?;
+        } else {
+            provision.stop()?;
+        }
+        Ok(())
+    }
+    fn change_network(&self, mode_changed: bool, reconnect: bool) -> Result<()> {
+        if mode_changed || reconnect {
+            self.stop_controller();
+        }
+        let options = self.effective_options()?;
+        if !self.prepare_wifi()? {
+            return Ok(());
+        }
+        let mut provision_guard = self.provision.lock().unwrap();
+        let provision = provision_guard.as_mut().unwrap();
+        provision.sync(&options.settings.shared_wifi_networks)?;
+        if options.settings.network_mode == "shared-wifi" {
+            if mode_changed || reconnect || provision.status().ssid.is_none() {
+                provision.start()?;
+            }
+        } else if mode_changed {
+            provision.stop()?;
+        }
+        Ok(())
+    }
     pub fn host_addresses(&self) -> Result<Vec<std::net::Ipv4Addr>> {
         let options = self.effective_options()?;
         let following_carlink = self.network_override.lock().unwrap().is_some();
         let carplay_hotspot = !following_carlink
             && options.settings.network_mode == "device-hotspot"
             && self.controller.lock().unwrap().is_some();
-        let mut addresses = (self.runtime.addresses)()?
+        let mut addresses = self
+            .runtime
+            .network_addresses()?
             .into_iter()
             .filter(|(i, a, _)| {
                 !a.is_loopback() && (!carplay_hotspot || i != &options.wifi_interface)
@@ -1223,18 +1380,56 @@ impl LinuxRelayAdmin {
         }
         Ok(addresses)
     }
+    fn resume_start(&self) -> Result<()> {
+        self.auto_start_gate.lock().unwrap().set_paused(false)?;
+        self.arrival.lock().unwrap().cancel();
+        self.recovery.lock().unwrap().reset();
+        self.events.facts.lock().unwrap().reset_phone();
+        Ok(())
+    }
     /// Read-only snapshot for E-b2; reads bounded memory and never probes the host.
     pub fn runtime_path_facts(&self) -> crate::path_facts::RuntimePathFacts {
         let mut facts = self.input.runtime_path_facts();
         let now = std::time::Instant::now();
+        let wall = crate::platform::wall_clock().as_millis() as u64;
+        let settings = self.settings.lock().unwrap();
+        facts.auto_start_paused = self.auto_start_gate.lock().unwrap().paused();
+        facts.automatic = settings.auto_start && !facts.auto_start_paused;
+        facts.boot_start = settings.boot_start;
+        facts.arrival_remaining_millis = self
+            .arrival
+            .lock()
+            .unwrap()
+            .deadline
+            .map(|d| d.saturating_duration_since(now).as_millis() as u64);
+        facts.arrival_until_millis = facts
+            .arrival_remaining_millis
+            .map(|ms| wall.saturating_add(ms));
+        facts.iphone.armed = self.desired.load(Ordering::Acquire)
+            && !facts.auto_start_paused
+            && !self.start_policy.lock().unwrap().waiting()
+            && self.controller.lock().unwrap().as_ref().map_or(
+                settings.auto_start || facts.iphone.failure.as_ref().is_none_or(|f| f.retrying),
+                |controller| controller.armed(),
+            );
+        drop(settings);
         facts.iphone.car_wait_until_millis =
             self.start_policy.lock().unwrap().deadline().map(|d| {
                 (crate::platform::wall_clock() + d.saturating_duration_since(now)).as_millis()
                     as u64
             });
         facts.pages = self.receivers.page_count(now);
+        let settings = self.settings.lock().unwrap().clone();
+        let tesla = self.tesla.lock().unwrap();
+        facts.tesla.failure = tesla.failure.clone();
+        facts.tesla.since_millis = tesla.since_millis;
+        facts.tesla.activation =
+            Some(tesla.activation(&settings, self.public_name.has_configuration()));
+        drop(tesla);
+        facts.tesla.url = self.tesla_url();
         let carlink = self.carlink.lock().unwrap();
-        facts.carlink.trusted = carlink.trusted;
+        facts.carlink.trusted =
+            has_trusted_carlink_for(&self.options.state_dir, settings.carlink_link == "ble");
         facts.carlink.pin_pending = carlink.pin_requested
             && carlink
                 .pin_expiry
@@ -1248,9 +1443,13 @@ impl LinuxRelayAdmin {
         if self.settings.lock().unwrap().output == "web" {
             return Err("error.conflict".into());
         }
-        self.input
+        let changed = self
+            .input
             .try_carlink_picture(size)
             .map_err(|_| "error.invalid".to_owned())?;
+        if changed {
+            self.defer(Operation::Carlink)?;
+        }
         self.wake_tick();
         Ok(())
     }
@@ -1268,12 +1467,48 @@ impl LinuxRelayAdmin {
         *self.tick_wake.0.lock().unwrap() = true;
         self.tick_wake.1.notify_all();
     }
+    fn active_hotspot(&self) -> Option<(String, std::net::Ipv4Addr)> {
+        let options = self.carplay_options().ok()?;
+        if options.settings.network_mode != "device-hotspot" {
+            return None;
+        }
+        if let Some(info) = self.hotspot_lifetime.ready_info() {
+            if let Some(address) = info.host_address {
+                return Some((
+                    info.interface_name.unwrap_or(options.wifi_interface),
+                    address,
+                ));
+            }
+        }
+        // Also covers an active NetworkManager AP inherited at daemon startup. Require our
+        // profile and AP mode, so a station address or the separate admin AP cannot qualify.
+        let inventory = self.inventory.get();
+        let interface =
+            inventory.interfaces.iter().find(|interface| {
+                interface.name == options.wifi_interface
+                    && interface.activity.mode.as_deref() == Some("AP")
+                    && interface.activity.profile.as_deref().is_some_and(|p| {
+                        p.starts_with(crate::linux_hotspot::HOTSPOT_CONNECTION_PREFIX)
+                    })
+            })?;
+        self.runtime
+            .network_addresses()
+            .ok()?
+            .into_iter()
+            .find(|(name, address, prefix)| {
+                name == &interface.name
+                    && *prefix != 32
+                    && !address.is_loopback()
+                    && !address.is_unspecified()
+            })
+            .map(|(name, address, _)| (name, address))
+    }
     /// The head-unit-facing IPv4 address: the CarPlay hotspot's (or, in shared-Wi-Fi mode, the
     /// relay's address on that network as the controller uses it), else the Wi-Fi interface's
     /// address in shared-Wi-Fi mode.
     fn head_unit_address(&self) -> Option<std::net::Ipv4Addr> {
         let (options, status) = self.effective_options_with_status().ok()?;
-        let addresses = (self.runtime.addresses)().unwrap_or_default();
+        let addresses = self.runtime.network_addresses().unwrap_or_default();
         let iphone = self
             .controller
             .lock()
@@ -1281,6 +1516,7 @@ impl LinuxRelayAdmin {
             .clone()
             .and_then(|c| c.hotspot_info())
             .and_then(|info| info.host_address)
+            .or_else(|| self.active_hotspot().map(|(_, address)| address))
             .or_else(|| {
                 (options.settings.network_mode == "shared-wifi")
                     .then(|| {
@@ -1303,8 +1539,103 @@ impl LinuxRelayAdmin {
     pub fn admin_certificate(&self) -> crate::admin::server::NamedCertificate {
         self.admin_certificate.clone()
     }
+    fn validate_tesla_change(
+        &self,
+        current: &Settings,
+        next: &Settings,
+    ) -> std::result::Result<(), BTreeMap<String, String>> {
+        if next.tesla_address() == current.tesla_address() {
+            return Ok(());
+        }
+        let Some(address) = next.tesla_address() else {
+            return Ok(());
+        };
+        let owned = self
+            .tesla
+            .lock()
+            .unwrap()
+            .active
+            .as_ref()
+            .map(|a| a.address.to_string());
+        let collision = (self.runtime.addresses)().map(|rows| {
+            rows.iter()
+                .any(|(_, a, _)| a.to_string() == address && owned.as_deref() != Some(address))
+        });
+        if collision.unwrap_or(true) {
+            return Err(BTreeMap::from([(
+                crate::tesla_address::address_key(next.tesla_browser)
+                    .unwrap()
+                    .into(),
+                "error.teslaAddress".into(),
+            )]));
+        }
+        Ok(())
+    }
+    fn refresh_tesla_address(&self) {
+        let mut settings = self
+            .effective_options()
+            .map(|o| o.settings)
+            .unwrap_or_else(|_| self.settings.lock().unwrap().clone());
+        let active = self.active_hotspot();
+        if let Some((interface, _)) = &active {
+            settings.wifi_interface = interface.clone();
+        }
+        let running =
+            self.desired.load(Ordering::Acquire) || self.controller.lock().unwrap().is_some();
+        let ready = active.is_some();
+        let mut tesla = self.tesla.lock().unwrap();
+        tesla.tick(
+            running,
+            ready,
+            &settings,
+            self.public_name.has_configuration(),
+            || (self.runtime.addresses)().map(|rows| rows.into_iter().map(|(_, a, _)| a).collect()),
+            crate::platform::wall_clock().as_millis() as u64,
+        );
+        let published = tesla
+            .active
+            .as_ref()
+            .filter(|a| a.mode.uses_name())
+            .map(|a| a.address);
+        let changes = tesla.journal_changes(&settings);
+        drop(tesla);
+        self.public_name.published_address_override(published);
+        for change in changes {
+            self.events.emit("tesla-address", &change);
+        }
+    }
+    /// Compare selected Tesla coverage with the last acknowledged receiver set.
+    fn tesla_tls_changed(&self) -> bool {
+        let desired = crate::tesla_address::tls_address(&self.settings.lock().unwrap());
+        desired != *self.receiver_tesla_tls.lock().unwrap()
+    }
+    fn tesla_url(&self) -> Option<String> {
+        let web = self.input.runtime_path_facts().web;
+        if web.phase != "LISTENING" {
+            return None;
+        }
+        let active = self.tesla.lock().unwrap().active.clone()?;
+        let host = if active.mode.uses_name() {
+            let status = self.public_name.status();
+            if status.address.as_deref() != Some(active.address.to_string().as_str()) {
+                return None;
+            }
+            let name = status.trusted_name?;
+            let served = self.receiver_tls.lock().unwrap().clone().flatten()?;
+            if served.name != name {
+                return None;
+            }
+            name
+        } else {
+            if *self.receiver_tesla_tls.lock().unwrap() != Some(active.address) {
+                return None;
+            }
+            active.address.to_string()
+        };
+        Some(format!("https://{host}:{}/", web.port))
+    }
     /// Follows the trusted-HTTPS certificate: the admin page swaps it at once, the head-unit
-    /// page by restarting its child when the restart rule allows.
+    /// page through its acknowledged control channel.
     fn apply_public_name(&self) {
         let served = self.public_name.served();
         let generation = self.public_name.generation();
@@ -1322,23 +1653,115 @@ impl LinuxRelayAdmin {
                 _ => self.admin_certificate.clear(),
             }
         }
+        if let Ok(sans) = self.receiver_sans() {
+            self.apply_receiver_tls(served, sans);
+        }
+    }
+    fn receiver_sans(&self) -> Result<Vec<std::net::Ipv4Addr>> {
+        let rows = self.runtime.network_addresses()?;
+        let occupied: Vec<_> = rows
+            .iter()
+            .map(|(_, address, prefix)| format!("{address}/{prefix}"))
+            .collect();
+        let mut addresses: Vec<_> = rows
+            .into_iter()
+            .map(|(_, address, _)| address)
+            .filter(|a| !a.is_loopback())
+            .collect();
+        if let Some(address) = crate::tesla_address::tls_address(&self.settings.lock().unwrap()) {
+            addresses.push(address);
+        }
+        addresses.push(std::net::Ipv4Addr::new(10, 78, 0, 1));
+        if let Ok(address) = crate::HotspotAddressPolicy::select_subnet(&occupied) {
+            addresses.push(address);
+        }
+        addresses.sort();
+        addresses.dedup();
+        for address in self.receiver_tls_sans.lock().unwrap().iter() {
+            if !addresses.contains(address) {
+                addresses.push(*address);
+            }
+        }
+        addresses.truncate(16);
+        addresses.sort();
+        Ok(addresses)
+    }
+    /// Single production queue for trusted material, network SANs and Tesla coverage.
+    /// The action reads the latest desired set when it runs, coalescing waiting changes.
+    fn apply_receiver_tls(
+        &self,
+        served: Option<crate::public_name::Served>,
+        sans: Vec<std::net::Ipv4Addr>,
+    ) {
         let Some(current) = self.receiver_tls.lock().unwrap().clone() else {
             return;
         };
-        if self.receiver_tls_queued.load(Ordering::Acquire) {
-            return;
-        }
-        if crate::public_name::service::should_restart(
+        let changed = crate::public_name::service::should_restart(
             current.as_ref(),
             served.as_ref(),
-            self.input.session_active(),
+            false,
             crate::public_name::service::trusted_clock(),
-        ) && self.operations.try_send(Operation::ReceiverTls).is_ok()
+        ) || *self.receiver_tls_sans.lock().unwrap() != sans
+            || self.tesla_tls_changed();
+        if changed
+            && !self.receiver_tls_queued.swap(true, Ordering::AcqRel)
+            && self.operations.try_send(Operation::ReceiverTls).is_err()
         {
-            self.receiver_tls_queued.store(true, Ordering::Release);
-            self.events
-                .log("receiver certificate changed; restarting the head-unit page");
+            self.receiver_tls_queued.store(false, Ordering::Release);
         }
+    }
+    fn update_receiver_tls(&self, timeout: Duration) -> Result<()> {
+        let Some(current) = self.receiver_tls.lock().unwrap().clone() else {
+            return Ok(());
+        };
+        // Freeze complete private PEMs before sending paths. A failed request never overwrites
+        // the pair used by automatic retries of the currently served child.
+        let served = self
+            .public_name
+            .certificate_snapshot(&self.options.state_dir)?;
+        let sans = self.receiver_sans()?;
+        let tesla = crate::tesla_address::tls_address(&self.settings.lock().unwrap());
+        let pem = served.as_ref().map(|s| PemTls {
+            name: s.name.clone(),
+            cert: s.cert.clone(),
+            key: s.key.clone(),
+        });
+        let swapped = self
+            .supervisor
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotConnected))
+            .and_then(|supervisor| supervisor.update_web_tls(pem, sans.clone(), timeout));
+        match swapped {
+            Ok(()) => {
+                *self.receiver_tls.lock().unwrap() = Some(served);
+                *self.receiver_tls_sans.lock().unwrap() = sans.clone();
+                *self.receiver_tesla_tls.lock().unwrap() = tesla.filter(|a| sans.contains(a));
+                self.events.log("receiver TLS updated live");
+            }
+            Err(error) => {
+                self.events
+                    .log(&format!("receiver TLS update not acknowledged: {error}"));
+                // Recheck now: a session may have begun while the request was pending.
+                let restart = !self.input.session_active()
+                    || crate::public_name::service::should_restart(
+                        current.as_ref(),
+                        served.as_ref(),
+                        true,
+                        crate::public_name::service::trusted_clock(),
+                    );
+                if restart {
+                    let running = self.supervisor.lock().unwrap().take();
+                    if let Some(mut supervisor) = running {
+                        supervisor.stop();
+                        *self.receiver_tls.lock().unwrap() = None;
+                        self.start_supervisor()?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
     fn apply_wifi_country(&self) {
         let country = self.settings.lock().unwrap().wifi_country.clone();
@@ -1363,13 +1786,46 @@ impl LinuxRelayAdmin {
         }
     }
     pub fn tick(&self) -> Result<()> {
+        if let Err(error) = self.tick_inner() {
+            // Startup/network failures belong to this start, not the daemon's main loop.
+            let _lifecycle = self.lifecycle.lock().unwrap();
+            self.fail_start(&error);
+        }
+        Ok(())
+    }
+    fn fail_start(&self, error: &std::io::Error) {
+        self.events.facts.lock().unwrap().failure(
+            &error.to_string(),
+            false,
+            crate::platform::wall_clock().as_millis() as u64,
+        );
+        self.events
+            .emit("stage", &serde_json::json!({"stage":"Failed"}));
+        self.stop_controller_for_restart(true);
+    }
+    fn tick_inner(&self) -> Result<()> {
         if self.runtime.inventory_refresh == InventoryRefresh::Automatic {
             self.inventory.refresh();
         }
+        self.vehicle.lock().unwrap().tick(
+            std::time::Instant::now(),
+            crate::platform::wall_clock().as_millis() as u64,
+        );
+        let inventory = self.inventory.get();
+        let interfaces: Vec<_> = inventory.interfaces.iter().map(|interface| serde_json::json!({
+            "interface":interface.name, "address":interface.mac, "state":interface.operstate,
+            "ipv4":interface.ipv4, "activity":interface.activity
+        })).collect();
+        self.events.log_observation("network-observed", &serde_json::json!({
+            "interfaces":interfaces, "bluetooth":self.capabilities.get().and_then(|caps| caps.adapters)
+        }));
+        // Address ownership and name/TLS refresh must progress during controller retries.
+        self.refresh_tesla_address();
         self.apply_public_name();
-        let playing = self.carlink.lock().unwrap().state == "playing";
+        self.public_name.head_unit_address(self.head_unit_address());
+        let playing = self.carlink.lock().unwrap().ready_for_carplay();
         if self.input.display.lock().unwrap().resize.reconnect(playing) {
-            // In both mode this also restarts web output; Android reconnects only Carlink.
+            // The control channel replaces only Carlink, preserving the browser.
             if let Some(supervisor) = self.supervisor.lock().unwrap().as_ref() {
                 supervisor.connect_carlink();
             }
@@ -1402,13 +1858,23 @@ impl LinuxRelayAdmin {
         if !self.busy.load(Ordering::Acquire) && self.pending.lock().unwrap().is_empty() {
             self.reconcile_admin_hotspot();
         }
-        self.public_name.head_unit_address(self.head_unit_address());
         if self.start_policy.lock().unwrap().take_failure() {
             self.stop_controller();
         }
+        self.observe_automatic_start()?;
         if self.busy.load(Ordering::Acquire)
             || !self.desired.load(Ordering::Acquire)
             || !self.pending.lock().unwrap().is_empty()
+        {
+            return Ok(());
+        }
+        if self
+            .events
+            .runtime_path_facts()
+            .iphone
+            .failure
+            .as_ref()
+            .is_some_and(|f| !f.retrying)
         {
             return Ok(());
         }
@@ -1431,9 +1897,119 @@ impl LinuxRelayAdmin {
         }
         self.ensure_controller()
     }
+    fn observe_automatic_start(&self) -> Result<()> {
+        let options = self.effective_options()?;
+        let bluetooth = match self.backends.bluetooth.check_radio() {
+            Ok(()) => Some(true),
+            Err(e) => matches!(
+                crate::carplay_policy::classify_failure(&e.to_string()),
+                "bluetooth_off" | "bluetooth_unusable"
+            )
+            .then_some(false),
+        };
+        let wifi = crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface);
+        let inventory = self.inventory.get();
+        let hotspot = inventory
+            .interfaces
+            .iter()
+            .find(|i| i.name == options.wifi_interface)
+            .filter(|_| inventory.probed_at.is_some())
+            .map(|i| i.activity.mode.as_deref() == Some("AP"));
+        let paused = self.auto_start_gate.lock().unwrap().paused();
+        let failure = self.events.runtime_path_facts().iphone.failure;
+        if let Some(controller) = self.controller.lock().unwrap().as_ref() {
+            controller.set_start_when_ready(options.settings.auto_start);
+        }
+        let devices = self.backends.bluetooth.devices().ok();
+        let iphone = devices.as_ref().map(|devices| {
+            crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), devices)
+                .device()
+                .is_some_and(|device| device.connected)
+        });
+        let restored = self.recovery.lock().unwrap().observe(
+            failure.as_ref(),
+            crate::start_policy::RadioReadings {
+                bluetooth,
+                wifi,
+                hotspot,
+                carlink: Some(
+                    options.settings.output == "web"
+                        || self.carlink.lock().unwrap().ready_for_carplay(),
+                ),
+                iphone,
+            },
+            paused,
+            options.settings.auto_start,
+        );
+        if restored {
+            let controller = self
+                .controller
+                .lock()
+                .unwrap()
+                .clone()
+                .filter(|c| c.running());
+            if let Some(controller) = controller {
+                controller.readiness_restored();
+            } else {
+                self.stop_controller_for_restart(true);
+                self.start_policy.lock().unwrap().cancel();
+                self.events.facts.lock().unwrap().iphone.failure = None;
+                self.desired.store(true, Ordering::Release);
+                self.events.log("carplay_radio_recover");
+            }
+        }
+        if self.desired.load(Ordering::Acquire)
+            || paused
+            || !options.settings.auto_start
+            || failure.is_some()
+        {
+            self.arrival.lock().unwrap().cancel();
+            return Ok(());
+        }
+        let devices = self.backends.bluetooth.devices().unwrap_or_default();
+        let selection =
+            crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
+        let identity = self.options.test_input.is_some()
+            || ["identity.pk8", "certificate.p7b"].iter().all(|name| {
+                std::fs::metadata(options.identity_dir.join(name)).is_ok_and(|m| m.len() > 0)
+            });
+        let network_ready = self.wifi_present(&options.wifi_interface)
+            && wifi != Some(false)
+            && (options.settings.network_mode != "shared-wifi"
+                || self.wifi_status().ssid.is_some());
+        let ready = identity
+            && network_ready
+            && bluetooth == Some(true)
+            && matches!(
+                selection.reason(),
+                "Selected" | "Connected" | "OnlyCandidate"
+            )
+            && !self.busy.load(Ordering::Acquire)
+            && self.pending.lock().unwrap().is_empty();
+        if self
+            .arrival
+            .lock()
+            .unwrap()
+            .ready(std::time::Instant::now(), ready)
+        {
+            self.arrival.lock().unwrap().cancel();
+            self.desired.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
     /// Runs the CarPlay controller: starts one unless it runs, Carlink or the setup hotspot owns
     /// the radio, and applies a requested session restart. The caller holds `lifecycle`.
     fn ensure_controller(&self) -> Result<()> {
+        if self
+            .events
+            .runtime_path_facts()
+            .iphone
+            .failure
+            .as_ref()
+            .is_some_and(|f| !f.retrying)
+        {
+            return Ok(());
+        }
         if self.provision.lock().unwrap().is_none()
             || !self.wifi_present(&self.effective_options()?.wifi_interface)
         {
@@ -1469,7 +2045,35 @@ impl LinuxRelayAdmin {
             }
         }
         let mut options = self.carplay_options()?;
+        // A requested start remains armed while a known radio problem needs the user.
+        let bluetooth_problem = self
+            .backends
+            .bluetooth
+            .check_radio()
+            .err()
+            .is_some_and(|e| {
+                matches!(
+                    crate::carplay_policy::classify_failure(&e.to_string()),
+                    "bluetooth_off" | "bluetooth_unusable"
+                )
+            });
+        if bluetooth_problem
+            || crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface)
+                == Some(false)
+                && self
+                    .runtime
+                    .root
+                    .join("sys/class/net")
+                    .join(&options.wifi_interface)
+                    .join("address")
+                    .exists()
+        {
+            return Ok(());
+        }
+        self.events
+            .failure_secrets(failure_secrets(&options.settings, &options.state_dir));
         self.input.configure_runtime_settings(&options.settings)?;
+        self.input.configure_connection_experiments();
         {
             let mut policy = self.start_policy.lock().unwrap();
             if !policy.requested() {
@@ -1499,10 +2103,7 @@ impl LinuxRelayAdmin {
                 let enabled = settings.lock().unwrap().output != "web";
                 let (ready, reported) = {
                     let c = carlink.lock().unwrap();
-                    (
-                        c.state == "playing" || c.view_size.is_some(),
-                        c.view_size.is_some(),
-                    )
+                    (c.ready_for_carplay(), c.view_size.is_some())
                 };
                 let result = policy.lock().unwrap().ready(
                     std::time::Instant::now(),
@@ -1511,7 +2112,6 @@ impl LinuxRelayAdmin {
                     input.screen_reported() || reported,
                 );
                 if let Err(e) = &result {
-                    desired.store(false, Ordering::Release);
                     policy.lock().unwrap().fail();
                     events.facts.lock().unwrap().failure(
                         &e.to_string(),
@@ -1525,8 +2125,10 @@ impl LinuxRelayAdmin {
         };
         // A concurrent/browser path prepares its AP before waiting for a screen report.
         // On one radio, Carlink must own that radio before the controller prepares a network.
-        if !start_gate()? && options.shared_carlink_radio() {
-            return Ok(());
+        match start_gate() {
+            Err(_) => return Ok(()), // The failed request is published; the daemon keeps serving.
+            Ok(false) if options.shared_carlink_radio() => return Ok(()),
+            _ => {}
         }
         if self
             .pairing
@@ -1538,6 +2140,11 @@ impl LinuxRelayAdmin {
             options.pair_seconds = None;
         }
         self.events.follow_over("controller-start");
+        self.tesla.lock().unwrap().prepare(
+            &options.settings,
+            crate::platform::wall_clock().as_millis() as u64,
+        );
+        let start_when_ready = options.settings.auto_start;
         let platform = Arc::new(
             LinuxWirelessPlatform::new(
                 options,
@@ -1560,7 +2167,7 @@ impl LinuxRelayAdmin {
                 let public_name = self.public_name.clone();
                 let target = self.browser_target.clone();
                 let iphone = self.effective_options()?.wifi_interface;
-                let addresses = self.runtime.addresses.clone();
+                let addresses = self.runtime.network_address_source();
                 Arc::new(move |address| {
                     let target = target.lock().unwrap();
                     let selected = if target.as_deref() == Some(&iphone) {
@@ -1591,6 +2198,7 @@ impl LinuxRelayAdmin {
             self.events.clone(),
             Duration::from_secs(45),
         ));
+        controller.set_start_when_ready(start_when_ready);
         *self.controller.lock().unwrap() = Some(controller.clone());
         let events = self.events.clone();
         *self.worker.lock().unwrap() = Some(crate::platform::spawn_worker(
@@ -1626,6 +2234,17 @@ impl LinuxRelayAdmin {
         let _ = self.stream.close();
         let _ = self.sink.close();
     }
+    /// A config import can change both the hotspot and normal settings in one response.
+    fn defer_hotspot(&self) -> AdminResult {
+        let owner = std::thread::current().id();
+        let mut pending = self.pending.lock().unwrap();
+        if self.busy.load(Ordering::Acquire) || pending.keys().any(|key| *key != owner) {
+            return Err("error.busy".into());
+        }
+        let after = pending.remove(&owner).map(Box::new);
+        pending.insert(owner, Operation::Hotspot(after));
+        Ok(())
+    }
     fn defer(&self, op: Operation) -> AdminResult {
         let mut pending = self.pending.lock().unwrap();
         if self.busy.load(Ordering::Acquire) || !pending.is_empty() {
@@ -1650,6 +2269,18 @@ fn public_name_url(
         .split_once('#')
         .map_or(String::new(), |(_, f)| format!("#{f}"));
     Some(format!("https://{name}:{port}/{fragment}"))
+}
+/// A stored certificate is not necessarily loaded by the page child yet.
+fn receiver_public_name(
+    mut status: crate::public_name::PublicNameStatus,
+    served: Option<&crate::public_name::Served>,
+    now: Option<u64>,
+) -> crate::public_name::PublicNameStatus {
+    status.trusted_name = status.trusted_name.filter(|name| {
+        served.is_some_and(|s| s.name == *name && now.is_none_or(|now| now < s.not_after))
+    });
+    status.not_after = served.map(|s| s.not_after);
+    status
 }
 fn admin_urls(
     status: &crate::public_name::PublicNameStatus,
@@ -1747,6 +2378,127 @@ fn picture_section() -> Section {
         .collect(),
     }
 }
+fn display_overrides_section() -> Section {
+    let mut section = runtime_section(
+        "display",
+        &[
+            ("displayMode", "choice"),
+            ("displayWidth", "number"),
+            ("displayHeight", "number"),
+            ("displayDensity", "number"),
+            ("physicalWidthEnabled", "bool"),
+            ("physicalWidthOverrideMm", "choice"),
+        ],
+    );
+    for field in &mut section.fields {
+        if field.key == "displayMode" {
+            field.options = Some(
+                ["automatic", "fixed"]
+                    .iter()
+                    .map(|v| FieldOption {
+                        value: (*v).into(),
+                        label_key: format!("option.displayMode.{v}"),
+                        labels: None,
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            );
+            field.hint_key = Some("hint.displayMode".into());
+        } else if field.key == "physicalWidthOverrideMm" {
+            field.options = Some(
+                (100..=400)
+                    .step_by(25)
+                    .map(|v| FieldOption {
+                        value: serde_json::json!(v),
+                        label_key: String::new(),
+                        labels: Some(BTreeMap::from([
+                            ("en".into(), format!("{v} mm")),
+                            ("zh-CN".into(), format!("{v} mm")),
+                        ])),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            );
+            field.visible_when = Some(VisibleWhen {
+                key: "physicalWidthEnabled".into(),
+                equals: vec![serde_json::json!(true)],
+            });
+        } else if field.key == "physicalWidthEnabled" {
+            field.hint_key = Some("hint.physicalWidth".into());
+        } else if field.key.starts_with("display") {
+            let (min, max) = match field.key.as_str() {
+                "displayWidth" => (320., 3840.),
+                "displayHeight" => (240., 2160.),
+                _ => (120., 640.),
+            };
+            field.min = Some(min);
+            field.max = Some(max);
+            field.visible_when = Some(VisibleWhen {
+                key: "displayMode".into(),
+                equals: vec!["fixed".into()],
+            });
+        }
+    }
+    section
+}
+fn tesla_section() -> Section {
+    let mut section = runtime_section(
+        "tesla",
+        &[
+            ("teslaBrowser", "choice"),
+            ("teslaVirtualAddress", "text"),
+            ("teslaPublicAddress", "text"),
+            ("teslaMirrorAddress", "text"),
+            ("teslaAndroidAddress", "text"),
+        ],
+    );
+    section.title_key = "tesla.title".into();
+    for field in &mut section.fields {
+        if field.key == "teslaBrowser" {
+            field.label_key = "tesla.mode".into();
+            field.options = Some(
+                [
+                    "teslamirror",
+                    "virtual-name",
+                    "public-address",
+                    "tesla-android",
+                    "off",
+                ]
+                .into_iter()
+                .map(|mode| FieldOption {
+                    value: mode.into(),
+                    label_key: format!("tesla.mode.{mode}"),
+                    labels: None,
+                    hint_key: (mode != "off").then(|| {
+                        if ["teslamirror", "virtual-name"].contains(&mode) {
+                            "tesla.nameHint"
+                        } else {
+                            "tesla.directHint"
+                        }
+                        .into()
+                    }),
+                    illustration: None,
+                })
+                .collect(),
+            );
+        } else {
+            let mode = match field.key.as_str() {
+                "teslaVirtualAddress" => "virtual-name",
+                "teslaPublicAddress" => "public-address",
+                "teslaMirrorAddress" => "teslamirror",
+                _ => "tesla-android",
+            };
+            field.label_key = "tesla.address".into();
+            field.visible_when = Some(VisibleWhen {
+                key: "teslaBrowser".into(),
+                equals: vec![mode.into()],
+            });
+        }
+    }
+    section
+}
 /// Trusted HTTPS with a free domain name, stored in `public-name.json` (not `settings.json`).
 fn public_name_section() -> Section {
     let field = |key: &str, kind: &str, label: &str, hint: Option<&str>| Field {
@@ -1766,10 +2518,7 @@ fn public_name_section() -> Section {
                 })
                 .collect()
         }),
-        visible_when: (key != "publicNameEnabled").then(|| VisibleWhen {
-            key: "publicNameEnabled".into(),
-            equals: vec![true.into()],
-        }),
+        visible_when: None,
         min: None,
         max: None,
     };
@@ -1795,7 +2544,8 @@ fn runtime_section(id: &str, keys: &[(&str, &str)]) -> Section {
                 key: (*key).into(),
                 field_type: (*kind).into(),
                 label_key: format!("field.{key}"),
-                hint_key: None,
+                hint_key: (key.starts_with("experimental") || *key == "developerActive")
+                    .then(|| format!("hint.field.{key}")),
                 options: (*key == "carlinkPictureSize").then(|| {
                     ["window", "mode"]
                         .into_iter()
@@ -1830,6 +2580,7 @@ fn car_section(car: &crate::car_models::CarSelection) -> Section {
             ("carModel", "choice"),
             ("carModelText", "text"),
             ("carYear", "choice"),
+            ("carYearText", "text"),
         ],
     );
     for field in &mut section.fields {
@@ -1871,12 +2622,17 @@ fn car_section(car: &crate::car_models::CarSelection) -> Section {
             });
             field.options = Some(options);
         }
-        if matches!(field.key.as_str(), "carBrandText" | "carModelText") {
+        if matches!(
+            field.key.as_str(),
+            "carBrandText" | "carModelText" | "carYearText"
+        ) {
             field.visible_when = Some(VisibleWhen {
                 key: if field.key == "carBrandText" {
                     "carBrand"
-                } else {
+                } else if field.key == "carModelText" {
                     "carModel"
+                } else {
+                    "carYear"
                 }
                 .into(),
                 equals: vec!["other".into()],
@@ -1894,6 +2650,7 @@ pub fn settings_schema() -> Vec<Section> {
         ("devicePreset", "choice"),
         ("sharedWifiNetworks", "networks"),
         ("hotspotBand", "choice"),
+        ("hotspotSecurity", "choice"),
         ("hotspotChannel", "number"),
         ("iphone", "phone"),
         ("wifiInterface", "text"),
@@ -1903,10 +2660,12 @@ pub fn settings_schema() -> Vec<Section> {
         ("carlinkName", "text"),
         ("carlinkModel", "text"),
         ("carlinkAutoReconnect", "bool"),
+        ("vehicleInformation", "bool"),
         ("carlinkReconnectOnResize", "bool"),
         ("carlinkHevc", "choice"),
         ("carlinkTrace", "choice"),
         ("autoStart", "bool"),
+        ("bootStart", "bool"),
         ("videoStats", "choice"),
         ("carPlayViewAreas", "bool"),
         ("receiverPort", "number"),
@@ -1937,6 +2696,7 @@ pub fn settings_schema() -> Vec<Section> {
                     | "carlinkAutoReconnect"
                     | "carlinkReconnectOnResize"
                     | "carlinkHevc"
+                    | "videoStats"
                     | "hotspotChannel"
                     | "carlinkLink"
                     | "carlinkInterface"
@@ -1949,7 +2709,7 @@ pub fn settings_schema() -> Vec<Section> {
         options: match key {
             "carlinkHevc" | "carlinkTrace" | "videoStats" => Some(
                 (if key == "carlinkHevc" {
-                    vec!["auto", "off"]
+                    vec!["auto", "off", "signal"]
                 } else if key == "carlinkTrace" {
                     vec!["off", "on"]
                 } else {
@@ -1972,6 +2732,18 @@ pub fn settings_schema() -> Vec<Section> {
                         labels: None,
                         value: v.into(),
                         label_key: format!("option.devicePreset.{v}"),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            ),
+            "hotspotSecurity" => Some(
+                ["open", "wpa2", "wpa3-transition", "wpa3"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        labels: None,
+                        value: v.into(),
+                        label_key: format!("option.hotspotSecurity.{v}"),
                         hint_key: None,
                         illustration: None,
                     })
@@ -2090,14 +2862,23 @@ pub fn settings_schema() -> Vec<Section> {
             ],
         ),
         car_section(&Default::default()),
+        display_overrides_section(),
         runtime_section(
             "experimental",
             &[
                 ("experimentalActive", "bool"),
+                ("experimentalScreenSessionIsolation", "bool"),
+                ("experimentalScreenReconnectReset", "bool"),
+                ("experimentalScreenDeliverySerialization", "bool"),
+                ("experimentalRemotePlaybackProof", "bool"),
+                ("experimentalStartupStatus", "bool"),
+                ("experimentalStartupDiagnostics", "bool"),
                 ("experimentalSendBluetoothAddress", "bool"),
                 ("experimentalBluetoothAddress", "text"),
             ],
         ),
+        runtime_section("developer", &[("developerActive", "bool")]),
+        tesla_section(),
         public_name_section(),
         Section {
             id: "audio".into(),
@@ -2132,13 +2913,91 @@ pub fn settings_schema() -> Vec<Section> {
         },
     ]
 }
+fn failure_secrets(settings: &Settings, state_dir: &std::path::Path) -> Vec<String> {
+    let mut secrets: Vec<_> = settings
+        .shared_wifi_networks
+        .iter()
+        .map(|n| n.password.clone())
+        .collect();
+    secrets.extend(settings.carlink_pin.clone());
+    secrets.extend(settings.admin_hotspot_password.clone());
+    if let Ok((_, password)) = crate::linux_hotspot::hotspot_credentials(state_dir) {
+        secrets.push(password);
+    }
+    secrets
+}
+
+/// This list drives both normal settings application and configuration import reports.
+fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    macro_rules! changed {
+        ($field:ident, $key:literal) => {
+            if next.$field != current.$field {
+                keys.push($key);
+            }
+        };
+    }
+    changed!(iphone, "iphone");
+    changed!(rfcomm_channel, "rfcommChannel");
+    changed!(wifi_interface, "wifiInterface");
+    changed!(hotspot_channel, "hotspotChannel");
+    changed!(hotspot_band, "hotspotBand");
+    changed!(hotspot_security, "hotspotSecurity");
+    changed!(device_preset, "devicePreset");
+    changed!(developer_active, "developerActive");
+    changed!(display_mode, "displayMode");
+    changed!(display_width, "displayWidth");
+    changed!(display_height, "displayHeight");
+    changed!(display_density, "displayDensity");
+    changed!(physical_width_enabled, "physicalWidthEnabled");
+    changed!(physical_width_override_mm, "physicalWidthOverrideMm");
+    changed!(car_bluetooth_audio, "carBluetoothAudio");
+    changed!(carlink_picture_default, "carlinkPictureDefault");
+    changed!(carlink_picture_size, "carlinkPictureSize");
+    keys
+}
 pub fn update_settings(
     current: &Settings,
-    values: Values,
+    mut values: Values,
 ) -> std::result::Result<Settings, BTreeMap<String, String>> {
+    // A picker change clears its descendants; a complete import can supply them together.
+    for (key, previous, descendants) in [
+        (
+            "carBrand",
+            &current.car_brand,
+            &[
+                "carBrandText",
+                "carModel",
+                "carModelText",
+                "carYear",
+                "carYearText",
+            ][..],
+        ),
+        (
+            "carModel",
+            &current.car_model,
+            &["carModelText", "carYear", "carYearText"][..],
+        ),
+        ("carYear", &current.car_year, &["carYearText"][..]),
+    ] {
+        if values
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|v| v != previous)
+        {
+            for key in descendants {
+                values.entry((*key).to_owned()).or_insert_with(|| "".into());
+            }
+        }
+    }
     let mut merged = serde_json::to_value(current).unwrap();
     let mut errors = BTreeMap::new();
     for (k, mut v) in values {
+        let k = match k.as_str() {
+            "autoStartWhenReady" => "autoStart".to_owned(),
+            "autoStartOnBoot" => "bootStart".to_owned(),
+            _ => k,
+        };
         if k == "pluginsEnabled" {
             let ids = serde_json::from_value::<Vec<String>>(v.clone());
             let mut seen = std::collections::BTreeSet::new();
@@ -2205,6 +3064,29 @@ pub fn update_settings(
     if !errors.is_empty() {
         return Err(errors);
     }
+    if let Ok(mode) =
+        serde_json::from_value::<crate::tesla_address::Mode>(merged["teslaBrowser"].clone())
+    {
+        if let Some(key) = crate::tesla_address::address_key(mode) {
+            if !merged[key]
+                .as_str()
+                .is_some_and(crate::tesla_address::valid)
+            {
+                return Err(BTreeMap::from([(key.into(), "error.teslaAddress".into())]));
+            }
+        }
+    } else {
+        return Err(BTreeMap::from([(
+            "teslaBrowser".into(),
+            "error.invalid".into(),
+        )]));
+    }
+    if merged["physicalWidthEnabled"] == true
+        && !current.physical_width_enabled
+        && merged["physicalWidthOverrideMm"] == 0
+    {
+        merged["physicalWidthOverrideMm"] = serde_json::json!(200);
+    }
     match serde_json::from_value::<Settings>(merged)
         .map_err(std::io::Error::other)
         .and_then(|mut s| {
@@ -2226,17 +3108,30 @@ pub fn update_settings(
     }
 }
 impl LinuxRelayAdmin {
+    fn config_user_values(
+        &self,
+        settings: &Settings,
+        display: &serde_json::Value,
+    ) -> std::result::Result<Values, crate::config_files::Errors> {
+        let mut values = crate::config_files::settings_values(settings, display);
+        let (ssid, password) = crate::linux_hotspot::hotspot_credentials(&self.options.state_dir)
+            .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+        values.insert("hotspotSsid".into(), serde_json::json!(ssid));
+        values.insert("hotspotPassphrase".into(), serde_json::json!(password));
+        values
+            .entry("hotspotSecurity")
+            .or_insert_with(|| serde_json::json!("wpa2"));
+        Ok(values)
+    }
     fn build_log_export(&self, range: &str) -> std::io::Result<crate::logs::Export> {
         let range = serde_json::from_value::<crate::logs::Range>(serde_json::json!(range))?;
         let status = self.status();
         let settings = self.settings.lock().unwrap().clone();
         let mut known: Vec<(String, &str)> = Vec::new();
         for network in &settings.shared_wifi_networks {
-            known.push((network.ssid.clone(), "name"));
             known.push((network.password.clone(), "secret"));
         }
         if let Some(hotspot) = status.hotspot {
-            known.push((hotspot.ssid, "name"));
             known.push((hotspot.password, "secret"));
         }
         for device in status.paired_devices {
@@ -2262,7 +3157,6 @@ impl LinuxRelayAdmin {
                     Some((lines.next()?.into(), lines.next()?.into()))
                 });
             if let Some((ssid, password)) = credentials {
-                known.push((ssid, "name"));
                 known.push((password, "secret"));
             }
         }
@@ -2270,18 +3164,12 @@ impl LinuxRelayAdmin {
             if key.contains("password") || key.contains("token") {
                 known.push((value.clone(), "secret"));
             }
-            if key.contains("ssid") {
-                known.push((value.clone(), "name"));
-            }
         }
         if let Some((public, _)) =
             crate::public_name::config::load(&self.options.state_dir.join("public-name.json"))?
         {
             if let Some(token) = public.token {
                 known.push((token, "secret"));
-            }
-            if let Some(name) = public.name {
-                known.push((name, "name"));
             }
         }
         let providers = self.options.state_dir.join("public-name/providers.json");
@@ -2291,10 +3179,8 @@ impl LinuxRelayAdmin {
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                 if let Some(providers) = value["providers"].as_object() {
                     for provider in providers.values() {
-                        for (key, kind) in [("name", "name"), ("token", "secret")] {
-                            if let Some(value) = provider[key].as_str() {
-                                known.push((value.into(), kind));
-                            }
+                        if let Some(value) = provider["token"].as_str() {
+                            known.push((value.into(), "secret"));
                         }
                     }
                 }
@@ -2363,15 +3249,29 @@ impl RelayAdmin for LinuxRelayAdmin {
             .map(|receipt| serde_json::to_value(receipt).unwrap())
             .map_err(|error| error.code().into())
     }
+    fn logs_upload_status(&self, id: &str, cancel: bool) -> Option<serde_json::Value> {
+        self.log_exports
+            .upload_status(id, cancel)
+            .map(|value| serde_json::to_value(value).unwrap())
+    }
     fn logs_receipt(&self) -> std::io::Result<Option<serde_json::Value>> {
         self.log_exports
             .receipt()
             .map(|receipt| receipt.map(|receipt| serde_json::to_value(receipt).unwrap()))
     }
     fn update_check(&self, channel: &str) -> std::result::Result<serde_json::Value, &'static str> {
-        self.release_checks
-            .check(crate::update_check::Channel::parse(channel).ok_or("offline")?)
-            .map(|check| serde_json::to_value(check).unwrap())
+        self.update_check_fresh(channel, false)
+    }
+    fn update_check_fresh(
+        &self,
+        channel: &str,
+        fresh: bool,
+    ) -> std::result::Result<serde_json::Value, &'static str> {
+        let selected = crate::update_check::Channel::parse(channel).ok_or("invalid")?;
+        Ok(match self.release_checks.check(selected, fresh) {
+            Ok(check) => serde_json::to_value(check).unwrap(),
+            Err(failure) => serde_json::json!({"channel":channel,"failure":failure}),
+        })
     }
     fn config_export(
         &self,
@@ -2379,17 +3279,15 @@ impl RelayAdmin for LinuxRelayAdmin {
     ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
         let now = crate::logs::now_millis();
         if privacy {
-            let public =
-                crate::public_name::config::load(&self.options.state_dir.join("public-name.json"))
-                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?
-                    .map(|(config, _)| serde_json::from_slice(&config.to_json()).unwrap());
-            crate::config_files::export_privacy(public, now)
+            let sections = self
+                .public_name
+                .privacy_export()
+                .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+            crate::config_files::export_privacy(sections, now)
         } else {
-            crate::config_files::export_user(
-                &self.settings.lock().unwrap(),
-                &oxp_wire::display_settings(&self.input.display_settings()),
-                now,
-            )
+            let display = oxp_wire::display_settings(&self.input.display_settings());
+            let values = self.config_user_values(&self.settings.lock().unwrap(), &display)?;
+            crate::config_files::export_user_values(values, now)
         }
     }
     fn config_import(
@@ -2399,11 +3297,24 @@ impl RelayAdmin for LinuxRelayAdmin {
     ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
         let current = self.settings.lock().unwrap().clone();
         let mut display = oxp_wire::display_settings(&self.input.display_settings());
-        let plan = crate::config_files::plan(
-            bytes,
-            &crate::config_files::settings_values(&current, &display),
+        let envelope = crate::config_files::read_envelope(bytes)?;
+        let mut current_values = crate::config_files::settings_values(&current, &display);
+        let native_hotspot_security = current_values.contains_key("hotspotSecurity");
+        if envelope["format"] == crate::config_files::USER_FORMAT {
+            current_values = self.config_user_values(&current, &display)?;
+        }
+        let mut plan = crate::config_files::plan_envelope(
+            &envelope,
+            &current_values,
+            self.public_name.config().as_ref(),
+            crate::platform::wall_clock().as_secs(),
         )?;
         let mut settings = plan.values.clone();
+        let hotspot = crate::config_files::take_hotspot(
+            &mut settings,
+            &current_values,
+            native_hotspot_security,
+        )?;
         for key in ["resolution", "screenWidth", "videoCodec"] {
             if let Some(value) = settings.remove(key) {
                 display[key] = value;
@@ -2412,6 +3323,8 @@ impl RelayAdmin for LinuxRelayAdmin {
         oxp_wire::decode_display_settings(&display)
             .map_err(|_| BTreeMap::from([("settings".into(), "error.linuxPicture".into())]))?;
         let next = update_settings(&current, settings)?;
+        self.validate_tesla_change(&current, &next)?;
+        self.validate_hotspot_security_change(&current, &next)?;
         if plan.values.contains_key("pluginsEnabled") {
             let installed = crate::plugins::installed(&self.options.plugins_root);
             if next
@@ -2425,19 +3338,44 @@ impl RelayAdmin for LinuxRelayAdmin {
                 )]));
             }
         }
+        let restart_keys = settings_restart_keys(&current, &next);
+        plan.report.next_start = plan
+            .report
+            .applied
+            .iter()
+            .filter(|key| restart_keys.contains(&key.as_str()))
+            .cloned()
+            .collect();
+        plan.report.applied_now = plan
+            .report
+            .applied
+            .iter()
+            .filter(|key| !restart_keys.contains(&key.as_str()))
+            .cloned()
+            .collect();
+        plan.report.restart_needed = !plan.report.next_start.is_empty();
         if !dry_run {
-            if let Some(public) = plan.public_name {
-                self.public_name.import(&public).map_err(|e| match e {
-                    crate::public_name::service::ImportError::Invalid(errors) => errors,
-                    crate::public_name::service::ImportError::Storage => {
-                        BTreeMap::from([("file".into(), "io".into())])
-                    }
-                })?;
+            if let Some(privacy) = plan.privacy {
+                self.public_name
+                    .import_privacy(privacy)
+                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
             }
-            if !plan.values.is_empty() {
-                if let AdminUpdate::Errors(errors) = self.update(plan.values) {
-                    return Err(errors);
+            let mut editor_values = plan.values;
+            editor_values.remove("hotspotSsid");
+            editor_values.remove("hotspotPassphrase");
+            if !native_hotspot_security {
+                editor_values.remove("hotspotSecurity");
+            }
+            if !editor_values.is_empty() {
+                match self.update(editor_values) {
+                    AdminUpdate::Errors(errors) => return Err(errors),
+                    AdminUpdate::NextStart => plan.report.restart_needed = true,
+                    AdminUpdate::AppliedNow => plan.report.restart_needed = false,
                 }
+            }
+            if let Some((ssid, password)) = hotspot {
+                self.hotspot_update(&ssid, &password, None, None)
+                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
             }
         }
         Ok(serde_json::to_value(plan.report).unwrap())
@@ -2446,7 +3384,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         let enabled = self
             .settings
             .try_lock()
-            .is_ok_and(|s| s.carlink_trace == "on");
+            .is_ok_and(|s| s.developer_active && s.carlink_trace == "on");
         let running = self
             .supervisor
             .try_lock()
@@ -2461,7 +3399,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         let enabled = self
             .settings
             .try_lock()
-            .is_ok_and(|s| s.carlink_trace == "on");
+            .is_ok_and(|s| s.developer_active && s.carlink_trace == "on");
         let supervisor = self
             .supervisor
             .try_lock()
@@ -2533,6 +3471,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
         let following_carlink = self.network_override.lock().unwrap().is_some();
         let head_unit = self.head_unit_address();
+        let active_hotspot = self.active_hotspot();
         let host_addresses = self.host_addresses().unwrap_or_default();
         let controller = self.controller.lock().unwrap();
         let stage = controller.as_ref().map(|c| c.stage()).unwrap_or_else(|| {
@@ -2549,10 +3488,43 @@ impl RelayAdmin for LinuxRelayAdmin {
             .as_ref()
             .map(|s| s.receiver_urls("openxplay-linux.local"))
             .unwrap_or_default();
-        let public_name = self.public_name.status();
+        let selected_tesla = options.settings.tesla_address();
+        let served_tesla = *self.receiver_tesla_tls.lock().unwrap();
+        receiver_urls.retain(|u| {
+            !selected_tesla.is_some_and(|a| u.contains(&format!("://{a}:")))
+                && !served_tesla.is_some_and(|a| u.contains(&format!("://{a}:")))
+        });
+        let worker_public_name = self.public_name.status();
+        let mut admin_public_name = worker_public_name.clone();
+        let admin_name = self.admin_certificate.name();
+        admin_public_name.trusted_name = admin_public_name
+            .trusted_name
+            .filter(|name| admin_name.as_ref() == Some(name));
+        let child_running = self
+            .supervisor
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|s| s.running());
+        let current = self
+            .receiver_tls
+            .lock()
+            .unwrap()
+            .clone()
+            .flatten()
+            .filter(|_| child_running);
+        let public_name = receiver_public_name(
+            worker_public_name,
+            current.as_ref(),
+            crate::public_name::service::trusted_clock(),
+        );
         if let Some(url) =
             public_name_url(&public_name, &receiver_urls, options.settings.receiver_port)
         {
+            receiver_urls.insert(0, url);
+        }
+        if let Some(url) = self.tesla_url() {
+            receiver_urls.retain(|u| u != &url);
             receiver_urls.insert(0, url);
         }
         let hotspot = crate::linux_hotspot::hotspot_credentials(&options.state_dir)
@@ -2560,18 +3532,21 @@ impl RelayAdmin for LinuxRelayAdmin {
             .map(|(ssid, password)| {
                 let ip = if !following_carlink
                     && options.settings.network_mode == "device-hotspot"
-                    && controller.is_some()
+                    && self.desired.load(Ordering::Acquire)
                 {
                     controller
                         .as_ref()
                         .and_then(|c| c.hotspot_info())
                         .and_then(|info| info.host_address)
+                        .or_else(|| active_hotspot.as_ref().map(|(_, address)| *address))
                         .map(|a| a.to_string())
                 } else {
                     None
                 };
                 AdminHotspot {
-                    has_password: !password.is_empty(),
+                    security: options.settings.hotspot_security.clone(),
+                    supported_security: self.supported_hotspot_security(&options.wifi_interface),
+                    has_password: options.settings.hotspot_security != "open",
                     ssid,
                     password,
                     active: ip.is_some(),
@@ -2586,7 +3561,9 @@ impl RelayAdmin for LinuxRelayAdmin {
             video: self.input.video_status(),
             hotspot,
             wifi_control: true,
-            host_addresses: (self.runtime.addresses)()
+            host_addresses: self
+                .runtime
+                .network_addresses()
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|(interface, a, _)| {
@@ -2616,6 +3593,8 @@ impl RelayAdmin for LinuxRelayAdmin {
                 })
                 .collect(),
             receivers: None,
+            receiver_history: None,
+            screen_data: Some(self.input.display.lock().unwrap().admin_status()),
             bluetooth_guard: crate::bluetooth_guard::read(&options.bluetooth_guard_status),
             bluetooth_secure_connections: self.secure_connections.enabled(),
             platform: "linux".into(),
@@ -2673,10 +3652,10 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .into(),
             }),
             admin_url: "https://openxplay-linux.local:6975/".into(),
-            admin_urls: admin_urls(&public_name, head_unit, &host_addresses),
+            admin_urls: admin_urls(&admin_public_name, head_unit, &host_addresses),
             receiver_urls,
             state: stage,
-            running: controller.is_some(),
+            running: controller.as_ref().is_some_and(|c| c.running()),
             auto_start_paused: !self.desired.load(Ordering::Acquire),
             iphone: AdminIphone {
                 name: selection.device().map(|d| d.name.clone()),
@@ -2691,7 +3670,11 @@ impl RelayAdmin for LinuxRelayAdmin {
             output: options.settings.output.clone(),
             carlink: if options.settings.output != "web" {
                 let mut status = self.carlink.lock().unwrap().clone().at(now, wall_now);
-                status.trusted = has_trusted_carlink(&self.options.state_dir);
+                status.trusted = has_trusted_carlink_for(
+                    &self.options.state_dir,
+                    options.settings.carlink_link == "ble",
+                );
+                status.vehicle = self.vehicle.lock().unwrap().status();
                 Some(status)
             } else {
                 None
@@ -2837,10 +3820,9 @@ impl RelayAdmin for LinuxRelayAdmin {
         }
         if let Some(trial) = values.remove("carlinkPictureTry") {
             if !values.is_empty() {
-                return AdminUpdate::Errors(BTreeMap::from([(
-                    "carlinkPictureTry".into(),
-                    "error.conflict".into(),
-                )]));
+                if let AdminUpdate::Errors(errors) = self.update(values) {
+                    return AdminUpdate::Errors(errors);
+                }
             }
             let size = if trial.is_null() {
                 None
@@ -2895,6 +3877,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .into();
         match update_settings(&current, values) {
             Ok(next) => {
+                if let Err(errors) = self.validate_tesla_change(&current, &next) {
+                    return AdminUpdate::Errors(errors);
+                }
                 if validate_plugins {
                     let installed = crate::plugins::installed(&self.options.plugins_root);
                     if next
@@ -2908,43 +3893,33 @@ impl RelayAdmin for LinuxRelayAdmin {
                         )]));
                     }
                 }
+                if let Err(errors) = self.validate_hotspot_security_change(&current, &next) {
+                    return AdminUpdate::Errors(errors);
+                }
                 let mode_changed = next.network_mode != current.network_mode;
                 let networks_changed = next.shared_wifi_networks != current.shared_wifi_networks;
                 let network_update = mode_changed || networks_changed;
+                let effective_next = next.effective_developer();
+                let effective_current = current.effective_developer();
                 let outputs_changed = picture.video_codec
                     != self.input.display_settings().video_codec
                     || next.plugins != current.plugins
                     || next.plugins_enabled != current.plugins_enabled
                     || next.output != current.output
                     || next.require_pairing_code != current.require_pairing_code
-                    || next.receiver_port != current.receiver_port
+                    || effective_next.receiver_port != effective_current.receiver_port
                     || next.carlink_interface != current.carlink_interface
-                    || next.carlink_link != current.carlink_link
-                    || next.carlink_address != current.carlink_address
-                    || next.carlink_head_unit != current.carlink_head_unit
-                    || next.carlink_local != current.carlink_local
-                    || next.carlink_pin != current.carlink_pin
-                    || next.carlink_ports != current.carlink_ports
+                    || effective_next.carlink_link != effective_current.carlink_link
+                    || effective_next.carlink_address != effective_current.carlink_address
+                    || effective_next.carlink_head_unit != effective_current.carlink_head_unit
+                    || effective_next.carlink_local != effective_current.carlink_local
+                    || effective_next.carlink_pin != effective_current.carlink_pin
+                    || effective_next.carlink_ports != effective_current.carlink_ports
                     || next.carlink_name != current.carlink_name
-                    || next.carlink_model != current.carlink_model
-                    || next.carlink_hevc != current.carlink_hevc
-                    || next.carlink_trace != current.carlink_trace
-                    || next.carlink_auto_reconnect != current.carlink_auto_reconnect
-                    || next.experimental_active != current.experimental_active
-                    || next.experimental_send_bluetooth_address
-                        != current.experimental_send_bluetooth_address
-                    || next.experimental_bluetooth_address
-                        != current.experimental_bluetooth_address;
-                let controller_changed = next.iphone != current.iphone
-                    || next.rfcomm_channel != current.rfcomm_channel
-                    || next.wifi_interface != current.wifi_interface
-                    || next.hotspot_channel != current.hotspot_channel
-                    || next.hotspot_band != current.hotspot_band
-                    || next.device_preset != current.device_preset
-                    // Read when the controller builds the AirPlay receiver for the iPhone.
-                    || next.car_bluetooth_audio != current.car_bluetooth_audio
-                    || next.carlink_picture_default!=current.carlink_picture_default
-                    || next.carlink_picture_size!=current.carlink_picture_size;
+                    || effective_next.carlink_model != effective_current.carlink_model
+                    || effective_next.carlink_trace != effective_current.carlink_trace
+                    || next.carlink_auto_reconnect != current.carlink_auto_reconnect;
+                let controller_changed = !settings_restart_keys(&current, &next).is_empty();
                 let network = if network_update {
                     let ssid = self
                         .provision
@@ -2965,8 +3940,12 @@ impl RelayAdmin for LinuxRelayAdmin {
                 } else {
                     None
                 };
+                let carlink_changed = effective_next.carlink_hevc != effective_current.carlink_hevc
+                    || next.vehicle_information != current.vehicle_information;
                 let operation = if outputs_changed {
                     Some(Operation::Outputs(network.map(Box::new)))
+                } else if carlink_changed {
+                    Some(Operation::Carlink)
                 } else {
                     network
                 };
@@ -2999,6 +3978,30 @@ impl RelayAdmin for LinuxRelayAdmin {
                 if let Err(e) = self.input.configure_runtime_settings(&next) {
                     self.events
                         .log(&format!("runtime settings not applied: {e}"));
+                }
+                if !current.auto_start && next.auto_start {
+                    if let Err(e) = self.auto_start_gate.lock().unwrap().set_paused(false) {
+                        return AdminUpdate::Errors(BTreeMap::from([(
+                            "autoStart".into(),
+                            e.to_string(),
+                        )]));
+                    }
+                }
+                if !next.auto_start {
+                    self.arrival.lock().unwrap().cancel();
+                }
+                self.events
+                    .failure_secrets(failure_secrets(&next, &self.options.state_dir));
+                self.vehicle
+                    .lock()
+                    .unwrap()
+                    .enable(next.vehicle_information);
+                if !next.developer_active {
+                    self.vehicle.lock().unwrap().sample(
+                        false,
+                        std::time::Instant::now(),
+                        crate::platform::wall_clock().as_millis() as u64,
+                    );
                 }
                 *current = next;
                 if outputs_changed {
@@ -3046,16 +4049,32 @@ impl RelayAdmin for LinuxRelayAdmin {
                 Ok(())
             }
             "start" => self.defer(Operation::Start),
-            "stop" => self.defer(Operation::Stop),
+            "stop" | "cancel-arrival" => self.defer(Operation::Stop),
             "restart" => self.defer(Operation::Restart),
             "forget-wifi" => self.defer(Operation::Forget),
             "forget-carlink" => self.defer(Operation::ForgetCarlink),
-            "clear-saved-head-unit" => {
-                if self.input.session_active() {
-                    return Err("error.sessionActive".into());
+            "clear-saved-head-unit" => self.defer(Operation::ClearSavedHeadUnit),
+            "clear-window-records" => self
+                .input
+                .display
+                .lock()
+                .unwrap()
+                .clear_records()
+                .map_err(|_| "error.request".into()),
+            // The child generates a new random browser code on each output start.
+            "regenerate-pairing-code" => {
+                let settings = self.settings.lock().unwrap();
+                if !settings.require_pairing_code || settings.output == "carlink" {
+                    return Err("error.action".into());
                 }
-                self.defer(Operation::ClearSavedHeadUnit)
+                self.defer(Operation::RegeneratePairingCode)
             }
+            "clear-vehicle-history" => self
+                .vehicle
+                .lock()
+                .unwrap()
+                .clear()
+                .map_err(|_| "error.request".into()),
             "public-name-renew" => {
                 self.public_name.renew();
                 Ok(())
@@ -3073,7 +4092,11 @@ impl RelayAdmin for LinuxRelayAdmin {
         }
         if pin
             .is_some_and(|p| !(4..=8).contains(&p.len()) || !p.bytes().all(|b| b.is_ascii_digit()))
-            || (pin.is_none() && !has_trusted_carlink(&self.options.state_dir))
+            || (pin.is_none()
+                && !has_trusted_carlink_for(
+                    &self.options.state_dir,
+                    self.settings.lock().unwrap().carlink_link == "ble",
+                ))
         {
             return Err("error.carlinkPin".into());
         }
@@ -3082,30 +4105,70 @@ impl RelayAdmin for LinuxRelayAdmin {
             expires: std::time::Instant::now() + Duration::from_secs(110),
         })))
     }
+    fn vehicle_sample(&self, enabled: bool) -> AdminResult {
+        let enabled = enabled && self.settings.lock().unwrap().developer_active;
+        self.vehicle.lock().unwrap().sample(
+            enabled,
+            std::time::Instant::now(),
+            crate::platform::wall_clock().as_millis() as u64,
+        );
+        Ok(())
+    }
+    fn vehicle(&self) -> serde_json::Value {
+        self.vehicle.lock().unwrap().view()
+    }
+    fn carlink_pairing(
+        &self,
+        request: u64,
+        generation: u64,
+        action: &str,
+        pin: Option<&str>,
+    ) -> AdminResult {
+        let status = self.carlink.lock().unwrap();
+        if !status.pin_requested
+            || status.generation.unwrap_or(0) != generation
+            || status.pin_request != Some(request)
+            || status
+                .pin_expiry
+                .is_none_or(|d| d <= crate::admin::auth::monotonic_seconds())
+            || !["approve", "pin", "cancel"].contains(&action)
+            || (action == "approve" && !status.pin_confirmation)
+            || (action == "pin"
+                && (status.pin_confirmation
+                    || pin.is_none_or(|p| {
+                        p.is_empty() || p.len() > 128 || !p.bytes().all(|b| b.is_ascii_digit())
+                    })))
+        {
+            return Err("error.carlinkPinNotRequested".into());
+        }
+        drop(status);
+        let supervisor = self.supervisor.lock().unwrap();
+        supervisor
+            .as_ref()
+            .ok_or("error.request")?
+            .pairing(request, action, pin)
+            .map_err(|_| "error.request".to_owned())?;
+        let mut status = self.carlink.lock().unwrap();
+        if status.pin_request == Some(request) {
+            status.clear_pin();
+            status.pin_incorrect = false;
+        }
+        Ok(())
+    }
     fn carlink_pin(&self, pin: &str) -> AdminResult {
         if self.busy.load(Ordering::Acquire) {
             return Err("error.busy".into());
         }
-        if !(4..=8).contains(&pin.len()) || !pin.bytes().all(|b| b.is_ascii_digit()) {
-            return Err("error.carlinkPin".into());
-        }
-        let mut status = self.carlink.lock().unwrap();
-        if !status.pin_requested
-            || status
-                .pin_expiry
-                .is_none_or(|d| d <= crate::admin::auth::monotonic_seconds())
-        {
-            return Err("error.carlinkPinNotRequested".into());
-        }
-        crate::platform::private_state_file(
-            &carlink_pin_path(&self.options.state_dir),
-            pin.as_bytes(),
-        )
-        .map_err(|_| "error.request".to_string())?;
-        status.clear_pin();
-        status.pin_incorrect = false;
-        Ok(())
+        let (request, generation) = {
+            let status = self.carlink.lock().unwrap();
+            (
+                status.pin_request.ok_or("error.carlinkPinNotRequested")?,
+                status.generation.unwrap_or(0),
+            )
+        };
+        self.carlink_pairing(request, generation, "pin", Some(pin))
     }
+
     fn phones(&self) -> Vec<AdminPhone> {
         let choice = self.effective_options().ok().and_then(|o| o.iphone);
         self.backends
@@ -3126,17 +4189,51 @@ impl RelayAdmin for LinuxRelayAdmin {
             })
             .collect()
     }
-    fn hotspot_update(&self, ssid: &str, password: &str, band: Option<&str>) -> AdminResult {
+    fn hotspot_update(
+        &self,
+        ssid: &str,
+        password: &str,
+        band: Option<&str>,
+        security: Option<&str>,
+    ) -> AdminResult {
+        let (_, saved_password) =
+            crate::linux_hotspot::hotspot_credentials(&self.options.state_dir)
+                .map_err(|_| "error.request".to_string())?;
+        let password = if password.is_empty() {
+            &saved_password
+        } else {
+            password
+        };
+        let selected = security
+            .map(str::to_string)
+            .unwrap_or_else(|| self.settings.lock().unwrap().hotspot_security.clone());
+        if !crate::linux_hotspot::HOTSPOT_SECURITY.contains(&selected.as_str()) {
+            return Err("error.invalid".into());
+        }
+        if !crate::linux_hotspot::security_supported(
+            &selected,
+            &self.supported_hotspot_security(
+                &self
+                    .effective_options()
+                    .map_err(|_| "error.request".to_string())?
+                    .wifi_interface,
+            ),
+        ) {
+            return Err("error.hotspotSecurity".into());
+        }
         crate::linux_hotspot::validate_hotspot_credentials(ssid, password)
             .map_err(str::to_owned)?;
         if band.is_some_and(|b| !["auto", "2.4", "5"].contains(&b)) {
             return Err("error.invalid".into());
         }
-        self.defer(Operation::Hotspot)?;
-        if let Some(band) = band {
+        self.defer_hotspot()?;
+        {
             let mut current = self.settings.lock().unwrap();
             let mut next = current.clone();
-            next.hotspot_band = band.into();
+            if let Some(band) = band {
+                next.hotspot_band = band.into();
+            }
+            next.hotspot_security = selected;
             if next.save(&self.options.state_dir).is_err() {
                 self.response_failed();
                 return Err("error.request".into());
@@ -3149,6 +4246,10 @@ impl RelayAdmin for LinuxRelayAdmin {
             self.response_failed();
             return Err("error.request".into());
         }
+        self.events.failure_secrets(failure_secrets(
+            &self.settings.lock().unwrap(),
+            &self.options.state_dir,
+        ));
         if self.settings.lock().unwrap().network_mode == "device-hotspot" {
             self.apply_pending.store(true, Ordering::Release);
         }
@@ -3156,6 +4257,16 @@ impl RelayAdmin for LinuxRelayAdmin {
     }
     fn receivers(&self) -> Vec<serde_json::Value> {
         self.receivers.snapshot(std::time::Instant::now())
+    }
+    fn show_view_area(&self, index: usize) -> AdminResult {
+        if self.input.show_view_area(index) {
+            Ok(())
+        } else {
+            Err("error.viewArea".into())
+        }
+    }
+    fn receiver_history(&self) -> serde_json::Value {
+        self.receivers.history()
     }
     fn wifi_status(&self) -> WifiClient {
         self.provision
@@ -3210,13 +4321,13 @@ mod tests {
         let preview = admin.config_import(&bytes, true).unwrap();
         assert_eq!(
             preview,
-            serde_json::json!({"applied":["autoStart","output"],"ignored":["localPreview"],"restartNeeded":true})
+            serde_json::json!({"applied":["bootStart","output"],"ignored":["localPreview"],"restartNeeded":false,"appliedNow":["bootStart","output"],"nextStart":[]})
         );
         assert_eq!(std::fs::read(dir.join("settings.json")).unwrap(), before);
         assert!(admin.pending.lock().unwrap().is_empty());
         assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
         assert_eq!(admin.settings.lock().unwrap().output, "both");
-        assert!(!admin.settings.lock().unwrap().auto_start);
+        assert!(!admin.settings.lock().unwrap().boot_start);
         assert!(!admin.pending.lock().unwrap().is_empty());
         admin.response_failed();
         let invalid=serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"receiverPort":6975}})).unwrap();
@@ -3226,19 +4337,87 @@ mod tests {
         else {
             panic!("invalid port accepted")
         };
-        assert_eq!(preview_errors, editor_errors);
+        assert_eq!(preview_errors["receiverPort"], "invalid");
+        assert!(editor_errors["settings"].contains("receiverPort"));
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn config_hotspot_backup_partial_import_and_restart_report_follow_runtime() {
+        let (admin, dir) = fake();
+        crate::linux_hotspot::save_hotspot_credentials(&dir, "Original", "openxplay").unwrap();
+        let exported = admin.config_export(false).unwrap();
+        assert_eq!(exported["settings"]["hotspotSsid"], "Original");
+        assert_eq!(exported["settings"]["hotspotPassphrase"], "openxplay");
+        assert_eq!(exported["settings"]["hotspotSecurity"], "wpa2");
+        let file = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{
+            "hotspotSsid":"Imported", "car":{"brand":"other","model":"other","year":"other","yearText":"2027 custom"}, "hotspotBand":"ghz-5", "videoStats":"seconds-15", "experimental":{"version":2,"sendBluetoothAddress":false}
+        }})).unwrap();
+        let preview = admin.config_import(&file, true).unwrap();
+        assert_eq!(preview["nextStart"], serde_json::json!(["hotspotBand"]));
+        assert_eq!(preview["restartNeeded"], true);
+        assert_eq!(
+            preview["appliedNow"],
+            serde_json::json!([
+                "carBrand",
+                "carModel",
+                "carYear",
+                "carYearText",
+                "experimentalSendBluetoothAddress",
+                "hotspotSsid",
+                "videoStats"
+            ])
+        );
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap().0,
+            "Original"
+        );
+        assert_eq!(admin.config_import(&file, false).unwrap(), preview);
+        assert!(matches!(
+            admin.pending.lock().unwrap().values().next(),
+            Some(Operation::Hotspot(None))
+        ));
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap(),
+            ("Imported".into(), "openxplay".into())
+        );
+        assert_eq!(
+            admin.config_export(false).unwrap()["settings"]["car"]["yearText"],
+            "2027 custom"
+        );
+        admin.response_failed();
+        let unsupported = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"hotspotSecurity":"wpa3"}})).unwrap();
+        assert_eq!(
+            admin.config_import(&unsupported, true).unwrap_err()["hotspotSecurity"],
+            "error.hotspotSecurity"
+        );
         drop(admin);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn privacy_file_dry_run_does_not_write_and_apply_reuses_public_name_import() {
         let (admin, dir) = fake();
+        admin.settings.lock().unwrap().unknown.insert(
+            "linux-local-extension".into(),
+            serde_json::json!({"keep":true}),
+        );
+        let before = admin.settings.lock().unwrap().clone();
+        std::fs::write(
+            dir.join("hotspot.credentials"),
+            b"unrelated invalid hotspot data",
+        )
+        .unwrap();
         let public = serde_json::json!({"version":1,"enabled":false,"provider":"dynv6","name":"test.dynv6.net","token":"private-token","agreeLetsEncryptTerms":true});
         let bytes=serde_json::to_vec(&serde_json::json!({"format":"openxplay-privacy-config","version":1,"publicName":public})).unwrap();
         let preview = admin.config_import(&bytes, true).unwrap();
         assert!(!dir.join("public-name.json").exists());
         assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
         assert_eq!(admin.config_export(true).unwrap()["publicName"], public);
+        assert_eq!(
+            serde_json::to_value(&*admin.settings.lock().unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+        std::fs::remove_file(dir.join("hotspot.credentials")).unwrap();
         assert!(!admin
             .config_export(false)
             .unwrap()
@@ -3257,39 +4436,180 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn android_screen_experiments_import_and_dry_run_leave_linux_settings_unchanged() {
+    fn experimental_master_and_phone_address_park_until_next_connection() {
         let (admin, dir) = fake();
-        let before_file = std::fs::read(dir.join("settings.json")).unwrap();
-        let before_export = admin.config_export(false).unwrap()["settings"].clone();
-        let before_settings = admin.settings().values;
-        for enabled in [true, false] {
-            let bytes = serde_json::to_vec(&serde_json::json!({
-                "format":"openxplay-user-config","version":1,"platform":"android",
-                "settings":{"experimental":{"version":2,"screenSessionIsolation":enabled,
-                    "screenReconnectReset":enabled,"screenDeliverySerialization":enabled}}
-            }))
-            .unwrap();
-            for dry_run in [true, false] {
-                assert_eq!(
-                    admin.config_import(&bytes, dry_run).unwrap(),
-                    serde_json::json!({
-                        "applied":[],"ignored":["experimental.screenDeliverySerialization",
-                            "experimental.screenReconnectReset","experimental.screenSessionIsolation"],
-                        "restartNeeded":false
-                    })
-                );
-                assert_eq!(admin.settings().values, before_settings);
-                assert_eq!(
-                    admin.config_export(false).unwrap()["settings"],
-                    before_export
-                );
-                assert_eq!(
-                    std::fs::read(dir.join("settings.json")).unwrap(),
-                    before_file
-                );
-                assert!(admin.pending.lock().unwrap().is_empty());
-            }
+        let file = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{
+            "experimental":{"version":2,"active":false,"sendBluetoothAddress":false,"bluetoothAddress":"02:11:22:33:44:55"}
+        }})).unwrap();
+        let preview = admin.config_import(&file, true).unwrap();
+        assert_eq!(preview["restartNeeded"], false);
+        assert_eq!(preview["nextStart"], serde_json::json!([]));
+        assert_eq!(admin.config_import(&file, false).unwrap(), preview);
+        assert!(admin.pending.lock().unwrap().is_empty());
+        assert_eq!(
+            admin
+                .input
+                .connection_settings()
+                .experimental_bluetooth_address,
+            "02:11:22:33:44:55"
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn one_developer_master_parks_calibration_and_resets_vehicle_sample() {
+        let (admin, dir) = fake();
+        assert_eq!(
+            settings_schema()
+                .iter()
+                .flat_map(|s| &s.fields)
+                .filter(|f| f.key == "developerActive")
+                .count(),
+            1
+        );
+        admin.vehicle_sample(true).unwrap();
+        assert_eq!(admin.vehicle()["sample"], true);
+        let values = serde_json::json!({"developerActive":false,"physicalWidthEnabled":true,"physicalWidthOverrideMm":325});
+        assert!(matches!(
+            admin.update(values.as_object().unwrap().clone()),
+            AdminUpdate::NextStart
+        ));
+        assert_eq!(admin.vehicle()["sample"], false);
+        admin.vehicle_sample(true).unwrap();
+        assert_eq!(admin.vehicle()["sample"], false);
+        let saved = Settings::load(&dir).unwrap();
+        assert!(!saved.developer_active);
+        assert!(saved.physical_width_enabled);
+        assert_eq!(saved.physical_width_override_mm, 325);
+        admin.response_failed();
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn android_experiment_import_stages_next_connection_without_restarting_output() {
+        let (admin, dir) = fake();
+        let before = admin.settings.lock().unwrap().clone();
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "format":"openxplay-user-config","version":1,"platform":"android",
+            "settings":{"experimental":{"version":2,"screenSessionIsolation":false,
+                "screenReconnectReset":false,"screenDeliverySerialization":false,
+                "remotePlaybackProof":false,"startupStatus":false,"startupDiagnostics":false}}
+        }))
+        .unwrap();
+        let report = admin.config_import(&bytes, true).unwrap();
+        assert_eq!(*admin.settings.lock().unwrap(), before);
+        assert_eq!(report["restartNeeded"], false);
+        assert_eq!(report["ignored"], serde_json::json!([]));
+        assert_eq!(report["applied"].as_array().unwrap().len(), 6);
+        assert_eq!(admin.config_import(&bytes, false).unwrap(), report);
+        assert!(admin.pending.lock().unwrap().is_empty());
+        assert!(
+            !admin
+                .input
+                .connection_settings()
+                .experimental_screen_session_isolation
+        );
+        assert!(
+            !crate::settings::Settings::load(&dir)
+                .unwrap()
+                .experimental_startup_status
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn developer_master_gates_effective_options_and_trace_but_keeps_raw_choices() {
+        let (admin, dir) = fake();
+        {
+            let mut settings = admin.settings.lock().unwrap();
+            settings.developer_active = false;
+            settings.carlink_trace = "on".into();
+            settings.receiver_port = 9443;
+            settings.carlink_model = "Parked model".into();
+            settings.carlink_link = "static".into();
+            settings.carlink_head_unit = "192.168.55.1".into();
         }
+        assert_eq!(admin.receiver_port().unwrap(), 8443);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_link,
+            "ble"
+        );
+        assert_eq!(
+            admin
+                .effective_options()
+                .unwrap()
+                .settings
+                .carlink_head_unit,
+            "192.168.43.1"
+        );
+        assert!(!admin.carlink_trace().unwrap().0);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_model,
+            crate::branding::MODEL
+        );
+        assert_eq!(admin.settings().values["receiverPort"], 9443);
+        assert_eq!(admin.settings().values["carlinkTrace"], "on");
+        admin.settings.lock().unwrap().developer_active = true;
+        assert_eq!(admin.receiver_port().unwrap(), 9443);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_link,
+            "static"
+        );
+        assert_eq!(
+            admin
+                .effective_options()
+                .unwrap()
+                .settings
+                .carlink_head_unit,
+            "192.168.55.1"
+        );
+        assert!(admin.carlink_trace().unwrap().0);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_model,
+            "Parked model"
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn hotspot_rename_keeps_password_and_open_security_keeps_it_parked() {
+        let (admin, dir) = fake();
+        let unsupported = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"hotspotSecurity":"wpa3"}})).unwrap();
+        for dry_run in [true, false] {
+            assert_eq!(
+                admin.config_import(&unsupported, dry_run).unwrap_err()["hotspotSecurity"],
+                "error.hotspotSecurity"
+            );
+        }
+
+        crate::linux_hotspot::save_hotspot_credentials(&dir, "Before", "saved-password").unwrap();
+        admin
+            .hotspot_update("Renamed", "", None, Some("open"))
+            .unwrap();
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap(),
+            ("Renamed".into(), "saved-password".into())
+        );
+        assert_eq!(admin.settings.lock().unwrap().hotspot_security, "open");
+        assert!(!admin.status().hotspot.unwrap().has_password);
+        admin.response_failed();
+        admin
+            .hotspot_update("Renamed again", "", None, Some("wpa2"))
+            .unwrap();
+        assert_eq!(admin.settings.lock().unwrap().hotspot_security, "wpa2");
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap().1,
+            "saved-password"
+        );
+        admin.response_failed();
+        assert_eq!(
+            admin.hotspot_update("Unsupported", "", None, Some("wpa3")),
+            Err("error.hotspotSecurity".into())
+        );
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap().0,
+            "Renamed again"
+        );
         drop(admin);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -3497,6 +4817,8 @@ mod tests {
         let options =
             Options::parse(&["--state-dir".into(), dir.to_str().unwrap().into()]).unwrap();
         let state = Arc::new(PersistentState::open(&dir).unwrap());
+        // Existing-installation lifecycle fixtures explicitly enable boot startup.
+        std::fs::write(dir.join("settings.json"), br#"{"bootStart":true}"#).unwrap();
         let events = Arc::new(JsonEvents::new(Arc::new(|_| {})));
         let provision = WifiProvisioner::new(
             ProcessNetworkManagerCli {
@@ -3515,6 +4837,12 @@ mod tests {
             runtime_paths(&dir),
         )
         .unwrap();
+        admin.tesla = Mutex::new(
+            crate::tesla_address::Session::new(Arc::new(
+                crate::tesla_address::tests::FakeBackend::default(),
+            ))
+            .with_ownership(admin.runtime.tesla_address.clone()),
+        );
         // These legacy lifecycle tests bypass the new car waits; dedicated tests exercise them.
         admin.start_policy.lock().unwrap().skip();
         admin.start_policy.lock().unwrap().skip();
@@ -3522,6 +4850,675 @@ mod tests {
         std::fs::create_dir_all(admin.net_root.join("wlan0")).unwrap();
         std::fs::write(admin.net_root.join("wlan0/address"), "02:00:00:00:00:01").unwrap();
         (Arc::new(admin), dir)
+    }
+    struct TlsSessionControl;
+    impl carplay_airplay::SessionControl for TlsSessionControl {
+        fn send_touch(&self, _: &[carplay_airplay::AirPlayContact]) -> Result<bool> {
+            Ok(false)
+        }
+        fn send_media_button(&self, _: u8) -> Result<bool> {
+            Ok(false)
+        }
+    }
+    fn tls_fake_admin() -> (
+        Arc<LinuxRelayAdmin>,
+        std::path::PathBuf,
+        Arc<crate::supervisor::receiver_tls_tests::FakeChildFactory>,
+        std::sync::mpsc::Receiver<crate::supervisor::receiver_tls_tests::Request>,
+    ) {
+        let (mut admin, dir) = fake();
+        let (factory, rx) = crate::supervisor::receiver_tls_tests::FakeChildFactory::new();
+        let inner = Arc::get_mut(&mut admin).unwrap();
+        inner.child_factory = factory.clone();
+        inner.runtime.addresses =
+            Arc::new(|| Ok(vec![("wlan0".into(), "10.77.0.1".parse().unwrap(), 24)]));
+        admin.start_supervisor().unwrap();
+        factory.wait_started();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !admin.supervisor.lock().unwrap().as_ref().unwrap().running() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        (admin, dir, factory, rx)
+    }
+    fn next_tls_operation(admin: &LinuxRelayAdmin) -> Operation {
+        let operation = admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .try_recv()
+            .unwrap();
+        assert!(matches!(operation, Operation::ReceiverTls));
+        operation
+    }
+    #[test]
+    fn tesla_direct_switch_and_coalesced_updates_hot_swap_during_the_same_session() {
+        use crate::tesla_address::Mode;
+        let (admin, dir, factory, rx) = tls_fake_admin();
+        let session = admin.input.begin(Arc::new(TlsSessionControl)).unwrap();
+        admin.settings.lock().unwrap().tesla_browser = Mode::PublicAddress;
+        admin.apply_public_name();
+        admin.apply_public_name();
+        let operation = next_tls_operation(&admin);
+        assert!(admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .try_recv()
+            .is_err());
+        // A later edit supersedes the queued address before any request is sent.
+        admin.settings.lock().unwrap().tesla_browser = Mode::TeslaAndroid;
+        let settings = admin.settings.lock().unwrap().clone();
+        admin
+            .tesla
+            .lock()
+            .unwrap()
+            .tick(true, true, &settings, false, || Ok(vec![]), 1);
+        {
+            let mut facts = admin.events.facts.lock().unwrap();
+            facts.web.phase = "LISTENING".into();
+            facts.web.port = 8443;
+        }
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.perform_operation(operation));
+            let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(request.value["trusted"], serde_json::Value::Null);
+            assert!(request.value["sans"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("3.3.3.1")));
+            assert!(!request.value["sans"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("169.254.88.1")));
+            assert!(admin.receiver_tesla_tls.lock().unwrap().is_none());
+            assert!(admin.tesla_url().is_none());
+            // Changes arriving while an acknowledgement is pending are picked up next tick.
+            admin.settings.lock().unwrap().tesla_android_address = "3.3.3.2".into();
+            admin.apply_public_name();
+            assert!(admin
+                .operation_rx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .try_recv()
+                .is_err());
+            request.applied();
+            update.join().unwrap().unwrap();
+        });
+        assert_eq!(
+            *admin.receiver_tesla_tls.lock().unwrap(),
+            Some("3.3.3.1".parse().unwrap())
+        );
+        assert_eq!(admin.tesla_url().as_deref(), Some("https://3.3.3.1:8443/"));
+        admin.apply_public_name();
+        let operation = next_tls_operation(&admin);
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.perform_operation(operation));
+            let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            for address in ["3.3.3.1", "3.3.3.2", "10.77.0.1", "openxplay-linux.local"] {
+                assert!(request.value["sans"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!(address)));
+            }
+            request.applied();
+            update.join().unwrap().unwrap();
+        });
+        assert!(admin.input.session_active());
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(factory.launches.lock().unwrap().len(), 1);
+        admin.input.end(session).unwrap();
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tls_error_and_timeout_keep_served_state_until_the_idle_respawn_fallback() {
+        use crate::tesla_address::Mode;
+        let (admin, dir, factory, rx) = tls_fake_admin();
+        let session = admin.input.begin(Arc::new(TlsSessionControl)).unwrap();
+        let before = admin.receiver_tls_sans.lock().unwrap().clone();
+        admin.settings.lock().unwrap().tesla_browser = Mode::TeslaAndroid;
+        for reject in [true, false] {
+            let started = std::time::Instant::now();
+            std::thread::scope(|scope| {
+                let update = scope.spawn(|| admin.update_receiver_tls(Duration::from_millis(80)));
+                let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                if reject {
+                    request.rejected();
+                }
+                update.join().unwrap().unwrap();
+                request.applied(); // A late success cannot change the old served state.
+            });
+            assert!(started.elapsed() < Duration::from_secs(2));
+            assert_eq!(*admin.receiver_tls.lock().unwrap(), Some(None));
+            assert_eq!(*admin.receiver_tls_sans.lock().unwrap(), before);
+            assert!(admin.receiver_tesla_tls.lock().unwrap().is_none());
+            assert!(admin.input.session_active());
+            assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        }
+        admin.input.end(session).unwrap();
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.update_receiver_tls(Duration::from_secs(2)));
+            rx.recv_timeout(Duration::from_secs(2)).unwrap().rejected();
+            update.join().unwrap().unwrap();
+        });
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *admin.receiver_tesla_tls.lock().unwrap(),
+            Some("3.3.3.1".parse().unwrap())
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn certificate_issued_during_a_session_is_advertised_only_after_the_swap() {
+        use crate::public_name::{
+            http::UreqHttp, privacy, testing::FakeHttp, Network, PublicNameService,
+        };
+        struct Host;
+        impl crate::public_name::Host for Host {
+            fn address(&self) -> Option<std::net::Ipv4Addr> {
+                Some("10.77.0.1".parse().unwrap())
+            }
+            fn online(&self) -> bool {
+                true
+            }
+            fn clock(&self) -> Option<u64> {
+                Some(crate::platform::wall_clock().as_secs())
+            }
+        }
+        let (mut admin, dir, factory, rx) = tls_fake_admin();
+        let provider = FakeHttp::start(|_| (200, vec![], b"OK".to_vec()));
+        let mut network = Network::internet(None);
+        network.http = Arc::new(UreqHttp::new(false));
+        network.endpoints.duckdns = provider.url();
+        network.tick = Duration::from_millis(20);
+        network.settle = Duration::from_millis(5);
+        Arc::get_mut(&mut admin).unwrap().public_name =
+            Arc::new(PublicNameService::new(&dir, network));
+        let session = admin.input.begin(Arc::new(TlsSessionControl)).unwrap();
+        let name = "myrelay.duckdns.org";
+        let issued = rcgen::generate_simple_self_signed(vec![name.into()]).unwrap();
+        let chain = issued.cert.pem();
+        let key = issued.key_pair.serialize_pem();
+        let backup = serde_json::json!({"publicName":{"version":1,"enabled":true,"provider":"duckdns",
+            "name":name,"token":"12345678-1234-1234-1234-123456789abc","agreeLetsEncryptTerms":true},
+            "publicNameCertificate":{"name":name,"chainPem":chain,"keyPem":key}});
+        admin
+            .public_name
+            .import_privacy(
+                privacy::decode(&backup, None, crate::platform::wall_clock().as_secs())
+                    .unwrap_or_else(|e| panic!("{e:?}")),
+            )
+            .unwrap();
+        admin.public_name.start(Arc::new(Host)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while admin.public_name.status().trusted_name.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "certificate not ready: {:?}",
+                admin.public_name.status()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(admin.status().public_name.unwrap().trusted_name.is_none());
+        admin.apply_public_name();
+        let operation = next_tls_operation(&admin);
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.perform_operation(operation));
+            let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(request.value["trusted"]["name"], name);
+            use std::os::unix::fs::PermissionsExt;
+            for (field, expected) in [("cert", &chain), ("key", &key)] {
+                let path = request.value["trusted"][field].as_str().unwrap();
+                assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
+                assert_eq!(
+                    std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+            assert_eq!(*admin.receiver_tls.lock().unwrap(), Some(None));
+            let pending = receiver_public_name(admin.public_name.status(), None, None);
+            assert!(pending.trusted_name.is_none());
+            request.applied();
+            update.join().unwrap().unwrap();
+        });
+        let status = admin.status();
+        assert_eq!(
+            status.public_name.unwrap().trusted_name.as_deref(),
+            Some(name)
+        );
+        assert_eq!(status.path_input["car"]["web"]["trustedName"], name);
+        assert!(status.receiver_urls[0].starts_with(&format!("https://{name}:")));
+        assert!(admin.input.session_active());
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        admin.input.end(session).unwrap();
+        admin.public_name.stop();
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tesla_settings_apply_live_and_config_previews_share_collision_validation() {
+        use crate::tesla_address::Mode;
+        let (a, dir) = fake();
+        let values = serde_json::json!({"teslaBrowser":"public-address"});
+        assert!(matches!(
+            a.update(values.as_object().unwrap().clone()),
+            AdminUpdate::AppliedNow
+        ));
+        assert!(!a.restart_required.load(Ordering::Acquire));
+        assert!(a.pending.lock().unwrap().is_empty());
+        assert_eq!(
+            Settings::load(&dir).unwrap().tesla_browser,
+            Mode::PublicAddress
+        );
+        let current = a.settings.lock().unwrap().clone();
+        for mode in [
+            Mode::VirtualName,
+            Mode::PublicAddress,
+            Mode::Teslamirror,
+            Mode::TeslaAndroid,
+        ] {
+            let key = crate::tesla_address::address_key(mode).unwrap();
+            let mut values = Values::new();
+            values.insert("teslaBrowser".into(), serde_json::to_value(mode).unwrap());
+            values.insert(key.into(), "192.168.1.1".into());
+            assert_eq!(
+                update_settings(&current, values).unwrap_err()[key],
+                "error.teslaAddress"
+            );
+        }
+        // A different relay interface already owns an otherwise valid address.
+        let mut owned = Settings {
+            tesla_browser: Mode::TeslaAndroid,
+            ..current.clone()
+        };
+        owned.tesla_android_address = "3.3.3.1".into();
+        let mut admin = Arc::try_unwrap(a).ok().unwrap();
+        admin.runtime.addresses =
+            Arc::new(|| Ok(vec![("eth0".into(), "3.3.3.1".parse().unwrap(), 24)]));
+        assert_eq!(
+            admin.validate_tesla_change(&current, &owned).unwrap_err()["teslaAndroidAddress"],
+            "error.teslaAddress"
+        );
+        let bytes = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"teslaBrowser":"tesla-android"}})).unwrap();
+        for dry_run in [true, false] {
+            assert_eq!(
+                admin.config_import(&bytes, dry_run).unwrap_err()["teslaAndroidAddress"],
+                "error.teslaAddress"
+            );
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tesla_url_requires_a_listening_receiver_with_the_direct_san_and_comes_first() {
+        use crate::tesla_address::Mode;
+        let (a, dir) = fake();
+        let settings = Settings {
+            tesla_browser: Mode::PublicAddress,
+            ..Default::default()
+        };
+        *a.settings.lock().unwrap() = settings.clone();
+        a.tesla
+            .lock()
+            .unwrap()
+            .tick(true, true, &settings, true, || Ok(vec![]), 1);
+        assert_eq!(a.tesla_url(), None);
+        {
+            let mut facts = a.events.facts.lock().unwrap();
+            facts.web.phase = "LISTENING".into();
+            facts.web.port = 9443;
+        }
+        assert_eq!(
+            a.tesla_url(),
+            None,
+            "old certificate does not cover a live edit yet"
+        );
+        assert!(a.tesla_tls_changed());
+        struct Control;
+        impl carplay_airplay::SessionControl for Control {
+            fn send_touch(&self, _: &[carplay_airplay::AirPlayContact]) -> Result<bool> {
+                Ok(false)
+            }
+            fn send_media_button(&self, _: u8) -> Result<bool> {
+                Ok(false)
+            }
+        }
+        *a.receiver_tls.lock().unwrap() = Some(None);
+        let session = a.input.begin(Arc::new(Control)).unwrap();
+        assert!(
+            a.tesla_tls_changed(),
+            "live SAN changes are allowed while CarPlay runs"
+        );
+        a.perform_operation(Operation::ReceiverTls).unwrap();
+        assert!(
+            a.input.session_active(),
+            "queued SAN changes cannot stop a newly started session"
+        );
+        a.input.end(session).unwrap();
+        assert!(a.tesla_tls_changed());
+        *a.receiver_tesla_tls.lock().unwrap() = Some("169.254.88.1".parse().unwrap());
+        let url = "https://169.254.88.1:9443/";
+        assert_eq!(a.tesla_url().as_deref(), Some(url));
+        assert_eq!(
+            a.status().receiver_urls.first().map(String::as_str),
+            Some(url)
+        );
+        assert_eq!(a.status().path_input["car"]["tesla"]["phase"], "READY");
+        assert!(!a.tesla_tls_changed());
+        a.stop_controller();
+        assert_eq!(a.tesla_url(), None);
+        drop(a);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn stop_cancels_arrival_and_survives_shell_recreation_until_boot_changes() {
+        let (a, dir) = fake();
+        a.arrival
+            .lock()
+            .unwrap()
+            .ready(std::time::Instant::now(), true);
+        assert_eq!(a.status().path_input["startup"]["arrival"]["pending"], true);
+        a.operation(Operation::Stop).unwrap();
+        assert!(a.arrival.lock().unwrap().deadline.is_none());
+        let options = a.options.clone();
+        let state = a.state.clone();
+        drop(a);
+        let a = LinuxRelayAdmin::with_optional_provisioner(
+            options.clone(),
+            state.clone(),
+            Arc::new(JsonEvents::new(Arc::new(|_| {}))),
+            None,
+            runtime_paths(&dir),
+        )
+        .unwrap();
+        assert!(!a.desired.load(Ordering::Acquire));
+        assert_eq!(a.status().path_input["startup"]["paused"], true);
+        drop(a);
+        let paths = runtime_paths(&dir);
+        let boot = paths.root.join("proc/sys/kernel/random");
+        std::fs::create_dir_all(&boot).unwrap();
+        std::fs::write(boot.join("boot_id"), "next-boot").unwrap();
+        let a = LinuxRelayAdmin::with_optional_provisioner(
+            options,
+            state,
+            Arc::new(JsonEvents::new(Arc::new(|_| {}))),
+            None,
+            paths,
+        )
+        .unwrap();
+        assert!(a.desired.load(Ordering::Acquire));
+        assert_eq!(a.status().path_input["startup"]["paused"], false);
+        assert_eq!(a.status().path_input["iphone"]["armed"], true);
+        drop(a);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn carlink_timeout_keeps_tick_alive_and_rearms_when_playing_unless_stopped() {
+        for interface in ["wlan0", "wlan1"] {
+            let (a, dir) = fake();
+            {
+                let mut settings = a.settings.lock().unwrap();
+                settings.output = "carlink".into();
+                settings.carlink_interface = interface.into();
+                settings.auto_start = true;
+            }
+            a.start_policy.lock().unwrap().request(
+                std::time::Instant::now() - Duration::from_secs(61),
+                true,
+                true,
+            );
+            a.tick().unwrap();
+            assert!(a.controller.lock().unwrap().is_none());
+            let path = a.status().path_input;
+            assert_eq!(path["iphone"]["failure"]["code"], "carlink_not_ready");
+            assert_eq!(path["iphone"]["failure"]["retrying"], false);
+            assert_eq!(path["iphone"]["armed"], true);
+            a.tick().unwrap();
+            assert!(
+                a.controller.lock().unwrap().is_none(),
+                "a timer must not retry the failed start"
+            );
+            a.carlink.lock().unwrap().state = "playing".into();
+            a.observe_automatic_start().unwrap();
+            assert!(a.events.runtime_path_facts().iphone.failure.is_none());
+            assert!(!a.start_policy.lock().unwrap().requested());
+            assert!(a.desired.load(Ordering::Acquire));
+            // Stop persists, including when the same readiness edge arrives again.
+            a.operation(Operation::Stop).unwrap();
+            a.carlink.lock().unwrap().state = "scanning".into();
+            a.observe_automatic_start().unwrap();
+            a.carlink.lock().unwrap().state = "playing".into();
+            a.observe_automatic_start().unwrap();
+            assert!(!a.desired.load(Ordering::Acquire));
+            assert!(!a.runtime_path_facts().iphone.armed);
+            a.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
+    fn lifecycle_contention_never_starves_tesla_or_public_name_refresh() {
+        let (mut admin, dir) = fake();
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let output = lines.clone();
+        Arc::get_mut(&mut admin).unwrap().events =
+            Arc::new(JsonEvents::new(Arc::new(move |line| {
+                output.lock().unwrap().push(line)
+            })));
+        assert!(admin.public_name.import(r#"{"version":1,"enabled":true,"provider":"dynv6","name":"car.dynv6.net","token":"private-d2-token","agreeLetsEncryptTerms":true}"#).is_ok());
+        admin.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::Teslamirror;
+        let address = admin
+            .settings
+            .lock()
+            .unwrap()
+            .tesla_address()
+            .unwrap()
+            .to_owned();
+        let hotspot = admin
+            .hotspot_lifetime
+            .create(|| Arc::new(crate::hotspot_lifetime::tests::Fake::default()))
+            .unwrap();
+        hotspot.start(Duration::from_secs(1)).unwrap();
+        let lifecycle = admin.lifecycle.lock().unwrap();
+        admin.tick().unwrap();
+        admin.tick().unwrap();
+        assert_eq!(
+            admin
+                .tesla
+                .lock()
+                .unwrap()
+                .active
+                .as_ref()
+                .unwrap()
+                .address
+                .to_string(),
+            address
+        );
+        let hosts = std::fs::read_to_string(&admin.runtime.local_dns.hosts).unwrap();
+        assert!(
+            hosts.contains(&format!("{address} car.dynv6.net")),
+            "{hosts}"
+        );
+        // Removing the named mode also refreshes DNS while the controller lock stays held.
+        admin.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::TeslaAndroid;
+        admin.tick().unwrap();
+        let hosts = std::fs::read_to_string(&admin.runtime.local_dns.hosts).unwrap();
+        assert!(hosts.contains("10.42.0.1 car.dynv6.net"), "{hosts}");
+        admin.settings.lock().unwrap().tesla_android_address = "3.3.3.2".into();
+        admin.tick().unwrap();
+        admin.tesla.lock().unwrap().failure = Some("nmcli private-d2-token command output".into());
+        admin.tick().unwrap();
+        admin.tick().unwrap();
+        let events: Vec<serde_json::Value> = lines
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|v: &serde_json::Value| v["event"] == "tesla-address")
+            .collect();
+        assert_eq!(events.len(), 4, "{events:?}");
+        assert_eq!(events[0]["mode"], "teslamirror");
+        assert_eq!(events[0]["phase"], "READY");
+        assert_eq!(events[1]["mode"], "tesla-android");
+        assert_eq!(events[2]["address"], "3.3.3.2");
+        assert_eq!(events[3]["phase"], "FAILED");
+        assert_eq!(events[3]["failureCode"], "tesla_address_failed");
+        assert!(!serde_json::to_string(&events)
+            .unwrap()
+            .contains("private-d2-token"));
+        assert!(admin.controller.lock().unwrap().is_none());
+        drop(lifecycle);
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn owned_tesla_address_does_not_change_network_roles_name_or_receiver_sans() {
+        use crate::tesla_address::{tests::FakeBackend, Mode, Session};
+        for mode in [
+            Mode::TeslaAndroid,
+            Mode::PublicAddress,
+            Mode::Teslamirror,
+            Mode::VirtualName,
+        ] {
+            let (mut admin, dir) = fake();
+            let backend = Arc::new(FakeBackend::default());
+            backend
+                .rows
+                .lock()
+                .unwrap()
+                .push(("wlan0".into(), "10.42.0.1".parse().unwrap(), 24));
+            let inner = Arc::get_mut(&mut admin).unwrap();
+            let rows = backend.clone();
+            inner.runtime.addresses = Arc::new(move || Ok(rows.rows.lock().unwrap().clone()));
+            inner.tesla = Mutex::new(
+                Session::new(backend.clone()).with_ownership(inner.runtime.tesla_address.clone()),
+            );
+            admin.settings.lock().unwrap().tesla_browser = mode;
+            assert!(admin.public_name.import(r#"{"version":1,"enabled":true,"provider":"dynv6","name":"car.dynv6.net","token":"private-token","agreeLetsEncryptTerms":true}"#).is_ok());
+            let hotspot = admin
+                .hotspot_lifetime
+                .create(|| Arc::new(crate::hotspot_lifetime::tests::Fake::default()))
+                .unwrap();
+            hotspot.start(Duration::from_secs(1)).unwrap();
+            let mut inventory = crate::net_inventory::Inventory {
+                probed_at: Some(1),
+                interfaces: vec![crate::net_inventory::Interface {
+                    name: "wlan0".into(),
+                    kind: "wifi".into(),
+                    ipv4: vec!["10.42.0.1".into()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            admin.inventory.set(inventory.clone());
+            let (options, status) = admin.effective_options_with_status().unwrap();
+            let links = admin.links(&options, &status);
+            let address = admin.head_unit_address();
+            let sans = admin.receiver_sans().unwrap();
+            *admin.receiver_tls.lock().unwrap() = Some(None);
+            *admin.receiver_tls_sans.lock().unwrap() = sans.clone();
+            *admin.receiver_tesla_tls.lock().unwrap() =
+                crate::tesla_address::tls_address(&options.settings);
+            admin.refresh_tesla_address();
+            assert!(admin.tesla.lock().unwrap().active.is_some());
+            // Reproduce NetworkManager returning the auxiliary address before the AP address.
+            backend.rows.lock().unwrap().reverse();
+            let rows = admin.runtime.network_addresses().unwrap();
+            assert_eq!(
+                rows,
+                vec![("wlan0".into(), "10.42.0.1".parse().unwrap(), 24)]
+            );
+            crate::net_inventory::refresh_activity(
+                admin.runtime.runner.as_ref(),
+                &admin.runtime.root,
+                &mut inventory,
+                &rows,
+            );
+            assert_eq!(inventory.interfaces[0].ipv4, ["10.42.0.1"]);
+            admin.inventory.set(inventory);
+            let (options, status) = admin.effective_options_with_status().unwrap();
+            assert!(links.changes(&admin.links(&options, &status)).is_empty());
+            assert_eq!(admin.head_unit_address(), address);
+            assert_eq!(admin.receiver_sans().unwrap(), sans);
+            admin.apply_public_name();
+            assert!(!admin.receiver_tls_queued.load(Ordering::Acquire));
+            admin.tesla.lock().unwrap().stop(200);
+            assert_eq!(admin.receiver_sans().unwrap(), sans);
+            admin.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
+    fn tesla_address_uses_the_active_ap_before_controller_hotspot_publication() {
+        let (mut a, dir) = fake();
+        Arc::get_mut(&mut a).unwrap().runtime.addresses = Arc::new(|| {
+            Ok(vec![
+                ("wlan0".into(), "10.77.0.1".parse().unwrap(), 24),
+                ("wlan1".into(), "10.78.0.1".parse().unwrap(), 24),
+            ])
+        });
+        a.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::TeslaAndroid;
+        assert!(a.controller.lock().unwrap().is_none());
+        a.inventory.set(crate::net_inventory::Inventory {
+            interfaces: vec![crate::net_inventory::Interface {
+                name: "wlan0".into(),
+                activity: crate::net_inventory::Activity {
+                    mode: Some("AP".into()),
+                    profile: Some("oxp-carplay-n1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        a.refresh_tesla_address();
+        assert_eq!(
+            a.tesla
+                .lock()
+                .unwrap()
+                .active
+                .as_ref()
+                .unwrap()
+                .address
+                .to_string(),
+            "3.3.3.1"
+        );
+        assert_eq!(a.head_unit_address(), Some("10.77.0.1".parse().unwrap()));
+        a.operation(Operation::Stop).unwrap();
+        a.refresh_tesla_address();
+        assert!(a.tesla.lock().unwrap().active.is_none());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tesla_uses_the_started_hotspot_lease_while_controller_snapshot_is_absent() {
+        let (a, dir) = fake();
+        a.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::TeslaAndroid;
+        let hotspot = a
+            .hotspot_lifetime
+            .create(|| Arc::new(crate::hotspot_lifetime::tests::Fake::default()))
+            .unwrap();
+        hotspot.start(Duration::from_secs(1)).unwrap();
+        assert!(a.controller.lock().unwrap().is_none());
+        assert!(a.inventory.get().interfaces.is_empty());
+        a.refresh_tesla_address();
+        assert!(a.tesla.lock().unwrap().active.is_some());
+        assert_eq!(
+            a.active_hotspot(),
+            Some(("wlan0".into(), "10.42.0.1".parse().unwrap()))
+        );
+        a.operation(Operation::Stop).unwrap();
+        assert!(a.hotspot_lifetime.ready_info().is_none());
+        assert!(a.tesla.lock().unwrap().active.is_none());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn runtime_waits_before_concurrent_carlink_and_start_now_skips_once() {
@@ -3532,6 +5529,7 @@ mod tests {
         a.ensure_controller().unwrap();
         assert!(a.controller.lock().unwrap().is_some());
         let f = a.runtime_path_facts();
+        assert!(!f.iphone.armed);
         assert!(f.iphone.car_wait_until_millis.is_some());
         a.perform_operation(Operation::Start).unwrap();
         assert!(!a.start_policy.lock().unwrap().waiting());
@@ -3594,6 +5592,7 @@ mod tests {
         let (old, dir) = fake();
         Settings {
             auto_start: false,
+            boot_start: false,
             ..Default::default()
         }
         .save(&dir)
@@ -3725,7 +5724,6 @@ mod tests {
         );
         let mut supervisor =
             RelaySupervisor::new(settings, Arc::new(ProcessChildFactory), Arc::new(|_| {}));
-        supervisor.connect_carlink();
         supervisor.start().unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         // Tracing is advertised before spawn; running is set only after the control pipe exists.
@@ -3785,7 +5783,7 @@ mod tests {
         ] {
             assert!(fields.iter().any(|f| f.key == key), "{key}");
         }
-        assert!(!fields.iter().any(|f| f.key == "bootStart"));
+        assert!(fields.iter().any(|f| f.key == "bootStart"));
         assert_eq!(
             fields
                 .iter()
@@ -3800,6 +5798,7 @@ mod tests {
             ("carlinkName", serde_json::json!("Car")),
             ("carlinkModel", serde_json::json!("Model")),
             ("carlinkHevc", serde_json::json!("off")),
+            ("vehicleInformation", serde_json::json!(true)),
             ("carlinkTrace", serde_json::json!("on")),
             ("carlinkAutoReconnect", serde_json::json!(false)),
             ("receiverPort", serde_json::json!(9443)),
@@ -3807,7 +5806,12 @@ mod tests {
             let values = serde_json::Map::from_iter([(key.into(), value)]);
             assert!(matches!(a.update(values), AdminUpdate::AppliedNow));
             a.response_sent();
-            assert!(matches!(rx.try_recv().unwrap(), Operation::Outputs(None)));
+            let operation = rx.try_recv().unwrap();
+            if ["carlinkHevc", "vehicleInformation"].contains(&key) {
+                assert!(matches!(operation, Operation::Carlink));
+            } else {
+                assert!(matches!(operation, Operation::Outputs(None)));
+            }
         }
         assert_eq!(a.settings.lock().unwrap().receiver_port, 9443);
         assert!(a
@@ -3834,6 +5838,7 @@ mod tests {
         let (a, dir) = fake();
         Settings {
             auto_start: false,
+            boot_start: false,
             ..Default::default()
         }
         .save(&dir)
@@ -3864,7 +5869,123 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn clear_saved_head_unit_removes_records_and_rejects_active_sessions() {
+    fn changing_car_levels_clears_descendants_but_complete_imports_keep_year_text() {
+        let current = Settings {
+            car_brand: "xpeng".into(),
+            car_model: "g6".into(),
+            car_year: "other".into(),
+            car_year_text: "2027".into(),
+            ..Default::default()
+        };
+        let next = update_settings(
+            &current,
+            serde_json::json!({"carModel":"p7"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            (&*next.car_model, &*next.car_year, &*next.car_year_text),
+            ("p7", "", "")
+        );
+        let same = update_settings(
+            &current,
+            serde_json::json!({"carModel":"g6"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(same.car_year_text, "2027");
+        let brand = update_settings(
+            &current,
+            serde_json::json!({"carBrand":"zeekr"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!((&*brand.car_model, &*brand.car_year_text), ("", ""));
+        let imported=update_settings(&current,serde_json::json!({"carBrand":"zeekr","carModel":"001","carYear":"other","carYearText":"2028"}).as_object().unwrap().clone()).unwrap();
+        assert_eq!(imported.car_year_text, "2028");
+        let calibration = update_settings(
+            &Settings::default(),
+            serde_json::json!({"physicalWidthEnabled":true})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(calibration.physical_width_override_mm, 200);
+    }
+    #[test]
+    fn screen_actions_route_with_auth_and_code_regeneration_restarts_outputs() {
+        let (a, dir) = fake();
+        let mut auth = AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap();
+        let token = auth
+            .login("127.0.0.1".parse().unwrap(), "openxplay", 100)
+            .ok()
+            .unwrap();
+        let server = AdminServer::new(
+            a.clone(),
+            auth,
+            AdminServerConfig::new(dir.clone(), dir.clone(), vec![]),
+        );
+        let mut request = Request {
+            method: "POST".into(),
+            path: "/api/v0/actions/clear-saved-head-unit".into(),
+            headers: BTreeMap::from([
+                ("content-type".into(), "application/json".into()),
+                ("x-openxplay-admin".into(), "1".into()),
+            ]),
+            body: b"{}".to_vec(),
+            peer: "127.0.0.1".parse().unwrap(),
+        };
+        assert_eq!(server.route(&request, 100).status, 401);
+        request
+            .headers
+            .insert("cookie".into(), format!("oxp_admin={token}"));
+        assert_eq!(server.route(&request, 100).status, 200);
+        a.response_sent();
+        let rx = a.operation_rx.lock().unwrap().take().unwrap();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Operation::ClearSavedHeadUnit
+        ));
+        a.response_failed();
+        request.path = "/api/v0/actions/clear-window-records".into();
+        assert_eq!(server.route(&request, 100).status, 200);
+        request.path = "/api/v0/view-area".into();
+        for body in [
+            r#"{"index":-1}"#,
+            r#"{"index":7}"#,
+            r#"{"index":1.5}"#,
+            r#"{"index":"0"}"#,
+            r#"{}"#,
+        ] {
+            request.body = body.as_bytes().to_vec();
+            assert_eq!(server.route(&request, 100).status, 422);
+        }
+        request.body = br#"{"index":0}"#.to_vec();
+        assert_eq!(server.route(&request, 100).status, 409);
+        assert_eq!(a.input.display.lock().unwrap().area_switches.len(), 1);
+        request.path = "/api/v0/actions/regenerate-pairing-code".into();
+        request.body = b"{}".to_vec();
+        assert_eq!(server.route(&request, 100).status, 409);
+        a.settings.lock().unwrap().require_pairing_code = true;
+        assert_eq!(server.route(&request, 100).status, 200);
+        a.response_sent();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Operation::RegeneratePairingCode
+        ));
+        a.response_failed();
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn clear_saved_head_unit_preserves_records_during_active_sessions() {
         let (a, dir) = fake();
         {
             let mut d = a.input.display.lock().unwrap();
@@ -3897,11 +6018,6 @@ mod tests {
             d.persist().unwrap();
         }
         a.input.state.lock().unwrap().current = Some(1);
-        assert_eq!(
-            a.action("clear-saved-head-unit"),
-            Err("error.sessionActive".into())
-        );
-        a.input.state.lock().unwrap().current = None;
         a.action("clear-saved-head-unit").unwrap();
         assert!(a.input.display.lock().unwrap().saved.head_unit.is_some());
         let rx = a.operation_rx.lock().unwrap().take().unwrap();
@@ -3909,7 +6025,8 @@ mod tests {
         a.operation(rx.try_recv().unwrap()).unwrap();
         let saved = crate::display::DisplayState::load(&dir.join("display.json"));
         assert!(saved.head_unit.is_none());
-        assert!(saved.records.is_empty());
+        assert_eq!(saved.records.len(), 1);
+        assert_eq!(a.input.state.lock().unwrap().current, Some(1));
         assert_eq!(saved.max_macroblocks, None);
         assert_eq!(saved.canvas, crate::display::DisplayState::default().canvas);
         a.shutdown();
@@ -3918,6 +6035,7 @@ mod tests {
     #[test]
     fn carlink_events_expose_view_statistics_and_retryable_incorrect_pin() {
         let (a, dir) = fake();
+        let controls = capture_controls(&a);
         let mut status = a.carlink.lock().unwrap();
         status.apply_event(
             &serde_json::json!({"type":"clink-view-size","width":1814,"height":1200}),
@@ -3940,14 +6058,15 @@ mod tests {
         assert!(status.pin_incorrect);
         assert!(!status.pin_requested);
         status.apply_event(
-            &serde_json::json!({"type":"pin-request"}),
+            &serde_json::json!({"type":"pin-request","request":17}),
             crate::admin::auth::monotonic_seconds(),
         );
         assert!(status.pin_incorrect && status.pin_requested);
         drop(status);
         a.carlink_pin("5678").unwrap();
         assert!(!a.carlink.lock().unwrap().pin_incorrect);
-        assert_eq!(std::fs::read(carlink_pin_path(&dir)).unwrap(), b"5678");
+        assert_eq!(controls.lock().unwrap()[0]["pin"], "5678");
+        assert!(!carlink_pin_path(&dir).exists());
         let mut status = a.carlink.lock().unwrap();
         status.apply_event(&serde_json::json!({"type":"receiver-starting"}), 20);
         assert!(status.view_size.is_none() && status.stats.is_none());
@@ -4079,7 +6198,7 @@ mod tests {
             })
         );
         a.status();
-        assert_eq!(runner.0.load(Ordering::SeqCst), 2);
+        assert_eq!(runner.0.load(Ordering::SeqCst), 3);
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -4358,6 +6477,7 @@ mod tests {
         )
         .unwrap();
         Settings {
+            boot_start: true,
             network_mode: mode.into(),
             shared_wifi_networks: vec![SharedWifiNetwork {
                 ssid: "Home".into(),
@@ -4934,7 +7054,7 @@ esac
         let lease = a.hotspot_lifetime.create(|| hotspot.clone()).unwrap();
         lease.start(Duration::from_secs(1)).unwrap();
         let op = rx.try_recv().unwrap();
-        assert!(matches!(op, Operation::Hotspot));
+        assert!(matches!(op, Operation::Hotspot(None)));
         a.operation(op).unwrap();
         assert_eq!(hotspot.closes.load(Ordering::SeqCst), 1);
         assert!(!a.apply_pending.load(Ordering::Acquire));
@@ -4942,7 +7062,7 @@ esac
         // In shared mode saving credentials leaves the current controller and AP alone.
         a.settings.lock().unwrap().network_mode = "shared-wifi".into();
         let controller = fake_controller(&a);
-        a.hotspot_update("Later", "laterpass1", None).unwrap();
+        a.hotspot_update("Later", "laterpass1", None, None).unwrap();
         a.response_sent();
         a.operation(rx.try_recv().unwrap()).unwrap();
         assert!(Arc::ptr_eq(
@@ -5087,7 +7207,7 @@ esac
         std::fs::write(
             dir.join("carlink/trust.json"),
             serde_json::to_vec(
-                &serde_json::json!({"peers":{"unit":format!("{}==", "A".repeat(86))}}),
+                &serde_json::json!({"peers":{"[\"ble\",\"unit\"]":format!("{}==", "A".repeat(86))}}),
             )
             .unwrap(),
         )
@@ -5182,9 +7302,225 @@ esac
         assert!(!Settings::load(&dir).unwrap().car_bluetooth_audio);
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn pairing_confirmation_cancel_and_stale_responses_use_matching_stdin_requests() {
+        let (a, dir) = fake();
+        let sent = capture_controls(&a);
+        a.carlink.lock().unwrap().apply_event(&serde_json::json!({"type":"pin-request","request":17,"generation":1,"confirmation":true,"client":"unit"}), crate::admin::auth::monotonic_seconds());
+        assert!(a.carlink_pairing(16, 1, "approve", None).is_err());
+        assert!(a.carlink_pairing(17, 0, "approve", None).is_err());
+        assert!(a.carlink_pairing(17, 1, "pin", Some("001234")).is_err());
+        a.carlink_pairing(17, 1, "approve", None).unwrap();
+        assert_eq!(sent.lock().unwrap()[0]["action"], "approve");
+        pin_request(&a);
+        a.carlink_pairing(17, 1, "cancel", None).unwrap();
+        assert_eq!(sent.lock().unwrap()[1]["action"], "cancel");
+        assert!(a.carlink_pairing(17, 1, "cancel", None).is_err());
+        assert!(!carlink_pin_path(&dir).exists());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn timeout_rearms_only_after_current_generation_playing_and_stop_wins() {
+        let (admin, dir) = fake();
+        admin.settings.lock().unwrap().output = "carlink".into();
+        admin.settings.lock().unwrap().auto_start = true;
+        let event = |value| admin.carlink.lock().unwrap().apply_event(&value, 0);
+        event(serde_json::json!({"type":"state","generation":1,"state":"Playing"}));
+        event(serde_json::json!({"type":"carlink-starting"}));
+        event(serde_json::json!({"type":"clink-restart","generation":2}));
+        event(
+            serde_json::json!({"type":"clink-view-size","generation":2,"width":1920,"height":1080}),
+        );
+        admin.start_policy.lock().unwrap().request(
+            std::time::Instant::now() - Duration::from_secs(61),
+            true,
+            true,
+        );
+        admin.tick().unwrap();
+        assert_eq!(
+            admin
+                .events
+                .runtime_path_facts()
+                .iphone
+                .failure
+                .unwrap()
+                .code,
+            "carlink_not_ready"
+        );
+        event(serde_json::json!({"type":"state","generation":1,"state":"Playing"}));
+        admin.observe_automatic_start().unwrap();
+        assert!(admin.events.runtime_path_facts().iphone.failure.is_some());
+        event(serde_json::json!({"type":"carlink-starting"}));
+        event(serde_json::json!({"type":"state","generation":3,"state":"Playing"}));
+        admin.observe_automatic_start().unwrap();
+        assert!(
+            admin.events.runtime_path_facts().iphone.failure.is_some(),
+            "pending replacement must not rearm"
+        );
+        event(serde_json::json!({"type":"clink-restart","generation":3}));
+        admin.observe_automatic_start().unwrap();
+        assert!(admin.events.runtime_path_facts().iphone.failure.is_none());
+        assert!(admin.desired.load(Ordering::Acquire));
+        admin.operation(Operation::Stop).unwrap();
+        event(serde_json::json!({"type":"carlink-starting"}));
+        event(serde_json::json!({"type":"clink-restart","generation":4}));
+        event(serde_json::json!({"type":"state","generation":4,"state":"Playing"}));
+        admin.observe_automatic_start().unwrap();
+        assert!(!admin.desired.load(Ordering::Acquire));
+        assert!(!admin.runtime_path_facts().iphone.armed);
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn carlink_summary_fields_reach_status_journal_and_attempt_timeline() {
+        let (mut admin, dir) = fake();
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let output = lines.clone();
+        Arc::get_mut(&mut admin).unwrap().events =
+            Arc::new(JsonEvents::new(Arc::new(move |line| {
+                output.lock().unwrap().push(line)
+            })));
+        let sink = carlink_event_sink(
+            admin.carlink.clone(),
+            admin.armed_pin.clone(),
+            dir.clone(),
+            admin.events.clone(),
+            Arc::new(Mutex::new(None)),
+        );
+        admin.settings.lock().unwrap().output = "both".into();
+        let fields = serde_json::json!({"vendor":"Vendor","product":"Car","name":"Technical head unit","ssid":"CarWifi","frequency":"5180","mode":"window","view":"1920x1080","window":"1814x1200","stream":"1280x720","codec":"H264","hevc":"supported","audio":"true","uibc":"HIDC"});
+        sink(serde_json::json!({"type":"state","state":"Playing","generation":2}));
+        sink(
+            serde_json::json!({"type":"clink-summary","generation":2,"atMillis":1234,"fields":fields}),
+        );
+        let status = serde_json::to_value(admin.status()).unwrap();
+        assert_eq!(status["carlink"]["summary"], fields);
+        assert_eq!(
+            status["carlink"]["appliedPicture"],
+            serde_json::json!({"width":1280,"height":720})
+        );
+        let records: Vec<serde_json::Value> = lines
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let baseline = records
+            .iter()
+            .find(|v| v["event"] == "clink-summary")
+            .unwrap();
+        let timeline = records
+            .iter()
+            .find(|v| v["event"] == "timeline" && v["mark"] == "summary")
+            .unwrap();
+        assert_eq!(baseline["fields"], fields);
+        assert_eq!(timeline["detail"]["fields"], fields);
+        assert_eq!(timeline["detail"]["atMillis"], 1234);
+        drop(sink);
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn start_gate_ignores_saved_view_and_old_generation_playing() {
+        let mut status = AdminCarlink::default();
+        let now = std::time::Instant::now();
+        let mut gate = crate::start_policy::StartPolicy::default();
+        gate.request(now, true, true);
+        status.apply_event(&serde_json::json!({"type":"clink-view-size","generation":2,"width":1920,"height":1080}),0);
+        status.apply_event(
+            &serde_json::json!({"type":"state","generation":1,"state":"Playing"}),
+            0,
+        );
+        assert!(!gate
+            .ready(now, true, status.state == "playing", true)
+            .unwrap());
+        status.apply_event(
+            &serde_json::json!({"type":"clink-restart","generation":2,"result":"started"}),
+            0,
+        );
+        assert!(!gate
+            .ready(now, true, status.state == "playing", true)
+            .unwrap());
+        status.apply_event(
+            &serde_json::json!({"type":"state","generation":2,"state":"Playing"}),
+            0,
+        );
+        assert!(gate
+            .ready(now, true, status.state == "playing", true)
+            .unwrap());
+        status.apply_event(&serde_json::json!({"type":"clink-summary","generation":2,"fields":{"stream":"1280x720","view":"1920x1080","codec":"H264"}}),0);
+        assert_eq!(
+            status.applied_picture,
+            Some(CarlinkViewSize {
+                width: 1280,
+                height: 720
+            })
+        );
+        status.apply_event(
+            &serde_json::json!({"type":"state","generation":2,"state":"Ended"}),
+            0,
+        );
+        assert!(status.applied_picture.is_none());
+    }
+    #[test]
+    fn vehicle_events_reach_private_history_and_never_the_journal_or_timeline() {
+        let (mut a, dir) = fake();
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let copy = logs.clone();
+        Arc::get_mut(&mut a).unwrap().events = Arc::new(JsonEvents::new(Arc::new(move |line| {
+            copy.lock().unwrap().push(line)
+        })));
+        let children = link_children(&mut a);
+        a.vehicle.lock().unwrap().enable(true);
+        a.settings.lock().unwrap().output = "both".into();
+        a.start_supervisor().unwrap();
+        let (_, sink) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        sink(
+            serde_json::json!({"type":"clink-vehicle","generation":1,"atMillis":123,"data":{"type":"Gps","latitude":45.123456,"timestamp":"18446744073709551615"}}),
+        );
+        sink(
+            serde_json::json!({"type":"clink-vehicle-state","generation":1,"sensorActive":true,"malformedFrames":1}),
+        );
+        assert_eq!(a.vehicle()["reports"][0]["fields"]["latitude"], 45.123456);
+        assert_eq!(a.vehicle()["malformedFrames"], 1);
+        assert!(!logs.lock().unwrap().join(" ").contains("45.123456"));
+        assert!(!logs.lock().unwrap().join(" ").contains("clink-vehicle"));
+        assert!(!a
+            .events
+            .facts
+            .lock()
+            .unwrap()
+            .timeline
+            .iter()
+            .any(|s| s.contains("45.123456")));
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    fn capture_controls(a: &LinuxRelayAdmin) -> Arc<Mutex<Vec<serde_json::Value>>> {
+        let controls = Arc::new(Mutex::new(Vec::new()));
+        let copy = controls.clone();
+        let pipe = ControlPipe::fake(move |v| {
+            copy.lock().unwrap().push(v.clone());
+            Ok(())
+        });
+        let settings = crate::supervisor_settings::supervisor_settings(
+            &a.options,
+            vec![],
+            &[],
+            String::new(),
+            None,
+            false,
+        );
+        *a.supervisor.lock().unwrap() = Some(
+            RelaySupervisor::new(settings, Arc::new(ProcessChildFactory), Arc::new(|_| {}))
+                .with_control_handle(Arc::new(Mutex::new(Some(pipe)))),
+        );
+        controls
+    }
     fn pin_request(a: &LinuxRelayAdmin) {
         a.carlink.lock().unwrap().apply_event(
-            &serde_json::json!({"type":"pin-request","client":"unit"}),
+            &serde_json::json!({"type":"pin-request","client":"unit","request":17,"generation":1}),
             crate::admin::auth::monotonic_seconds(),
         );
     }
@@ -5263,7 +7599,7 @@ esac
         std::fs::write(
             dir.join("carlink/trust.json"),
             serde_json::to_vec(
-                &serde_json::json!({"peers":{"unit":format!("{}==", "A".repeat(86))}}),
+                &serde_json::json!({"peers":{"[\"ble\",\"unit\"]":format!("{}==", "A".repeat(86))}}),
             )
             .unwrap(),
         )
@@ -5273,11 +7609,16 @@ esac
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn prearmed_pin_is_immediate_single_use_private_and_absent_from_events() {
-        use std::os::unix::fs::PermissionsExt;
+    fn prearmed_pin_is_single_use_stdin_only_and_confirmation_never_auto_approves() {
         let (a, dir) = fake();
         let logs = Arc::new(Mutex::new(Vec::new()));
         let copy = logs.clone();
+        let controls = Arc::new(Mutex::new(Vec::new()));
+        let sent = controls.clone();
+        let pipe = ControlPipe::fake(move |v| {
+            sent.lock().unwrap().push(v.clone());
+            Ok(())
+        });
         let sink = carlink_event_sink(
             a.carlink.clone(),
             a.armed_pin.clone(),
@@ -5285,31 +7626,28 @@ esac
             Arc::new(JsonEvents::new(Arc::new(move |line| {
                 copy.lock().unwrap().push(line)
             }))),
+            Arc::new(Mutex::new(Some(pipe))),
         );
         *a.armed_pin.lock().unwrap() = Some(ArmedPin {
             pin: "098765".into(),
             expires: std::time::Instant::now() + Duration::from_secs(110),
         });
-        sink(serde_json::json!({"type":"pin-request","client":"unit"}));
-        assert_eq!(std::fs::read(carlink_pin_path(&dir)).unwrap(), b"098765");
+        sink(
+            serde_json::json!({"type":"pin-request","request":17,"client":"unit","confirmation":true}),
+        );
+        assert!(controls.lock().unwrap().is_empty());
+        assert!(a.carlink.lock().unwrap().pin_confirmation);
+        sink(serde_json::json!({"type":"pin-request","request":18,"client":"unit"}));
         assert_eq!(
-            std::fs::metadata(carlink_pin_path(&dir))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
+            controls.lock().unwrap()[0],
+            serde_json::json!({"type":"clink-pairing","request":18,"action":"pin","pin":"098765"})
         );
         assert!(a.armed_pin.lock().unwrap().is_none());
         assert!(!a.carlink.lock().unwrap().pin_requested);
-        remove_carlink_pin(&dir).unwrap();
-        sink(serde_json::json!({"type":"pin-request","client":"unit"}));
+        sink(serde_json::json!({"type":"pin-request","request":19,"client":"unit"}));
         assert!(a.carlink.lock().unwrap().pin_requested);
         assert!(!carlink_pin_path(&dir).exists());
         assert!(!logs.lock().unwrap().join(" ").contains("098765"));
-        assert!(!serde_json::to_string(&*a.carlink.lock().unwrap())
-            .unwrap()
-            .contains("098765"));
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -5394,8 +7732,8 @@ esac
     }
     #[test]
     fn carlink_pin_endpoint_checks_auth_csrf_request_format_rate_and_atomic_mode() {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let (a, dir) = fake();
+        let controls = capture_controls(&a);
         let mut auth = AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap();
         let token = auth
             .login("127.0.0.1".parse().unwrap(), "openxplay", 100)
@@ -5437,19 +7775,12 @@ esac
         }
         request.body = br#"{"pin":"012345"}"#.to_vec();
         assert_eq!(server.route(&request, 110).status, 429);
-        let path = carlink_pin_path(&dir);
-        crate::platform::private_state_file(&path, b"old").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let old = std::fs::File::open(&path).unwrap();
         assert_eq!(server.route(&request, 112).status, 200);
-        assert_eq!(std::fs::read(&path).unwrap(), b"012345");
-        let metadata = std::fs::metadata(&path).unwrap();
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
-        assert_ne!(metadata.ino(), old.metadata().unwrap().ino());
         assert_eq!(
-            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-            1
+            controls.lock().unwrap()[0],
+            serde_json::json!({"type":"clink-pairing","request":17,"action":"pin","pin":"012345"})
         );
+        assert!(!carlink_pin_path(&dir).exists());
         assert!(!a.carlink.lock().unwrap().pin_requested);
         assert_eq!(server.route(&request, 114).status, 409);
         pin_request(&a);
@@ -5845,7 +8176,7 @@ esac
         std::fs::write(
             dir.join("carlink/trust.json"),
             serde_json::to_vec(
-                &serde_json::json!({"peers":{"unit":format!("{}==", "A".repeat(86))}}),
+                &serde_json::json!({"peers":{"[\"ble\",\"unit\"]":format!("{}==", "A".repeat(86))}}),
             )
             .unwrap(),
         )
@@ -5861,8 +8192,39 @@ esac
             args: &[std::ffi::OsString],
             events: EventSink,
         ) -> std::io::Result<Box<dyn RelayChild>> {
-            let _ = self.0.lock().unwrap().send((args.to_vec(), events));
-            Ok(Box::new(OutputChild(Arc::default())))
+            let _ = self.0.lock().unwrap().send((args.to_vec(), events.clone()));
+            let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
+            let tx = self.0.lock().unwrap().clone();
+            let pipe = ControlPipe::fake(move |v| {
+                let tx = tx.clone();
+                let events = events.clone();
+                let value = v.clone();
+                let generation = generation.clone();
+                std::thread::spawn(move || {
+                    let next = generation.fetch_add(1, Ordering::AcqRel) + 1;
+                    let _ = tx.send((
+                        vec![serde_json::to_string(&value).unwrap().into()],
+                        events.clone(),
+                    ));
+                    events(
+                        serde_json::json!({"type":"clink-restart","request":value["request"],"generation":next,"result":"started"}),
+                    );
+                });
+                Ok(())
+            });
+            struct ControlledChild(ControlPipe);
+            impl RelayChild for ControlledChild {
+                fn control(&self) -> Option<ControlPipe> {
+                    Some(self.0.clone())
+                }
+                fn exited(&mut self) -> std::io::Result<bool> {
+                    Ok(false)
+                }
+                fn stop(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            Ok(Box::new(ControlledChild(pipe)))
         }
     }
     fn link_children(a: &mut Arc<LinuxRelayAdmin>) -> std::sync::mpsc::Receiver<Spawned> {
@@ -5910,6 +8272,39 @@ esac
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+    #[test]
+    fn admin_operations_fit_the_device_worker_stack() {
+        let (mut admin, dir) = fake();
+        let _children = link_children(&mut admin);
+        admin.desired.store(false, Ordering::Release);
+        admin.settings.lock().unwrap().output = "both".into();
+        add_second_radio(&admin);
+        trust_carlink(&dir);
+        admin.inventory.set(role_inventory());
+        let worker = admin.clone();
+        std::thread::Builder::new()
+            .name("admin-operations-small-stack".into())
+            // Leave headroom below the device worker's 256 KiB for caller and platform frames.
+            .stack_size(192 * 1024)
+            .spawn(move || {
+                // Roles chains output and network changes; startup and restart initialize Wi-Fi.
+                for operation in [
+                    Operation::Startup,
+                    Operation::Roles(vec!["carlink".into(), "controller".into()]),
+                    Operation::Restart,
+                    Operation::Start,
+                ] {
+                    worker.operation(operation).unwrap();
+                }
+                assert!(worker.supervisor.lock().unwrap().is_some());
+                assert!(worker.desired.load(Ordering::Acquire));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn unprobed_options_keep_legacy_inputs_and_tick_does_not_record_roles() {
@@ -6123,8 +8518,11 @@ esac
         sink(
             serde_json::json!({"type":"diagnostic","message":"codec mismatch expected=H265 actual=Some(H264)"}),
         );
-        let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(has_hevc(&args, "off"));
+        let (control, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        let control: serde_json::Value =
+            serde_json::from_str(&control[0].to_string_lossy()).unwrap();
+        assert_eq!(control["type"], "clink-restart");
+        assert_eq!(control["hevc"], "off");
         a.supervisor.lock().unwrap().take().unwrap().stop();
         a.start_supervisor().unwrap();
         let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -6152,7 +8550,7 @@ esac
     }
 
     #[test]
-    fn window_and_view_events_reconnect_both_outputs_once_and_blacklist_unchanged_window() {
+    fn window_and_view_events_replace_only_carlink_once_and_blacklist_unchanged_window() {
         let (mut a, dir) = fake();
         let children = link_children(&mut a);
         {
@@ -6179,8 +8577,8 @@ esac
         first(serde_json::json!({"type":"state","state":"Playing"}));
         a.tick().unwrap();
         let (args, second) = children.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(args.iter().any(|a| a == "--clink-name"));
-        assert!(args.iter().any(|a| a == "--web-port"));
+        let command: serde_json::Value = serde_json::from_str(&args[0].to_string_lossy()).unwrap();
+        assert_eq!(command["type"], "clink-restart");
         a.input
             .control(&oxp_wire::Message::Json(capabilities))
             .unwrap();
@@ -6334,39 +8732,19 @@ esac
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn carlink_band_backoff_survives_admin_restarts_until_forget_carlink() {
+    fn terminal_loss_keeps_shared_child_and_forget_clears_pairing_state() {
         let (mut a, dir) = fake();
         let children = link_children(&mut a);
-        {
-            let mut settings = a.settings.lock().unwrap();
-            settings.output = "carlink".into();
-            settings.carlink_link = "static".into();
-        }
-        trust_carlink(&dir);
-        let next = |millis| children.recv_timeout(Duration::from_millis(millis)).ok();
-        let links = |args: &[std::ffi::OsString]| args.iter().any(|a| a == "--clink-head-unit");
+        a.settings.lock().unwrap().output = "both".into();
         a.start_supervisor().unwrap();
-        let (args, sink) = next(2000).unwrap();
-        assert!(links(&args));
+        let (_, sink) = children.recv_timeout(Duration::from_secs(2)).unwrap();
         sink(
-            serde_json::json!({"type":"link","state":"lost","reason":"head_unit_band_unsupported:5180"}),
+            serde_json::json!({"type":"link","state":"lost","generation":1,"reason":"head_unit_band_unsupported:5180"}),
         );
-        // Output changes, Restart and Start replace the supervisor; none relinks during the backoff.
-        for op in [
-            Operation::Outputs(None),
-            Operation::Restart,
-            Operation::Start,
-        ] {
-            a.operation(op).unwrap();
-            assert!(next(200).is_none());
-        }
-        // Forgetting the head unit drops its escalation: the next trusted unit links at once.
+        assert!(children.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(a.supervisor.lock().unwrap().as_ref().unwrap().running());
         a.operation(Operation::ForgetCarlink).unwrap();
-        assert!(next(200).is_none());
-        trust_carlink(&dir);
-        a.operation(Operation::Outputs(None)).unwrap();
-        let (args, _) = next(2000).unwrap();
-        assert!(links(&args));
+        assert!(a.carlink.lock().unwrap().pin_request.is_none());
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -6480,7 +8858,7 @@ esac
         });
         let controller = Arc::new(
             LinuxCarPlayController::new(platform.clone(), a.events.clone(), Duration::from_secs(1))
-                .with_retry_delay(Duration::from_millis(1), Duration::from_millis(5)),
+                .with_retry_delay(Duration::from_millis(50), Duration::from_millis(100)),
         );
         *a.controller.lock().unwrap() = Some(controller.clone());
         let running = controller.clone();
@@ -6627,7 +9005,9 @@ esac
                 .unwrap()
                 .clone(),
         ) {
-            AdminUpdate::Errors(errors) => assert_eq!(errors["publicName"], "error.invalid"),
+            AdminUpdate::Errors(errors) => {
+                assert_eq!(errors["publicName"], "publicName.nameInvalid")
+            }
             _ => panic!("invalid name accepted"),
         }
         assert!(a.action("public-name-renew").is_ok());
@@ -6662,6 +9042,109 @@ esac
             ..ready
         };
         assert_eq!(public_name_url(&untrusted, &urls, 8443), None);
+    }
+    #[test]
+    fn advertised_name_and_path_input_wait_for_the_certificate_served_by_the_child() {
+        let ready = crate::public_name::PublicNameStatus {
+            state: "ready".into(),
+            trusted_name: Some("myrelay.duckdns.org".into()),
+            not_after: Some(1_900_000_000),
+            ..Default::default()
+        };
+        let certificate = crate::public_name::Served {
+            name: "myrelay.duckdns.org".into(),
+            cert: "cert".into(),
+            key: "key".into(),
+            not_after: 1_850_000_000,
+            fingerprint: "old".into(),
+        };
+        let urls = vec!["https://10.77.0.1:8443/#pairing".into()];
+        for served in [
+            None,
+            Some(&crate::public_name::Served {
+                name: "other.duckdns.org".into(),
+                ..certificate.clone()
+            }),
+        ] {
+            let pending = receiver_public_name(ready.clone(), served, Some(1_800_000_000));
+            assert!(pending.trusted_name.is_none());
+            assert!(public_name_url(&pending, &urls, 8443).is_none());
+        }
+        let serving = receiver_public_name(ready.clone(), Some(&certificate), Some(1_800_000_000));
+        assert_eq!(serving.not_after, Some(certificate.not_after));
+        assert_eq!(
+            public_name_url(&serving, &urls, 8443).as_deref(),
+            Some("https://myrelay.duckdns.org:8443/#pairing")
+        );
+        let expired = receiver_public_name(ready, Some(&certificate), Some(certificate.not_after));
+        assert!(expired.trusted_name.is_none());
+        let (admin, dir) = fake();
+        let mut status = admin.status();
+        status.public_name = Some(serving);
+        let facts = crate::path_facts::RuntimePathFacts::default();
+        let settings = Settings::default();
+        let path = crate::path_input::build(&facts, &settings, &status, 0, true, true);
+        assert_eq!(path["car"]["web"]["trustedName"], "myrelay.duckdns.org");
+        status.public_name = Some(expired);
+        let path = crate::path_input::build(&facts, &settings, &status, 0, true, true);
+        assert!(path["car"]["web"]["trustedName"].is_null());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn receiver_certificate_and_sans_share_one_queued_update() {
+        let (admin, dir) = fake();
+        *admin.receiver_tls.lock().unwrap() = Some(None);
+        let sans = vec![std::net::Ipv4Addr::new(10, 77, 0, 1)];
+        admin.apply_receiver_tls(None, sans.clone());
+        assert!(admin.receiver_tls_queued.load(Ordering::Acquire));
+        assert!(matches!(
+            admin
+                .operation_rx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .try_recv(),
+            Ok(Operation::ReceiverTls)
+        ));
+        admin.apply_receiver_tls(None, sans);
+        assert!(
+            admin
+                .operation_rx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .try_recv()
+                .is_err(),
+            "coalesced while queued"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn receiver_sans_follow_new_networks_retain_old_ones_and_stay_bounded() {
+        let (mut admin, dir) = fake();
+        Arc::get_mut(&mut admin).unwrap().runtime.addresses = Arc::new(|| {
+            Ok(vec![
+                ("lo".into(), std::net::Ipv4Addr::LOCALHOST, 8),
+                ("ap0".into(), std::net::Ipv4Addr::new(10, 77, 0, 1), 24),
+            ])
+        });
+        *admin.receiver_tls_sans.lock().unwrap() = (1..=20)
+            .map(|n| std::net::Ipv4Addr::new(192, 168, 1, n))
+            .collect();
+        let sans = admin.receiver_sans().unwrap();
+        assert_eq!(sans.len(), 16);
+        assert!(sans.contains(&std::net::Ipv4Addr::new(10, 77, 0, 1)));
+        assert!(sans.contains(&std::net::Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(!sans.contains(&std::net::Ipv4Addr::LOCALHOST));
+        *admin.receiver_tls_sans.lock().unwrap() = sans.clone();
+        assert_eq!(
+            admin.receiver_sans().unwrap(),
+            sans,
+            "address flapping does not replace the certificate"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn provider_switches_and_empty_tokens_keep_each_saved_setup() {

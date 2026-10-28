@@ -181,6 +181,9 @@ export function diagnosticsView(status: Status, t: Translate): string {
   const stream = v && [v.codecString && `<code>${esc(v.codecString)}</code>`, v.size && esc(v.size)].filter(Boolean).join(' · ');
   const video = v ? `<p>${esc(videoLine(status, t))}</p><dl class="facts"><dt>${t('diag.codec')}</dt><dd>${esc(v.codec)}</dd><dt>${t('diag.reason')}</dt><dd><code>${esc(status.video!.reason)}</code></dd>${stream ? `<dt>${t('diag.stream')}</dt><dd>${stream}</dd>` : ''}</dl>`
     + v.mismatches.map(m => `<p class="notice">${esc(t(`video.mismatch.${m.support}`, { screen: t('diag.screen', { n: m.screen }), codec: v.codec }))}</p>`).join('') : '<p class="muted">—</p>';
+  const history = status.receiverHistory;
+  const retained = history ? (history.screens.length ? `<h3>${t('diag.screenHistory')}</h3><pre>${esc(JSON.stringify(history.screens, null, 2))}</pre>` : '')
+    + (history.fullscreenExits.length ? `<h3>${t('diag.fullscreenExits')}</h3><pre>${esc(JSON.stringify(history.fullscreenExits, null, 2))}</pre>` : '') : '';
   const receivers = (status.receivers ?? []).map((report, index) => receiverCard(report, index, t)).join('');
   const h = status.hostProfile;
   const host = h ? `<dl class="facts"><dt>${t('host.model')}</dt><dd>${esc(h.model ?? '—')}</dd><dt>${t('host.bluetooth')}</dt><dd>${esc(h.bluetoothAdapter ? `${h.bluetoothAdapter.name} · ${h.bluetoothAdapter.address}` : '—')}</dd>${h.secureConnections === 'untouched' ? `<dt>${t('host.sc')}</dt><dd>${t('host.unmanaged')}</dd>` : ''}</dl>` : '';
@@ -188,7 +191,7 @@ export function diagnosticsView(status: Status, t: Translate): string {
   const carlink = status.platform === 'linux' && status.carlink ? `<h3>${t('ui.carlink')}</h3><pre>${esc(JSON.stringify(status.carlink, null, 2))}</pre>` : '';
   const network = status.platform === 'linux' && status.network.plan ? `<h3>${t('connections.title')}</h3><pre>${esc(JSON.stringify(status.network, null, 2))}</pre>` : '';
   const group = (key: string, title: string, content: string) => content ? `<details class="diagnostic-group" data-details="${key}"><summary>${esc(t(title))}</summary>${content}</details>` : '';
-  return group('video', 'diag.video', video) + group('carlink', 'ui.carlink', carlink) + group('host', 'host.title', host + hostCapabilitiesView(status, t)) + group('wireless', 'wireless.title', wireless) + group('network', 'connections.title', network) + group('bluetooth', 'bt.title', bluetoothView(status, t)) + group('receivers', 'diag.receivers', receivers || `<p class="muted">${t('diag.none')}</p>`);
+  return group('video', 'diag.video', video) + group('carlink', 'ui.carlink', carlink) + group('host', 'host.title', host + hostCapabilitiesView(status, t)) + group('wireless', 'wireless.title', wireless) + group('network', 'connections.title', network) + group('bluetooth', 'bt.title', bluetoothView(status, t)) + group('receivers', 'diag.receivers', (receivers || `<p class="muted">${t('diag.none')}</p>`) + retained);
 }
 export function receiverReport(status: Status, client: string, now = new Date()): string | null {
   const receiver = status.receivers?.find(r => r.client === client);

@@ -23,6 +23,8 @@ pub struct WifiCapabilities {
     pub present: Option<bool>,
     pub phy: Option<String>,
     pub capabilities: Option<PhyCapabilities>,
+    #[serde(default)]
+    pub hotspot_security: Vec<String>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,16 +141,24 @@ pub fn probe_wifi(runner: &dyn CommandRunner, root: &Path, interface: &str) -> W
                 .map(|n| format!("phy{n}"))
         })
     });
-    let capabilities = phy
+    let phy_text = phy
         .as_ref()
-        .and_then(|p| run(runner, &["iw", "phy", p, "info"]))
-        .map(|s| parse_phy(&s))
+        .and_then(|p| run(runner, &["iw", "phy", p, "info"]));
+    let hotspot_security = crate::linux_hotspot::probe_hotspot_security(
+        runner,
+        interface,
+        phy_text.as_deref().unwrap_or_default(),
+    );
+    let capabilities = phy_text
+        .as_ref()
+        .map(|s| parse_phy(s))
         .filter(|p| !p.channels.is_empty() || !p.modes.is_empty() || !p.combinations.is_empty());
     WifiCapabilities {
         interface: interface.into(),
         present,
         phy,
         capabilities,
+        hotspot_security,
     }
 }
 pub fn detect_tools(

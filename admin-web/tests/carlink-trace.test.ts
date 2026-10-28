@@ -63,7 +63,7 @@ it('uses exact Link and Error filters and stops fetching after the card is dispo
   await vi.advanceTimersByTimeAsync(0); expect(content.innerHTML).toContain('Link');
   for (const type of ['Link', 'Error']) {
     select.value = type; select.addEventListener.mock.calls[0][1](); await vi.advanceTimersByTimeAsync(0);
-    expect(fetch.mock.calls.some(([url]) => url.endsWith(`limit=200&type=${type}`))).toBe(true);
+    expect(fetch.mock.calls.some(([url]) => url.endsWith(`limit=5000&type=${type}`))).toBe(true);
   }
   expect(traceFilters).toEqual(['', 'Rtsp', 'Frame', 'Media', 'Link', 'Error']);
   dispose(); const count = fetch.mock.calls.length;
@@ -97,4 +97,15 @@ it.each([0, 180])('preserves trace scrollTop %s and focused button across pollin
   await vi.advanceTimersByTimeAsync(2000);
   expect(capture.focus).not.toHaveBeenCalled();
   dispose();
+});
+
+it('renders all always-on summary fields while retaining the 5000-event trace view', () => {
+  const summary = { vendor: 'Vendor <car>', product: 'Car', name: 'Unit', ssid: 'CarWifi', frequency: '5180', mode: 'window', view: '1920x1080', window: '1814x1200', stream: '1280x720', codec: 'H264', hevc: 'supported', audio: 'true', uibc: 'HIDC' };
+  const lines = Array.from({ length: 5001 }, (_, i) => `event-${i}-end`);
+  const html = tracePanel(snapshot, lines, undefined, key => key, summary);
+  for (const key of Object.keys(summary)) expect(html).toContain(key);
+  expect(html).toContain('Vendor &lt;car&gt;');
+  expect(html).not.toContain('Vendor <car>');
+  expect(html).toContain('event-4999-end');
+  expect(html).not.toContain('event-5000-end');
 });

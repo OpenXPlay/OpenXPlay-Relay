@@ -70,13 +70,26 @@ export function addressViews(status: Status, developer: boolean) {
   });
   // Trusted HTTPS: while ready, the name replaces the published address; the IP stays as fallback.
   const named = publicNameUrl(status);
-  return addresses.filter(a => developer || !a.developerOnly).map(a => {
+  const views = addresses.filter(a => developer || !a.developerOnly).map(a => {
     const original = status.receiverUrls.find(url => { try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === a.ipv4; } catch { return false; } });
     const query = status.receiverUrls.flatMap(url => { try { const parsed = new URL(url); return parsed.protocol === 'https:' ? [parsed.search] : []; } catch { return []; } })[0] ?? '';
     const receiver = original ?? `https://${a.ipv4}:${status.receiverPort || 8443}/${query}`;
     const viaName = named !== null && (!status.publicName?.address || status.publicName.address === a.ipv4);
     return { ...a, label: a.developerOnly ? a.interface : status.wifiClient?.setupHotspot || status.network.mode !== 'shared-wifi' ? 'home.hotspot' : status.network.wifi || status.wifiClient?.ssid || 'home.hotspot', host: status.host, receiver: viaName ? named : receiver, fallback: viaName ? receiver : null, admin: `https://${a.ipv4}:${status.adminPort || 6975}/` };
   });
+  const tesla = status.pathInput?.car?.tesla;
+  if (tesla?.phase === 'READY' && tesla.name && status.receiverUrls[0] === tesla.name) {
+    const existing = views.findIndex(a => a.receiver === tesla.name);
+    if (existing >= 0) views.unshift(...views.splice(existing, 1));
+    else {
+      const host = new URL(tesla.name).hostname;
+      views.unshift({ interface: '', ipv4: status.publicName?.trustedName === host ? status.publicName.address ?? host : host,
+        developerOnly: false, label: 'tesla.title', host: status.host, receiver: tesla.name, fallback: null,
+        admin: status.adminUrls?.[0] ?? `https://${status.host}:${status.adminPort || 6975}/` });
+    }
+    views[0].label = 'tesla.title';
+  }
+  return views;
 }
 /** The head-unit address under the trusted-HTTPS name while the relay trusts it (also during a failing renewal), as the relay lists it. */
 export function publicNameUrl(status: Pick<Status, 'publicName' | 'receiverUrls' | 'receiverPort'>): string | null {

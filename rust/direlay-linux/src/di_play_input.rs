@@ -56,6 +56,9 @@ struct CodecWrite {
     sequence: u64,
 }
 pub(crate) struct InputState {
+    pending_settings: crate::settings::Settings,
+    remote_playback_proof: bool,
+    startup_status: bool,
     pub generation: u64,
     pub current: Option<u64>,
     pub latest: Option<u64>,
@@ -83,6 +86,13 @@ pub(crate) struct InputState {
     pub codec_restart_pending: bool,
     keyframe_watch: Option<KeyframeWatch>,
     hevc_failed: bool,
+    hevc_early_drops: u32,
+    first_hevc_format: Option<Instant>,
+    hevc_failure: Option<String>,
+    requested_end: bool,
+    video_frames: u64,
+    video_bytes: u64,
+    count_video_bytes: bool,
     codec_state_path: Option<std::path::PathBuf>,
     codec_writes: u64,
     receiver_decided: bool,
@@ -155,6 +165,9 @@ impl DiPlayInput {
     }
     fn build(events: Arc<JsonEvents>, clock: Clock, plugins: bool) -> Self {
         let state = Arc::new(Mutex::new(InputState {
+            pending_settings: Default::default(),
+            remote_playback_proof: true,
+            startup_status: true,
             generation: 0,
             current: None,
             latest: None,
@@ -191,6 +204,13 @@ impl DiPlayInput {
             codec_restart_pending: false,
             keyframe_watch: None,
             hevc_failed: false,
+            hevc_early_drops: 0,
+            first_hevc_format: None,
+            hevc_failure: None,
+            requested_end: false,
+            video_frames: 0,
+            video_bytes: 0,
+            count_video_bytes: false,
             codec_state_path: None,
             codec_writes: 0,
             receiver_decided: false,
@@ -202,7 +222,7 @@ impl DiPlayInput {
         events.startup_listener(Arc::new(move |reason| {
             if let Some(state)=startup_state.upgrade() {
                 let mut s=state.lock().unwrap();
-                if s.active && !matches!(reason,"failed"|"disconnected") { return; }
+                if !s.startup_status || s.active && !matches!(reason,"failed"|"disconnected") { return; }
                 let id=s.current.unwrap_or(s.generation+1);
                 Self::publish_locked(&mut s,"0-session",Message::Json(serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":format!("startup/{reason}")}})));
             }
@@ -383,7 +403,11 @@ impl DiPlayInput {
     /// Falls back to H.264 when an H.265 key frame is still missing after the timeout.
     fn poll_keyframe_watchdog(&self, s: &mut InputState) -> Option<CodecWrite> {
         let watch = s.keyframe_watch.as_ref()?;
-        if s.codec_setting != "auto" || s.applied_video.codec != VideoCodec::H265 || s.hevc_failed {
+        if s.codec_setting != "auto"
+            || s.applied_video.codec != VideoCodec::H265
+            || s.hevc_failed
+            || s.requested_end
+        {
             return None;
         }
         let now = (self.clock)();
@@ -391,8 +415,10 @@ impl DiPlayInput {
             return None;
         }
         let forwarded = watch.forwarded;
+        let wait_ms = now.saturating_duration_since(watch.requested).as_millis();
         s.keyframe_watch = None;
         s.hevc_failed = true;
+        s.hevc_failure = Some(format!("keyframe-timeout waitMs={wait_ms}"));
         s.desired_video = VideoCodecDecision {
             codec: VideoCodec::H264,
             reason: "hevc-keyframe-timeout",
@@ -407,6 +433,7 @@ impl DiPlayInput {
         Ok(())
     }
     pub fn stop(&self) -> Result<()> {
+        self.expect_stop();
         self.session_context(false);
         let id = self.state.lock().unwrap().current;
         if let Some(id) = id {
@@ -420,11 +447,13 @@ impl DiPlayInput {
         Ok(())
     }
     pub fn begin(&self, control: Arc<dyn SessionControl>) -> Result<u64> {
+        self.expect_stop();
         let current = self.state.lock().unwrap().current;
         if let Some(id) = current {
             self.end(id)?;
         }
         let mut s = self.state.lock().unwrap();
+        Self::capture_experiments(&mut s, &self.events);
         s.generation += 1;
         let id = s.generation;
         s.current = Some(id);
@@ -438,14 +467,16 @@ impl DiPlayInput {
             },
         ));
         s.active = false;
+        Self::reset_video_session(&mut s);
         s.playback = None;
         s.recovery.clear();
         s.declarations.retain(|key, _| key.starts_with("display-"));
+        let startup_status = s.startup_status;
         Self::publish_locked(
             &mut s,
             "0-session",
             Message::Json(
-                serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":"startup/waiting-media"}}),
+                serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":if startup_status { Some("startup/waiting-media") } else { None }}}),
             ),
         );
         drop(s);
@@ -461,12 +492,14 @@ impl DiPlayInput {
             s.latest = Some(next);
             s.current = Some(next);
             s.active = false;
+            Self::reset_video_session(&mut s);
             s.declarations.retain(|key, _| key.starts_with("display-"));
+            let startup_status = s.startup_status;
             Self::publish_locked(
                 &mut s,
                 "0-session",
                 Message::Json(
-                    serde_json::json!({"type":"session","session":{"id":next.to_string(),"phase":"CONNECTING","reason":"startup/waiting-media"}}),
+                    serde_json::json!({"type":"session","session":{"id":next.to_string(),"phase":"CONNECTING","reason":if startup_status { Some("startup/waiting-media") } else { None }}}),
                 ),
             );
             drop(s);
@@ -477,11 +510,13 @@ impl DiPlayInput {
         id
     }
     pub fn end(&self, id: u64) -> Result<()> {
+        let write;
         let (microphones, summary) = {
             let mut s = self.state.lock().unwrap();
             if s.current != Some(id) {
                 return Ok(());
             }
+            write = self.record_video_end(&mut s);
             let keys: Vec<_> = s
                 .declarations
                 .keys()
@@ -510,6 +545,7 @@ impl DiPlayInput {
                 ),
             );
             s.current = None;
+            s.active = false;
             s.playback = None;
             let summary = s
                 .keyframe_watch
@@ -517,6 +553,7 @@ impl DiPlayInput {
                 .and_then(|w| w.summary((self.clock)(), "still missing at session end"));
             (std::mem::take(&mut s.microphones), summary)
         };
+        self.persist_codec(write);
         {
             let mut f = self.events.facts.lock().unwrap();
             f.picture_on_car = false;
@@ -547,6 +584,19 @@ impl DiPlayInput {
             let mut s = self.state.lock().unwrap();
             if s.current != Some(id) {
                 return;
+            }
+            if matches!(&m, Message::Json(v) if v["type"] == "video-format" && v["screen"] == 0 && v["format"]["codec"] == "H265")
+                && s.first_hevc_format.is_none()
+            {
+                s.first_hevc_format = Some((self.clock)());
+            }
+            if let Message::Binary { header, payload } = &m {
+                if s.active && header.kind == oxp_wire::Kind::Video && header.stream == 0 {
+                    s.video_frames = s.video_frames.saturating_add(1);
+                    if s.count_video_bytes {
+                        s.video_bytes = s.video_bytes.saturating_add(payload.len() as u64);
+                    }
+                }
             }
             if matches!(&m, Message::Binary { header, .. }
                 if header.kind == oxp_wire::Kind::Video && header.stream == 0
@@ -630,11 +680,14 @@ impl DiPlayInput {
         };
         let field = |key: &str| format.map_or(serde_json::Value::Null, |f| f[key].clone());
         serde_json::json!({"codec":codec,"reason":reason,"codecString":field("codecString"),
-            "width":field("width"),"height":field("height")})
+            "width":field("width"),"height":field("height"),
+            "session":s.current.map(|id| id.to_string()),"active":s.current.is_some() && s.active,
+            "frames":s.video_frames,"bytes":s.video_bytes,"bytesMeasured":s.count_video_bytes,
+            "appliedFps":s.applied_fps,"requestedFps":s.desired_fps,"hevcFailure":s.hevc_failure})
     }
     pub fn clear_receiver_capabilities(&self) {
         self.events.facts.lock().unwrap().picture_on_car = false;
-        self.display.lock().unwrap().connected = false;
+        self.display.lock().unwrap().disconnected();
         self.context_disconnected();
         self.set_video_decision(oxp_core::video_codec_policy::resolve(&[], false));
     }
@@ -720,6 +773,7 @@ impl DiPlayInput {
         };
         self.persist_codec(write);
         if requested {
+            self.expect_stop();
             stop_controller();
         }
         requested
@@ -825,6 +879,59 @@ impl DiPlayInput {
     }
 }
 impl DiPlayInput {
+    fn record_video_end(&self, s: &mut InputState) -> Option<CodecWrite> {
+        let first = s.first_hevc_format.take()?;
+        let now = (self.clock)();
+        let elapsed = now.checked_duration_since(first)?;
+        if s.codec_setting != "auto"
+            || s.applied_video.codec != VideoCodec::H265
+            || s.requested_end
+            || elapsed >= Duration::from_secs(30)
+        {
+            return None;
+        }
+        s.hevc_early_drops = s.hevc_early_drops.saturating_add(1);
+        if s.hevc_early_drops < 2 || s.hevc_failed {
+            return None;
+        }
+        s.hevc_failed = true;
+        let failure = format!(
+            "early-drop waitMs={} count={}",
+            elapsed.as_millis(),
+            s.hevc_early_drops
+        );
+        self.events.log(&format!(
+            "video codec H264 reason=hevc-failed {failure}; HEVC disabled until process restart"
+        ));
+        s.hevc_failure = Some(failure);
+        s.desired_video = Self::hevc_fallback(s);
+        s.codec_restarts.changed(now);
+        Self::stage_codec_write(s, VideoCodec::H264)
+    }
+    /// The shell must call this before closing a controller, so its EOF is not a codec failure.
+    pub fn expect_stop(&self) {
+        self.state.lock().unwrap().requested_end = true;
+    }
+    fn reset_video_session(s: &mut InputState) {
+        s.first_hevc_format = None;
+        s.requested_end = false;
+        s.video_frames = 0;
+        s.video_bytes = 0;
+    }
+    fn hevc_fallback(s: &InputState) -> VideoCodecDecision {
+        VideoCodecDecision {
+            codec: VideoCodec::H264,
+            reason: if s
+                .hevc_failure
+                .as_ref()
+                .is_some_and(|failure| failure.starts_with("early-drop "))
+            {
+                "hevc-failed"
+            } else {
+                "hevc-keyframe-timeout"
+            },
+        }
+    }
     pub fn host_ui_requested(&self) {
         let mut s = self.state.lock().unwrap();
         if s.current.is_some() {
@@ -835,13 +942,33 @@ impl DiPlayInput {
             );
         }
     }
+    pub fn connection_settings(&self) -> crate::settings::Settings {
+        self.state.lock().unwrap().pending_settings.clone()
+    }
+    fn capture_experiments(s: &mut InputState, events: &JsonEvents) {
+        let settings = &s.pending_settings;
+        s.remote_playback_proof =
+            settings.experimental_active && settings.experimental_remote_playback_proof;
+        s.startup_status = settings.experimental_active && settings.experimental_startup_status;
+        events.set_startup_diagnostics(
+            settings.experimental_active && settings.experimental_startup_diagnostics,
+        );
+    }
+    pub fn configure_connection_experiments(&self) {
+        Self::capture_experiments(&mut self.state.lock().unwrap(), &self.events);
+    }
     pub fn configure_runtime_settings(&self, settings: &crate::settings::Settings) -> Result<()> {
+        self.state.lock().unwrap().pending_settings = settings.clone();
+        let effective = settings.effective_developer();
+        let settings = &effective;
+        self.state.lock().unwrap().count_video_bytes = settings.video_stats != "off";
         let mut d = self.display.lock().unwrap();
         if d.saved.select_car(settings.car().key()) {
             d.pictures.automatic_canvas = None;
-            d.connected = false;
+            d.disconnected();
             d.persist()?;
         }
+        d.configure(settings);
         d.fallback = settings.car().built_in();
         if d.picture_default != settings.carlink_picture_default
             && (d.pictures.trial.is_some() || self.session_active())
@@ -889,7 +1016,7 @@ impl DiPlayInput {
     }
     pub fn screen_known(&self) -> bool {
         let d = self.display.lock().unwrap();
-        d.saved.head_unit.is_some() || d.fallback.is_some()
+        d.head().is_some()
     }
     pub fn screen_reported(&self) -> bool {
         self.display.lock().unwrap().connected
@@ -901,6 +1028,9 @@ impl DiPlayInput {
             let Some(id) = s.current else {
                 return false;
             };
+            if !s.remote_playback_proof {
+                return false;
+            }
             let proof = if event["type"] == "stats" {
                 let session = event["session"]
                     .as_u64()
@@ -937,7 +1067,15 @@ impl DiPlayInput {
             width: h.screen.width,
             height: h.screen.height,
         });
-        facts.screen = facts.saved_screen.filter(|_| d.connected);
+        facts.screen = d
+            .live_head
+            .as_ref()
+            .or(d.saved.head_unit.as_ref())
+            .filter(|_| d.connected)
+            .map(|h| crate::display::Size {
+                width: h.screen.width,
+                height: h.screen.height,
+            });
         facts.built_in_screen = d.fallback.as_ref().map(|(h, _)| crate::display::Size {
             width: h.screen.width,
             height: h.screen.height,
@@ -1061,10 +1199,7 @@ impl DiPlayInput {
             }
             s.codec_setting = settings.video_codec.clone();
             let automatic = if s.hevc_failed {
-                VideoCodecDecision {
-                    codec: VideoCodec::H264,
-                    reason: "hevc-keyframe-timeout",
-                }
+                Self::hevc_fallback(&s)
             } else {
                 s.auto_video
             };
@@ -1102,7 +1237,7 @@ impl DiPlayInput {
             .zip(number(&report["densityDpi"]))
             .map(|((w, h), d)| (w, h, d))
         else {
-            self.display.lock().unwrap().connected = false;
+            self.display.lock().unwrap().disconnected();
             return Ok(());
         };
         let viewport = number(&report["viewport"]["widthPx"])
@@ -1140,11 +1275,29 @@ impl DiPlayInput {
         if let Some(size) = viewport {
             d.resize.window_size(size);
         }
-        if d.saved.observe(head, limit, now) {
+        if d.observe(head, limit, now) {
             d.persist()?;
         }
         d.switch_due((self.clock)());
         Ok(())
+    }
+    pub(crate) fn show_view_area(&self, index: usize) -> bool {
+        let mut d = self.display.lock().unwrap();
+        let (id, control) = {
+            let s = self.state.lock().unwrap();
+            (s.current, s.control.clone().filter(|_| s.active))
+        };
+        let queued = index < d.areas.len()
+            && d.view_areas_enabled()
+            && control.is_some_and(|c| c.show_view_area(index));
+        let mut s = self.state.lock().unwrap();
+        let accepted = queued && s.current == id && s.active;
+        if accepted {
+            d.active = index;
+            Self::publish_locked(&mut s, "display-view-area", d.area_message());
+        }
+        d.record_switch(index, accepted);
+        accepted
     }
     fn poll_view_area(&self) {
         Self::poll_view_area_state(&self.display, &self.state, (self.clock)());
@@ -1166,6 +1319,7 @@ impl DiPlayInput {
             let mut s = state.lock().unwrap();
             if s.current == id && s.active {
                 d.active = index;
+                d.record_switch(index, true);
                 Self::publish_locked(&mut s, "display-view-area", d.area_message());
             }
         }
@@ -1240,6 +1394,59 @@ impl InputEvents for DiPlayInput {
 #[cfg(test)]
 mod runtime_parity_tests {
     use super::*;
+    #[test]
+    fn startup_experiments_capture_status_and_diagnostics_without_disconnecting() {
+        for master in [true, false] {
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let out = lines.clone();
+            let events = Arc::new(JsonEvents::new(Arc::new(move |line| {
+                out.lock().unwrap().push(line)
+            })));
+            let input = DiPlayInput::new(events.clone());
+            let (tx, rx) = sync_channel(16);
+            input.state.lock().unwrap().output = Some(tx);
+            let control = || Arc::new(Control(Mutex::default()));
+            let old = input.begin(control()).unwrap();
+            rx.recv().unwrap();
+            let settings = crate::settings::Settings {
+                experimental_active: master,
+                experimental_startup_status: !master,
+                experimental_startup_diagnostics: !master,
+                ..Default::default()
+            };
+            input.configure_runtime_settings(&settings).unwrap();
+            events.emit("stage", &serde_json::json!({"stage":"ConnectingBluetooth"}));
+            assert!(
+                matches!(rx.recv().unwrap(), Message::Json(v) if v["session"]["reason"] == "startup/authenticating")
+            );
+            assert_eq!(input.state.lock().unwrap().current, Some(old));
+            let next = input.begin(control()).unwrap();
+            assert_ne!(old, next);
+            let messages = rx.try_iter().collect::<Vec<_>>();
+            assert!(messages.iter().any(|m| matches!(m, Message::Json(v) if v["session"]["phase"] == "CONNECTING" && v["session"]["reason"].is_null())));
+            events.emit("stage", &serde_json::json!({"stage":"ConnectingBluetooth"}));
+            assert!(rx.try_recv().is_err());
+            events.startup_milestone("first_video");
+            events.iap2_frame();
+            assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 0);
+            assert!(lines
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|line| !line.contains("airplay-milestone")));
+            input
+                .configure_runtime_settings(&Default::default())
+                .unwrap();
+            input.begin(control()).unwrap();
+            events.startup_milestone("first_video");
+            assert!(lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.contains("airplay-milestone")));
+        }
+    }
+
     struct Control(Mutex<Vec<u8>>);
     impl SessionControl for Control {
         fn send_touch(&self, _: &[AirPlayContact]) -> Result<bool> {
@@ -1679,6 +1886,130 @@ mod watchdog_tests {
             assert_eq!(f.logged("Keyframe requested").len(), 2);
         }
     }
+    fn hevc_format(f: &Fixture, session: u64) {
+        f.input.publish(
+            session,
+            "1-video-0",
+            Message::Json(
+                serde_json::json!({"type":"video-format","screen":0,"format":{"codec":"H265"}}),
+            ),
+        );
+    }
+    #[test]
+    fn second_unrequested_early_hevc_disconnect_latches_fallback_across_sessions() {
+        let f = Fixture::new(true);
+        f.input.end(f.session).unwrap(); // No format: not an early drop.
+        let id = f.input.begin(Arc::new(Control)).unwrap();
+        hevc_format(&f, id);
+        f.advance(1);
+        f.input.end(id).unwrap();
+        f.input.end(id).unwrap(); // Duplicate/stale end: counted once.
+        assert!(!f.input.state.lock().unwrap().hevc_failed);
+        let id = f.input.begin(Arc::new(Control)).unwrap();
+        hevc_format(&f, id - 1); // A retired bridge cannot arm the tracker.
+        assert!(f.input.state.lock().unwrap().first_hevc_format.is_none());
+        hevc_format(&f, id);
+        f.advance(29);
+        *f.now.lock().unwrap() += Duration::from_millis(999);
+        f.input.end(id).unwrap();
+        assert_eq!(
+            f.input.video_status()["hevcFailure"],
+            "early-drop waitMs=29999 count=2"
+        );
+        f.input
+            .set_video_decision(oxp_core::video_codec_policy::resolve(&[true], false));
+        assert!(f.input.apply_requested_restart(|| {}));
+        assert!(!f
+            .input
+            .apply_requested_restart(|| panic!("duplicate restart")));
+        assert!(!f.input.configure_video_codec());
+        assert_eq!(f.input.video_status()["reason"], "hevc-failed");
+        f.input.begin(Arc::new(Control)).unwrap();
+        assert_eq!(f.input.state.lock().unwrap().hevc_early_drops, 2);
+    }
+    #[test]
+    fn requested_replaced_forced_and_thirty_second_sessions_do_not_count_as_early_drops() {
+        for mode in [
+            "stop",
+            "expected",
+            "replace",
+            "forced",
+            "long",
+            "reconfigured",
+        ] {
+            let f = Fixture::new(true);
+            hevc_format(&f, f.session);
+            match mode {
+                "stop" => {
+                    f.input.stop().unwrap();
+                }
+                "expected" => {
+                    f.input.expect_stop();
+                }
+                "replace" => {
+                    f.input.begin(Arc::new(Control)).unwrap();
+                }
+                "forced" => {
+                    f.input.state.lock().unwrap().codec_setting = "h265".into();
+                }
+                "long" => f.advance(30),
+                "reconfigured" => {
+                    f.advance(29);
+                    hevc_format(&f, f.session);
+                    f.advance(1);
+                }
+                _ => unreachable!(),
+            }
+            f.input.end(f.session).unwrap();
+            assert_eq!(f.input.state.lock().unwrap().hevc_early_drops, 0, "{mode}");
+        }
+    }
+    #[test]
+    fn expected_shutdown_does_not_trigger_the_hevc_watchdog() {
+        let f = Fixture::new(true);
+        hevc_format(&f, f.session);
+        assert!(f.input.request_keyframe(0).unwrap());
+        f.received_request();
+        f.advance(8);
+        f.input.expect_stop();
+        assert!(!f
+            .input
+            .apply_requested_restart(|| panic!("requested shutdown")));
+        f.input.end(f.session).unwrap();
+        assert!(f.input.video_status()["hevcFailure"].is_null());
+        assert_eq!(f.input.state.lock().unwrap().hevc_early_drops, 0);
+    }
+    #[test]
+    fn input_video_counters_count_main_active_frames_and_reset_on_resume() {
+        let f = Fixture::new(false);
+        f.frame(f.session, true); // Connecting frames are not measured.
+        {
+            let mut s = f.input.state.lock().unwrap();
+            s.active = true;
+        }
+        f.frame(f.session, true);
+        assert_eq!(f.input.video_status()["frames"], 1);
+        assert_eq!(f.input.video_status()["bytes"], 0);
+        let settings = crate::settings::Settings {
+            video_stats: "5".into(),
+            ..Default::default()
+        };
+        f.input.configure_runtime_settings(&settings).unwrap();
+        f.frame(f.session, false);
+        f.frame(f.session + 1, false);
+        hevc_format(&f, f.session); // Reconfiguration keeps counters in the same session.
+        assert_eq!(f.input.video_status()["frames"], 2);
+        assert_eq!(f.input.video_status()["bytes"], 1);
+        f.input.end(f.session).unwrap();
+        assert_eq!(f.input.video_status()["active"], false);
+        let id = f.input.resume(f.session);
+        assert_ne!(id, f.session);
+        let status = f.input.video_status();
+        assert_eq!(status["session"], id.to_string());
+        assert_eq!(status["frames"], 0);
+        assert_eq!(status["bytes"], 0);
+        assert!(f.input.state.lock().unwrap().first_hevc_format.is_none());
+    }
     #[test]
     fn receiver_requests_restart_the_cadence_but_not_the_deadline() {
         let f = Fixture::new(true);
@@ -2018,6 +2349,52 @@ mod display_tests {
             self.0.lock().unwrap().push(index);
             true
         }
+    }
+    #[test]
+    fn manual_view_area_switch_publishes_crop_and_full_canvas_with_bounded_results() {
+        let (input, _) = fixture();
+        let control = Arc::new(AreaControl(Mutex::new(vec![])));
+        input.begin(control.clone()).unwrap();
+        input.state.lock().unwrap().active = true;
+        input.display.lock().unwrap().areas = vec![
+            crate::display::Area {
+                size: crate::display::Size {
+                    width: 1920,
+                    height: 960,
+                },
+                fullscreen: true,
+                windowed: true,
+            },
+            crate::display::Area {
+                size: crate::display::Size {
+                    width: 1450,
+                    height: 960,
+                },
+                fullscreen: false,
+                windowed: true,
+            },
+        ];
+        assert!(input.show_view_area(1));
+        let Message::Json(crop) =
+            input.state.lock().unwrap().declarations["display-view-area"].clone()
+        else {
+            panic!()
+        };
+        assert_eq!(crop["area"]["width"], 1450);
+        assert!(input.show_view_area(0));
+        let Message::Json(full) =
+            input.state.lock().unwrap().declarations["display-view-area"].clone()
+        else {
+            panic!()
+        };
+        assert!(full["area"].is_null());
+        assert_eq!(*control.0.lock().unwrap(), vec![1, 0]);
+        for _ in 0..40 {
+            assert!(!input.show_view_area(7));
+        }
+        let d = input.display.lock().unwrap();
+        assert_eq!(d.area_switches.len(), 32);
+        assert_eq!(d.area_switches.back().unwrap()["accepted"], false);
     }
     #[test]
     fn planned_display_reaches_airplay_and_switch_announces_after_debounce() {

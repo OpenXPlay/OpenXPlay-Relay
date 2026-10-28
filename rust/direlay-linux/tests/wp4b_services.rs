@@ -12,8 +12,8 @@ mod mdns_host;
 #[path = "../src/provision.rs"]
 mod provision;
 use openxplay_relay::{
-    boot_timing, device_preset, host_capabilities, network_roles, platform, plugins, public_name,
-    runtime_paths, settings, wifi_capabilities,
+    boot_timing, carlink_policy, device_preset, display, host_capabilities, network_roles,
+    platform, plugins, public_name, runtime_paths, settings, wifi_capabilities,
 };
 #[path = "../src/supervisor.rs"]
 mod supervisor;
@@ -468,6 +468,7 @@ fn receiver_diagnostics_are_opt_in_and_pairing_can_be_cancelled() {
     let get = |p| value(s.route(&req("GET", p, json!({}), &t), 2));
     let plain = get("/api/v0/status");
     assert!(plain.get("receivers").is_none());
+    assert!(plain.get("receiverHistory").is_none());
     assert!(plain.get("bluetoothGuard").is_none());
     assert_eq!(plain["pairedDevices"], json!([]));
     assert!(plain["pairingRemaining"].is_null());
@@ -475,6 +476,10 @@ fn receiver_diagnostics_are_opt_in_and_pairing_can_be_cancelled() {
         .get("receivers")
         .is_none());
     let diagnostics = get("/api/v0/status?lang=en&diagnostics=1");
+    assert_eq!(
+        diagnostics["receiverHistory"],
+        json!({"screens":[],"fullscreenExits":[]})
+    );
     assert_eq!(diagnostics["receivers"][0]["client"], "1");
     assert_eq!(diagnostics["receivers"][0]["stats"][0]["renderedFps"], 59.9);
     assert_eq!(
@@ -605,6 +610,7 @@ struct NmState {
     fail: Option<String>,
     scan_fails: bool,
     active_ssid: Option<String>,
+    addresses: Option<String>,
 }
 impl provision::NetworkManagerCli for FakeNm {
     fn run(&self, args: &[String], timeout: Duration) -> io::Result<String> {
@@ -654,7 +660,10 @@ impl provision::NetworkManagerCli for FakeNm {
             s.profiles.remove(&after("uuid").unwrap());
         }
         if position("IP4.ADDRESS").is_some() {
-            return Ok("192.168.1.78/24\n".into());
+            return Ok(s
+                .addresses
+                .clone()
+                .unwrap_or_else(|| "192.168.1.78/24\n".into()));
         }
         if position("SSID,SIGNAL,SECURITY,IN-USE").is_some() {
             if s.scan_fails {
@@ -671,6 +680,28 @@ fn provisioner(nm: FakeNm, path: &Path) -> provision::WifiProvisioner<FakeNm> {
         .with_local_dns(Some(
             openxplay_relay::public_name::local_dns::Paths::in_dir(path.join("dnsmasq-shared.d")),
         ))
+}
+#[test]
+fn provisioning_decodes_multivalue_addresses_on_join_and_autoconnect() {
+    let dir = Temp::new();
+    let nm = FakeNm::default();
+    nm.inner.lock().unwrap().addresses =
+        Some(r"bad\:10.99.99.1/32 | bad\|10.99.99.1/32 | 10.79.0.1/24 | 10.99.99.1/32".into());
+    let mut p = provisioner(nm.clone(), &dir.0);
+    p.join("Home", "password").unwrap();
+    assert_eq!(p.status().ip.as_deref(), Some("10.79.0.1"));
+    for addresses in [
+        "-- | 10.77.0.1/24 | 10.99.99.1/32",
+        "--\n10.77.0.1/24\n10.99.99.1/32",
+    ] {
+        let mut state = nm.inner.lock().unwrap();
+        state.active_ssid = Some("Car: Wi-Fi".into());
+        state.addresses = Some(addresses.into());
+        drop(state);
+        let status = p.status();
+        assert_eq!(status.ssid.as_deref(), Some("Car: Wi-Fi"));
+        assert_eq!(status.ip.as_deref(), Some("10.77.0.1"));
+    }
 }
 #[test]
 fn provisioning_without_config_creates_open_24ghz_ap() {
@@ -898,7 +929,6 @@ fn supervisor_restarts_backs_off_and_stops() {
     let policy = supervisor::RestartPolicy {
         initial: Duration::from_millis(5),
         maximum: Duration::from_millis(20),
-        stable_after: Duration::from_secs(1),
         poll: Duration::from_millis(1),
     };
     s.set_restart_policy(policy);
@@ -1023,6 +1053,8 @@ fn supervisor_carlink_arguments() {
     let mut settings = supervisor_settings();
     settings.carlink = Some(supervisor::CarlinkSettings {
         trace: false,
+        vehicle_data: false,
+        picture: None,
         name: branding::DEVICE_NAME.into(),
         model: branding::MODEL.into(),
         hevc: "auto".into(),
@@ -1199,6 +1231,8 @@ fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
     let mut settings = supervisor_settings();
     settings.carlink = Some(supervisor::CarlinkSettings {
         trace: false,
+        vehicle_data: false,
+        picture: None,
         name: branding::DEVICE_NAME.into(),
         model: branding::MODEL.into(),
         hevc: "auto".into(),
@@ -1210,6 +1244,7 @@ fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
             id: "stable-id".into(),
             band: 0,
             phone_mac: None,
+            default_phone_mac: None,
         }),
         head_unit: "192.168.43.1".parse().unwrap(),
         local: "192.168.43.2".parse().unwrap(),
@@ -1236,11 +1271,12 @@ fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
         ("--clink-id", "stable-id"),
         ("--clink-band", "0"),
         ("--clink-address", "AA:BB:CC:DD:EE:FF"),
-        ("--pin-file", "/var/lib/openxplay/carlink/pin"),
+        ("--clink-identity", "ble"),
+        ("--clink-vehicle-data", "off"),
     ] {
         assert!(text.windows(2).any(|pair| pair == [key, value]), "{key}");
     }
-    for key in ["--clink-head-unit", "--clink-local", "--pin"] {
+    for key in ["--clink-head-unit", "--clink-local", "--pin", "--pin-file"] {
         assert!(!text.contains(&key));
     }
     settings
@@ -1377,40 +1413,17 @@ fn carlink_retains_last_lost_reason_through_errors_restarts_and_discovery() {
 }
 
 #[test]
-fn supervisor_trust_policy_and_single_user_attempt() {
-    struct Child;
-    impl supervisor::RelayChild for Child {
-        fn exited(&mut self) -> io::Result<bool> {
-            Ok(false)
-        }
-        fn stop(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-    struct Factory(std::sync::mpsc::Sender<(Vec<std::ffi::OsString>, supervisor::EventSink)>);
-    impl supervisor::ChildFactory for Factory {
-        fn spawn(
-            &self,
-            _: &Path,
-            args: &[std::ffi::OsString],
-            events: supervisor::EventSink,
-        ) -> io::Result<Box<dyn supervisor::RelayChild>> {
-            self.0.send((args.to_vec(), events)).unwrap();
-            Ok(Box::new(Child))
-        }
-    }
-    let dir = std::env::temp_dir().join(format!(
-        "carlink-c1-{}",
-        admin::auth::random_hex(8).unwrap()
-    ));
-    std::fs::create_dir_all(dir.join("carlink")).unwrap();
+fn supervisor_configures_unpaired_output_with_the_stdin_confirmation_channel() {
+    let dir = Temp::new();
     let mut settings = supervisor_settings();
-    settings.state_dir = dir.clone();
+    settings.state_dir = dir.0.clone();
     settings.carlink = Some(supervisor::CarlinkSettings {
         trace: false,
+        vehicle_data: false,
+        picture: None,
         name: branding::DEVICE_NAME.into(),
         model: branding::MODEL.into(),
-        hevc: "auto".into(),
+        hevc: "signal".into(),
         auto_reconnect: true,
         ble: Some(supervisor::BleCarlinkSettings {
             adapter: None,
@@ -1419,115 +1432,25 @@ fn supervisor_trust_policy_and_single_user_attempt() {
             id: "relay".into(),
             band: 0,
             phone_mac: None,
+            default_phone_mac: None,
         }),
         head_unit: "192.168.43.1".parse().unwrap(),
         local: "192.168.43.2".parse().unwrap(),
         pin: None,
         ports: BTreeMap::new(),
     });
-    for value in [
-        json!({"identity":{"public":"key"},"peers":{}}),
-        json!({"peers":{"unit":""}}),
-        json!({"peers":{"unit":"invalid"}}),
-    ] {
-        std::fs::write(
-            dir.join("carlink/trust.json"),
-            serde_json::to_vec(&value).unwrap(),
-        )
-        .unwrap();
-        assert!(!supervisor::has_trusted_carlink(&dir));
-        assert!(!settings
-            .launch_arguments(false)
-            .iter()
-            .any(|arg| arg == "--clink-link"));
+    for attempt in [false, true] {
+        let args = settings.launch_arguments(attempt);
+        assert!(args.iter().any(|a| a == "--control-stdin"));
+        assert!(args
+            .windows(2)
+            .any(|a| a[0] == "--clink-identity" && a[1] == "ble"));
+        assert!(args
+            .windows(2)
+            .any(|a| a[0] == "--clink-hevc" && a[1] == "signal"));
+        assert!(!args.iter().any(|a| a == "--pin-file"));
     }
-    assert!(settings
-        .launch_arguments(false)
-        .iter()
-        .any(|arg| arg == "--web-port"));
-    assert!(settings
-        .launch_arguments(true)
-        .iter()
-        .any(|arg| arg == "--pin-file"));
-    let (tx, rx) = std::sync::mpsc::channel();
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let copy = seen.clone();
-    let mut relay = supervisor::RelaySupervisor::new(
-        settings.clone(),
-        Arc::new(Factory(tx)),
-        Arc::new(move |event| copy.lock().unwrap().push(event)),
-    );
-    relay.set_restart_policy(supervisor::RestartPolicy {
-        initial: Duration::from_millis(1),
-        maximum: Duration::from_millis(5),
-        stable_after: Duration::from_secs(1),
-        poll: Duration::from_millis(1),
-    });
-    relay.start().unwrap();
-    let (args, _) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(!args.iter().any(|arg| arg == "--clink-link"));
-    relay.connect_carlink();
-    let (args, events) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(args.iter().any(|arg| arg == "--clink-link"));
-    events(json!({"type":"link","state":"lost","reason":"failed"}));
-    let (args, _) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(!args.iter().any(|arg| arg == "--clink-link"));
-    assert!(args.iter().any(|arg| arg == "--web-port"));
-    assert!(seen
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|event| event["type"] == "carlink-unpaired"));
-    relay.stop();
-    std::fs::write(
-        dir.join("carlink/trust.json"),
-        serde_json::to_vec(&json!({"peers":{"unit":format!("{}==", "A".repeat(86))}})).unwrap(),
-    )
-    .unwrap();
-    assert!(supervisor::has_trusted_carlink(&dir));
-    assert!(settings
-        .launch_arguments(false)
-        .iter()
-        .any(|arg| arg == "--clink-link"));
-    relay.start().unwrap();
-    let (args, _) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(args.iter().any(|arg| arg == "--clink-link"));
-    relay.stop();
-    // Carlink-only must remain idle without a trusted unit, then wake on Connect.
-    std::fs::remove_file(dir.join("carlink/trust.json")).unwrap();
-    settings.web_port = 0;
-    let (tx, idle_rx) = std::sync::mpsc::channel();
-    let idle_events = Arc::new(Mutex::new(Vec::new()));
-    let copy = idle_events.clone();
-    let mut idle = supervisor::RelaySupervisor::new(
-        settings.clone(),
-        Arc::new(Factory(tx)),
-        Arc::new(move |v| copy.lock().unwrap().push(v)),
-    );
-    idle.start().unwrap();
-    assert!(idle_rx.recv_timeout(Duration::from_millis(150)).is_err());
-    assert!(!idle.running());
-    assert_eq!(
-        idle_events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|v| v["type"] == "carlink-unpaired")
-            .count(),
-        1
-    );
-    idle.connect_carlink();
-    let (args, sink) = idle_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(args.iter().any(|a| a == "--clink-link"));
-    sink(json!({"type":"error","message":"auth_rejected"}));
-    assert!(idle_rx.recv_timeout(Duration::from_millis(700)).is_err());
-    idle.stop();
-    settings.carlink = None;
-    assert!(!settings
-        .launch_arguments(true)
-        .iter()
-        .any(|arg| arg == "--clink-link" || arg == "--web-port"));
-    std::fs::remove_dir_all(dir).unwrap();
+    assert!(!supervisor::has_trusted_carlink(&dir.0));
 }
 
 #[test]
@@ -1841,6 +1764,7 @@ fn plugin_arguments_off_golden_and_on_filtered_in_order() {
         "/opt/openxplay/share/receiver",
         "--web-bind",
         "0.0.0.0",
+        "--control-stdin",
         "--tls-self-signed",
         "/var/lib/openxplay/receiver-tls",
         "--tls-san",
@@ -2074,7 +1998,7 @@ fn trace_routes_auth_csrf_platform_validation_commands_and_streams() {
             serde_json::from_slice(&route("GET", "/tail?type=Link&limit=1", json!({})).body)
                 .unwrap();
         assert_eq!(tail["lines"], json!(["{\"type\":\"Link\"}"]));
-        for query in ["limit=501", "limit=no", "type=Errors", "type=Unknown"] {
+        for query in ["limit=5001", "limit=no", "type=Errors", "type=Unknown"] {
             assert_eq!(
                 route("GET", &format!("/tail?{query}"), json!({})).status,
                 422

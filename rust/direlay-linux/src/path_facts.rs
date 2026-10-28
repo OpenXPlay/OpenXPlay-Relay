@@ -4,7 +4,51 @@
 
 //! Plain runtime observations for the admin presenter. No I/O or JSON assembly at read time.
 use crate::{carplay_policy, display::Size};
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Instant};
+
+/// First wall timestamp plus monotonic offsets; keep the first line and most recent facts.
+#[derive(Clone, Debug, Default)]
+pub struct StepTrail {
+    lines: Vec<String>,
+    start: Option<Instant>,
+    omitted: usize,
+}
+impl StepTrail {
+    pub fn record(&mut self, line: &str, wall: u64, now: Instant) {
+        let prefix = if let Some(start) = self.start {
+            format!(
+                "+{:.3}s ",
+                now.saturating_duration_since(start).as_secs_f64()
+            )
+        } else {
+            self.start = Some(now);
+            format!(
+                "{:02}:{:02}:{:02}.{:03} ",
+                wall / 3_600_000 % 24,
+                wall / 60_000 % 60,
+                wall / 1000 % 60,
+                wall % 1000
+            )
+        };
+        self.lines
+            .push(format!("{prefix}{line}").chars().take(200).collect());
+        if self.lines.len() > 80 {
+            if self.omitted == 0 {
+                self.lines.remove(1);
+                self.lines.remove(1);
+                self.lines.insert(1, String::new());
+                self.omitted = 2;
+            } else {
+                self.lines.remove(2);
+                self.omitted += 1;
+            }
+            self.lines[1] = format!("{} earlier lines omitted", self.omitted);
+        }
+    }
+    pub fn snapshot(&self) -> Vec<String> {
+        self.lines.clone()
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct LinkFailure {
@@ -23,6 +67,8 @@ pub struct IphoneFacts {
     pub failure: Option<LinkFailure>,
     pub session_since_millis: Option<u64>,
     pub car_wait_until_millis: Option<u64>,
+    pub armed: bool,
+    pub runtime_iap2_frames: u64,
 }
 impl Default for IphoneFacts {
     fn default() -> Self {
@@ -33,6 +79,8 @@ impl Default for IphoneFacts {
             failure: None,
             session_since_millis: None,
             car_wait_until_millis: None,
+            armed: false,
+            runtime_iap2_frames: 0,
         }
     }
 }
@@ -53,6 +101,7 @@ pub struct CarlinkFacts {
     pub pin_pending: bool,
     pub live_frames: u64,
     pub phase_timings: Vec<(String, u64)>,
+    pub failure: Option<LinkFailure>,
 }
 impl Default for CarlinkFacts {
     fn default() -> Self {
@@ -72,6 +121,7 @@ impl Default for CarlinkFacts {
             pin_pending: false,
             live_frames: 0,
             phase_timings: vec![],
+            failure: None,
         }
     }
 }
@@ -93,10 +143,23 @@ impl Default for WebFacts {
     }
 }
 #[derive(Clone, Debug, Default)]
+pub struct TeslaFacts {
+    pub url: Option<String>,
+    pub failure: Option<String>,
+    pub since_millis: Option<u64>,
+    pub activation: Option<crate::tesla_address::Activation>,
+}
+#[derive(Clone, Debug, Default)]
 pub struct RuntimePathFacts {
     pub iphone: IphoneFacts,
+    pub automatic: bool,
+    pub boot_start: bool,
+    pub auto_start_paused: bool,
+    pub arrival_until_millis: Option<u64>,
+    pub arrival_remaining_millis: Option<u64>,
     pub carlink: CarlinkFacts,
     pub web: WebFacts,
+    pub tesla: TeslaFacts,
     pub pages: usize,
     pub screen: Option<Size>,
     pub saved_screen: Option<Size>,
@@ -106,18 +169,11 @@ pub struct RuntimePathFacts {
     pub chips: Vec<String>,
     pub timeline: VecDeque<String>,
     pub carlink_summary: Option<String>,
-    phone_trail: Vec<String>,
+    phone_trail: StepTrail,
+    carlink_trail: StepTrail,
+    video_since: Option<Instant>,
     carlink_started: Option<u64>,
     carlink_summarized: bool,
-}
-fn bounded(lines: &mut Vec<String>, line: String) {
-    if lines.last() == Some(&line) {
-        return;
-    }
-    if lines.len() == 16 {
-        lines.remove(0);
-    }
-    lines.push(line);
 }
 impl RuntimePathFacts {
     fn step(&mut self, step: &str, now: u64) {
@@ -126,10 +182,29 @@ impl RuntimePathFacts {
             self.iphone.since_millis = Some(now);
         }
     }
+    pub fn reset_phone(&mut self) {
+        self.iphone = IphoneFacts::default();
+        self.phone_trail = StepTrail::default();
+        self.video_since = None;
+        self.picture_on_car = false;
+    }
     pub fn failure(&mut self, message: &str, retrying: bool, now: u64) {
+        self.failure_at(message, retrying, now, Instant::now());
+    }
+    pub(crate) fn failure_at(
+        &mut self,
+        message: &str,
+        retrying: bool,
+        now: u64,
+        monotonic: Instant,
+    ) {
         let code = carplay_policy::classify_failure(message);
         let step = match code {
-            "hotspot_not_ready" | "hotspot_configuration" | "wifi_off" => "STARTING",
+            "hotspot_not_ready"
+            | "hotspot_configuration"
+            | "wifi_off"
+            | "wifi_reset_required"
+            | "carlink_not_ready" => "STARTING",
             "bluetooth_off" | "bluetooth_unusable" | "iphone_unpaired" | "rfcomm_timeout" => {
                 "BLUETOOTH"
             }
@@ -137,17 +212,39 @@ impl RuntimePathFacts {
             _ => &self.iphone.step,
         }
         .to_owned();
-        let text = carplay_policy::failure_text(code);
-        bounded(&mut self.phone_trail, format!("{now} failed {code}"));
+        let text = crate::failure_text::redact(message, &[]);
+        self.phone_trail.record(
+            &format!("status=Failed reason={code} retrying={retrying}"),
+            now,
+            monotonic,
+        );
+        self.video_since = None;
+        self.picture_on_car = false;
+        self.iphone.session_since_millis = None;
         self.iphone.failure = Some(LinkFailure {
             step: step.clone(),
             code: code.into(),
-            text: text.into(),
+            text,
             at_millis: now,
             retrying,
-            trail: self.phone_trail.clone(),
+            trail: self.phone_trail.snapshot(),
         });
         self.step(&step, now);
+        self.iphone.detail = None;
+    }
+    /// Playback state remains available when optional milestone diagnostics are disabled.
+    pub fn video_received(&mut self, now: u64, monotonic: Instant) {
+        self.video_since.get_or_insert(monotonic);
+        self.step("VIDEO", now);
+        self.iphone.failure = None;
+    }
+    pub fn stable_video(&self, now: Instant) -> bool {
+        self.video_since.is_some_and(|since| {
+            now.saturating_duration_since(since) >= crate::start_policy::STABLE_SESSION
+        })
+    }
+    pub fn phone_trail(&self) -> Vec<String> {
+        self.phone_trail.snapshot()
     }
     /// Returns the startup reason to publish, when this event changes the startup state.
     pub fn observe(
@@ -156,21 +253,47 @@ impl RuntimePathFacts {
         fields: &serde_json::Value,
         now: u64,
     ) -> Option<&'static str> {
+        self.observe_at(kind, fields, now, Instant::now())
+    }
+    pub(crate) fn observe_at(
+        &mut self,
+        kind: &str,
+        fields: &serde_json::Value,
+        now: u64,
+        monotonic: Instant,
+    ) -> Option<&'static str> {
         let mut reason = None;
         if kind == "stage" || kind == "iap2-stage" {
             let stage = fields["stage"].as_str().unwrap_or("");
+            let waiting = stage == "WaitingForPairedIphone" && fields["unreachable"] == true;
+            if waiting {
+                self.iphone.failure = None;
+                self.iphone.detail = None;
+                self.video_since = None;
+                self.iphone.session_since_millis = None;
+                self.picture_on_car = false;
+                let message =
+                    crate::failure_text::redact(fields["reason"].as_str().unwrap_or(""), &[]);
+                self.phone_trail
+                    .record(&format!("waiting_for_iphone {message}"), now, monotonic);
+            }
             if stage == "DiscoveringMfi" {
-                self.phone_trail.clear();
+                self.phone_trail = StepTrail::default();
+                self.iphone.runtime_iap2_frames = 0;
+                self.video_since = None;
                 self.picture_on_car = false;
                 self.iphone.session_since_millis = None;
             }
-            if let Some((step, r)) = carplay_policy::startup_stage(stage) {
+            if let Some((step, r)) = carplay_policy::startup_stage(stage)
+                .filter(|_| !matches!(stage, "Failed" | "Stopped") || self.iphone.failure.is_none())
+            {
                 // A late handoff callback must not move an active stream backwards.
                 if !(matches!(step, "JOINING" | "WIFI_SENT" | "AUTH")
                     && matches!(self.iphone.step.as_str(), "SESSION" | "VIDEO"))
                 {
                     self.step(step, now);
-                    bounded(&mut self.phone_trail, format!("{now} {stage}"));
+                    self.phone_trail
+                        .record(&format!("status={stage}"), now, monotonic);
                     reason = Some(r);
                 }
             }
@@ -179,29 +302,58 @@ impl RuntimePathFacts {
                     failure.retrying = false;
                 }
                 self.iphone.session_since_millis = None;
+                self.video_since = None;
                 self.picture_on_car = false;
             }
             if let Some(message) = fields["reason"]
                 .as_str()
-                .filter(|_| fields["retryMillis"].is_number())
+                .filter(|_| !waiting && fields["retryMillis"].is_number())
             {
-                self.failure(message, true, now);
+                if !self.iphone.failure.as_ref().is_some_and(|f| {
+                    f.retrying && f.text == crate::failure_text::redact(message, &[])
+                }) {
+                    self.failure_at(message, true, now, monotonic);
+                }
             }
-        } else if kind == "retry" {
-            self.failure(fields["reason"].as_str().unwrap_or(""), true, now);
+        } else if kind == "retry" || kind == "startup-failed" {
+            self.failure_at(
+                fields["reason"].as_str().unwrap_or(""),
+                kind == "retry",
+                now,
+                monotonic,
+            );
             reason = Some("failed");
         } else if kind == "airplay-session-active" {
+            self.phone_trail.record("session_active", now, monotonic);
             self.step("SESSION", now);
             self.iphone.failure = None;
             self.iphone.session_since_millis.get_or_insert(now);
             reason = Some("waiting-media");
         } else if kind == "airplay-milestone" {
             let name = fields["name"].as_str().unwrap_or("");
-            bounded(&mut self.phone_trail, format!("{now} {name}"));
+            self.phone_trail
+                .record(&format!("milestone={name}"), now, monotonic);
             self.timeline(format!("{now} phone {name}"));
             if name == "first_video_received" {
-                self.step("VIDEO", now);
-                self.iphone.failure = None;
+                self.video_received(now, monotonic);
+            }
+        }
+        if kind == "runtime-iap2" {
+            self.phone_trail.record(
+                &format!("runtime_iap2 frames={}", fields["frames"]),
+                now,
+                monotonic,
+            );
+        }
+        if kind == "diagnostic" {
+            let message = fields["message"].as_str().unwrap_or("");
+            let hex_run = message
+                .split(|c: char| !c.is_ascii_hexdigit())
+                .any(|s| s.len() >= 16);
+            if message.len() <= 160 && message.bytes().all(|b| (32..=126).contains(&b)) && !hex_run
+            {
+                self.phone_trail
+                    .record(&format!("progress {message}"), now, monotonic);
             }
         }
         if let Some(r) = reason {
@@ -217,8 +369,16 @@ impl RuntimePathFacts {
         self.timeline.push_back(line);
     }
     pub fn carlink_event(&mut self, event: &serde_json::Value, now: u64) -> Option<String> {
+        self.carlink_event_at(event, now, Instant::now())
+    }
+    pub(crate) fn carlink_event_at(
+        &mut self,
+        event: &serde_json::Value,
+        now: u64,
+        monotonic: Instant,
+    ) -> Option<String> {
         let kind = event["type"].as_str().unwrap_or("");
-        if kind == "receiver-starting" {
+        if kind == "receiver-starting" || kind == "carlink-starting" {
             self.carlink_summarized = false;
             self.carlink.car_name = None;
             self.carlink.model_id = None;
@@ -227,11 +387,12 @@ impl RuntimePathFacts {
             self.carlink.screen = None;
             self.carlink.picture = None;
             self.carlink.phase_timings.clear();
+            self.carlink_trail = StepTrail::default();
             self.carlink.trail.clear();
             self.carlink_started = Some(now);
         }
         let phase = match kind {
-            "link" => event["state"].as_str().map(|s| match s {
+            "link" if event["state"] != "failed" => event["state"].as_str().map(|s| match s {
                 "scanning" => "SCANNING",
                 "connecting" => "EXCHANGING",
                 "joined" => "AUTHENTICATING",
@@ -246,6 +407,7 @@ impl RuntimePathFacts {
                     "negotiating" => "NEGOTIATING",
                     _ => "AUTHENTICATING",
                 }),
+            "carlink-starting" => Some("SCANNING"),
             "pin-request" => Some("PIN"),
             "carlink-backoff" | "error" | "pin-timeout" => Some("ENDED"),
             "receiver-stopped" if self.carlink.phase != "OFF" => Some("ENDED"),
@@ -263,10 +425,13 @@ impl RuntimePathFacts {
                 ));
                 self.carlink.phase_timings.truncate(32);
                 let line = format!("{now} carlink {phase}");
-                bounded(&mut self.carlink.trail, line.clone());
+                self.carlink_trail
+                    .record(&format!("phase={phase}"), now, monotonic);
+                self.carlink.trail = self.carlink_trail.snapshot();
                 self.timeline(line);
             }
-            if phase == "SCANNING" || phase == "PLAYING" {
+            if phase == "PLAYING" {
+                self.carlink.failure = None;
                 self.carlink.code = None;
                 self.carlink.error = None;
                 self.carlink.retrying = false;
@@ -275,14 +440,107 @@ impl RuntimePathFacts {
         if kind == "pin-request" {
             self.carlink.pin_pending = true;
         }
-        if matches!(kind, "receiver-stopped" | "pin-timeout") || self.carlink.phase == "PLAYING" {
+        if matches!(kind, "receiver-stopped" | "pin-timeout" | "clink-pairing")
+            || self.carlink.phase == "PLAYING"
+        {
             self.carlink.pin_pending = false;
         }
         if kind == "clink-pin" && event["result"] == "incorrect" {
             self.carlink.code = Some("pin_incorrect".into());
         }
-        if matches!(kind, "error" | "pin-timeout" | "carlink-backoff")
-            || (kind == "link" && event["state"] == "lost")
+        if kind == "clink-summary" {
+            let mut parts = Vec::new();
+            for key in [
+                "vendor",
+                "product",
+                "name",
+                "ssid",
+                "frequency",
+                "mode",
+                "view",
+                "window",
+                "stream",
+                "codec",
+                "hevc",
+                "audio",
+                "uibc",
+            ] {
+                if let Some(value) = event["fields"][key].as_str() {
+                    let safe = crate::failure_text::redact(value, &[])
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .take(512)
+                        .collect::<String>();
+                    parts.push(format!("{key}={safe:?}"));
+                }
+            }
+            if self.carlink.phase == "PLAYING" {
+                if let Some(size) = event["fields"]["stream"]
+                    .as_str()
+                    .filter(|s| *s != "unknown")
+                {
+                    self.carlink.picture = Some(format!(
+                        "{} {}",
+                        size,
+                        event["fields"]["codec"].as_str().unwrap_or("")
+                    ));
+                }
+            }
+            let summary = format!("carlink summary {}", parts.join(" "));
+            for part in &parts {
+                self.carlink_trail.record(part, now, monotonic);
+            }
+            self.carlink.trail = self.carlink_trail.snapshot();
+            if let Some(failure) = self.carlink.failure.as_mut() {
+                failure.trail = self.carlink.trail.clone();
+            }
+            self.carlink_summary = Some(summary.clone());
+            self.carlink_summarized = true;
+            self.timeline(format!("{now} {summary}"));
+            return Some(summary);
+        }
+        if kind == "link" && event["state"] == "failed" {
+            let code = event["code"].as_str().unwrap_or("link_failed");
+            let mut detail = Vec::new();
+            for key in [
+                "stage",
+                "code",
+                "elapsedMs",
+                "totalElapsedMs",
+                "attempt",
+                "osCode",
+                "operation",
+                "status",
+            ] {
+                if !event[key].is_null() {
+                    detail.push(format!("{key}={}", event[key]));
+                }
+            }
+            let text = crate::failure_text::redact(&detail.join(" "), &[]);
+            self.carlink.code = Some(code.into());
+            self.carlink.error = Some(text.clone());
+            self.carlink_trail.record(&text, now, monotonic);
+            self.carlink.trail = self.carlink_trail.snapshot();
+            self.carlink.failure = Some(LinkFailure {
+                step: self.carlink.phase.clone(),
+                code: code.into(),
+                text,
+                at_millis: now,
+                retrying: true,
+                trail: self.carlink.trail.clone(),
+            });
+            self.carlink.retrying = true;
+        }
+        let retained_backoff = ((kind == "carlink-backoff")
+            || (kind == "link" && event["state"] == "lost"))
+            && self.carlink.failure.is_some();
+        if retained_backoff {
+            self.carlink.retrying = true;
+            self.carlink.failure.as_mut().unwrap().retrying = true;
+        }
+        if !retained_backoff
+            && (matches!(kind, "error" | "pin-timeout" | "carlink-backoff")
+                || (kind == "link" && event["state"] == "lost"))
         {
             let message = event["reason"]
                 .as_str()
@@ -293,12 +551,22 @@ impl RuntimePathFacts {
                     "connection failed"
                 });
             self.carlink.code = Some(crate::carlink_policy::failure_code(message).into());
-            self.carlink.error = Some("Carlink connection ended".into());
+            self.carlink.error = Some(crate::failure_text::redact(message, &[]));
             self.carlink.retrying = kind == "carlink-backoff";
-            bounded(
-                &mut self.carlink.trail,
-                format!("{now} {}", self.carlink.code.as_deref().unwrap()),
+            self.carlink_trail.record(
+                &format!("failed {}", self.carlink.code.as_deref().unwrap()),
+                now,
+                monotonic,
             );
+            self.carlink.trail = self.carlink_trail.snapshot();
+            self.carlink.failure = Some(LinkFailure {
+                step: self.carlink.phase.clone(),
+                code: self.carlink.code.clone().unwrap(),
+                text: self.carlink.error.clone().unwrap(),
+                at_millis: now,
+                retrying: self.carlink.retrying,
+                trail: self.carlink.trail.clone(),
+            });
         }
         if let Some(name) = event["headUnit"]["name"].as_str() {
             self.carlink.car_name =
@@ -324,7 +592,7 @@ impl RuntimePathFacts {
                 .into(),
             );
         }
-        if kind == "clink-view-size" || kind == "media-stats" {
+        if kind == "media-stats" && self.carlink.phase == "PLAYING" {
             let size = event["width"]
                 .as_u64()
                 .zip(event["height"].as_u64())
@@ -383,6 +651,104 @@ impl RuntimePathFacts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn structured_link_failure_and_full_summary_survive_in_path_trails() {
+        let mut f = RuntimePathFacts::default();
+        f.carlink_event(&serde_json::json!({"type":"link","state":"connecting"}), 1);
+        f.carlink_event(&serde_json::json!({"type":"link","state":"failed","stage":"wifi_join","code":"system_tool_failed","elapsedMs":70,"totalElapsedMs":3000,"attempt":2,"operation":"nmcli","status":7}),2);
+        assert_eq!(f.carlink.phase, "EXCHANGING");
+        assert_eq!(f.carlink.code.as_deref(), Some("system_tool_failed"));
+        f.carlink_event(
+            &serde_json::json!({"type":"link","state":"lost","reason":"connection failed"}),
+            3,
+        );
+        assert_eq!(f.carlink.code.as_deref(), Some("system_tool_failed"));
+        let summary=f.carlink_event(&serde_json::json!({"type":"clink-summary","fields":{"vendor":"Vendor","product":"Car","frequency":"5180","hevc":"supported","audio":"true","uibc":"HIDC"}}),4).unwrap();
+        for value in [
+            "vendor=",
+            "product=",
+            "frequency=",
+            "hevc=",
+            "audio=",
+            "uibc=",
+        ] {
+            assert!(summary.contains(value));
+            assert!(f
+                .carlink
+                .failure
+                .as_ref()
+                .unwrap()
+                .trail
+                .iter()
+                .any(|s| s.contains(value)));
+        }
+    }
+    #[test]
+    fn trail_keeps_first_and_latest_monotonic_offsets_under_clock_changes() {
+        let mut trail = StepTrail::default();
+        let t = Instant::now();
+        trail.record("first", 3600123, t);
+        for i in 1..=100 {
+            trail.record(
+                &format!("line {i}"),
+                0,
+                t + std::time::Duration::from_millis(i * 10),
+            );
+        }
+        let lines = trail.snapshot();
+        assert_eq!(lines.len(), 80);
+        assert!(lines[0].ends_with("00:00.123 first"));
+        assert_eq!(lines[1], "22 earlier lines omitted");
+        assert_eq!(lines.last().unwrap(), "+1.000s line 100");
+    }
+    #[test]
+    fn phone_and_carlink_failures_freeze_details_until_success() {
+        let mut facts = RuntimePathFacts::default();
+        facts.observe("stage", &serde_json::json!({"stage":"RunningWireless"}), 1);
+        facts.observe(
+            "startup-failed",
+            &serde_json::json!({"reason":"RFCOMM timeout error=17 password=secret"}),
+            2,
+        );
+        let failure = facts.iphone.failure.clone().unwrap();
+        facts.observe("stage", &serde_json::json!({"stage":"DiscoveringMfi"}), 3);
+        assert_eq!(facts.iphone.failure.as_ref().unwrap().trail, failure.trail);
+        assert!(failure.text.contains("error=17"));
+        assert!(!failure.text.contains("secret"));
+        facts.carlink_event(
+            &serde_json::json!({"type":"error","message":"AUTH rejected token=secret"}),
+            4,
+        );
+        let failure = facts.carlink.failure.clone().unwrap();
+        facts.carlink_event(
+            &serde_json::json!({"type":"carlink-backoff","reason":"retrying"}),
+            5,
+        );
+        assert_eq!(
+            facts.carlink.failure.as_ref().unwrap().at_millis,
+            failure.at_millis
+        );
+        assert_eq!(facts.carlink.error, Some(failure.text.clone()));
+        facts.carlink_event(&serde_json::json!({"type":"receiver-starting"}), 5);
+        facts.carlink_event(&serde_json::json!({"type":"link","state":"scanning"}), 6);
+        assert_eq!(facts.carlink.failure.as_ref().unwrap().trail, failure.trail);
+        assert_eq!(facts.carlink.error, Some(failure.text));
+        facts.carlink_event(&serde_json::json!({"type":"state","state":"playing"}), 7);
+        assert!(facts.carlink.failure.is_none());
+        assert!(facts.carlink.error.is_none());
+    }
+    #[test]
+    fn only_sixty_seconds_of_video_restores_the_retry_budget() {
+        let mut facts = RuntimePathFacts::default();
+        let now = Instant::now();
+        facts.observe("airplay-session-active", &serde_json::json!({}), 0);
+        assert!(!facts.stable_video(now + std::time::Duration::from_secs(60)));
+        facts.video_since = Some(now);
+        assert!(!facts.stable_video(now + std::time::Duration::from_secs(59)));
+        assert!(facts.stable_video(now + std::time::Duration::from_secs(60)));
+        facts.failure("ended", true, 1);
+        assert!(!facts.stable_video(now + std::time::Duration::from_secs(61)));
+    }
     #[test]
     fn stages_keep_since_failure_trail_and_late_handoff_order() {
         let mut f = RuntimePathFacts::default();

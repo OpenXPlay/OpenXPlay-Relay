@@ -134,6 +134,18 @@ impl NetworkManagerCli for ProcessNetworkManagerCli {
 }
 /// Split NM terse fields without breaking escaped colons or backslashes.
 pub fn terse_fields(line: &str) -> Vec<String> {
+    escaped_fields(line, ':')
+}
+/// Decode a single `nmcli -g` field, whose values may be pipe-separated or one per line.
+/// Split before unescaping so literal `\|`, `\:` and `\\` stay inside their value.
+pub fn nmcli_values(text: &str) -> Vec<String> {
+    text.lines()
+        .flat_map(|line| escaped_fields(line, '|'))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+fn escaped_fields(line: &str, separator: char) -> Vec<String> {
     let mut fields = vec![String::new()];
     let mut escaped = false;
     for c in line.chars() {
@@ -142,7 +154,7 @@ pub fn terse_fields(line: &str) -> Vec<String> {
             escaped = false;
         } else if c == '\\' {
             escaped = true;
-        } else if c == ':' {
+        } else if c == separator {
             fields.push(String::new());
         } else {
             fields.last_mut().unwrap().push(c);
@@ -721,12 +733,11 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             )
             .ok()
             .and_then(|s| {
-                s.lines().find_map(|line| {
-                    let f = terse_fields(line);
-                    let ip = f.first()?.split('/').next()?;
-                    ip.parse::<std::net::Ipv4Addr>().ok().map(|a| a.to_string())
-                })
-            });
+                nmcli_values(&s)
+                    .iter()
+                    .find_map(|value| value.split('/').next()?.parse::<std::net::Ipv4Addr>().ok())
+            })
+            .map(|ip| ip.to_string());
         self.status = WifiClient {
             ssid: Some(ssid),
             ip,
@@ -866,8 +877,8 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
                         )
                         .ok()
                         .and_then(|s| {
-                            s.lines().find_map(|line| {
-                                line.split('/').next()?.parse::<std::net::Ipv4Addr>().ok()
+                            nmcli_values(&s).iter().find_map(|value| {
+                                value.split('/').next()?.parse::<std::net::Ipv4Addr>().ok()
                             })
                         })
                         .map(|ip| ip.to_string());

@@ -56,6 +56,15 @@ impl AdminServer {
                 },
                 None => Response::error(422, "error.invalid"),
             },
+            (method @ ("GET" | "DELETE"), path) if path.starts_with("/logs/upload/") => {
+                match self
+                    .admin
+                    .logs_upload_status(&path[13..], method == "DELETE")
+                {
+                    Some(status) => Response::json(200, status),
+                    None => Response::error(404, "error.request"),
+                }
+            }
             ("GET", "/logs/receipt") => match self.admin.logs_receipt() {
                 Ok(Some(receipt)) => Response::json(200, json!(receipt)),
                 Ok(None) => Response::error(404, "error.request"),
@@ -90,7 +99,10 @@ impl AdminServer {
                 match Some(query(request, "channel").unwrap_or("stable"))
                     .filter(|v| matches!(*v, "stable" | "beta"))
                 {
-                    Some(channel) => match self.admin.update_check(channel) {
+                    Some(channel) => match self
+                        .admin
+                        .update_check_fresh(channel, query(request, "fresh") == Some("1"))
+                    {
                         Ok(check) => Response::json(200, json!(check)),
                         Err(_) => Response::error(503, "offline"),
                     },
@@ -144,6 +156,7 @@ mod tests {
     #[derive(Default)]
     struct Fake {
         calls: Mutex<Vec<String>>,
+        raw: Mutex<Vec<u8>>,
     }
     impl RelayAdmin for Fake {
         fn logs_download(&self, id: &str) -> io::Result<(std::fs::File, u64, String)> {
@@ -162,16 +175,31 @@ mod tests {
         fn logs_upload(&self, id: &str) -> Result<Value, String> {
             Err(id.into())
         }
+        fn logs_upload_status(&self, id: &str, cancel: bool) -> Option<Value> {
+            (id == "test").then(|| json!({"id":id,"phase":"Sending","sent":2,"total":3,"elapsedMillis":15000,"state":if cancel {"cancelled"} else {"running"}}))
+        }
         fn logs_export(&self, _: &str) -> Result<Value, String> {
             self.calls.lock().unwrap().push("export".into());
             Ok(json!({"id":"test","bytes":3,"sha256":"hash","createdMillis":1}))
+        }
+        fn update_check_fresh(&self, channel: &str, fresh: bool) -> Result<Value, &'static str> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("update:{channel}:{fresh}"));
+            Err("offline")
         }
         fn config_export(&self, privacy: bool) -> Result<Value, BTreeMap<String, String>> {
             Ok(
                 json!({"format":if privacy {"openxplay-privacy-config"} else {"openxplay-user-config"},"version":1}),
             )
         }
-        fn config_import(&self, _: &[u8], dry: bool) -> Result<Value, BTreeMap<String, String>> {
+        fn config_import(
+            &self,
+            bytes: &[u8],
+            dry: bool,
+        ) -> Result<Value, BTreeMap<String, String>> {
+            *self.raw.lock().unwrap() = bytes.to_vec();
             self.calls.lock().unwrap().push(format!("import:{dry}"));
             Ok(json!({"applied":["output"],"ignored":["androidOnly"],"restartNeeded":true}))
         }
@@ -241,6 +269,24 @@ mod tests {
             .into()
     }
     #[test]
+    fn upload_poll_and_cancel_are_local_json_routes() {
+        let (server, _) = server();
+        let cookie = login(&server);
+        for (method, state) in [("GET", "running"), ("DELETE", "cancelled")] {
+            let mut request = request(method, "/logs/upload/test", json!({}));
+            request.headers.insert("cookie".into(), cookie.clone());
+            request
+                .headers
+                .insert("x-openxplay-admin".into(), "1".into());
+            let response = server.route(&request, 1);
+            assert_eq!(response.status, 200);
+            assert_eq!(
+                serde_json::from_slice::<Value>(&response.body).unwrap()["state"],
+                state
+            );
+        }
+    }
+    #[test]
     fn sessions_and_write_headers_guard_every_new_route() {
         let (server, fake) = server();
         let cookie = login(&server);
@@ -249,6 +295,8 @@ mod tests {
             ("GET", "/logs/export/test", json!({})),
             ("POST", "/logs/upload", json!({"id":"test"})),
             ("GET", "/logs/receipt", json!({})),
+            ("GET", "/logs/upload/test", json!({})),
+            ("DELETE", "/logs/upload/test", json!({})),
             ("GET", "/config/user", json!({})),
             ("GET", "/config/privacy", json!({})),
             (
@@ -267,6 +315,22 @@ mod tests {
             }
         }
         assert!(fake.calls.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn strict_import_receives_original_bytes_after_auth_and_csrf_checks() {
+        let (server, fake) = server();
+        let cookie = login(&server);
+        for raw in [
+            b"{\"version\":1,\"version\":2}".as_slice(),
+            b"{\"bad\":\"\xff\"}",
+            b"not json",
+        ] {
+            let mut request = request("POST", "/config/import?dryRun=1", json!({}));
+            request.body = raw.to_vec();
+            request.headers.insert("cookie".into(), cookie.clone());
+            assert_eq!(server.route(&request, 2).status, 200);
+            assert_eq!(*fake.raw.lock().unwrap(), raw);
+        }
     }
     #[test]
     fn shapes_download_headers_dry_run_caps_receipt_and_offline_error() {
@@ -324,6 +388,12 @@ mod tests {
             serde_json::from_slice::<Value>(&response.body).unwrap(),
             json!({"error":"offline"})
         );
+        route("GET", "/update?channel=beta&fresh=1", json!({}));
+        assert!(fake
+            .calls
+            .lock()
+            .unwrap()
+            .contains(&"update:beta:true".into()));
         assert_eq!(
             route("GET", "/update?channel=nightly", json!({})).status,
             422

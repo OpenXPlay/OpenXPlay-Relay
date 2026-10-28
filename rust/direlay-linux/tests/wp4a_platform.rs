@@ -57,6 +57,65 @@ fn parses_observed_wifi_details() {
         .is_none());
 }
 #[test]
+fn nmcli_ipv4_values_support_device_multivalue_and_line_output() {
+    for text in [
+        "10.99.99.1/32 | 10.79.0.1/24",
+        "10.99.99.1/32\n10.79.0.1/24",
+        "IP4.ADDRESS[1]: 10.99.99.1/32\nIP4.ADDRESS[2]: 10.79.0.1/24",
+    ] {
+        assert_eq!(
+            WifiOutput::ipv4_networks(text),
+            [
+                ("10.99.99.1".parse().unwrap(), 32),
+                ("10.79.0.1".parse().unwrap(), 24),
+            ],
+            "{text}"
+        );
+        assert_eq!(WifiOutput::ipv4(text), Some("10.99.99.1".parse().unwrap()));
+    }
+    for text in [
+        "10.79.0.1/24 | 10.99.99.1/32",
+        "10.79.0.1/24\n10.99.99.1/32",
+    ] {
+        assert_eq!(
+            WifiOutput::ipv4_networks(text),
+            [
+                ("10.79.0.1".parse().unwrap(), 24),
+                ("10.99.99.1".parse().unwrap(), 32),
+            ],
+            "{text}"
+        );
+        assert_eq!(WifiOutput::ipv4(text), Some("10.79.0.1".parse().unwrap()));
+    }
+}
+#[test]
+fn nmcli_multivalue_escapes_are_decoded_after_splitting() {
+    use openxplay_relay::provision::nmcli_values;
+    assert_eq!(
+        nmcli_values("\r\n 10.99.99.1/32 | 10.79.0.1/24\r\n | \n10.77.0.1/24\n"),
+        ["10.99.99.1/32", "10.79.0.1/24", "10.77.0.1/24"]
+    );
+    assert_eq!(
+        nmcli_values(r"name\:value | literal \| value | back\\slash | dangling\"),
+        ["name:value", "literal | value", "back\\slash", "dangling\\"]
+    );
+    assert_eq!(
+        nmcli_values(r"2001\:db8\:\:1/64 | fe80\:\:2/64"),
+        ["2001:db8::1/64", "fe80::2/64"]
+    );
+    assert_eq!(nmcli_values(r"back\\|next"), ["back\\", "next"]);
+    assert!(nmcli_values("\n | \r\n").is_empty());
+}
+#[test]
+fn nmcli_ipv4_ignores_escaped_non_addresses_and_unusable_values() {
+    let text = r"bad\:10.99.99.1/32 | bad\|10.99.99.1/32 | 0.0.0.0/0 | 127.0.0.1/8 | 999.1.1.1/24 | 10.77.0.1/24";
+    let ip = "10.77.0.1".parse().unwrap();
+    assert_eq!(WifiOutput::ipv4(text), Some(ip));
+    assert_eq!(WifiOutput::ipv4_networks(text), [(ip, 24)]);
+    assert!(WifiOutput::ipv4_networks("10.77.0.1/33 | 10.77.0.2/no | 10.77.0.3").is_empty());
+    assert_eq!(WifiOutput::ipv4("-- | 10.77.0.1"), Some(ip));
+}
+#[test]
 fn nmcli_escaped_radio() {
     let f = fixture!("nmcli-wifi")
         .lines()

@@ -43,6 +43,12 @@ pub struct AdminStatus {
     /// Per-browser receiver diagnostics, only for `GET /status?diagnostics=1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receivers: Option<Vec<Value>>,
+    /// Bounded screen information and fullscreen exits retained after live clients expire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver_history: Option<Value>,
+    /// Numeric car-screen observations and the session-frozen view-area declarations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_data: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bluetooth_guard: Option<AdminBluetoothGuard>,
     /// Bluetooth Secure Connections as the relay last switched it (off only while pairing);
@@ -97,6 +103,8 @@ pub struct AdminWireless {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminHotspot {
+    pub security: String,
+    pub supported_security: Vec<String>,
     pub has_password: bool,
     pub ssid: String,
     pub password: String,
@@ -175,6 +183,15 @@ pub struct AdminCarlink {
     pub network: Option<CarlinkNetwork>,
     pub trusted: bool,
     pub view_size: Option<CarlinkViewSize>,
+    pub generation: Option<u64>,
+    #[serde(skip)]
+    pub restarting: bool,
+    pub applied_picture: Option<CarlinkViewSize>,
+    pub summary: BTreeMap<String, String>,
+    pub pin_request: Option<u64>,
+    pub pin_confirmation: bool,
+    pub pin_client: Option<String>,
+    pub vehicle: Value,
     pub stats: Option<Value>,
     pub pin_incorrect: bool,
     #[serde(skip)]
@@ -207,6 +224,9 @@ pub struct CarlinkNetwork {
 impl AdminCarlink {
     pub fn clear_pin(&mut self) {
         self.pin_requested = false;
+        self.pin_request = None;
+        self.pin_confirmation = false;
+        self.pin_client = None;
         self.pin_expiry = None;
         self.pin_deadline = None;
         self.pin_remaining = None;
@@ -231,8 +251,26 @@ impl AdminCarlink {
         }
         self
     }
+    /// Supervisor fences generations; an outstanding replacement still parks startup.
+    pub fn ready_for_carplay(&self) -> bool {
+        self.state == "playing" && !self.restarting
+    }
     /// Applies a receiver event at `now`, in seconds on the monotonic clock.
     pub fn apply_event(&mut self, event: &Value, now: u64) {
+        if let Some(generation) = event["generation"].as_u64() {
+            if self.generation.is_some_and(|g| generation < g) {
+                return;
+            }
+            if self.generation != Some(generation) {
+                self.generation = Some(generation);
+                self.state = "connecting".into();
+                self.view_size = None;
+                self.applied_picture = None;
+                self.stats = None;
+                self.summary.clear();
+                self.clear_pin();
+            }
+        }
         // Teardown events from the failed child must not hide the retry deadline.
         if self.next_attempt.is_some()
             && (matches!(
@@ -243,9 +281,20 @@ impl AdminCarlink {
             return;
         }
         match event["type"].as_str().unwrap_or("") {
-            "receiver-starting" => {
+            "receiver-starting" | "carlink-starting" => {
+                self.restarting = event["type"] == "carlink-starting";
+                if event["type"] == "receiver-starting" {
+                    self.generation = None;
+                }
+                self.state = "connecting".into();
+                self.clear_pin();
+                self.summary.clear();
+                self.applied_picture = None;
                 self.view_size = None;
                 self.stats = None;
+            }
+            "clink-restart" => {
+                self.restarting = event.get("error").is_some();
             }
             "clink-view-size" => {
                 if let Ok(size) = serde_json::from_value::<CarlinkViewSize>(event.clone()) {
@@ -254,7 +303,30 @@ impl AdminCarlink {
                     }
                 }
             }
+            "clink-summary" => {
+                if let Ok(fields) =
+                    serde_json::from_value::<BTreeMap<String, String>>(event["fields"].clone())
+                {
+                    if self.state == "playing" {
+                        self.applied_picture = fields
+                            .get("stream")
+                            .and_then(|s| s.split_once('x'))
+                            .and_then(|(w, h)| {
+                                Some(CarlinkViewSize {
+                                    width: w.parse().ok()?,
+                                    height: h.parse().ok()?,
+                                })
+                            });
+                    }
+                    self.summary = fields;
+                }
+            }
             "media-stats" => {
+                if self.state == "playing" {
+                    self.applied_picture = serde_json::from_value::<CarlinkViewSize>(event.clone())
+                        .ok()
+                        .filter(|s| s.width > 0 && s.height > 0);
+                }
                 self.stats = Some(event.clone());
             }
             "clink-pin" if event["result"] == "incorrect" => {
@@ -328,7 +400,18 @@ impl AdminCarlink {
                 self.attempt_requested_pin = false;
                 self.clear_pin();
             }
+            "clink-pairing"
+                if ["answered", "cancelled", "accepted"]
+                    .iter()
+                    .any(|r| event["result"] == *r)
+                    && self.pin_request.is_some_and(|r| event["request"] == r) =>
+            {
+                self.clear_pin();
+            }
             "pin-request" => {
+                self.pin_request = event["request"].as_u64();
+                self.pin_confirmation = event["confirmation"] == true;
+                self.pin_client = event["client"].as_str().map(str::to_owned);
                 self.attempt_requested_pin = true;
                 self.pin_requested = true;
                 self.pin_expiry = Some(now.saturating_add(120));
@@ -342,6 +425,13 @@ impl AdminCarlink {
             "state" => {
                 if let Some(state) = event["state"].as_str() {
                     self.state = state.to_ascii_lowercase();
+                }
+                if self.state != "playing" {
+                    self.applied_picture = None;
+                } else if let Some(stats) = self.stats.as_ref() {
+                    self.applied_picture = serde_json::from_value::<CarlinkViewSize>(stats.clone())
+                        .ok()
+                        .filter(|s| s.width > 0 && s.height > 0);
                 }
                 if matches!(
                     self.state.as_str(),
@@ -489,6 +579,10 @@ pub trait RelayAdmin: Send + Sync + 'static {
     fn logs_upload(&self, _id: &str) -> Result<Value, String> {
         Err("rejected".into())
     }
+    /// Poll/cancel a single explicit background upload; cancellation does not remove its ZIP.
+    fn logs_upload_status(&self, _id: &str, _cancel: bool) -> Option<Value> {
+        None
+    }
     fn logs_receipt(&self) -> std::io::Result<Option<Value>> {
         Ok(None)
     }
@@ -506,10 +600,29 @@ pub trait RelayAdmin: Send + Sync + 'static {
     ) -> Result<Value, BTreeMap<String, String>> {
         Err(BTreeMap::from([("file".into(), "unsupported".into())]))
     }
+    /// Manual checks bypass the shared feed cache; channel changes may reuse it.
+    fn update_check_fresh(&self, channel: &str, _fresh: bool) -> Result<Value, &'static str> {
+        self.update_check(channel)
+    }
     fn update_check(&self, _channel: &str) -> Result<Value, &'static str> {
         Err("offline")
     }
     /// Linux recorder support; absent on other platforms.
+    fn vehicle_sample(&self, _enabled: bool) -> AdminResult {
+        Err("error.action".into())
+    }
+    fn vehicle(&self) -> Value {
+        Value::Null
+    }
+    fn carlink_pairing(
+        &self,
+        _request: u64,
+        _generation: u64,
+        _action: &str,
+        _pin: Option<&str>,
+    ) -> AdminResult {
+        Err("error.action".into())
+    }
     fn carlink_trace(&self) -> Option<(bool, bool, Value)> {
         None
     }
@@ -547,12 +660,25 @@ pub trait RelayAdmin: Send + Sync + 'static {
         Err("error.action".into())
     }
     fn phones(&self) -> Vec<AdminPhone>;
-    fn hotspot_update(&self, _ssid: &str, _password: &str, _band: Option<&str>) -> AdminResult {
+    /// An empty password retains the saved PSK; absent security retains the current mode.
+    fn hotspot_update(
+        &self,
+        _ssid: &str,
+        _password: &str,
+        _band: Option<&str>,
+        _security: Option<&str>,
+    ) -> AdminResult {
         Err("error.action".into())
     }
     /// Latest receiver-info and recent stats per browser, as `[{client, idleSeconds, info, stats}]`.
     fn receivers(&self) -> Vec<Value> {
         Vec::new()
+    }
+    fn show_view_area(&self, _index: usize) -> AdminResult {
+        Err("error.action".into())
+    }
+    fn receiver_history(&self) -> Value {
+        serde_json::json!({"screens":[],"fullscreenExits":[]})
     }
     fn wifi_status(&self) -> WifiClient;
     fn wifi_networks(&self) -> Result<Vec<WifiNetwork>, String>;

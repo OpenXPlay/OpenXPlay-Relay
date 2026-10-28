@@ -12,7 +12,7 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -26,6 +26,24 @@ pub const CARPLAY_MARKER_UUID: &str = "d31fbf50-5d57-2797-a240-41cd484388ec";
 pub const PAIRING_DEVICE_CLASS: u32 = 0x240408;
 fn err(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
+}
+/// Selection and SDP have no OS reachability kind. Preserve their cause with a typed marker.
+#[derive(Debug)]
+pub(crate) struct IphoneUnavailable(std::io::Error);
+impl IphoneUnavailable {
+    fn wrap(error: std::io::Error) -> std::io::Error {
+        std::io::Error::other(Self(error))
+    }
+}
+impl std::fmt::Display for IphoneUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for IphoneUnavailable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
 }
 pub fn valid_mac(a: &str) -> bool {
     let p: Vec<_> = a.split(':').collect();
@@ -118,14 +136,15 @@ impl IphoneSelection {
 }
 pub fn select_iphone(devices: &[BondedDevice], choice: Option<&str>) -> Result<BondedDevice> {
     let selection = IphoneSelection::select(choice, devices);
-    selection.device().cloned().ok_or_else(|| {
-        err(match selection {
-            IphoneSelection::SelectedUnpaired(_) => "The configured iPhone is no longer paired",
-            IphoneSelection::MultipleConnected(_) | IphoneSelection::MultipleCandidates(_) => {
-                "More than one bonded iPhone candidate; configure --iphone ADDR"
-            }
-            _ => "No unambiguous bonded iPhone found; pair one iPhone",
-        })
+    selection.device().cloned().ok_or_else(|| match selection {
+        IphoneSelection::NoIphone => {
+            IphoneUnavailable::wrap(err("No unambiguous bonded iPhone found; pair one iPhone"))
+        }
+        IphoneSelection::SelectedUnpaired(_) => err("The configured iPhone is no longer paired"),
+        IphoneSelection::MultipleConnected(_) | IphoneSelection::MultipleCandidates(_) => {
+            err("More than one bonded iPhone candidate; configure --iphone ADDR")
+        }
+        _ => unreachable!(),
     })
 }
 pub fn rfcomm_channel(text: &str) -> Result<u8> {
@@ -171,9 +190,9 @@ pub fn rfcomm_channel(text: &str) -> Result<u8> {
     if channels.len() == 1 {
         Ok(channels[0])
     } else {
-        Err(err(
+        Err(IphoneUnavailable::wrap(err(
             "SDP did not report one iAP2 RFCOMM channel; configure --rfcomm-channel",
-        ))
+        )))
     }
 }
 type Objects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
@@ -308,7 +327,7 @@ pub struct LinuxBluetooth {
     runner: Arc<dyn CommandRunner>,
     configured: Option<String>,
     channel_override: Option<u8>,
-    registration: Mutex<Option<BluezRegistration>>,
+    registration: Mutex<Option<ProfileLease>>,
 }
 impl LinuxBluetooth {
     pub fn new(
@@ -385,9 +404,22 @@ impl LinuxBluetooth {
                 ));
             }
         }
-        let mut r = self.registration.lock().unwrap();
-        if r.is_none() {
-            *r = Some(BluezRegistration::new(c, &path)?);
+        Ok(())
+    }
+    /// Only a controller session leases profiles. Readiness probes must never register them.
+    pub fn register_profiles(&self) -> Result<()> {
+        self.check_radio()?;
+        let mut registration = self.registration.lock().unwrap();
+        if registration.is_none() {
+            let connection = Connection::system().map_err(err)?;
+            let path = self.selection.adapter(&connection)?;
+            prop(&connection, &path, "org.bluez.Adapter1")?
+                .set_property("Alias", crate::branding::DEVICE_NAME)
+                .map_err(err)?;
+            static REGISTRY: OnceLock<Arc<ProfileRegistry>> = OnceLock::new();
+            *registration = Some(REGISTRY.get_or_init(Default::default).acquire(|| {
+                BluezRegistration::new(Box::new(SystemProfileManager { connection }))
+            })?);
         }
         Ok(())
     }
@@ -412,12 +444,18 @@ impl LinuxBluetooth {
         let c = Connection::system().map_err(err)?;
         let path = self.selection.adapter(&c)?;
         let name = path.rsplit('/').next().unwrap();
-        rfcomm_channel(&command(
-            self.runner.as_ref(),
-            &sdp_command(name, address),
-            Duration::from_secs(20),
-        )?)
+        sdp_lookup(self.runner.as_ref(), name, address)
     }
+}
+fn sdp_lookup(runner: &dyn CommandRunner, adapter: &str, address: &str) -> Result<u8> {
+    let result = runner.run(
+        &sdp_command(adapter, address)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        Duration::from_secs(20),
+    )?;
+    rfcomm_channel(&result.checked("sdptool").map_err(IphoneUnavailable::wrap)?)
 }
 fn sdp_command<'a>(adapter: &'a str, address: &'a str) -> Vec<&'a str> {
     let mut args = vec!["sdptool"];
@@ -446,64 +484,114 @@ impl Profile {
     }
     fn request_disconnection(&self, _device: OwnedObjectPath) {}
 }
-struct BluezRegistration {
+/// All local profile owners share one lease. Creation and final unregistration hold the same
+/// lock, so even overlapping controller teardown/startup cannot register a UUID twice. With no
+/// local registration alive under this lock, BlueZ's duplicate response belongs to another process.
+#[derive(Default)]
+struct ProfileRegistry(Mutex<Option<(usize, BluezRegistration)>>);
+impl ProfileRegistry {
+    fn acquire(
+        self: &Arc<Self>,
+        create: impl FnOnce() -> Result<BluezRegistration>,
+    ) -> Result<ProfileLease> {
+        let mut current = self.0.lock().unwrap();
+        if let Some((users, _)) = current.as_mut() {
+            *users += 1;
+        } else {
+            *current = Some((1, create()?));
+        }
+        Ok(ProfileLease(self.clone()))
+    }
+}
+struct ProfileLease(Arc<ProfileRegistry>);
+impl Drop for ProfileLease {
+    fn drop(&mut self) {
+        let mut current = self.0 .0.lock().unwrap();
+        if let Some((users, _)) = current.as_mut() {
+            *users -= 1;
+            if *users == 0 {
+                // Complete UnregisterProfile before allowing another RegisterProfile.
+                drop(current.take());
+            }
+        }
+    }
+}
+trait ProfileManager: Send + Sync {
+    /// False means BlueZ rejected this UUID because another process owns it.
+    fn register(&self, path: &str, uuid: &str, channel: u16) -> Result<bool>;
+    fn unregister(&self, path: &str);
+}
+struct SystemProfileManager {
     connection: Connection,
+}
+fn external_profile_duplicate(name: &str, detail: Option<&str>) -> bool {
+    name == "org.bluez.Error.AlreadyExists"
+        || name == "org.bluez.Error.NotPermitted" && detail == Some("UUID already registered")
+}
+impl ProfileManager for SystemProfileManager {
+    fn register(&self, path: &str, uuid: &str, channel: u16) -> Result<bool> {
+        self.connection
+            .object_server()
+            .at(path, Profile)
+            .map_err(err)?;
+        let manager = prop(&self.connection, "/org/bluez", "org.bluez.ProfileManager1")?;
+        let mut options: HashMap<&str, Value<'_>> = HashMap::new();
+        options.insert("Name", Value::from(crate::branding::DEVICE_NAME));
+        options.insert("Role", Value::from("server"));
+        options.insert("RequireAuthentication", Value::from(false));
+        options.insert("RequireAuthorization", Value::from(false));
+        options.insert("Channel", Value::from(channel));
+        let record=format!("<record><attribute id='0x0001'><sequence><uuid value='{uuid}'/></sequence></attribute><attribute id='0x0004'><sequence><sequence><uuid value='0x0100'/></sequence><sequence><uuid value='0x0003'/><uint8 value='0x{channel:02x}'/></sequence></sequence></attribute><attribute id='0x0005'><sequence><uuid value='0x1002'/></sequence></attribute><attribute id='0x0100'><text value='{name}'/></attribute></record>", name = crate::branding::DEVICE_NAME);
+        options.insert("ServiceRecord", Value::from(record.as_str()));
+        let call: zbus::Result<()> = manager.call(
+            "RegisterProfile",
+            &(ObjectPath::try_from(path).map_err(err)?, uuid, options),
+        );
+        match call {
+            Ok(()) => Ok(true),
+            Err(zbus::Error::MethodError(name, detail, _))
+                if external_profile_duplicate(name.as_str(), detail.as_deref()) =>
+            {
+                eprintln!("Warning: BlueZ profile {uuid} already owned by another process");
+                Ok(false)
+            }
+            Err(e) => Err(err(e)),
+        }
+    }
+    fn unregister(&self, path: &str) {
+        if let (Ok(manager), Ok(path)) = (
+            prop(&self.connection, "/org/bluez", "org.bluez.ProfileManager1"),
+            ObjectPath::try_from(path),
+        ) {
+            let _: zbus::Result<()> = manager.call("UnregisterProfile", &(path,));
+        }
+    }
+}
+struct BluezRegistration {
+    manager: Box<dyn ProfileManager>,
     paths: Vec<String>,
 }
 impl BluezRegistration {
-    fn new(connection: Connection, adapter_path: &str) -> Result<Self> {
+    fn new(manager: Box<dyn ProfileManager>) -> Result<Self> {
         let mut result = Self {
-            connection,
+            manager,
             paths: Vec::new(),
         };
         for (path, uuid, channel) in [
             ("/org/openxplay/iap2", IAP2_ACCESSORY_UUID, 1u16),
             ("/org/openxplay/carplay", CARPLAY_MARKER_UUID, 2),
         ] {
-            result
-                .connection
-                .object_server()
-                .at(path, Profile)
-                .map_err(err)?;
-            let manager = prop(
-                &result.connection,
-                "/org/bluez",
-                "org.bluez.ProfileManager1",
-            )?;
-            let mut options: HashMap<&str, Value<'_>> = HashMap::new();
-            options.insert("Name", Value::from(crate::branding::DEVICE_NAME));
-            options.insert("Role", Value::from("server"));
-            options.insert("RequireAuthentication", Value::from(false));
-            options.insert("RequireAuthorization", Value::from(false));
-            options.insert("Channel", Value::from(channel));
-            let record=format!("<record><attribute id='0x0001'><sequence><uuid value='{uuid}'/></sequence></attribute><attribute id='0x0004'><sequence><sequence><uuid value='0x0100'/></sequence><sequence><uuid value='0x0003'/><uint8 value='0x{channel:02x}'/></sequence></sequence></attribute><attribute id='0x0005'><sequence><uuid value='0x1002'/></sequence></attribute><attribute id='0x0100'><text value='{name}'/></attribute></record>", name = crate::branding::DEVICE_NAME);
-            options.insert("ServiceRecord", Value::from(record.as_str()));
-            let call: zbus::Result<()> = manager.call(
-                "RegisterProfile",
-                &(ObjectPath::try_from(path).map_err(err)?, uuid, options),
-            );
-            match call {
-                Ok(()) => result.paths.push(path.into()),
-                Err(e) if e.to_string().contains("AlreadyExists") => {
-                    eprintln!("Warning: BlueZ profile {uuid} already owned by another process")
-                }
-                Err(e) => return Err(err(e)),
+            if result.manager.register(path, uuid, channel)? {
+                result.paths.push(path.into());
             }
         }
-        prop(&result.connection, adapter_path, "org.bluez.Adapter1")?
-            .set_property("Alias", crate::branding::DEVICE_NAME)
-            .map_err(err)?;
         Ok(result)
     }
 }
 impl Drop for BluezRegistration {
     fn drop(&mut self) {
-        if let Ok(p) = prop(&self.connection, "/org/bluez", "org.bluez.ProfileManager1") {
-            for path in &self.paths {
-                if let Ok(path) = ObjectPath::try_from(path.as_str()) {
-                    let _: zbus::Result<()> = p.call("UnregisterProfile", &(path,));
-                }
-            }
+        for path in &self.paths {
+            self.manager.unregister(path);
         }
     }
 }
@@ -1093,6 +1181,37 @@ impl BluetoothOutput {
 mod signal_tests {
     use super::*;
     #[test]
+    fn sdp_lookup_failures_are_typed_and_keep_the_command_cause() {
+        struct MissingService;
+        impl CommandRunner for MissingService {
+            fn run(&self, _: &[String], _: Duration) -> Result<crate::platform::CommandResult> {
+                Ok(crate::platform::CommandResult {
+                    exit_code: 255,
+                    output: String::new(),
+                })
+            }
+        }
+        let error = sdp_lookup(&MissingService, "hci0", "AA:BB:CC:DD:EE:01").unwrap_err();
+        assert!(crate::carplay_policy::iphone_unreachable(&error));
+        assert!(crate::failure_text::error_text(&error).contains("sdptool failed (exit 255)"));
+        assert!(std::error::Error::source(error.get_ref().unwrap()).is_some());
+        struct ToolError(std::io::ErrorKind);
+        impl CommandRunner for ToolError {
+            fn run(&self, _: &[String], _: Duration) -> Result<crate::platform::CommandResult> {
+                Err(std::io::Error::new(self.0, "local tool error"))
+            }
+        }
+        for (kind, waiting) in [
+            (std::io::ErrorKind::NotFound, false),
+            (std::io::ErrorKind::PermissionDenied, false),
+            (std::io::ErrorKind::TimedOut, true),
+        ] {
+            let error = sdp_lookup(&ToolError(kind), "hci0", "AA:BB:CC:DD:EE:01").unwrap_err();
+            assert_eq!(crate::carplay_policy::iphone_unreachable(&error), waiting);
+            assert_eq!(error.kind(), kind);
+        }
+    }
+    #[test]
     fn adapter_selection_is_deterministic_and_never_falls_back() {
         assert_eq!(sdp_command("hci0", "phone"), ["sdptool", "browse", "phone"]);
         assert_eq!(
@@ -1312,5 +1431,101 @@ mod signal_tests {
         assert_eq!(adapter_path_index("/org/bluez/hci12"), Some(12));
         assert_eq!(adapter_path_index("/org/bluez"), None);
         assert_eq!(adapter_path_index("/org/bluez/hcix"), None);
+    }
+}
+
+#[cfg(test)]
+mod profile_lifecycle_tests {
+    use super::*;
+    #[derive(Default)]
+    struct ManagerState {
+        live: HashMap<String, String>,
+        registrations: usize,
+        duplicates: usize,
+        fail_marker: bool,
+    }
+    struct FakeManager(Arc<Mutex<ManagerState>>);
+    impl ProfileManager for FakeManager {
+        fn register(&self, path: &str, uuid: &str, _: u16) -> Result<bool> {
+            let mut state = self.0.lock().unwrap();
+            if state.live.values().any(|registered| registered == uuid) {
+                state.duplicates += 1;
+                return Err(err("org.bluez.Error.NotPermitted: UUID already registered"));
+            }
+            if state.fail_marker && uuid == CARPLAY_MARKER_UUID {
+                return Err(err("profile registration failed"));
+            }
+            state.live.insert(path.into(), uuid.into());
+            state.registrations += 1;
+            Ok(true)
+        }
+        fn unregister(&self, path: &str) {
+            self.0.lock().unwrap().live.remove(path);
+        }
+    }
+    fn acquire(
+        registry: &Arc<ProfileRegistry>,
+        state: &Arc<Mutex<ManagerState>>,
+    ) -> Result<ProfileLease> {
+        registry.acquire(|| BluezRegistration::new(Box::new(FakeManager(state.clone()))))
+    }
+    #[test]
+    fn overlapping_sessions_share_profiles_and_last_release_unregisters_before_restart() {
+        let registry = Arc::new(ProfileRegistry::default());
+        let state = Arc::new(Mutex::new(ManagerState::default()));
+        let first = acquire(&registry, &state).unwrap();
+        let replacement = acquire(&registry, &state).unwrap();
+        drop(first);
+        assert_eq!(state.lock().unwrap().live.len(), 2);
+        assert_eq!(state.lock().unwrap().registrations, 2);
+        drop(replacement);
+        assert!(state.lock().unwrap().live.is_empty());
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let (registry, state, barrier) = (registry.clone(), state.clone(), barrier.clone());
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..50 {
+                        drop(acquire(&registry, &state).unwrap());
+                    }
+                });
+            }
+        });
+        assert!(state.lock().unwrap().live.is_empty());
+        assert_eq!(state.lock().unwrap().duplicates, 0);
+    }
+    #[test]
+    fn partial_registration_failure_is_unregistered_and_can_be_retried() {
+        let registry = Arc::new(ProfileRegistry::default());
+        let state = Arc::new(Mutex::new(ManagerState {
+            fail_marker: true,
+            ..Default::default()
+        }));
+        assert!(acquire(&registry, &state).is_err());
+        assert!(state.lock().unwrap().live.is_empty());
+        state.lock().unwrap().fail_marker = false;
+        drop(acquire(&registry, &state).unwrap());
+        assert!(state.lock().unwrap().live.is_empty());
+    }
+    #[test]
+    fn only_exact_bluez_duplicate_errors_qualify_for_foreign_ownership() {
+        assert!(external_profile_duplicate(
+            "org.bluez.Error.AlreadyExists",
+            None
+        ));
+        assert!(external_profile_duplicate(
+            "org.bluez.Error.NotPermitted",
+            Some("UUID already registered")
+        ));
+        assert!(!external_profile_duplicate(
+            "org.bluez.Error.NotPermitted",
+            Some("Permission denied")
+        ));
+        assert!(!external_profile_duplicate(
+            "org.bluez.Error.Failed",
+            Some("UUID already registered")
+        ));
+        assert!(!external_profile_duplicate("unrelated.AlreadyExists", None));
     }
 }

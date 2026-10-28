@@ -23,18 +23,30 @@ pub struct Radio {
 }
 pub struct WifiOutput;
 impl WifiOutput {
-    pub fn ipv4(text: &str) -> Option<Ipv4Addr> {
-        text.lines()
-            .filter_map(|s| {
-                s.trim()
-                    .rsplit(':')
-                    .next()?
-                    .trim()
-                    .split('/')
-                    .next()?
-                    .parse::<Ipv4Addr>()
-                    .ok()
+    fn ipv4_values(text: &str) -> impl Iterator<Item = String> {
+        crate::provision::nmcli_values(text)
+            .into_iter()
+            .map(|value| {
+                value
+                    .strip_prefix("IP4.ADDRESS[")
+                    .and_then(|rest| rest.split_once("]:"))
+                    .map(|(_, address)| address.trim().to_owned())
+                    .unwrap_or(value)
             })
+    }
+    pub fn ipv4_networks(text: &str) -> Vec<(Ipv4Addr, u8)> {
+        Self::ipv4_values(text)
+            .filter_map(|value| {
+                let (ip, prefix) = value.split_once('/')?;
+                let ip: Ipv4Addr = ip.parse().ok()?;
+                let prefix: u8 = prefix.parse().ok()?;
+                (!ip.is_unspecified() && !ip.is_loopback() && prefix <= 32).then_some((ip, prefix))
+            })
+            .collect()
+    }
+    pub fn ipv4(text: &str) -> Option<Ipv4Addr> {
+        Self::ipv4_values(text)
+            .filter_map(|value| value.split('/').next()?.parse::<Ipv4Addr>().ok())
             .find(|a| !a.is_unspecified() && !a.is_loopback())
     }
     pub fn unescape(text: &str) -> String {
@@ -307,12 +319,65 @@ fn keyfile_string(value: &str) -> String {
         })
         .collect()
 }
+/// Security values shared with Android user configuration and the admin API.
+pub const HOTSPOT_SECURITY: [&str; 4] = ["open", "wpa2", "wpa3-transition", "wpa3"];
+pub fn security_supported(security: &str, supported: &[String]) -> bool {
+    matches!(security, "open" | "wpa2") || supported.iter().any(|s| s == security)
+}
+/// SAE needs both AP management-frame protection and supplicant support. Unknown stays WPA2.
+pub fn hotspot_security_capabilities(phy: &str, key_management: &str) -> Vec<String> {
+    let mut values = vec!["open".into(), "wpa2".into()];
+    let ap = crate::wifi_capabilities::parse_phy(phy).ap;
+    let pmf = phy.contains("CMAC") || phy.contains("00-0f-ac:6");
+    let sae = key_management.split_whitespace().any(|s| s == "SAE");
+    if ap && pmf && sae {
+        values.extend(["wpa3-transition".into(), "wpa3".into()]);
+    }
+    values
+}
+pub fn probe_hotspot_security(
+    runner: &dyn CommandRunner,
+    interface: &str,
+    phy: &str,
+) -> Vec<String> {
+    if hotspot_security_capabilities(phy, "SAE").len() == 2 {
+        return vec!["open".into(), "wpa2".into()];
+    }
+    let keys = command(
+        runner,
+        &["wpa_cli", "-i", interface, "get_capability", "key_mgmt"],
+        Duration::from_secs(3),
+    )
+    .unwrap_or_default();
+    hotspot_security_capabilities(phy, &keys)
+}
+fn keyfile_security(security: &str, password: &str) -> Result<String> {
+    if security == "open" {
+        return Ok(String::new());
+    }
+    let (key, pmf) = match security {
+        "wpa2" => ("wpa-psk", 1),
+        "wpa3-transition" => ("wpa-psk", 2),
+        "wpa3" => ("sae", 3),
+        _ => return Err(std::io::Error::other("Unsupported hotspot security")),
+    };
+    Ok(format!("[wifi-security]\nkey-mgmt={key}\nproto=rsn;\npairwise=ccmp;\ngroup=ccmp;\npmf={pmf}\npsk={}\n\n", keyfile_string(password)))
+}
+fn wireless_security(value: &str) -> Iap2WirelessSecurity {
+    match value {
+        "open" => Iap2WirelessSecurity::None,
+        "wpa3-transition" => Iap2WirelessSecurity::Wpa3Transition,
+        "wpa3" => Iap2WirelessSecurity::Wpa3Only,
+        _ => Iap2WirelessSecurity::WpaWpa2,
+    }
+}
 struct ApKeyfile<'a> {
     id: &'a str,
     interface: &'a str,
     mac: Option<&'a str>,
     ssid: &'a str,
     password: &'a str,
+    security: &'a str,
     band: &'a str,
     channel: &'a str,
     subnet: &'a str,
@@ -336,8 +401,9 @@ impl ApKeyfile<'_> {
         let mac = self
             .mac
             .map_or_else(String::new, |mac| format!("mac-address={mac}\n"));
-        Ok(format!("[connection]\nid={}\nuuid={uuid}\ntype=wifi\nautoconnect=false\ninterface-name={binding}\n\n[wifi]\n{mac}mode=ap\nssid={}\nband={}\nchannel={}\npowersave=2\n\n[wifi-security]\nkey-mgmt=wpa-psk\nproto=rsn;\npairwise=ccmp;\ngroup=ccmp;\npmf=1\npsk={}\n\n[ipv4]\nmethod=shared\naddress1={}\n\n[ipv6]\nmethod=disabled\n",
-            self.id, self.ssid.bytes().map(|b| format!("{b};")).collect::<String>(), self.band, self.channel, keyfile_string(self.password), self.subnet))
+        let security = keyfile_security(self.security, self.password)?;
+        Ok(format!("[connection]\nid={}\nuuid={uuid}\ntype=wifi\nautoconnect=false\ninterface-name={binding}\n\n[wifi]\n{mac}mode=ap\nssid={}\nband={}\nchannel={}\npowersave=2\n\n{security}[ipv4]\nmethod=shared\naddress1={}\n\n[ipv6]\nmethod=disabled\n",
+            self.id, self.ssid.bytes().map(|b| format!("{b};")).collect::<String>(), self.band, self.channel, self.subnet))
     }
 }
 struct HotspotState {
@@ -345,6 +411,7 @@ struct HotspotState {
     profile_loaded: bool,
     profile_channel: u8,
     ready: Option<WirelessHotspotInfo>,
+    ready_prefix: u8,
 }
 pub struct LinuxHotspot {
     state_dir: PathBuf,
@@ -384,6 +451,7 @@ impl LinuxHotspot {
                 profile_loaded: false,
                 profile_channel: 0,
                 ready: None,
+                ready_prefix: 32,
             }),
             closed: AtomicBool::new(false),
             provisioning: None,
@@ -502,6 +570,24 @@ impl LinuxHotspot {
                 (ssid.clone(), password.clone())
             }
         };
+        let security = match &request.credentials {
+            crate::host_backends::AccessPointCredentials::Saved(dir) => {
+                crate::settings::Settings::load(dir)?.hotspot_security
+            }
+            crate::host_backends::AccessPointCredentials::Supplied { .. } => "wpa2".into(),
+        };
+        if matches!(security.as_str(), "wpa3-transition" | "wpa3") {
+            let capability = crate::host_capabilities::probe_wifi(
+                self.runner.as_ref(),
+                std::path::Path::new("/"),
+                &self.interface,
+            );
+            if !security_supported(&security, &capability.hotspot_security) {
+                return Err(std::io::Error::other(
+                    "Hotspot security is unsupported by this radio",
+                ));
+            }
+        }
         let occupied = interface_addresses()?
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
@@ -545,6 +631,7 @@ impl LinuxHotspot {
                 mac: self.admin.as_ref().map(|(mac, _)| mac.as_str()),
                 ssid: &ssid,
                 password: &password,
+                security: &security,
                 band,
                 channel: &channel,
                 subnet: &subnet,
@@ -597,7 +684,7 @@ impl LinuxHotspot {
                 cmd(&["nmcli", "connection", "up", "id", &id])?;
                 self.state.lock().unwrap().profile_channel = 6;
             }
-            let address = loop {
+            let (address, prefix) = loop {
                 let output = cmd(&[
                     "nmcli",
                     "-g",
@@ -606,9 +693,13 @@ impl LinuxHotspot {
                     "show",
                     &self.interface,
                 ])?;
-                if let Some(a) = WifiOutput::ipv4(&output) {
+                // An auxiliary /32 must never become the AP's advertised gateway.
+                if let Some((a, prefix)) = WifiOutput::ipv4_networks(&output)
+                    .into_iter()
+                    .find(|(_, prefix)| *prefix != 32)
+                {
                     if self.admin.is_none() || a == Ipv4Addr::new(10, 79, 0, 1) {
-                        break a;
+                        break (a, prefix);
                     }
                 }
                 std::thread::sleep(Duration::from_millis(250));
@@ -619,11 +710,15 @@ impl LinuxHotspot {
                 .ok_or_else(|| std::io::Error::other("AP BSSID unavailable"))?;
             let info = WirelessHotspotInfo {
                 ssid,
-                passphrase: password,
+                passphrase: if security == "open" {
+                    String::new()
+                } else {
+                    password
+                },
                 channel: radio
                     .channel
                     .ok_or_else(|| std::io::Error::other("AP channel unavailable"))?,
-                security: carplay_iap2::Iap2WirelessSecurity::WpaWpa2,
+                security: wireless_security(&security),
                 host_address: Some(address),
                 bssid: Some(bssid.clone()),
                 access_point_bssid: Some(bssid),
@@ -637,7 +732,9 @@ impl LinuxHotspot {
                 actual.band = if info.channel > 14 { "5" } else { "2.4" }.into();
                 cache.record_hotspot(&self.interface, actual);
             }
-            self.state.lock().unwrap().ready = Some(info.clone());
+            let mut state = self.state.lock().unwrap();
+            state.ready = Some(info.clone());
+            state.ready_prefix = prefix;
             Ok(info)
         })();
         if result.is_err() {
@@ -741,13 +838,14 @@ impl LinuxHotspot {
         self.radio(&|args| command(self.runner.as_ref(), args, Duration::from_secs(5)))
     }
     pub fn validate_ready(&self) -> Result<()> {
-        let (expected, connection, profile_channel) = {
+        let (expected, prefix, connection, profile_channel) = {
             let state = self.state.lock().unwrap();
             (
                 state
                     .ready
                     .clone()
                     .ok_or_else(|| std::io::Error::other("Hotspot is not ready"))?,
+                state.ready_prefix,
                 state
                     .connection
                     .clone()
@@ -755,7 +853,7 @@ impl LinuxHotspot {
                 state.profile_channel,
             )
         };
-        let now = WifiOutput::ipv4(&command(
+        let now = WifiOutput::ipv4_networks(&command(
             self.runner.as_ref(),
             &[
                 "nmcli",
@@ -767,7 +865,12 @@ impl LinuxHotspot {
             ],
             Duration::from_secs(5),
         )?);
-        if now != expected.host_address {
+        // NetworkManager can report the live Tesla /32 first. Validate the AP's own
+        // address and prefix, independent of auxiliary addresses and their ordering.
+        if !now
+            .iter()
+            .any(|(ip, p)| Some(*ip) == expected.host_address && *p == prefix)
+        {
             return Err(std::io::Error::other("Hotspot address changed"));
         }
         let active = command(
@@ -799,10 +902,15 @@ impl LinuxHotspot {
             Duration::from_secs(5),
         )?;
         let rows: Vec<_> = profile.lines().collect();
-        if rows.len() != 3
+        let key_matches = match expected.security {
+            Iap2WirelessSecurity::None => matches!(rows.get(2).copied(), None | Some("" | "--")),
+            Iap2WirelessSecurity::Wpa3Only => rows.get(2) == Some(&"sae"),
+            _ => rows.get(2) == Some(&"wpa-psk"),
+        };
+        if !(2..=3).contains(&rows.len())
             || crate::provision::terse_fields(rows[0]).join(":") != expected.ssid
             || rows[1].parse::<u8>().ok() != Some(profile_channel)
-            || rows[2] != "wpa-psk"
+            || !key_matches
         {
             return Err(std::io::Error::other("Hotspot configuration changed"));
         }
@@ -864,6 +972,7 @@ pub struct ExistingWifiManager {
     pub interface: String,
     pub ssid: String,
     pub password: String,
+    addresses: crate::runtime_paths::InterfaceAddresses,
     ready: Mutex<Option<WirelessHotspotInfo>>,
     closed: AtomicBool,
 }
@@ -879,9 +988,14 @@ impl ExistingWifiManager {
             interface,
             ssid,
             password,
+            addresses: Arc::new(interface_addresses),
             ready: Mutex::new(None),
             closed: AtomicBool::new(false),
         }
+    }
+    pub fn with_addresses(mut self, addresses: crate::runtime_paths::InterfaceAddresses) -> Self {
+        self.addresses = addresses;
+        self
     }
 }
 impl ExistingWifiManager {
@@ -915,7 +1029,7 @@ impl ExistingWifiManager {
                 "Connected Wi-Fi does not match configured SSID",
             ));
         }
-        let addr = interface_addresses()?
+        let addr = (self.addresses)()?
             .into_iter()
             .find(|(i, a, _)| i == &self.interface && !a.is_loopback())
             .map(|(_, a, _)| a)
@@ -1018,6 +1132,58 @@ pub fn existing_wifi_security(observed: &str, password: &str) -> Result<Iap2Wire
 #[cfg(test)]
 mod credential_tests {
     use super::*;
+    #[test]
+    fn security_keyfiles_and_iap2_values_match_the_selected_mode() {
+        for (value, key, pmf, wire) in [
+            ("wpa2", "wpa-psk", 1, Iap2WirelessSecurity::WpaWpa2),
+            (
+                "wpa3-transition",
+                "wpa-psk",
+                2,
+                Iap2WirelessSecurity::Wpa3Transition,
+            ),
+            ("wpa3", "sae", 3, Iap2WirelessSecurity::Wpa3Only),
+        ] {
+            let profile = ApKeyfile {
+                id: "test",
+                interface: "wlan0",
+                mac: None,
+                ssid: "Relay",
+                password: "a password",
+                security: value,
+                band: "bg",
+                channel: "6",
+                subnet: "10.78.0.1/24",
+            }
+            .text()
+            .unwrap();
+            assert!(profile.contains(&format!("key-mgmt={key}\n")));
+            assert!(profile.contains(&format!("pmf={pmf}\n")));
+            assert!(profile.contains("psk=a\\spassword\n"));
+            assert_eq!(wireless_security(value), wire);
+        }
+        assert_eq!(keyfile_security("open", "retained-password").unwrap(), "");
+        assert_eq!(wireless_security("open"), Iap2WirelessSecurity::None);
+        assert!(keyfile_security("unknown", "password").is_err());
+    }
+    #[test]
+    fn sae_capability_requires_ap_pmf_and_supplicant_support() {
+        let phy =
+            "Supported interface modes:\n\t * AP\nSupported Ciphers:\n\t * CMAC (00-0f-ac:6)\n";
+        assert_eq!(
+            hotspot_security_capabilities(phy, "WPA-PSK SAE"),
+            HOTSPOT_SECURITY
+        );
+        for (radio, keys) in [
+            (phy, "WPA-PSK"),
+            ("", "SAE"),
+            ("Supported interface modes:\n * AP\n", "SAE"),
+        ] {
+            assert_eq!(hotspot_security_capabilities(radio, keys), ["open", "wpa2"]);
+        }
+        assert!(!security_supported("wpa3", &[]));
+    }
+
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     #[test]
     fn fresh_credentials_use_default_password_and_existing_files_are_unchanged() {

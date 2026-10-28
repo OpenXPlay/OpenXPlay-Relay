@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-27
 
 //! Read-only Linux release checks, with Android's SemVer ordering and channel policy.
-use crate::public_name::http::{Http, Request};
+use crate::public_name::http::{Failure as HttpFailure, Request, Response};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -12,7 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const ENDPOINT: &str = "https://api.github.com/repos/OpenXPlay/OpenXPlay-Relay/releases";
+pub const ENDPOINT: &str =
+    "https://api.github.com/repos/OpenXPlay/OpenXPlay-Relay/releases?per_page=30";
+pub const TIME_BUDGET: Duration = Duration::from_secs(40);
+const MAX_BODY: usize = 2 * 1024 * 1024;
 const CACHE_TIME: Duration = Duration::from_secs(6 * 60 * 60);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Channel {
@@ -130,6 +133,7 @@ pub struct Release {
     prerelease: bool,
     url: String,
     notes: String,
+    published_at: String,
 }
 fn safe_url(url: &str) -> bool {
     let Some(path) = url.strip_prefix("https://github.com/OpenXPlay/OpenXPlay-Relay/") else {
@@ -185,6 +189,7 @@ pub fn parse_feed(bytes: &[u8]) -> Option<Vec<Release>> {
             prerelease,
             url,
             notes,
+            published_at: item.get("published_at")?.as_str()?.into(),
         });
     }
     Some(releases)
@@ -197,13 +202,190 @@ pub fn select(releases: &[Release], channel: Channel) -> Option<&Release> {
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Check {
-    pub current: String,
+pub struct Candidate {
     pub latest: Option<String>,
-    pub channel: String,
+    pub outcome: &'static str,
     pub url: Option<String>,
     pub notes: String,
+    pub published_at: Option<String>,
+}
+fn candidate(releases: &[Release], channel: Channel, installed: &str) -> Candidate {
+    let selected = select(releases, channel);
+    Candidate {
+        latest: selected.map(|r| r.version.value.clone()),
+        outcome: match selected {
+            None => "no-release",
+            Some(release) if Version::parse(installed).is_none_or(|v| release.version > v) => {
+                "available"
+            }
+            Some(_) => "up-to-date",
+        },
+        url: selected.map(|r| r.url.clone()),
+        notes: selected.map(|r| r.notes.clone()).unwrap_or_default(),
+        published_at: selected.map(|r| r.published_at.clone()),
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Check {
+    pub current: String,
+    pub channel: String,
+    #[serde(flatten)]
+    pub candidate: Candidate,
     pub checked_millis: u64,
+    /// Both selections come from the same feed, so changing channels needs no network request.
+    pub candidates: std::collections::BTreeMap<String, Candidate>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Failure {
+    Offline,
+    Timeout,
+    RateLimited {
+        #[serde(rename = "resetMillis")]
+        reset_millis: Option<u64>,
+    },
+    Http {
+        status: u16,
+    },
+    InvalidResponse,
+}
+trait Transport: Send + Sync {
+    fn send(&self, request: Request, remaining: Duration) -> Result<Response, HttpFailure>;
+}
+struct Client;
+impl Transport for Client {
+    fn send(&self, request: Request, remaining: Duration) -> Result<Response, HttpFailure> {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .proxy(None)
+            .https_only(true)
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .max_redirects_will_error(false)
+            .timeout_global(Some(remaining))
+            .timeout_connect(Some(Duration::from_secs(15).min(remaining)))
+            .timeout_recv_response(Some(Duration::from_secs(20).min(remaining)))
+            .timeout_recv_body(Some(Duration::from_secs(20).min(remaining)))
+            .build()
+            .into();
+        let mut builder = ureq::http::Request::builder().uri(request.url);
+        for (key, value) in request.headers {
+            builder = builder.header(key, value);
+        }
+        let mut response = agent
+            .run(builder.body(()).map_err(|_| HttpFailure::Refused)?)
+            .map_err(transport_failure)?;
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.as_str().to_owned(),
+                    value.to_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        Ok(Response {
+            status: response.status().as_u16(),
+            headers,
+            body: if response.status().as_u16() == 200 {
+                response
+                    .body_mut()
+                    .with_config()
+                    .limit(MAX_BODY as u64)
+                    .read_to_vec()
+                    .map_err(transport_failure)?
+            } else {
+                Vec::new()
+            },
+        })
+    }
+}
+fn transport_failure(error: ureq::Error) -> HttpFailure {
+    match error {
+        ureq::Error::Timeout(_) => HttpFailure::Timeout,
+        ureq::Error::BodyExceedsLimit(_) => HttpFailure::TooLarge,
+        _ => HttpFailure::Unreachable,
+    }
+}
+fn redirect_url(base: &str, location: &str) -> Option<String> {
+    let target = if location.starts_with("//") {
+        format!("https:{location}")
+    } else if location.starts_with('/') {
+        format!("https://api.github.com{location}")
+    } else if location.starts_with('?') {
+        format!("{}{location}", base.split('?').next()?)
+    } else if location.contains(':') {
+        location.to_owned()
+    } else {
+        format!("{}/{location}", base.split('?').next()?.rsplit_once('/')?.0)
+    };
+    let uri: ureq::http::Uri = target.parse().ok()?;
+    (uri.scheme_str() == Some("https")
+        && uri.host() == Some("api.github.com")
+        && matches!(uri.port_u16(), None | Some(443))
+        && !uri.authority()?.as_str().contains('@')
+        && !target.contains('#'))
+    .then_some(target)
+}
+fn fetch(http: &dyn Transport) -> Result<Vec<Release>, Failure> {
+    let started = Instant::now();
+    let mut url = ENDPOINT.to_owned();
+    for redirects in 0..=5 {
+        let remaining = TIME_BUDGET
+            .checked_sub(started.elapsed())
+            .filter(|d| !d.is_zero())
+            .ok_or(Failure::Timeout)?;
+        let response = http
+            .send(
+                Request::get(&url)
+                    .header("Accept", "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", "2022-11-28")
+                    .header(
+                        "User-Agent",
+                        format!("OpenXPlay-Linux/{}", env!("CARGO_PKG_VERSION")),
+                    ),
+                remaining,
+            )
+            .map_err(|error| match error {
+                HttpFailure::Timeout => Failure::Timeout,
+                HttpFailure::TooLarge => Failure::InvalidResponse,
+                _ => Failure::Offline,
+            })?;
+        if started.elapsed() >= TIME_BUDGET {
+            return Err(Failure::Timeout);
+        }
+        if matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+            url = response
+                .header("location")
+                .filter(|_| redirects < 5)
+                .and_then(|location| redirect_url(&url, location))
+                .ok_or(Failure::Http {
+                    status: response.status,
+                })?;
+            continue;
+        }
+        if matches!(response.status, 403 | 429)
+            && response.header("x-ratelimit-remaining") == Some("0")
+        {
+            return Err(Failure::RateLimited {
+                reset_millis: response
+                    .header("x-ratelimit-reset")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .and_then(|v| v.checked_mul(1000)),
+            });
+        }
+        if response.status != 200 {
+            return Err(Failure::Http {
+                status: response.status,
+            });
+        }
+        if response.body.len() > MAX_BODY {
+            return Err(Failure::InvalidResponse);
+        }
+        return parse_feed(&response.body).ok_or(Failure::InvalidResponse);
+    }
+    unreachable!()
 }
 struct Cached {
     at: Instant,
@@ -211,50 +393,38 @@ struct Cached {
     releases: Vec<Release>,
 }
 pub struct Checker {
-    http: Arc<dyn Http>,
+    http: Arc<dyn Transport>,
     cache: Mutex<Option<Cached>>,
 }
 impl Default for Checker {
     fn default() -> Self {
-        Self::new(Arc::new(crate::logs::http::Client::new(
-            Duration::from_secs(10),
-            2 * 1024 * 1024,
-            &format!("OpenXPlay-Linux/{}", env!("CARGO_PKG_VERSION")),
-        )))
+        Self::new(Arc::new(Client))
     }
 }
 impl Checker {
-    pub fn new(http: Arc<dyn Http>) -> Self {
+    fn new(http: Arc<dyn Transport>) -> Self {
         Self {
             http,
             cache: Mutex::new(None),
         }
     }
-    pub fn check(&self, channel: Channel) -> Result<Check, &'static str> {
-        self.check_at(channel, Instant::now(), crate::logs::now_millis())
+    pub fn check(&self, channel: Channel, fresh: bool) -> Result<Check, Failure> {
+        self.check_at(channel, fresh, Instant::now(), crate::logs::now_millis())
     }
-    fn check_at(&self, channel: Channel, now: Instant, wall: u64) -> Result<Check, &'static str> {
+    fn check_at(
+        &self,
+        channel: Channel,
+        fresh: bool,
+        now: Instant,
+        wall: u64,
+    ) -> Result<Check, Failure> {
         let mut cache = self.cache.lock().unwrap();
-        if cache
-            .as_ref()
-            .is_none_or(|c| now.saturating_duration_since(c.at) >= CACHE_TIME)
+        if fresh
+            || cache
+                .as_ref()
+                .is_none_or(|c| now.saturating_duration_since(c.at) >= CACHE_TIME)
         {
-            let response = self
-                .http
-                .send(
-                    Request::get(ENDPOINT)
-                        .header("Accept", "application/vnd.github+json")
-                        .header("X-GitHub-Api-Version", "2022-11-28")
-                        .header(
-                            "User-Agent",
-                            format!("OpenXPlay-Linux/{}", env!("CARGO_PKG_VERSION")),
-                        ),
-                )
-                .map_err(|_| "offline")?;
-            if response.status != 200 || response.body.len() > 2 * 1024 * 1024 {
-                return Err("offline");
-            }
-            let releases = parse_feed(&response.body).ok_or("offline")?;
+            let releases = fetch(self.http.as_ref())?;
             *cache = Some(Cached {
                 at: now,
                 checked: wall,
@@ -262,21 +432,28 @@ impl Checker {
             });
         }
         let cached = cache.as_ref().unwrap();
-        let selected = select(&cached.releases, channel);
+        let current = env!("CARGO_PKG_VERSION");
         Ok(Check {
-            current: env!("CARGO_PKG_VERSION").into(),
-            latest: selected.map(|r| r.version.value.clone()),
+            current: current.into(),
             channel: channel.name().into(),
-            url: selected.map(|r| r.url.clone()),
-            notes: selected.map(|r| r.notes.clone()).unwrap_or_default(),
+            candidate: candidate(&cached.releases, channel, current),
             checked_millis: cached.checked,
+            candidates: [Channel::Stable, Channel::Beta]
+                .into_iter()
+                .map(|channel| {
+                    (
+                        channel.name().into(),
+                        candidate(&cached.releases, channel, current),
+                    )
+                })
+                .collect(),
         })
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::public_name::http::{Failure, Response};
+
     use serde_json::json;
     #[test]
     fn android_semver_order_and_validation() {
@@ -330,8 +507,9 @@ mod tests {
         assert!(parse_feed(b"{}").is_none());
     }
     struct Fake(Mutex<Vec<Request>>);
-    impl Http for Fake {
-        fn send(&self, request: Request) -> Result<Response, Failure> {
+    impl Transport for Fake {
+        fn send(&self, request: Request, remaining: Duration) -> Result<Response, HttpFailure> {
+            assert!(remaining <= TIME_BUDGET);
             self.0.lock().unwrap().push(request);
             Ok(Response {
                 status: 200,
@@ -347,22 +525,23 @@ mod tests {
         let now = Instant::now();
         assert_eq!(
             checker
-                .check_at(Channel::Stable, now, 10)
+                .check_at(Channel::Stable, false, now, 10)
                 .unwrap()
+                .candidate
                 .latest
                 .as_deref(),
             Some("0.1.5")
         );
         assert_eq!(
             checker
-                .check_at(Channel::Beta, now + Duration::from_secs(1), 20)
+                .check_at(Channel::Beta, false, now + Duration::from_secs(1), 20)
                 .unwrap()
                 .checked_millis,
             10
         );
         assert_eq!(http.0.lock().unwrap().len(), 1);
         checker
-            .check_at(Channel::Stable, now + CACHE_TIME, 30)
+            .check_at(Channel::Stable, false, now + CACHE_TIME, 30)
             .unwrap();
         let requests = http.0.lock().unwrap();
         assert_eq!(requests.len(), 2);
@@ -372,38 +551,164 @@ mod tests {
             format!("OpenXPlay-Linux/{}", env!("CARGO_PKG_VERSION"))
         )));
     }
-    #[test]
-    fn network_http_and_invalid_feed_failures_are_offline() {
-        struct Source(Result<Response, Failure>);
-        impl Http for Source {
-            fn send(&self, _: Request) -> Result<Response, Failure> {
-                self.0.clone()
-            }
+    struct Source(Result<Response, HttpFailure>);
+    impl Transport for Source {
+        fn send(&self, _: Request, _: Duration) -> Result<Response, HttpFailure> {
+            self.0.clone()
         }
-        for result in [
-            Err(Failure::Timeout),
-            Err(Failure::Unreachable),
-            Ok(Response {
-                status: 429,
-                ..Default::default()
-            }),
-            Ok(Response {
-                status: 200,
-                body: b"not json".to_vec(),
-                ..Default::default()
-            }),
-            Ok(Response {
-                status: 200,
-                body: vec![b' '; 2 * 1024 * 1024 + 1],
-                ..Default::default()
-            }),
+    }
+    #[test]
+    fn failures_keep_timeout_status_rate_reset_and_invalid_response() {
+        for (result, expected) in [
+            (Err(HttpFailure::Timeout), Failure::Timeout),
+            (Err(HttpFailure::Unreachable), Failure::Offline),
+            (
+                Ok(Response {
+                    status: 503,
+                    ..Default::default()
+                }),
+                Failure::Http { status: 503 },
+            ),
+            (
+                Ok(Response {
+                    status: 429,
+                    headers: vec![
+                        ("x-ratelimit-remaining".into(), "0".into()),
+                        ("x-ratelimit-reset".into(), "1792713600".into()),
+                    ],
+                    ..Default::default()
+                }),
+                Failure::RateLimited {
+                    reset_millis: Some(1_792_713_600_000),
+                },
+            ),
+            (
+                Ok(Response {
+                    status: 403,
+                    ..Default::default()
+                }),
+                Failure::Http { status: 403 },
+            ),
+            (
+                Ok(Response {
+                    status: 200,
+                    body: b"not json".to_vec(),
+                    ..Default::default()
+                }),
+                Failure::InvalidResponse,
+            ),
+            (
+                Ok(Response {
+                    status: 200,
+                    body: vec![b' '; MAX_BODY + 1],
+                    ..Default::default()
+                }),
+                Failure::InvalidResponse,
+            ),
         ] {
             assert_eq!(
                 Checker::new(Arc::new(Source(result)))
-                    .check(Channel::Stable)
+                    .check(Channel::Stable, true)
                     .unwrap_err(),
-                "offline"
+                expected
             );
         }
+    }
+    #[test]
+    fn manual_checks_bypass_cache_and_no_release_is_distinct_from_up_to_date() {
+        let http = Arc::new(Fake(Mutex::default()));
+        let checker = Checker::new(http.clone());
+        checker.check(Channel::Stable, true).unwrap();
+        checker.check(Channel::Beta, true).unwrap();
+        assert_eq!(http.0.lock().unwrap().len(), 2);
+        let releases = parse_feed(&feed()).unwrap();
+        for installed in ["0.1.5", "0.1.6", "0.1.5+other"] {
+            assert_eq!(
+                candidate(&releases, Channel::Stable, installed).outcome,
+                "up-to-date"
+            );
+        }
+        assert_eq!(
+            candidate(&releases, Channel::Stable, "0.1.4").outcome,
+            "available"
+        );
+        assert_eq!(
+            candidate(&[], Channel::Stable, "0.1.4").outcome,
+            "no-release"
+        );
+    }
+    #[test]
+    fn a_safe_redirect_is_followed_with_the_remaining_budget_and_request_headers() {
+        struct Redirect(Mutex<Vec<(String, Duration)>>);
+        impl Transport for Redirect {
+            fn send(&self, request: Request, remaining: Duration) -> Result<Response, HttpFailure> {
+                assert!(request.headers.iter().any(|(key, _)| *key == "User-Agent"));
+                let mut seen = self.0.lock().unwrap();
+                seen.push((request.url, remaining));
+                Ok(if seen.len() == 1 {
+                    Response {
+                        status: 307,
+                        headers: vec![("location".into(), "/next".into())],
+                        ..Default::default()
+                    }
+                } else {
+                    Response {
+                        status: 200,
+                        body: feed(),
+                        ..Default::default()
+                    }
+                })
+            }
+        }
+        let http = Arc::new(Redirect(Mutex::default()));
+        let check = Checker::new(http.clone())
+            .check(Channel::Stable, true)
+            .unwrap();
+        assert_eq!(
+            check.candidate.published_at.as_deref(),
+            Some("2026-10-25T12:00:00Z")
+        );
+        let seen = http.0.lock().unwrap();
+        assert_eq!(seen[1].0, "https://api.github.com/next");
+        assert!(seen[1].1 < seen[0].1 && seen[0].1 <= TIME_BUDGET);
+    }
+    #[test]
+    fn redirects_allow_only_github_api_https_with_a_five_hop_limit() {
+        for location in [
+            "https://evil.test/",
+            "http://api.github.com/",
+            "https://user@api.github.com/",
+            "https://api.github.com:444/",
+            "https://api.github.com/#fragment",
+        ] {
+            assert!(redirect_url(ENDPOINT, location).is_none(), "{location}");
+        }
+        for location in [
+            "/releases?page=2",
+            "?page=2",
+            "releases",
+            "https://api.github.com:443/releases",
+        ] {
+            assert!(redirect_url(ENDPOINT, location).is_some(), "{location}");
+        }
+        struct Redirect(Mutex<usize>);
+        impl Transport for Redirect {
+            fn send(&self, _: Request, _: Duration) -> Result<Response, HttpFailure> {
+                *self.0.lock().unwrap() += 1;
+                Ok(Response {
+                    status: 302,
+                    headers: vec![("location".into(), "/next".into())],
+                    ..Default::default()
+                })
+            }
+        }
+        let http = Arc::new(Redirect(Mutex::new(0)));
+        assert_eq!(
+            Checker::new(http.clone())
+                .check(Channel::Stable, true)
+                .unwrap_err(),
+            Failure::Http { status: 302 }
+        );
+        assert_eq!(*http.0.lock().unwrap(), 6);
     }
 }

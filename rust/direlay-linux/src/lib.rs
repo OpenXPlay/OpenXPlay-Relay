@@ -99,6 +99,7 @@ pub mod runtime_paths;
 pub mod secure_connections;
 pub mod settings;
 pub mod supervisor;
+pub mod tesla_address;
 
 pub mod config_files;
 pub mod context;
@@ -123,6 +124,7 @@ pub mod wifi_country;
 pub mod car_models;
 pub mod carlink_policy;
 pub mod carplay_policy;
+pub mod failure_text;
 pub mod path_facts;
 pub mod path_input;
 pub mod start_policy;

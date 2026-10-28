@@ -22,7 +22,12 @@ pub fn update(
     if let Some(carlink) = &mut status.carlink {
         carlink.code = facts.carlink.code.clone();
         carlink.retrying = facts.carlink.retrying;
-        carlink.trail = facts.carlink.trail.clone();
+        carlink.trail = facts
+            .carlink
+            .failure
+            .as_ref()
+            .map(|f| f.trail.clone())
+            .unwrap_or_else(|| facts.carlink.trail.clone());
     }
     status.path_input = build(facts, settings, status, now, identity_ready, bluetooth_on);
 }
@@ -39,10 +44,17 @@ pub fn build(
     let shared = settings.network_mode == "shared-wifi";
     let web = settings.output != "carlink";
     let carlink = settings.output != "web";
-    let outputs: Vec<_> = [(web, "BROWSER"), (carlink, "CARLINK")]
-        .into_iter()
-        .filter_map(|(enabled, name)| enabled.then_some(name))
-        .collect();
+    let outputs: Vec<_> = [
+        (web, "BROWSER"),
+        (carlink, "CARLINK"),
+        (
+            settings.tesla_browser != crate::tesla_address::Mode::Off,
+            "TESLA",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, name)| enabled.then_some(name))
+    .collect();
     let pick = match status.iphone.reason.as_str() {
         "Selected" | "Connected" | "OnlyCandidate" => "PICKED",
         "SelectedUnpaired" => "UNPAIRED",
@@ -53,6 +65,7 @@ pub fn build(
     let hotspot = status.hotspot.as_ref();
     let phone = &facts.iphone;
     let clink = &facts.carlink;
+    let carlink_failure = clink.failure.as_ref();
     let failure = phone.failure.as_ref().map(|f| {
         json!({
             "step": f.step, "code": f.code, "text": f.text, "atMillis": f.at_millis,
@@ -74,9 +87,13 @@ pub fn build(
         .as_ref()
         .and_then(|p| p.trusted_name.as_deref());
     let waiting = phone.car_wait_until_millis.is_some_and(|t| t > now);
+    let tesla = &facts.tesla;
+    let tesla_enabled = settings.tesla_browser != crate::tesla_address::Mode::Off;
     let output_off = json!({"phase":"OFF", "name":null, "code":null, "sinceMillis":null});
     json!({
         "platform":"linux", "nowMillis":now, "version":status.version,
+        "startup":{"automatic":facts.automatic,"bootStart":facts.boot_start,"paused":facts.auto_start_paused,
+            "arrival":{"pending":facts.arrival_until_millis.is_some(),"deadlineMillis":facts.arrival_until_millis,"remainingMillis":facts.arrival_remaining_millis}},
         "setup":{"network":if shared {"SHARED_WIFI"} else {"PHONE_HOTSPOT"},
             "outputs":outputs, "summary":"", "valid":true},
         "relay":{"identity":if identity_ready {"READY"} else {"MISSING"}, "identityLabel":null,
@@ -93,13 +110,18 @@ pub fn build(
             "screen":screen(facts.screen.or(facts.carlink.screen)),
             "savedScreen":screen(facts.saved_screen.or(facts.built_in_screen)),
             "carlink":{"phase":if carlink {if clink.pin_pending {"PIN"} else {&clink.phase}} else {"OFF"},
-                "sinceMillis":clink.since_millis, "code":clink.code, "error":clink.error,
+                "sinceMillis":carlink_failure.map(|f| f.at_millis).or(clink.since_millis), "code":clink.code, "error":clink.error,
                 "retrying":clink.retrying, "carName":clink.car_name, "joinMethod":clink.join_method,
-                "trusted":clink.trusted, "pinPending":clink.pin_pending, "picture":clink.picture, "trail":clink.trail},
-            "dlna":output_off, "miracast":output_off, "tesla":output_off},
+                "trusted":clink.trusted, "pinPending":clink.pin_pending, "picture":clink.picture, "trail":carlink_failure.map(|f| &f.trail).unwrap_or(&clink.trail)},
+            "dlna":output_off, "miracast":output_off, "tesla":{
+                "phase":if !tesla_enabled {"OFF"} else if tesla.failure.is_some() {"FAILED"} else if tesla.url.is_some() {"READY"} else {"STARTING"},
+                "name":tesla.url.as_ref().filter(|_| tesla_enabled), "code":tesla.failure.as_ref().filter(|_| tesla_enabled),
+                "sinceMillis":tesla.since_millis.filter(|_| tesla_enabled), "activation":tesla.activation
+            }},
         "iphone":{"pick":pick, "name":status.iphone.name, "usb":"UNKNOWN",
-            "started":status.running || waiting, "armed":false, "carWaitUntilMillis":phone.car_wait_until_millis,
-            "step":phone.step, "stepSinceMillis":phone.since_millis, "stepDetail":phone.detail, "failure":failure},
+            "started":status.running || waiting, "armed":phone.armed, "carWaitUntilMillis":phone.car_wait_until_millis,
+            "step":phone.step, "stepSinceMillis":phone.since_millis, "stepDetail":phone.detail, "failure":failure,
+            "trail":facts.phone_trail(), "runtimeIap2Frames":phone.runtime_iap2_frames},
         "live":{"pictureOnCar":facts.picture_on_car, "sessionSinceMillis":phone.session_since_millis, "chips":facts.chips},
     })
 }

@@ -138,9 +138,9 @@ it('uses the Linux settings schema for Linux preview states', async () => {
     const keys = settings.schema.flatMap((section: { fields: { key: string }[] }) => section.fields.map(field => field.key));
     expect(keys).toContain('wifiInterface');
     expect(keys).toContain('autoStart');
-    expect(keys).not.toContain('bootStart');
+    expect(keys).toContain('bootStart');
     expect(settings.values.autoStart).toBe(true);
-    expect(settings.values).not.toHaveProperty('bootStart');
+    expect(settings.values.bootStart).toBe(true);
     expect(settings.schema.filter((section: { id: string }) => section.id === 'connection')).toHaveLength(1);
     expect((await call('/status')).data.platform).toBe('linux');
   } finally { vi.unstubAllEnvs(); }
@@ -262,7 +262,7 @@ it('serves all Linux trace types, downloads and mutable capture/clear preview st
     }
     expect((await call('/carlink-trace/tail?limit=0')).data.lines).toEqual([]);
     expect((await call('/carlink-trace/tail?limit=2')).data.lines).toEqual(lines.slice(0, 2));
-    for (const query of ['limit=501', 'type=Errors']) expect((await call('/carlink-trace/tail?' + query)).status).toBe(422);
+    for (const query of ['limit=5001', 'type=Errors']) expect((await call('/carlink-trace/tail?' + query)).status).toBe(422);
     const bundle = await call('/carlink-trace/download');
     expect(bundle.headers['Content-Type']).toBe('application/x-ndjson');
     expect(Number(bundle.headers['Content-Length'])).toBe(Buffer.byteLength(bundle.data));
@@ -292,7 +292,13 @@ it.each([false, true])('exports valid log ZIPs, retains a receipt and previews b
   expect((await call('/logs/receipt')).status).toBe(404);
   const file = await call('/logs/export', 'POST', { range: '10m' }); expect(file.data).toMatchObject({ bytes: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   const zip = await call('/logs/export/' + file.data.id); expect(zip.headers['Content-Type']).toBe('application/zip'); expect(Buffer.from(zip.data).readUInt32LE()).toBe(0x04034b50); expect(Buffer.from(zip.data).toString()).toContain('timeline.txt');
-  const receipt = await call('/logs/upload', 'POST', { id: file.data.id }); expect(receipt.data).toMatchObject({ logId: expect.any(String), expiresMillis: expect.any(Number) }); expect((await call('/logs/receipt')).data).toEqual(receipt.data);
+  let receipt = await call('/logs/upload', 'POST', { id: file.data.id });
+  if (linux) {
+    expect(receipt.data).toMatchObject({ id: expect.any(String), phase: 'Connecting', state: 'running', receipt: null });
+    const time = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 4000);
+    try { receipt = { ...receipt, data: (await call('/logs/upload/' + receipt.data.id)).data.receipt }; } finally { time.mockRestore(); }
+  }
+  expect(receipt.data).toMatchObject({ logId: expect.any(String), expiresMillis: expect.any(Number) }); expect((await call('/logs/receipt')).data).toEqual(receipt.data);
   const png = await call('/logs/qr.png'); expect(Buffer.from(png.data).slice(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   const envelope = (await call('/config/user')).data; expect(envelope.format).toBe('openxplay-user-config');
   envelope.settings.autoStart = false; envelope.settings.futureSetting = true;
@@ -334,4 +340,17 @@ it('expires log exports after one hour', async () => {
     const file = (await call('/logs/export', 'POST', { range: '10m' })).data;
     time.mockReturnValue(1793003600001); expect((await call('/logs/export/' + file.id)).status).toBe(404);
   } finally { time.mockRestore(); }
+});
+
+it('keeps saved hotspot passwords across rename and security changes', async () => {
+  const call = relay(true);
+  await call('/login', 'POST', { password: 'openxplay' });
+  await call('/hotspot', 'PUT', { ssid: 'First', password: 'retained-password', security: 'wpa2' });
+  expect((await call('/hotspot', 'PUT', { ssid: 'Renamed', password: '', security: 'open' })).status).toBe(200);
+  const open = (await call('/status')).data.hotspot;
+  expect(open).toMatchObject({ ssid: 'Renamed', password: 'retained-password', security: 'open', hasPassword: false });
+  expect((await call('/hotspot', 'PUT', { ssid: 'Secured', password: '', security: 'wpa3' })).status).toBe(200);
+  expect((await call('/status')).data.hotspot).toMatchObject({ ssid: 'Secured', password: 'retained-password', security: 'wpa3', hasPassword: true });
+  expect((await call('/hotspot', 'PUT', { ssid: 'Rejected', password: '', security: 'unknown' })).status).toBe(422);
+  expect((await call('/status')).data.hotspot.ssid).toBe('Secured');
 });

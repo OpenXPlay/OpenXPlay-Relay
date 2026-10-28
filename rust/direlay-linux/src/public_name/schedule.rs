@@ -21,6 +21,29 @@ pub const URGENT: u64 = 3 * DAY;
 /// The longest `Retry-After` obeyed; longer values are taken as this.
 pub const MAX_RETRY_AFTER: u64 = 30 * DAY;
 
+/// Android polls ARI after Retry-After, bounded to one hour through one day.
+pub fn ari_poll_delay(retry_after: Option<u64>) -> u64 {
+    retry_after.unwrap_or(CHECK_EVERY).clamp(3600, DAY)
+}
+/// Check at renewal or the next ARI poll, with the normal 12-hour check as an upper bound.
+pub fn next_check(
+    now: u64,
+    not_before: Option<u64>,
+    not_after: Option<u64>,
+    renew_at: Option<u64>,
+    ari_next_poll: Option<u64>,
+) -> Option<u64> {
+    let renewal = renew_at
+        .or_else(|| Some(not_after?.saturating_sub(not_after?.saturating_sub(not_before?) / 3)));
+    Some(
+        [Some(now + CHECK_EVERY), renewal, ari_next_poll]
+            .into_iter()
+            .flatten()
+            .min()?
+            .max(now),
+    )
+}
+
 /// The wait after the `failures`-th consecutive failure (counting from 1).
 pub fn backoff(failures: u32) -> u64 {
     let index = (failures.max(1) as usize - 1).min(BACKOFF.len() - 1);
@@ -70,6 +93,41 @@ pub fn may_replace(not_after: u64, now: u64, due: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn checks_wake_at_renewal_or_ari_poll_and_bound_retry_after_like_android() {
+        let now = 1_800_000_000;
+        assert_eq!(ari_poll_delay(None), CHECK_EVERY);
+        assert_eq!(ari_poll_delay(Some(1)), 3600);
+        assert_eq!(ari_poll_delay(Some(30 * DAY)), DAY);
+        assert_eq!(
+            next_check(now, Some(now - 60), Some(now + 30), None, None),
+            Some(now)
+        );
+        assert_eq!(
+            next_check(
+                now,
+                Some(now),
+                Some(now + 90 * DAY),
+                Some(now + 17),
+                Some(now + 200)
+            ),
+            Some(now + 17)
+        );
+        assert_eq!(
+            next_check(
+                now,
+                Some(now),
+                Some(now + 90 * DAY),
+                Some(now + DAY),
+                Some(now + 42)
+            ),
+            Some(now + 42)
+        );
+        assert_eq!(
+            next_check(now, Some(now), Some(now + 90 * DAY), None, None),
+            Some(now + CHECK_EVERY)
+        );
+    }
     #[test]
     fn backoff_sequence_then_daily_and_retry_after_wins_when_longer() {
         let waits: Vec<u64> = (1..=8).map(backoff).collect();

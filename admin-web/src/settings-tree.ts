@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
+import { updateMenuVersion } from './update-check';
 import { isVisible, optionLabel, type Field, type Settings } from './schema';
 import type { Status } from './api';
 import type { Language } from './i18n';
 export const pageKeys: Record<string, string[]> = {
-  output: ['output', 'wirelessDisplay', 'carlinkName', 'vehicleInformation', 'carlinkAutoReconnect', 'carlinkReconnectOnResize', 'carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'],
+  output: ['output', 'wirelessDisplay', 'carlinkName', 'vehicleInformation', 'carlinkAutoReconnect', 'carlinkReconnectOnResize'],
+  vehicle: [],
   'output/plugins': ['plugins', 'pluginsEnabled'],
-  car: ['carBrand', 'carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText', 'savedHeadUnit', 'savedScreen'],
-  picture: ['carplayResolution', 'resolution', 'carplayScreenWidth', 'screenWidth', 'frameRate', 'videoCodec', 'videoStats', 'carPlayViewAreas', 'viewAreas'],
+  tesla: ['teslaBrowser', 'teslaVirtualAddress', 'teslaPublicAddress', 'teslaMirrorAddress', 'teslaAndroidAddress'],
+  car: ['carBrand', 'carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText', 'savedHeadUnit', 'savedScreen', 'carPlayViewAreas', 'viewAreas'],
+  picture: ['carplayResolution', 'resolution', 'carplayScreenWidth', 'screenWidth', 'frameRate', 'videoCodec', 'videoStats', 'carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'],
   audio: ['carBluetoothAudio', 'microphone', 'microphoneSource'],
   connection: ['iphone', 'transport'],
   'connection/network': ['networkMode', 'hotspotSsid', 'hotspotPassword', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'wifiCountry', 'sharedWifiNetworks'],
@@ -17,18 +20,23 @@ export const pageKeys: Record<string, string[]> = {
   startup: ['autoStart', 'bootStart'],
   access: ['requirePairingCode', 'adminPort', 'webPort'],
   'access/public-name': ['publicNameEnabled', 'publicNameProvider', 'publicName', 'publicNameToken', 'publicNameAgreeTerms'],
-  'developer/carlink': ['carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
+  'developer/carlink': ['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
   'developer/video': ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
-  'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'wifiChannel', 'devicePreset'],
+  'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
   'developer/identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget'],
-  'experimental': ['experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
+  developer: ['developerActive'],
+  'experimental': ['experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
 };
+export function fieldEnabled(key: string, values: Settings['values']): boolean {
+  if (key.startsWith('experimental') && key !== 'experimentalActive') return values.experimentalActive !== false;
+  return !['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
+}
 export function fieldRoute(key: string): string {
   return 'settings/' + (Object.entries(pageKeys).find(([, keys]) => keys.includes(key))?.[0] ?? 'developer/other');
 }
 export function pageFields(settings: Settings, route: string): Field[] { return settings.schema.flatMap(s => s.fields).filter(f => fieldRoute(f.key) === route); }
 export const pages = [
-  ['output', 'menu.output', 'car'], ['car', 'menu.car', 'car'], ['picture', 'menu.picture', 'monitor'], ['audio', 'menu.audio', 'bluetooth'],
+  ['output', 'menu.output', 'car'], ['car', 'menu.car', 'car'], ['tesla', 'menu.tesla', 'car'], ['picture', 'menu.picture', 'monitor'], ['audio', 'menu.audio', 'bluetooth'],
   ['connection', 'menu.connection', 'smartphone'], ['startup', 'menu.startup', 'play'], ['access', 'menu.access', 'lock'],
   ['config-files', 'menu.config-files', 'code'], ['logs', 'menu.logs', 'file-text'], ['about', 'menu.about', 'info'],
   ['developer', 'menu.developer', 'code'], ['experimental', 'menu.experimental', 'settings'],
@@ -42,15 +50,20 @@ export function normalizeRoute(hash: string): string {
   return valid.includes(route) ? route : 'settings';
 }
 export function settingsPlacement(settings: Settings) { return settings.schema.flatMap(s => s.fields).map(field => ({ field, route: fieldRoute(field.key) })); }
-export function restartsPicture(key: string): boolean { return ['carplayResolution', 'carplayScreenWidth', 'resolution', 'screenWidth', 'videoCodec', 'frameRate', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity'].includes(key); }
+export function restartsPicture(key: string): boolean { return ['carplayResolution', 'carplayScreenWidth', 'resolution', 'screenWidth', 'videoCodec', 'frameRate'].includes(key); }
 
 export const developerIcons: Record<string, string> = { diagnostics: 'info', carlink: 'car', video: 'settings', connection: 'wifi', identity: 'file-key-2', other: 'sliders-horizontal' };
 export function pageAvailable(settings: Settings, status: Status, route: string): boolean {
   if (route === 'settings/logs' || route === 'settings/config-files') return status.adminFeatures?.includes(route.slice(9) as 'logs' | 'config-files') ?? false;
   if (['settings', 'settings/about', 'settings/access', 'settings/access/admin', 'settings/connection', 'settings/connection/network', 'settings/developer', 'settings/developer/diagnostics', 'settings/developer/connection'].includes(route)) return true;
+  if (route === 'settings/vehicle') return status.platform === 'linux';
   if (route === 'settings/car') return status.platform === 'linux' || pageFields(settings, route).length > 0;
   if (route === 'settings/connection/network/interfaces') return status.platform === 'linux';
   return pageFields(settings, route).some(field => isVisible(field, settings.values));
+}
+export function autoFrameRateSummary(status: Status, t: (key: string) => string): string {
+  const fps = status.running ? status.video?.appliedFps : status.video?.requestedFps;
+  return [t('menu.rateAuto'), fps ? `${fps} fps` : ''].filter(Boolean).join(' · ');
 }
 export function menuSummary(settings: Settings, status: Status, route: string, language: Language, t: (key: string) => string): string {
   const all = settings.schema.flatMap(s => s.fields), v = settings.values;
@@ -60,7 +73,11 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
     return field.type === 'choice' ? optionLabel(field.options?.find(o => o.value === value), language, t) : field.type === 'bool' ? t(value ? 'stage.on' : 'stage.off') : typeof value === 'string' || typeof value === 'number' ? String(value) : '';
   };
   if (route === 'settings/car') return ['carBrand', 'carModel', 'carYear'].map(key => v[key] === 'other' && v[key + 'Text'] ? String(v[key + 'Text']) : label(key)).filter(Boolean).join(' · ');
-  if (route === 'settings/picture') return [label('resolution') || label('carplayResolution'), `${v.screenWidth ?? v.carplayScreenWidth ?? 200} mm`, label('videoCodec'), v.frameRate === 'auto' ? t('menu.rateAuto') : label('frameRate')].filter(Boolean).join(' · ');
+  if (route === 'settings/picture') {
+    const rate = v.frameRate === 'auto' ? autoFrameRateSummary(status, t) : label('frameRate');
+    return [label('resolution') || label('carplayResolution'), `${v.screenWidth ?? v.carplayScreenWidth ?? 200} mm`, label('videoCodec'), rate].filter(Boolean).join(' · ');
+  }
+  if (route === 'settings/tesla') return label('teslaBrowser');
   if (route === 'settings/output') return label('output');
   if (route === 'settings/audio') return `${t('stage.carBluetooth')}: ${label('carBluetoothAudio')}`;
   if (route === 'settings/startup') return [all.some(f => f.key === 'autoStart') ? `${t('menu.whenReady')}: ${label('autoStart')}` : '', all.some(f => f.key === 'bootStart') ? `${t('menu.atBoot')}: ${label('bootStart')}` : ''].filter(Boolean).join(' · ');
@@ -72,9 +89,9 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
     const options = all.filter(f => f.key.startsWith('experimental') && f.key !== 'experimentalActive' && f.type === 'bool' && v[f.key]).length;
     return options ? `${t('stage.on')} · ${options} ${t('menu.options')}` : t('stage.on');
   }
-  if (route === 'settings/about') return status.version;
+  if (route === 'settings/about') return updateMenuVersion(status.version, t);
   if (route === 'settings/developer/carlink') return [label('carlinkHevc'), label('carlinkTrace')].filter(Boolean).join(' · ');
   if (route === 'settings/developer/connection') return [label('output'), t(v.transport === 'usb' ? 'option.transport.usb' : 'option.transport.wireless')].filter(Boolean).join(' · ');
-  if (route === 'settings/developer/video') return v.displayMode === 'custom' ? `${v.displayWidth} × ${v.displayHeight} · ${v.displayDensity} dpi` : label('displayMode');
+  if (route === 'settings/developer/video') return ['custom', 'fixed'].includes(String(v.displayMode)) ? `${v.displayWidth} × ${v.displayHeight} · ${v.displayDensity} dpi` : label('displayMode');
   return '';
 }

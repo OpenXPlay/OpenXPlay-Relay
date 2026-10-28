@@ -4,10 +4,18 @@
 
 import type { Settings, Values, NetworkRolesSetting } from './schema';
 export type SessionState = 'login' | 'ready';
+export interface RuntimeStartup {
+  automatic: boolean; bootStart: boolean; paused: boolean;
+  arrival: { pending: boolean; deadlineMillis: number | null; remainingMillis: number | null };
+}
 export interface Session { state: SessionState; defaultPassword: boolean }
 export interface WifiNetwork { ssid: string; signal: number; secure: boolean; known: boolean }
 export interface WifiClient { ssid: string | null; ip: string | null; signal: number | null; setupHotspot?: boolean }
 export interface CarlinkStatus {
+  generation?: number | null; appliedPicture?: { width: number; height: number } | null;
+  pinRequest?: number | null; pinConfirmation?: boolean; pinClient?: string | null;
+  vehicle?: { sample?: boolean; enabled: boolean; state: string; sensorActive: boolean; storageFailed: boolean };
+  summary?: Record<string, string>;
   trusted?: boolean; state: string; detail: string; lastLostReason?: string | null; lastError?: string | null;
   headUnit?: { address: string; name?: string | null } | null;
   network?: { ssid: string; interface: string } | null;
@@ -17,7 +25,11 @@ export interface CarlinkStatus {
 }
 export interface HostAddress { interface: string; ipv4: string; developerOnly: boolean }
 export interface PairedDevice { name: string; connected: boolean; iphone: boolean }
-export interface VideoStatus { codec: string; reason: string; codecString?: string | null; width?: number | null; height?: number | null }
+export interface VideoStatus { codec: string; reason: string; codecString?: string | null; width?: number | null; height?: number | null;
+  // Linux input counters are scoped to this Stream session; rates use the admin page's monotonic clock.
+  session?: string | null; active?: boolean; frames?: number; bytes?: number; bytesMeasured?: boolean;
+  appliedFps?: number; requestedFps?: number; hevcFailure?: string | null;
+}
 // One browser on the car screen: its latest receiver-info and the most recent per-second stats, oldest first.
 // Linux device-support contract (UFI003 Bluetooth guard); absent where no guard runs.
 export interface HostProfile { model: string | null; profilePath: string; profileLoaded: boolean; profileError: string | null; bluetoothAdapter: { name: string; address: string } | null; wifiInterface: string; wifiPresent: boolean; secureConnections: 'pairing-off' | 'untouched' }
@@ -30,6 +42,7 @@ export interface HostCapabilities {
   tools: Record<string, { present: boolean | null; version: string | null }>;
 }
 export type HotspotBand = 'auto' | '2.4' | '5';
+export type HotspotSecurity = 'open' | 'wpa2' | 'wpa3-transition' | 'wpa3';
 export interface Wireless {
   preset: { id: string; label: string; source: string; detected: string };
   mode: 'concurrent' | 'single-radio' | 'unknown';
@@ -67,15 +80,21 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 // trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
+  screenData?: import('./car-screen').ScreenData;
   adminFeatures?: ('logs' | 'config-files' | 'update-check')[];
-  pathInput?: import('./path/model').PartialInput;
+  pathInput?: import('./path/model').PartialInput & {
+    startup?: RuntimeStartup;
+    iphone?: import('./path/model').PartialInput['iphone'] & { trail?: string[]; runtimeIap2Frames?: number };
+  };
   adminHotspot?: { state: 'up' | 'paused-carlink' | 'waiting-interface' | 'off' | 'failed'; reason: string | null };
   hostAddresses?: HostAddress[]; receiverPort?: number; adminPort?: number; pairingAvailable?: boolean; pairingDeadline?: number | null; screenConnected?: boolean;
   pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[];
   // Android 12+: the Nearby devices step of a pairing window, and whether the request waits in a notification.
   pairingNeedsPermission?: boolean; pairingPermissionDenied?: boolean; pairingNotified?: boolean;
+  receiverHistory?: { screens: { width: number; height: number; densityDpi: number; info: Record<string, unknown> }[];
+    fullscreenExits: { time: number; client: string; report: Record<string, unknown> }[] };
   video?: VideoStatus; receivers?: ReceiverReport[]; bluetoothGuard?: BluetoothGuard;
-  hotspot?: { hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
+  hotspot?: { security?: HotspotSecurity; supportedSecurity?: HotspotSecurity[]; hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;
   platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; hostCapabilities?: HostCapabilities; adminUrl: string; adminUrls?: string[]; receiverUrls: string[];
   state: 'idle' | 'waiting' | 'connecting' | 'active' | 'reconnecting'; running: boolean; autoStartPaused: boolean;
@@ -90,13 +109,13 @@ export class ApiError extends Error {
 }
 export class NetworkError extends Error {}
 export const events = new EventTarget();
-export async function request<T>(path: string, method = 'GET', body?: unknown, retry = true, timeoutMillis = 8000): Promise<T> {
+export async function request<T>(path: string, method = 'GET', body?: unknown, retry = true, timeoutMillis = 8000, rawJson = false): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/api/v0${path}`, {
       method, credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(timeoutMillis),
       headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-OpenXPlay-Admin': '1' },
-      ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }),
+      ...(method === 'GET' ? {} : { body: rawJson ? String(body) : JSON.stringify(body ?? {}) }),
     });
   } catch {
     events.dispatchEvent(new Event('offline'));
@@ -116,10 +135,12 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
 }
 export const api = {
   logExport: (range: '10m' | '30m' | '24h') => request<import('./feature-pages').LogExport>('/logs/export', 'POST', { range }, false, 60000),
-  logUpload: (id: string) => request<import('./feature-pages').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
+  logUpload: (id: string) => request<import('./logs-page').LogJob | import('./logs-page').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
+  logUploadStatus: (id: string) => request<import('./logs-page').LogJob>('/logs/upload/' + encodeURIComponent(id), 'GET', undefined, false),
+  logUploadCancel: (id: string) => request<import('./logs-page').LogJob>('/logs/upload/' + encodeURIComponent(id), 'DELETE', {}, false),
   logReceipt: () => request<import('./feature-pages').LogReceipt>('/logs/receipt', 'GET', undefined, false),
-  configImport: (envelope: unknown, dryRun = false) => request<import('./feature-pages').ConfigImport>('/config/import' + (dryRun ? '?dryRun=1' : ''), 'POST', envelope, false),
-  updateCheck: async (channel: 'stable' | 'beta') => { const result = await request<import('./feature-pages').UpdateCheck | { error: string }>('/update?channel=' + channel, 'GET', undefined, false, 15000); if ('error' in result) throw new ApiError(503, result.error); return result; },
+  configImport: (envelope: unknown, dryRun = false) => request<import('./feature-pages').ConfigImport>('/config/import' + (dryRun ? '?dryRun=1' : ''), 'POST', envelope, false, 8000, typeof envelope === 'string'),
+  updateCheck: async (channel: 'stable' | 'beta') => { const result = await request<import('./update-check').UpdateResponse | { error: string }>('/update?channel=' + channel + '&fresh=1', 'GET', undefined, false, 45000); if ('error' in result) throw new ApiError(503, result.error); return result; },
   previewRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles/preview', 'POST', { networkRoles, ...extra }, false),
   saveRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles, ...extra }, false),
   session: () => request<Session>('/session'),
@@ -127,7 +148,7 @@ export const api = {
   password: (current: string, next: string) => request('/password', 'POST', { current, new: next }, false),
   networks: () => request<WifiNetwork[]>('/wifi/networks'),
   wifi: (ssid: string, password?: string) => request('/wifi', 'PUT', { ssid, ...(password === undefined ? {} : { password }) }, false),
-  hotspot: (ssid: string, password: string, band?: HotspotBand) => request('/hotspot', 'PUT', { ssid, password, ...(band === undefined ? {} : { band }) }, false),
+  hotspot: (ssid: string, password: string, band?: HotspotBand, security?: HotspotSecurity) => request('/hotspot', 'PUT', { ssid, password, ...(band === undefined ? {} : { band }), ...(security === undefined ? {} : { security }) }, false),
   logout: () => request('/logout', 'POST'),
   // Receiver diagnostics are large and change every second; only the developer section asks for them.
   status: (diagnostics = false) => request<Status>(diagnostics ? '/status?diagnostics=1' : '/status'),
@@ -137,6 +158,7 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
-  action: (name: 'start' | 'stop' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
+  action: (name: 'start' | 'stop' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'clear-window-records' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink', 'regenerate-pairing-code'].includes(name)),
+  showViewArea: (index: number) => request('/view-area', 'POST', { index }, false),
   phones: () => request<Phone[]>('/phones'),
 };

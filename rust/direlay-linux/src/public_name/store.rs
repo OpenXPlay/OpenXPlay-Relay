@@ -109,6 +109,7 @@ pub struct Meta {
     pub cert_id: Option<String>,
     pub ari_window: Option<(u64, u64)>,
     pub renew_at: Option<u64>,
+    pub ari_next_poll: Option<u64>,
     /// The address last published, and when.
     pub address: Option<String>,
     pub published_at: Option<u64>,
@@ -207,9 +208,52 @@ impl Store {
         Ok(key)
     }
     pub fn account_url(&self) -> Option<String> {
-        let url = String::from_utf8(self.read("account.url", 4096)?).ok()?;
+        let url =
+            String::from_utf8(self.read("account.url", crate::config_files::MAX_BYTES as u64)?)
+                .ok()?;
         let url = url.trim();
         (!url.is_empty()).then(|| url.to_string())
+    }
+    /// Old installs bind the legacy account URL to the selected environment. New writes keep
+    /// the directory explicitly, so a transferred staging account cannot be used in production.
+    pub fn account(
+        &self,
+        environment: Option<config::AcmeEnvironment>,
+    ) -> Option<(String, String, Option<String>)> {
+        let pem = String::from_utf8(self.read("account.key", 16 * 1024)?).ok()?;
+        AccountKey::from_pem(&pem)?;
+        let directory = self
+            .read("account.directory", crate::config_files::MAX_BYTES as u64)
+            .and_then(|b| String::from_utf8(b).ok())
+            .or_else(|| {
+                environment.map(|e| match e {
+                    config::AcmeEnvironment::Production => super::acme::PRODUCTION.into(),
+                    config::AcmeEnvironment::Staging => super::acme::STAGING.into(),
+                })
+            })?;
+        Some((pem, directory.trim().into(), self.account_url()))
+    }
+    pub fn account_url_for(&self, directory: &str) -> Option<String> {
+        if let Some(saved) = self.read("account.directory", crate::config_files::MAX_BYTES as u64) {
+            if String::from_utf8(saved).ok()?.trim() != directory {
+                return None;
+            }
+        }
+        self.account_url()
+    }
+    pub fn save_account(&self, key: &str, directory: &str, url: Option<&str>) -> io::Result<()> {
+        self.write("account.key", key.as_bytes())?;
+        self.write("account.directory", directory.as_bytes())?;
+        match url {
+            Some(url) => self.save_account_url(url),
+            None => match std::fs::remove_file(self.dir.join("account.url")) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                result => result,
+            },
+        }
+    }
+    pub fn save_account_directory(&self, directory: &str) -> io::Result<()> {
+        self.write("account.directory", directory.as_bytes())
     }
     pub fn save_account_url(&self, url: &str) -> io::Result<()> {
         self.write("account.url", format!("{url}\n").as_bytes())
