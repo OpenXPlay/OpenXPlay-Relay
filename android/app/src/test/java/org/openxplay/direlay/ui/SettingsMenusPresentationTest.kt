@@ -11,10 +11,29 @@ import org.openxplay.direlay.relay.CarModel
 import org.openxplay.direlay.relay.CarYear
 import org.openxplay.direlay.relay.CarModels
 import org.openxplay.direlay.settings.CarSelection
+import org.openxplay.direlay.settings.TeslaBrowserMode
 import org.openxplay.direlay.storage.MaterialStatus
+import org.openxplay.direlay.ui.design.IconHue
 import java.util.Locale
 
 class SettingsMenusPresentationTest {
+    @Test fun teslaIsAlwaysInTheFirstMenuGroupDirectlyAfterCarAndScreen() {
+        assertEquals(listOf("settings/output", "settings/car", "settings/tesla", "settings/picture", "settings/audio"),
+            settingsMainPages.map { it.route })
+        val tesla = settingsMainPages.single { it.route == "settings/tesla" }
+        assertEquals(R.string.tesla_title, tesla.title)
+        assertEquals(R.string.tesla_title, settingsPageTitle(tesla.route))
+        assertEquals(R.drawable.symbol_car, tesla.icon)
+        assertEquals(IconHue.CAR, settingsMenuHue(tesla.title))
+    }
+
+    @Test fun teslaMenuSummaryUsesTheSelectedModesTitleIncludingOff() {
+        val titles = mapOf(TeslaBrowserMode.OFF to R.string.tesla_off, TeslaBrowserMode.TESLAMIRROR to R.string.tesla_mirror,
+            TeslaBrowserMode.VIRTUAL_NAME to R.string.tesla_virtual_name, TeslaBrowserMode.PUBLIC_ADDRESS to R.string.tesla_public_address,
+            TeslaBrowserMode.TESLA_ANDROID to R.string.tesla_android)
+        TeslaBrowserMode.entries.forEach { mode -> assertEquals(titles.getValue(mode), teslaBrowserOption(mode).title) }
+    }
+
     @Test fun frameRateAndPictureSummariesShowTheSuppliedSessionOrNextStartRate() {
         val auto = org.openxplay.stream.core.FrameRatePreference.AUTO
         assertEquals("Auto · 60 fps", frameRateSummary(auto, 60, "Auto"))
