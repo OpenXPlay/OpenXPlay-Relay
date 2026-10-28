@@ -34,7 +34,7 @@ export function configErrorText(error: unknown, t: Translate): string | null {
 export function httpUrl(value: string): string { try { const url = new URL(value, location.origin); return ['http:', 'https:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } }
 export function mountFeaturePage(container: HTMLElement, route: string, options: { t: Translate; version: string; platform?: 'linux' | 'android'; adminFeatures?: string[]; language: string; setLanguage: (language: string) => void; error: (error: unknown) => string; reload: () => Promise<void> }) {
   const t = options.t;
-  let privateDataAvailable = false;
+  let privateDataAvailable = false, mfiTokenAvailable = false, publicNamePrivateAvailable = true;
   const feedback = (key: string) => { const node = container.querySelector('#feature-feedback'); if (node) node.textContent = t(key); };
   const fail = (e: unknown) => {
     const message = configErrorText(e, t), node = container.querySelector('#feature-feedback');
@@ -52,13 +52,15 @@ export function mountFeaturePage(container: HTMLElement, route: string, options:
       const settings = await api.settings();
       if (!container.isConnected) return;
       const available = privateDataAvailable = settings.values.privacyConfigAvailable === true;
+      mfiTokenAvailable = settings.values.mfiRemoteTokenSet === true;
+      publicNamePrivateAvailable = settings.values.publicNamePrivacyAvailable !== false || !mfiTokenAvailable;
       container.querySelector<HTMLButtonElement>('#privacy-export')!.disabled = !available;
       container.querySelector('#privacy-empty')!.toggleAttribute('hidden', available);
     };
     void refreshPrivacy().catch(fail);
     on(container.querySelector('#privacy-export'), 'click', () => {
       const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', t('files.export.privacy'));
-      dialog.innerHTML = `<h2>${esc(t('files.export.privacy'))}</h2><p>${esc(t('files.privacyWarning'))}</p><button data-export class="primary">${esc(t('files.exportConfirm'))}</button><button data-close>${esc(t('ui.cancel'))}</button>`;
+      dialog.innerHTML = `<h2>${esc(t('files.export.privacy'))}</h2>${publicNamePrivateAvailable ? `<p>${esc(t('files.privacyWarning'))}</p>` : ''}${mfiTokenAvailable ? `<p>${esc(t('files.mfiPrivacyWarning'))}</p>` : ''}<button data-export class="primary">${esc(t('files.exportConfirm'))}</button><button data-close>${esc(t('ui.cancel'))}</button>`;
       document.body.append(dialog); dialog.showModal();
       const close = () => { dialog.close(); dialog.remove(); container.querySelector<HTMLButtonElement>('#privacy-export')?.focus(); };
       on(dialog.querySelector('[data-close]'), 'click', close); on(dialog, 'cancel', close);

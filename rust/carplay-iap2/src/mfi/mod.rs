@@ -9,3 +9,9 @@ pub mod local_mfi_authentication_client;
 /// mfi authentication client protocol module.
 pub mod mfi_authentication_client;
 pub use mfi_authentication_client::{BaaCertificatePair, MfiAuthenticator, MfiCertificateType};
+
+pub mod ch341;
+pub mod coprocessor;
+#[cfg(any(target_os = "linux", test))]
+pub mod linux;
+pub mod remote;

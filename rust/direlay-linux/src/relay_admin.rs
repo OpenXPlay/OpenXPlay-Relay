@@ -1950,9 +1950,11 @@ impl LinuxRelayAdmin {
         let selection =
             crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
         let identity = self.options.test_input.is_some()
-            || ["identity.pk8", "certificate.p7b"].iter().all(|name| {
-                std::fs::metadata(options.identity_dir.join(name)).is_ok_and(|m| m.len() > 0)
-            });
+            || crate::mfi_sources::readiness(
+                &options.settings,
+                &options.state_dir,
+                &options.identity_dir,
+            ) == "ready";
         let network_ready = self.wifi_present(&options.wifi_interface)
             && wifi != Some(false)
             && (options.settings.network_mode != "shared-wifi"
@@ -2623,6 +2625,10 @@ fn car_section(car: &crate::car_models::CarSelection) -> Section {
 }
 pub fn settings_schema() -> Vec<Section> {
     let fields: Vec<Field> = [
+        ("mfiTarget", "choice"),
+        ("mfiI2cPath", "text"),
+        ("mfiRemoteServer", "text"),
+        ("mfiRemoteToken", "secret"),
         ("networkMode", "choice"),
         ("networkRoles", "object"),
         ("adminHotspotPassword", "secret"),
@@ -2687,6 +2693,18 @@ pub fn settings_schema() -> Vec<Section> {
             .then(|| format!("hint.field.{key}"))
         },
         options: match key {
+            "mfiTarget" => Some(
+                ["local", "remote", "usb-ch341", "i2c"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        value: v.into(),
+                        label_key: format!("option.mfiTarget.{v}"),
+                        labels: None,
+                        illustration: None,
+                        hint_key: None,
+                    })
+                    .collect(),
+            ),
             "carlinkHevc" | "carlinkTrace" | "videoStats" => Some(
                 (if key == "carlinkHevc" {
                     vec!["auto", "off", "signal"]
@@ -2780,6 +2798,14 @@ pub fn settings_schema() -> Vec<Section> {
             _ => None,
         },
         visible_when: match key {
+            "mfiI2cPath" => Some(VisibleWhen {
+                key: "mfiTarget".into(),
+                equals: vec!["i2c".into()],
+            }),
+            "mfiRemoteServer" | "mfiRemoteToken" => Some(VisibleWhen {
+                key: "mfiTarget".into(),
+                equals: vec!["remote".into()],
+            }),
             "networkRoles"
             | "adminHotspotPassword"
             | "wifiCountry"
@@ -2899,6 +2925,9 @@ fn failure_secrets(settings: &Settings, state_dir: &std::path::Path) -> Vec<Stri
         .iter()
         .map(|n| n.password.clone())
         .collect();
+    if let Ok(token) = crate::mfi_sources::token(state_dir) {
+        secrets.push(token);
+    }
     secrets.extend(settings.carlink_pin.clone());
     secrets.extend(settings.admin_hotspot_password.clone());
     if let Ok((_, password)) = crate::linux_hotspot::hotspot_credentials(state_dir) {
@@ -2917,6 +2946,9 @@ fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static st
             }
         };
     }
+    changed!(mfi_target, "mfiTarget");
+    changed!(mfi_i2c_path, "mfiI2cPath");
+    changed!(mfi_remote_server, "mfiRemoteServer");
     changed!(iphone, "iphone");
     changed!(rfcomm_channel, "rfcommChannel");
     changed!(wifi_interface, "wifiInterface");
@@ -3108,6 +3140,9 @@ impl LinuxRelayAdmin {
         let status = self.status();
         let settings = self.settings.lock().unwrap().clone();
         let mut known: Vec<(String, &str)> = Vec::new();
+        if let Ok(token) = crate::mfi_sources::token(&self.options.state_dir) {
+            known.push((token, "secret"));
+        }
         for network in &settings.shared_wifi_networks {
             known.push((network.password.clone(), "secret"));
         }
@@ -3259,10 +3294,15 @@ impl RelayAdmin for LinuxRelayAdmin {
     ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
         let now = crate::logs::now_millis();
         if privacy {
-            let sections = self
+            let mut sections = self
                 .public_name
                 .privacy_export()
                 .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+            let token = crate::mfi_sources::token(&self.options.state_dir)
+                .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+            if !token.is_empty() {
+                sections["mfiRemoteToken"] = token.into();
+            }
             crate::config_files::export_privacy(sections, now)
         } else {
             let display = oxp_wire::display_settings(&self.input.display_settings());
@@ -3334,7 +3374,21 @@ impl RelayAdmin for LinuxRelayAdmin {
             .cloned()
             .collect();
         plan.report.restart_needed = !plan.report.next_start.is_empty();
+        if plan.mfi_remote_token.is_some() {
+            plan.report
+                .applied_now
+                .retain(|key| key != "mfiRemoteToken");
+            plan.report.next_start.push("mfiRemoteToken".into());
+            plan.report.restart_needed = true;
+        }
         if !dry_run {
+            if let Some(token) = plan.mfi_remote_token {
+                crate::mfi_sources::save_token(&self.options.state_dir, &token)
+                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+                self.restart_required.store(true, Ordering::Release);
+                self.events
+                    .failure_secrets(failure_secrets(&current, &self.options.state_dir));
+            }
             if let Some(privacy) = plan.privacy {
                 self.public_name
                     .import_privacy(privacy)
@@ -3642,7 +3696,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             network: AdminNetwork {
                 planned: Some(self.network_status(&self.settings.lock().unwrap())),
                 following_carlink,
-                mode: options.settings.network_mode,
+                mode: options.settings.network_mode.clone(),
                 wifi: wifi.ssid.clone(),
             },
             output: options.settings.output.clone(),
@@ -3676,9 +3730,11 @@ impl RelayAdmin for LinuxRelayAdmin {
         };
         drop(controller);
         let identity_ready = self.options.test_input.is_some()
-            || ["identity.pk8", "certificate.p7b"].iter().all(|name| {
-                std::fs::metadata(options.identity_dir.join(name)).is_ok_and(|m| m.len() > 0)
-            });
+            || crate::mfi_sources::readiness(
+                &options.settings,
+                &options.state_dir,
+                &options.identity_dir,
+            ) == "ready";
         crate::path_input::update(
             &self.runtime_path_facts(),
             &self.settings.lock().unwrap(),
@@ -3753,6 +3809,28 @@ impl RelayAdmin for LinuxRelayAdmin {
         }
         // The token never leaves the relay: `publicNameTokenSet` says whether one is saved.
         values.extend(self.public_name.admin_values());
+        values.insert(
+            "publicNamePrivacyAvailable".into(),
+            values
+                .get("privacyConfigAvailable")
+                .cloned()
+                .unwrap_or(false.into()),
+        );
+        let token_set =
+            crate::mfi_sources::token(&self.options.state_dir).is_ok_and(|v| !v.is_empty());
+        values.insert("mfiRemoteTokenSet".into(), token_set.into());
+        if token_set {
+            values.insert("privacyConfigAvailable".into(), true.into());
+        }
+        values.insert(
+            "mfiSourceStatus".into(),
+            crate::mfi_sources::readiness(
+                &self.settings.lock().unwrap(),
+                &self.options.state_dir,
+                &self.options.identity_dir,
+            )
+            .into(),
+        );
         AdminSettings {
             schema,
             values,
@@ -3769,6 +3847,40 @@ impl RelayAdmin for LinuxRelayAdmin {
                 "settings".into(),
                 "error.invalid".into(),
             )]));
+        }
+        // Remote credentials use a write-only field and an independent private store.
+        if let Some(value) = values.remove("mfiRemoteToken") {
+            let Some(token) = value
+                .as_str()
+                .filter(|v| crate::mfi_sources::valid_token(v))
+            else {
+                return AdminUpdate::Errors(BTreeMap::from([(
+                    "mfiRemoteToken".into(),
+                    "error.invalid".into(),
+                )]));
+            };
+            if let Err(errors) = update_settings(&self.settings.lock().unwrap(), values.clone()) {
+                return AdminUpdate::Errors(errors);
+            }
+            if crate::mfi_sources::save_token(&self.options.state_dir, token).is_err() {
+                return AdminUpdate::Errors(BTreeMap::from([(
+                    "mfiRemoteToken".into(),
+                    "error.invalid".into(),
+                )]));
+            }
+            self.events.failure_secrets(failure_secrets(
+                &self.settings.lock().unwrap(),
+                &self.options.state_dir,
+            ));
+            self.restart_required.store(true, Ordering::Release);
+            return match if values.is_empty() {
+                AdminUpdate::NextStart
+            } else {
+                self.update(values)
+            } {
+                AdminUpdate::Errors(e) => AdminUpdate::Errors(e),
+                _ => AdminUpdate::NextStart,
+            };
         }
         // Trusted HTTPS lives in its own file and applies at once.
         let public: Vec<String> = values
@@ -4290,6 +4402,144 @@ impl RelayAdmin for LinuxRelayAdmin {
 mod tests {
     use super::*;
     include!("admin_contract_tests.rs");
+    #[test]
+    fn mfi_sources_android_user_envelope_and_restart_contract() {
+        let (admin, dir) = fake();
+        for (target, path, server) in [
+            ("remote", "/dev/i2c-1", "https://mfi.example.org"),
+            ("i2c", "/dev/i2c-2", "https://mfi.example.org"),
+            ("usb-ch341", "/dev/i2c-2", "https://mfi.example.org"),
+            ("local", "/dev/i2c-2", "https://mfi.example.org"),
+        ] {
+            let envelope = serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"mfiTarget":target,"mfiI2cPath":path,"mfiRemoteServer":server}});
+            let bytes = serde_json::to_vec(&envelope).unwrap();
+            let preview = admin.config_import(&bytes, true).unwrap();
+            assert_eq!(preview["restartNeeded"], true);
+            assert!(preview["ignored"].as_array().unwrap().is_empty());
+            assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
+            let exported = admin.config_export(false).unwrap();
+            assert_eq!(exported["settings"]["mfiTarget"], target);
+            assert_eq!(exported["settings"]["mfiI2cPath"], path);
+            assert_eq!(exported["settings"]["mfiRemoteServer"], server);
+        }
+        for values in [
+            serde_json::json!({"mfiTarget":"unknown"}),
+            serde_json::json!({"mfiTarget":"i2c","mfiI2cPath":"/tmp/device"}),
+            serde_json::json!({"mfiTarget":"remote","mfiRemoteServer":"file:///tmp/server"}),
+        ] {
+            assert!(matches!(
+                admin.update(values.as_object().unwrap().clone()),
+                AdminUpdate::Errors(_)
+            ));
+        }
+        assert_eq!(admin.settings.lock().unwrap().mfi_target, "local");
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn mfi_token_is_write_only_private_exportable_and_applied_only_after_preview() {
+        use std::os::unix::fs::PermissionsExt;
+        let (admin, dir) = fake();
+        let bytes=br#"{"format":"openxplay-privacy-config","version":1,"mfiRemoteToken":"mfi-test-secret"}"#;
+        let preview = admin.config_import(bytes, true).unwrap();
+        assert_eq!(preview["nextStart"], serde_json::json!(["mfiRemoteToken"]));
+        assert_eq!(preview["restartNeeded"], true);
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "");
+        assert_eq!(admin.config_import(bytes, false).unwrap(), preview);
+        assert_eq!(
+            std::fs::metadata(dir.join("mfi-remote-token"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let settings = admin.settings();
+        assert_eq!(settings.values["mfiRemoteTokenSet"], true);
+        assert_eq!(settings.values["privacyConfigAvailable"], true);
+        assert_eq!(settings.values["publicNamePrivacyAvailable"], false);
+        assert!(!serde_json::to_string(&settings)
+            .unwrap()
+            .contains("mfi-test-secret"));
+        assert!(!admin
+            .config_export(false)
+            .unwrap()
+            .to_string()
+            .contains("mfi-test-secret"));
+        assert!(!std::fs::read_to_string(dir.join("settings.json"))
+            .unwrap()
+            .contains("mfi-test-secret"));
+        assert_eq!(
+            admin.config_export(true).unwrap()["mfiRemoteToken"],
+            "mfi-test-secret"
+        );
+        assert!(failure_secrets(&admin.settings.lock().unwrap(), &dir)
+            .contains(&"mfi-test-secret".into()));
+        assert!(matches!(admin.update(serde_json::json!({"mfiRemoteServer":"https://mfi.example.org","mfiTarget":"remote"}).as_object().unwrap().clone()),AdminUpdate::NextStart));
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "mfi-test-secret");
+        assert_eq!(admin.settings().values["mfiSourceStatus"], "ready");
+        assert!(matches!(
+            admin.update(
+                serde_json::json!({"mfiRemoteToken":"bad\nsecret"})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::Errors(_)
+        ));
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "mfi-test-secret");
+        assert!(matches!(
+            admin.update(
+                serde_json::json!({"mfiRemoteToken":""})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::NextStart
+        ));
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "");
+        assert_eq!(admin.settings().values["mfiRemoteTokenSet"], false);
+        assert_eq!(admin.settings().values["privacyConfigAvailable"], false);
+        assert!(admin
+            .config_export(true)
+            .unwrap()
+            .get("mfiRemoteToken")
+            .is_none());
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn admin_contract_mfi_sources() {
+        let (admin, dir) = fake();
+        crate::mfi_sources::save_token(&dir, "fixture-secret").unwrap();
+        for target in ["remote", "i2c", "usb-ch341"] {
+            {
+                let mut settings = admin.settings.lock().unwrap();
+                settings.mfi_target = target.into();
+                settings.mfi_remote_server = "https://mfi.example.org".into();
+            }
+            let mut settings = admin.settings();
+            settings
+                .values
+                .insert("experimentalBluetoothAddress".into(), "".into());
+            // Pin host-only capability facts; the device backends have their own fake-driver tests.
+            settings.values.insert(
+                "mfiSourceStatus".into(),
+                if target == "remote" {
+                    "ready"
+                } else {
+                    "missing"
+                }
+                .into(),
+            );
+            contract_fixture(
+                &format!("settings-mfi-{target}"),
+                &serde_json::to_value(settings).unwrap(),
+            );
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn config_file_preview_apply_and_validation_match_the_settings_editor() {
         let (admin, dir) = fake();

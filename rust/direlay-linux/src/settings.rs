@@ -26,6 +26,9 @@ pub struct Settings {
     pub plugins: bool,
     pub plugins_enabled: Vec<String>,
     pub network_mode: String,
+    pub mfi_target: String,
+    pub mfi_i2c_path: String,
+    pub mfi_remote_server: String,
     pub network_roles: crate::network_roles::NetworkRoles,
     pub admin_hotspot_password: Option<String>,
     pub wifi_country: String,
@@ -109,6 +112,9 @@ impl Default for Settings {
             plugins: false,
             plugins_enabled: Vec::new(),
             network_mode: "device-hotspot".into(),
+            mfi_target: "local".into(),
+            mfi_i2c_path: "/dev/i2c-1".into(),
+            mfi_remote_server: String::new(),
             network_roles: Default::default(),
             admin_hotspot_password: None,
             wifi_country: "system".into(),
@@ -393,6 +399,20 @@ impl Settings {
             .is_some_and(|p| !crate::network_roles::valid_password(p))
         {
             return Err(invalid("Invalid adminHotspotPassword"));
+        }
+        if !["local", "remote", "usb-ch341", "i2c"].contains(&self.mfi_target.as_str()) {
+            return Err(invalid("Invalid mfiTarget"));
+        }
+        if self.mfi_i2c_path.contains('\0')
+            || (self.mfi_target == "i2c" && !crate::mfi_sources::valid_path(&self.mfi_i2c_path))
+        {
+            return Err(invalid("Invalid mfiI2cPath"));
+        }
+        if self.mfi_remote_server.contains('\0')
+            || (self.mfi_target == "remote"
+                && !crate::mfi_sources::valid_server(&self.mfi_remote_server))
+        {
+            return Err(invalid("Invalid mfiRemoteServer"));
         }
         if !["device-hotspot", "shared-wifi"].contains(&self.network_mode.as_str()) {
             return Err(invalid("Invalid networkMode"));

@@ -72,7 +72,7 @@ export function hasPublicName(settings: Settings): boolean {
 }
 /** Whether the public-name stores hold anything, so that Remove has something to remove. */
 export function publicNameConfigured(values: Values, status?: PublicNameStatus): boolean {
-  return values.privacyConfigAvailable === true || values.publicNameEnabled === true || values.publicNameTokenSet === true || !!values.publicName || !!values.publicNameProvider || (!!status && status.state !== 'off');
+  return (values.publicNamePrivacyAvailable ?? values.privacyConfigAvailable) === true || values.publicNameEnabled === true || values.publicNameTokenSet === true || !!values.publicName || !!values.publicNameProvider || (!!status && status.state !== 'off');
 }
 const time = (seconds: number, language: string, withDate: boolean) => new Date(seconds * 1000).toLocaleString(language, withDate ? { dateStyle: 'medium' } : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 /** The status line: one of the shared labels, with the head-unit address, dates and error filled in. */

@@ -4,6 +4,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { validPictureSize, normalizedSizes, picturePresets } from './src/picture-sizes';
+import { mfiError } from './src/mfi';
 import { validateHotspot } from './src/hotspot-settings';
 import { validateSharedNetworks } from './src/shared-networks';
 import type { SavedNetwork } from './src/schema';
@@ -364,15 +365,16 @@ export function mockApi(linux = false): Plugin {
         if (!['openxplay-user-config', 'openxplay-privacy-config'].includes(String(body.format)) || body.version !== 1) return send(422, { error: 'error.invalid' });
         if (body.format === 'openxplay-privacy-config') {
           const keys = Object.keys(body).filter(key => !['format', 'version', 'platform', 'appVersion', 'exportedAt'].includes(key));
-          const allowed = ['publicName', 'publicNameCertificate', 'publicNameAccount', 'providers'];
+          const allowed = ['publicName', 'publicNameCertificate', 'publicNameAccount', 'providers', 'mfiRemoteToken'];
+          if ('mfiRemoteToken' in body && (typeof body.mfiRemoteToken !== 'string' || /[\0\r\n]/.test(body.mfiRemoteToken))) return send(422, { errors: { mfiRemoteToken: 'invalid' } });
           const applied = keys.filter(key => allowed.includes(key)), ignored = keys.filter(key => !allowed.includes(key));
           if (url.searchParams.get('dryRun') !== '1') privacyConfig = { ...privacyConfig, ...Object.fromEntries(applied.map(key => [key, body[key]])) };
-          return send(200, { applied, ignored, restartNeeded: false, appliedNow: applied, nextStart: [] });
+          return send(200, { applied, ignored, restartNeeded: applied.includes('mfiRemoteToken'), appliedNow: applied.filter(key => key !== 'mfiRemoteToken'), nextStart: applied.filter(key => key === 'mfiRemoteToken') });
         }
         if (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings)) return send(422, { error: 'error.invalid' });
         const known = new Set(settings.schema.flatMap(s => s.fields).map(f => f.key).filter(key => key !== 'carlinkPictureTry'));
         const changes = Object.entries(body.settings as Record<string, Value>), applied = changes.filter(([key]) => known.has(key)).map(([key]) => key), ignored = changes.filter(([key]) => !known.has(key)).map(([key]) => key);
-        const nextStart = applied.filter(key => ['hotspotChannel', 'hotspotBand', 'carBluetoothAudio', 'carlinkPictureDefault', 'carlinkPictureSize'].includes(key));
+        const nextStart = applied.filter(key => ['hotspotChannel', 'hotspotBand', 'carBluetoothAudio', 'carlinkPictureDefault', 'carlinkPictureSize', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer'].includes(key));
         const restartNeeded = nextStart.length > 0;
         if (url.searchParams.get('dryRun') !== '1') for (const [key, value] of changes) if (known.has(key)) settings.values[key] = value;
         return send(200, { applied, ignored, restartNeeded, appliedNow: applied.filter(key => !nextStart.includes(key)), nextStart });
@@ -516,10 +518,13 @@ export function mockApi(linux = false): Plugin {
         settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name, tokenSet: true } };
         return send(200, { ok: true, provider, name });
       }
-      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, privacyConfigAvailable: !!settings.values.publicNameProvider || Object.keys(privacyConfig).length > 0, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
+      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, privacyConfigAvailable: !!settings.values.publicNameProvider || Object.entries(privacyConfig).some(([, value]) => !!value), publicNamePrivacyAvailable: !!settings.values.publicNameProvider || Object.keys(privacyConfig).some(key => key !== 'mfiRemoteToken'), mfiRemoteTokenSet: !!privacyConfig.mfiRemoteToken, mfiSourceStatus: settings.values.mfiTarget === 'remote' ? 'ready' : settings.values.mfiSourceStatus, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
       if (path === '/phones' && method === 'GET') return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id })));
       if (path === '/settings' && method === 'PUT') {
         const errors: Record<string, string> = {};
+        const mfi = linux ? mfiError({ ...settings.values, ...body }) : null;
+        if (mfi) errors.mfiTarget = mfi;
+        if ('mfiRemoteToken' in body && (typeof body.mfiRemoteToken !== 'string' || /[\0\r\n]/.test(body.mfiRemoteToken))) errors.mfiRemoteToken = 'error.invalid';
         for (const [key, value] of Object.entries(body)) {
           const field = settings.schema.flatMap(section => section.fields).find(field => field.key === key);
           if (!field) { errors[key] = 'error.invalid'; continue; }
@@ -583,6 +588,8 @@ export function mockApi(linux = false): Plugin {
         if (typeof body.publicNameToken === 'string') { if (body.publicNameToken !== '') settings.values.publicNameTokenSet = true; body.publicNameToken = ''; }
         if (typeof body.publicName === 'string') body.publicName = body.publicName.trim().toLowerCase();
         if ('carlinkPictureTry' in body) { pictureTrial = body.carlinkPictureTry as Value; delete body.carlinkPictureTry; started = Date.now(); }
+        const mfiChanged = Object.keys(body).some(key => key.startsWith('mfi'));
+        if (typeof body.mfiRemoteToken === 'string') { privacyConfig.mfiRemoteToken = body.mfiRemoteToken; delete body.mfiRemoteToken; }
         Object.assign(settings.values, body);
         if (body.networkMode !== undefined) {
           networkChanged = true; outageUntil = Date.now() + 2000;
@@ -590,7 +597,7 @@ export function mockApi(linux = false): Plugin {
           wifiClient = shared ? { ssid: (settings.values.sharedWifiNetworks as SavedNetwork[])[0].ssid, ip: '192.168.1.78', signal: 82, setupHotspot: false } : { ssid: null, ip: null, signal: null, setupHotspot: false };
           redactNetworks();
         }
-        return send(200, { ok: true, applied: body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => key.startsWith('publicName') || key.startsWith('experimental') || ['plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
+        return send(200, { ok: true, applied: mfiChanged ? 'next-start' : body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => key.startsWith('publicName') || key.startsWith('experimental') || ['plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
       }
       if (path === '/status' && method === 'GET') {
         if (Date.now() < outageUntil) return send(503, { error: 'error.network' });

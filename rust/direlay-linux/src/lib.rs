@@ -90,6 +90,7 @@ pub mod bluetooth_wake;
 pub mod boot_timing;
 pub mod branding;
 pub mod mdns_host;
+pub mod mfi_sources;
 pub mod plugins;
 pub mod provision;
 pub mod public_name;

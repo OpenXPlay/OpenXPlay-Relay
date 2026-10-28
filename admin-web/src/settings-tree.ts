@@ -23,7 +23,7 @@ export const pageKeys: Record<string, string[]> = {
   'developer/carlink': ['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
   'developer/video': ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
   'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
-  'developer/identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget'],
+  'developer/identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'],
   developer: ['developerActive'],
   'experimental': ['experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
 };

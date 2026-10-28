@@ -7,6 +7,7 @@ import { teslaHint, teslaNotes } from './tesla';
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
 import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
+import { mfiSubmission, mfiError, mfiReadiness } from './mfi';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
 import { patchMarkup, on, enhanceSheets, confirmSheet } from './dom';
@@ -603,7 +604,8 @@ function fieldMarkup(field: Field): string {
     const string = draft ?? (object ? JSON.stringify(value, null, 2) : String(value ?? ''));
     control = `<label for="${id}">${label}</label><div class="input-row">${object ? `<textarea ${attr} rows="4">${esc(string)}</textarea>` : `<input ${attr} type="${field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'}" value="${esc(string)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1" inputmode="numeric"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${/^car(Brand|Model|Year)Text$/.test(field.key) ? 'maxlength="40"' : ''}>`}${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}">${icon('eye')}</button>` : ''}</div><div class="field-edit-actions" ${draft === undefined ? 'hidden' : ''}><button type="button" data-save="${esc(field.key)}">${t('net.save')}</button><button type="button" data-cancel="${esc(field.key)}">${t('ui.cancel')}</button></div>`;
   }
-  const hint = field.key === 'teslaBrowser' ? esc(teslaHint(settings!.values, String(value), t)) : field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
+  const hint = field.key === 'mfiTarget' ? esc(mfiReadiness(settings!.values, t)) : field.key === 'teslaBrowser' ? esc(teslaHint(settings!.values, String(value), t)) : field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
+  if (field.key === 'mfiRemoteToken' && settings!.values.mfiRemoteTokenSet) control += `<p class="muted">${t('mfi.tokenSaved')}</p><button type="button" data-clear-mfi-token>${t('mfi.removeToken')}</button>`;
   return `<div class="field" data-field="${esc(field.key)}">${control}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result" role="status">${esc(t(feedback.get(field.key) ?? ''))}</p></div>`;
 }
 function bindField(field: Field) {
@@ -612,6 +614,7 @@ function bindField(field: Field) {
   el.closest('.field')?.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea').forEach(control => { control.disabled = !fieldEnabled(field.key, settings!.values); });
   if (!fieldEnabled(field.key, settings!.values)) return;
   if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.carlink?.appliedPicture ? `${status!.carlink.appliedPicture.width} × ${status!.carlink.appliedPicture.height}` : undefined); return; }
+  if (field.key === 'mfiRemoteToken') { const clear = el.closest('.field')?.querySelector<HTMLButtonElement>('[data-clear-mfi-token]'); if (clear) on(clear, 'click', () => queueSave(field, '')); }
   if (field.type === 'plugins') on(el, 'change', event => { const input = event.target as HTMLInputElement; queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked)); });
   else if (field.type === 'bool' || field.key === 'carlinkTrace') on(el, 'change', () => queueSave(field, field.key === 'carlinkTrace' ? (el as HTMLInputElement).checked ? 'on' : 'off' : (el as HTMLInputElement).checked));
   else if (field.type === 'phone') on(el, 'click', () => void pickPhone(field));
@@ -864,7 +867,7 @@ async function queueSave(field: Field, raw: string | boolean) {
   if (field.key === 'transport' && value === 'wireless' && wifiDirectDisabled(status?.platform, settings!.values, settings!.values.networkMode)) settings!.values.networkMode = 'phone-hotspot';
   if (field.key === 'networkMode' && wifiDirectDisabled(status?.platform, settings!.values, value)) return;
   queueValue(field, value);
-  if (['output', 'developerActive', 'experimentalActive'].includes(field.key)) render();
+  if (['output', 'developerActive', 'experimentalActive', 'mfiTarget'].includes(field.key)) render();
 }
 function queueValue(field: Field, value: Value) {
   settings!.values[field.key] = value;
@@ -879,19 +882,22 @@ async function save(key: string) {
   if (key.startsWith('publicName') && publicNameBusy) { item.timer = setTimeout(() => void save(key), 2000); return; }
   if (switching) { item.timer = setTimeout(() => void save(key), 2000); return; }
   item.busy = true; const revision = item.revision; const current = epoch;
-  const submitted = key === 'publicNameProvider' ? publicNameSubmission(settings!.values) : null;
+  const mfi = mfiSubmission(settings!.values, key, item.value);
+  const error = mfi && key !== 'mfiRemoteToken' ? mfiError(mfi) : null;
+  if (error) { item.busy = false; pending.delete(key); result(key, error); return; }
+  const submitted = key === 'publicNameProvider' ? publicNameSubmission(settings!.values) : mfi;
   try {
     const write = key === 'wifiCountry' ? api.saveRoles(settings!.values.networkRoles as NetworkRolesSetting, { wifiCountry: String(item.value) }).then(() => ({ applied: 'now' as const })) : api.save(submitted ?? { [key]: key === 'sharedWifiNetworks' ? sharedNetworkUpdate(item.value as SavedNetwork[]) : item.value });
-    if (submitted) publicNameWrite = write;
+    if (submitted && key === 'publicNameProvider') publicNameWrite = write;
     const response = await write;
     if (current !== epoch) return;
-    if (submitted && settings) {
+    if (submitted && key === 'publicNameProvider' && settings) {
       publicNameDrafts.saved(submitted, settings.values);
       const token = document.getElementById(fieldId('publicNameToken')) as HTMLInputElement | null;
       if (token) { token.value = String(settings.values.publicNameToken ?? ''); token.placeholder = settings.values.publicNameTokenSet ? t('publicName.tokenSaved') : ''; }
       for (const field of fields().filter(f => f.key.startsWith('publicName'))) result(field.key, 'ui.saved');
     }
-    if (revision === item.revision) { pending.delete(key); if (['carBrand', 'carModel', 'carYear', 'physicalWidthEnabled'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
+    if (revision === item.revision) { if (key === 'mfiRemoteToken') { drafts.delete(key); delete settings!.values.mfiRemoteToken; } pending.delete(key); if (['carBrand', 'carModel', 'carYear', 'physicalWidthEnabled', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {
@@ -901,7 +907,7 @@ async function save(key: string) {
     }
   } finally {
     item.busy = false;
-    if (submitted && current === epoch) publicNameWrite = null;
+    if (submitted && key === 'publicNameProvider' && current === epoch) publicNameWrite = null;
     if (pending.get(key) === item && current === epoch) item.timer = setTimeout(() => void save(key), revision === item.revision ? 2000 : 450);
   }
 }
