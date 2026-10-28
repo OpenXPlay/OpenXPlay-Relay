@@ -662,7 +662,7 @@
     <string name="tesla_virtual_name_hint">需要先设置可信 HTTPS。你的可信域名会指向这台手机上的 %1$s，特斯拉打开 https://你的域名:8443 时不会出现证书警告。特斯拉要能通过这台手机的热点上网，才能查到这个域名。</string>
     <string name="tesla_public_address">直接地址（链路本地）</string>
     <string name="tesla_public_address_hint">不需要账号。在特斯拉中打开 https://%1$s:8443，并在证书警告页选择继续访问。只有特斯拉浏览器允许继续访问时才能使用。</string>
-    <string name="tesla_mirror">可信域名 + 共享网段地址（TeslaMirror 方式）</string>
+    <string name="tesla_mirror">可信域名 + 共享网段地址（TeslaMirror 方式，推荐）</string>
     <string name="tesla_android">公网网段地址（TeslaAndroid 方式）</string>
     <string name="tesla_address">本机虚拟地址</string>
     <string name="tesla_address_invalid">请输入不在 10.x、172.16–31.x、192.168.x 和其他保留网段内的 IPv4 地址。</string>

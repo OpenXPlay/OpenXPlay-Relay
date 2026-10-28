@@ -27,6 +27,7 @@ fun relayRoute(entry: String): String = when {
     entry.startsWith("settings:") -> when (entry.substringAfter(':')) {
         "output" -> "settings/output#output"
         "car" -> "settings/car#car"
+        "tesla" -> "settings/tesla"
         "picture" -> "settings/picture"
         "audio" -> "settings/audio"
         "connection" -> "settings/connection#connection"
@@ -63,7 +64,7 @@ fun relayRouteParents(route: String): List<String> = when (route.substringBefore
 
 fun settingsSessionActive(entries: List<String>) = entries.any { it.startsWith("settings") || it.startsWith("developer") || it == "experimental" }
 
-fun firstSettingsErrorPage(errors: Set<String>) = listOf("settings/output", "settings/connection/network",
+fun firstSettingsErrorPage(errors: Set<String>) = listOf("settings/output", "settings/tesla", "settings/connection/network",
     "settings/identity", "developer/video", "developer/connection", "experimental").firstOrNull { it in errors } ?: "settings"
 
 fun showsDeveloperDiagnostics(route: String) = route in setOf("developer", "developer/diagnostics", "developer/carlink", "settings/identity")
