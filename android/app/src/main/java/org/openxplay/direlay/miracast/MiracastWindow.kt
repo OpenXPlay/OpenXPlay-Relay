@@ -25,6 +25,7 @@ import org.openxplay.stream.core.OutputCapabilities
 internal interface MiracastDisplays : AutoCloseable {
     fun start(changed: () -> Unit)
     fun displays(): List<MiracastDisplay>
+    fun descriptions(): List<String>
 }
 
 internal class AndroidMiracastDisplays(context: Context, private val main: Handler) : MiracastDisplays {
@@ -46,6 +47,14 @@ internal class AndroidMiracastDisplays(context: Context, private val main: Handl
             MiracastDisplay(display.displayId, display.name, mode.physicalWidth, mode.physicalHeight,
                 metrics.densityDpi, mode.refreshRate.toDouble()).let(MiracastPolicy::normalize)
         }
+    override fun descriptions(): List<String> {
+        val presentation = manager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).map { it.displayId }.toSet()
+        return manager.displays.sortedBy { it.displayId }.map { display ->
+            val mode = display.mode
+            "${display.displayId}:${display.name}:${mode.physicalWidth}x${mode.physicalHeight}:" +
+                "flags=${Integer.toHexString(display.flags)}:presentation=${display.displayId in presentation}"
+        }
+    }
     override fun close() { manager.unregisterDisplayListener(listener); changed = {} }
 }
 
@@ -148,6 +157,7 @@ internal class MiracastDisplayController(
     private var denied = false
     private var failed = false
     private var state: Pair<MiracastState, MiracastDisplay?>? = null
+    private var reportedDisplays: List<String>? = null
     private var reported: OutputCapabilities? = null
     private var videoWidth = 0
     private var videoHeight = 0
@@ -176,6 +186,11 @@ internal class MiracastDisplayController(
     private fun reconcile() {
         if (!running) return
         main.removeCallbacks(poll)
+        val descriptions = source.descriptions().toList()
+        if (reportedDisplays != descriptions) {
+            reportedDisplays = descriptions
+            listener.diagnostic("displays ${descriptions.joinToString("; ").ifEmpty { "none" }}")
+        }
         val available = source.displays()
         val next = MiracastPolicy.display(available)
         if (display != next) {
@@ -198,9 +213,14 @@ internal class MiracastDisplayController(
                     window = windows.create(next) { if (running && epoch == version) surface(it) }
                     window?.videoSize(videoWidth, videoHeight)
                     failed = false
+                    listener.diagnostic("window shown on ${next.id} ${next.width}x${next.height}")
                 } catch (failure: Exception) {
                     removeWindow()
-                    if (!failed) { failed = true; listener.failure("window_failed", failure.javaClass.simpleName) }
+                    if (!failed) {
+                        failed = true
+                        listener.failure("window_failed", failure.javaClass.simpleName)
+                        listener.diagnostic("window failed on ${next.id}: ${failure.javaClass.simpleName}: ${failure.message.orEmpty()}")
+                    }
                 }
             }
             report(if (window != null) MiracastState.SHOWING else MiracastState.WAITING_FOR_DISPLAY,

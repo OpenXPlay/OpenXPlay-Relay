@@ -16,6 +16,7 @@ import java.nio.ByteBuffer
 import java.util.Locale
 
 internal interface MiracastCodec : AutoCloseable {
+    val name: String
     fun offer(annexB: ByteArray, ptsUs: Long): Boolean
     fun drain(): Int
     fun interface Factory { fun create(format: VideoFormat, surface: Surface): MiracastCodec }
@@ -152,6 +153,7 @@ internal object MiracastCodecs {
 }
 
 private class AndroidMiracastCodec(private val codec: MediaCodec) : MiracastCodec {
+    override val name: String get() = codec.name
     private val info = MediaCodec.BufferInfo()
     override fun offer(annexB: ByteArray, ptsUs: Long): Boolean {
         val index = codec.dequeueInputBuffer(0)

@@ -31,8 +31,11 @@ internal class MiracastHost : OutputHost {
 internal class MiracastEvents : MiracastListener {
     val states = mutableListOf<Pair<MiracastState, MiracastDisplay?>>()
     val failures = mutableListOf<String>()
+    val diagnostics = mutableListOf<String>()
     val statistics = mutableListOf<MiracastStatistics>()
+    var onDiagnostic: (String) -> Unit = {}
     override fun state(state: MiracastState, display: MiracastDisplay?) { states += state to display }
     override fun failure(code: String, detail: String) { failures += code }
+    override fun diagnostic(message: String) { diagnostics += message; onDiagnostic(message) }
     override fun statistics(statistics: MiracastStatistics) { this.statistics += statistics }
 }

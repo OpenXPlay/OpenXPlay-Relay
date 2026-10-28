@@ -83,7 +83,12 @@ internal class MiracastVideo(
         if (ready) {
             try {
                 val frame = work.frame
-                if (codec == null && frame?.keyFrame == true) codec = factory.create(checkNotNull(work.format), checkNotNull(work.surface))
+                if (codec == null && frame?.keyFrame == true) {
+                    val format = checkNotNull(work.format)
+                    val created = factory.create(format, checkNotNull(work.surface))
+                    codec = created
+                    listener.diagnostic("decoder ${created.name} ${MiracastCodecs.mime(format.codec)} ${format.width}x${format.height}")
+                }
                 val active = codec
                 if (active != null) {
                     decoded += active.drain()
@@ -106,6 +111,7 @@ internal class MiracastVideo(
                     }
                 }
                 listener.failure("decoder_failed", failure.javaClass.simpleName)
+                listener.diagnostic("decoder failed: ${failure.javaClass.simpleName}: ${failure.message.orEmpty()}")
             }
         }
         val last = statisticsAt
