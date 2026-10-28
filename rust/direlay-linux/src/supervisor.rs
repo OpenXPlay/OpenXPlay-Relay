@@ -78,6 +78,7 @@ pub struct SupervisorSettings {
     pub binary: PathBuf,
     pub socket: PathBuf,
     pub web_port: u16,
+    pub web_transcode: bool,
     pub web_root: PathBuf,
     pub plugins: Option<crate::plugins::OutputPlugins>,
     pub state_dir: PathBuf,
@@ -137,6 +138,12 @@ impl SupervisorSettings {
         };
         if !args.iter().any(|a| a == "--control-stdin") {
             args.push("--control-stdin".into());
+        }
+        if self.web_port != 0 {
+            args.extend([
+                "--web-transcode".into(),
+                if self.web_transcode { "auto" } else { "off" }.into(),
+            ]);
         }
         args.push("--host-ui".into());
         args.extend([
@@ -821,6 +828,10 @@ impl RelaySupervisor {
             let mut failures = 0;
             while !*stop.0.lock().unwrap() {
                 *fragment.lock().unwrap() = None;
+                // A fresh child must prove its encoder before using HEVC beside the browser.
+                if settings.web_port != 0 && settings.carlink.is_some() {
+                    carlink_options.lock().unwrap()["hevc"] = "off".into();
+                }
                 let requested = carlink_options.lock().unwrap().clone();
                 let initial_picture = requested["picture"].is_object();
                 lifecycle.lock().unwrap().begin_child(initial_picture);
@@ -1044,6 +1055,7 @@ mod band_tests {
                 socket: dir.join("socket"),
                 web_port,
                 web_root: dir.clone(),
+                web_transcode: true,
                 plugins: None,
                 state_dir: dir.clone(),
                 addresses: vec![],
@@ -1257,7 +1269,8 @@ mod band_tests {
         let (args, new) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(args
             .windows(2)
-            .any(|a| a[0] == "--clink-hevc" && a[1] == "signal"));
+            .any(|a| a[0] == "--clink-hevc" && a[1] == "off"));
+        // The new process must report its encoder before HEVC can be restored beside web.
         assert!(args
             .windows(2)
             .any(|a| a[0] == "--clink-vehicle-data" && a[1] == "on"));
@@ -1323,6 +1336,7 @@ mod tls_tests {
             socket: "/tmp/oxp-relay.sock".into(),
             web_port: 8443,
             web_root: "/opt/openxplay/share/web".into(),
+            web_transcode: true,
             plugins: None,
             state_dir: dir.into(),
             addresses: vec![Ipv4Addr::new(10, 77, 0, 1), Ipv4Addr::new(192, 168, 1, 2)],
@@ -1440,6 +1454,8 @@ mod tls_tests {
             &format!("{state}/receiver-tls"),
             "--tls-san",
             "openxplay-linux.local",
+            "--web-transcode",
+            "auto",
             "--host-ui",
             "--relay-name",
             crate::branding::DEVICE_NAME,

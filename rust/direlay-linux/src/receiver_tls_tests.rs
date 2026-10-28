@@ -27,6 +27,7 @@ impl Request {
 }
 pub(crate) struct FakeChildFactory {
     requests: mpsc::Sender<Request>,
+    pub events: Mutex<Option<EventSink>>,
     pub launches: Mutex<Vec<Vec<OsString>>>,
     pub stops: Arc<AtomicUsize>,
     exited: Arc<AtomicBool>,
@@ -37,6 +38,7 @@ impl FakeChildFactory {
         (
             Arc::new(Self {
                 requests: tx,
+                events: Mutex::default(),
                 launches: Mutex::default(),
                 stops: Arc::default(),
                 exited: Arc::default(),
@@ -93,6 +95,7 @@ impl ChildFactory for FakeChildFactory {
         let output = unsafe { OwnedFd::from_raw_fd(fds[1]) };
         let pipe = ControlPipe::new(ChildStdin::from(output))?;
         let tx = self.requests.clone();
+        *self.events.lock().unwrap() = Some(events.clone());
         let reader = thread::spawn(move || {
             for line in BufReader::new(input).lines() {
                 let value = serde_json::from_str(&line.unwrap()).unwrap();
@@ -122,6 +125,7 @@ fn supervisor(factory: Arc<FakeChildFactory>) -> RelaySupervisor {
         socket: "/tmp/nonexistent-web-tls-test.sock".into(),
         web_port: 8443,
         web_root: "/web".into(),
+        web_transcode: true,
         plugins: None,
         state_dir: "/state".into(),
         addresses: vec!["10.77.0.1".parse().unwrap()],

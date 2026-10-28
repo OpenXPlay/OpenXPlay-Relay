@@ -435,6 +435,36 @@
           }
         },
         {
+          "key": "webTranscode",
+          "labelKey": "field.webTranscode",
+          "type": "bool"
+        },
+        {
+          "key": "playCarPlayAudio",
+          "labelKey": "field.playCarPlayAudio",
+          "type": "bool"
+        },
+        {
+          "key": "microphoneSourceEnabled",
+          "labelKey": "field.microphoneSourceEnabled",
+          "type": "bool"
+        },
+        {
+          "key": "microphoneSource",
+          "labelKey": "field.microphoneSource",
+          "options": [
+            {
+              "labelKey": "option.microphoneSource.head-unit",
+              "value": "head-unit"
+            },
+            {
+              "labelKey": "option.microphoneSource.this-device",
+              "value": "this-device"
+            }
+          ],
+          "type": "choice"
+        },
+        {
           "key": "carlinkTrace",
           "labelKey": "field.carlinkTrace",
           "options": [
@@ -568,6 +598,7 @@
     {
       "fields": [
         {
+          "hintKey": "hint.field.carlinkPictureSize",
           "key": "carlinkPictureSize",
           "labelKey": "field.carlinkPictureSize",
           "options": [
@@ -1199,6 +1230,8 @@
     "mfiRemoteTokenSet": true,
     "mfiSourceStatus": "ready",
     "mfiTarget": "remote",
+    "microphoneSource": "head-unit",
+    "microphoneSourceEnabled": false,
     "networkMode": "device-hotspot",
     "networkRoles": {
       "mode": "auto"
@@ -1206,6 +1239,7 @@
     "output": "web",
     "physicalWidthEnabled": false,
     "physicalWidthOverrideMm": 0,
+    "playCarPlayAudio": false,
     "plugins": false,
     "pluginsEnabled": [],
     "privacyConfigAvailable": true,
@@ -1240,6 +1274,7 @@
     "vehicleInformation": false,
     "videoCodec": "auto",
     "videoStats": "off",
+    "webTranscode": true,
     "wifiCountry": "system",
     "wifiInterface": "wlan0"
   }

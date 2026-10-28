@@ -13,7 +13,7 @@ export const pageKeys: Record<string, string[]> = {
   tesla: ['teslaBrowser', 'teslaVirtualAddress', 'teslaPublicAddress', 'teslaMirrorAddress', 'teslaAndroidAddress'],
   car: ['carBrand', 'carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText', 'savedHeadUnit', 'savedScreen', 'carPlayViewAreas', 'viewAreas'],
   picture: ['carplayResolution', 'resolution', 'carplayScreenWidth', 'screenWidth', 'frameRate', 'videoCodec', 'videoStats', 'carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'],
-  audio: ['carBluetoothAudio', 'microphone', 'microphoneSource'],
+  audio: ['carBluetoothAudio', 'microphone'],
   connection: ['iphone', 'transport'],
   'connection/network': ['networkMode', 'hotspotSsid', 'hotspotPassword', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'wifiCountry', 'sharedWifiNetworks'],
   'connection/network/interfaces': ['networkRoles', 'wifiInterface', 'carlinkInterface', 'adminHotspotPassword'],
@@ -21,15 +21,16 @@ export const pageKeys: Record<string, string[]> = {
   access: ['requirePairingCode', 'adminPort', 'webPort'],
   'access/public-name': ['publicNameEnabled', 'publicNameProvider', 'publicName', 'publicNameToken', 'publicNameAgreeTerms'],
   'developer/carlink': ['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
-  'developer/video': ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
-  'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
+  'developer/video': ['webTranscode', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
+  'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset', 'playCarPlayAudio', 'microphoneSourceEnabled', 'microphoneSource'],
   'identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'],
   developer: ['developerActive'],
   'experimental': ['experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
 };
 export function fieldEnabled(key: string, values: Settings['values']): boolean {
+  if (key === 'microphoneSource' && values.microphoneSourceEnabled === false) return false;
   if (key.startsWith('experimental') && key !== 'experimentalActive') return values.experimentalActive !== false;
-  return !['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
+  return !['physicalWidthEnabled', 'physicalWidthOverrideMm', 'webTranscode', 'playCarPlayAudio', 'microphoneSourceEnabled', 'microphoneSource', 'carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
 }
 export function fieldRoute(key: string): string {
   return 'settings/' + (Object.entries(pageKeys).find(([, keys]) => keys.includes(key))?.[0] ?? 'developer/other');

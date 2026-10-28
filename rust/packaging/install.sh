@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 OpenXPlay.org
 # SPDX-License-Identifier: AGPL-3.0-only
 # Created by riko chen on 2026-10-15
-# Usage: [DESTDIR=/absolute/staging/root] install.sh OPENXPLAY_RELAY_BINARY OXP_RELAY_BINARY WEB_ASSETS ADMIN_ASSETS
+# Usage: [DESTDIR=/absolute/staging/root] install.sh OPENXPLAY_RELAY_BINARY OXP_RELAY_BINARY WEB_ASSETS ADMIN_ASSETS [PLUGINS_BUNDLE]
 set -eu
 # The Debian builder uses this same host payload installer.
 install_host_tuning() {
@@ -18,8 +18,8 @@ if [ "${1:-}" = --install-host-tuning ]; then
   install_host_tuning "${2%/}"
   exit 0
 fi
-if [ "$#" -ne 4 ]; then
-  echo "Usage: $0 OPENXPLAY_RELAY_BINARY OXP_RELAY_BINARY WEB_ASSETS ADMIN_ASSETS" >&2
+if [ "$#" -ne 4 ] && [ "$#" -ne 5 ]; then
+  echo "Usage: $0 OPENXPLAY_RELAY_BINARY OXP_RELAY_BINARY WEB_ASSETS ADMIN_ASSETS [PLUGINS_BUNDLE]" >&2
   exit 2
 fi
 DESTDIR=${DESTDIR:-}
@@ -41,11 +41,24 @@ for assets in "$3" "$4"; do
     exit 1
   fi
 done
+# Optional bundle is a prebuilt host/ + p/ install directory; no runtime dependency.
+plugins_stage=
+if [ "$#" -eq 5 ]; then
+  plugins_stage=$(mktemp -d)
+  trap 'rm -rf "$plugins_stage"' 0
+  python3 "$(dirname "$0")/plugins-bundle.py" "$5" "$plugins_stage"
+fi
 install -d -m 0755 "$DESTDIR/opt/openxplay/bin" "$DESTDIR/opt/openxplay/share/web" "$DESTDIR/opt/openxplay/share/admin"
 install -m 0755 "$1" "$DESTDIR/opt/openxplay/bin/openxplay-relay"
 install -m 0755 "$2" "$DESTDIR/opt/openxplay/bin/oxp-relay"
 cp -Rf "$3/." "$DESTDIR/opt/openxplay/share/web/"
 cp -Rf "$4/." "$DESTDIR/opt/openxplay/share/admin/"
+if [ -n "$plugins_stage" ]; then
+  install -d -m 0755 "$DESTDIR/opt/openxplay/share/plugins"
+  cp -Rf "$plugins_stage/." "$DESTDIR/opt/openxplay/share/plugins/"
+  find "$DESTDIR/opt/openxplay/share/plugins" -type d -exec chmod 0755 {} +
+  find "$DESTDIR/opt/openxplay/share/plugins" -type f -exec chmod 0644 {} +
+fi
 # Preserve both project licenses and component notices with the installed build.
 # A device bundle ships them next to this script; the repository keeps them at its root.
 license_dir="$(dirname "$0")/licenses"

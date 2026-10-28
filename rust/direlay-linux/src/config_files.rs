@@ -48,13 +48,13 @@ const NESTED_KEYS: &[(&str, &str, &str)] = &[
         "physicalWidthOverrideMm",
     ),
     ("developer", "localPreview", "developerLocalPreview"),
-    ("developer", "playCarPlayAudio", "developerPlayCarPlayAudio"),
+    ("developer", "playCarPlayAudio", "playCarPlayAudio"),
     (
         "developer",
         "microphoneSourceEnabled",
-        "developerMicrophoneSourceEnabled",
+        "microphoneSourceEnabled",
     ),
-    ("developer", "microphoneSource", "developerMicrophoneSource"),
+    ("developer", "microphoneSource", "microphoneSource"),
     ("developer", "webPortEnabled", "developerWebPortEnabled"),
     ("developer", "webPort", "receiverPort"),
     (
@@ -895,6 +895,32 @@ mod tests {
         plan(&serde_json::to_vec(file).unwrap(), &current())
             .err()
             .unwrap()
+    }
+    #[test]
+    fn local_audio_android_keys_round_trip_and_stay_parked_under_the_master() {
+        let file = json!({"format":USER_FORMAT,"version":1,"settings":{"developer":{
+            "active":false,"playCarPlayAudio":true,"microphoneSourceEnabled":true,"microphoneSource":"this-device"}}});
+        let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+        assert!(p.report.ignored.is_empty());
+        let saved = crate::relay_admin::update_settings(&Settings::default(), p.values).unwrap();
+        assert!(saved.play_car_play_audio);
+        assert_eq!(saved.microphone_source, "this-device");
+        let effective = saved.effective_developer();
+        assert!(!effective.play_car_play_audio);
+        assert_eq!(effective.microphone_source, "head-unit");
+        let output = export_user(&saved, &json!({}), 0).unwrap();
+        assert_eq!(output["settings"]["developer"]["playCarPlayAudio"], true);
+        assert_eq!(
+            output["settings"]["developer"]["microphoneSource"],
+            "this-device"
+        );
+        let mut active = saved;
+        active.developer_active = true;
+        assert!(active.effective_developer().play_car_play_audio);
+        assert_eq!(
+            active.effective_developer().microphone_source,
+            "this-device"
+        );
     }
     #[test]
     fn developer_table_maps_implemented_choices_and_android_wire_values() {

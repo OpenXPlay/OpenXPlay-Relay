@@ -42,6 +42,10 @@ pub struct AdminStatus {
     pub paired_devices: Vec<AdminPairedDevice>,
     #[serde(default)]
     pub video: Value,
+    #[serde(default)]
+    pub transcoding: Value,
+    #[serde(default)]
+    pub local_audio: crate::local_audio::Devices,
     /// Per-browser receiver diagnostics, only for `GET /status?diagnostics=1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receivers: Option<Vec<Value>>,
