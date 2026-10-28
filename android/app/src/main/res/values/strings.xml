@@ -806,4 +806,10 @@
     <string name="experimental_startup_diagnostics_hint">Record safe protocol milestones through the first picture to help diagnose startup failures.</string>
     <string name="experimental_network_observation_backoff">Back off unavailable observations</string>
     <string name="experimental_network_observation_backoff_hint">Avoid repeating unsupported network observations and their diagnostic messages during the same attempt.</string>
+    <string name="experimental_screen_session_isolation">Isolate screen sessions</string>
+    <string name="experimental_screen_session_isolation_hint">Keep an old iPhone connection and its late data from stopping or changing the new picture. Applies to the next connection.</string>
+    <string name="experimental_screen_reconnect_reset">Reset screen state on reconnect</string>
+    <string name="experimental_screen_reconnect_reset_hint">Wait for fresh video and playback confirmation when a new iPhone connection takes over. Rebuilding a screen on the same connection keeps the session. Applies to the next connection.</string>
+    <string name="experimental_screen_delivery_serialization">Synchronize screen handoff</string>
+    <string name="experimental_screen_delivery_serialization_hint">Keep frame delivery ordered during screen handoff so late work cannot overwrite the new picture. Applies to the next connection.</string>
 </resources>

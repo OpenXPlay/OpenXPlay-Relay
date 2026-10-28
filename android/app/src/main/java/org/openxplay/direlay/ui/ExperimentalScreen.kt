@@ -19,6 +19,21 @@ fun ExperimentalScreen(state: SettingsEditorState, back: () -> Unit, wireless: (
             R.drawable.symbol_settings_2, IconHue.DEVELOPER, footer = stringResource(R.string.experimental_use_options_hint)) { enabled ->
             state.changeExperimental { it.copy(active = enabled) }
         }
+        SettingsToggleGroup(stringResource(R.string.experimental_screen_session_isolation), options.screenSessionIsolation,
+            R.drawable.symbol_activity, IconHue.DEVELOPER,
+            footer = stringResource(R.string.experimental_screen_session_isolation_hint), enabled = options.active) { enabled ->
+            state.changeExperimental { it.copy(screenSessionIsolation = enabled) }
+        }
+        SettingsToggleGroup(stringResource(R.string.experimental_screen_reconnect_reset), options.screenReconnectReset,
+            R.drawable.symbol_activity, IconHue.DEVELOPER,
+            footer = stringResource(R.string.experimental_screen_reconnect_reset_hint), enabled = options.active) { enabled ->
+            state.changeExperimental { it.copy(screenReconnectReset = enabled) }
+        }
+        SettingsToggleGroup(stringResource(R.string.experimental_screen_delivery_serialization), options.screenDeliverySerialization,
+            R.drawable.symbol_activity, IconHue.DEVELOPER,
+            footer = stringResource(R.string.experimental_screen_delivery_serialization_hint), enabled = options.active) { enabled ->
+            state.changeExperimental { it.copy(screenDeliverySerialization = enabled) }
+        }
         SettingsToggleGroup(stringResource(R.string.experimental_remote_playback_proof), options.remotePlaybackProof,
             R.drawable.symbol_activity, IconHue.DEVELOPER,
             footer = stringResource(R.string.experimental_remote_playback_proof_hint), enabled = options.active) { enabled ->

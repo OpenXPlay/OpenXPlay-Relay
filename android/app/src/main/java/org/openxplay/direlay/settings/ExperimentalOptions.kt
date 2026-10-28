@@ -22,6 +22,9 @@ data class ExperimentalOptions(
     val startupStatus: Boolean = true,
     val startupDiagnostics: Boolean = true,
     val networkObservationBackoff: Boolean = true,
+    val screenSessionIsolation: Boolean = true,
+    val screenReconnectReset: Boolean = true,
+    val screenDeliverySerialization: Boolean = true,
 ) {
     fun effective(carlinkTrace: Boolean = true): ExperimentalOptions {
         val address = normalizedBluetoothAddress(bluetoothAddress)
@@ -33,11 +36,16 @@ data class ExperimentalOptions(
             cancelRecoveredRetries = active && cancelRecoveredRetries,
             startupStatus = active && startupStatus,
             startupDiagnostics = active && startupDiagnostics,
-            networkObservationBackoff = active && networkObservationBackoff)
+            networkObservationBackoff = active && networkObservationBackoff,
+            screenSessionIsolation = active && screenSessionIsolation,
+            screenReconnectReset = active && screenReconnectReset,
+            screenDeliverySerialization = active && screenDeliverySerialization)
     }
 
     val invalidAddress: Boolean get() = active && sendBluetoothAddress && normalizedBluetoothAddress(bluetoothAddress) == null
-    val optionCount: Int get() = listOf(remotePlaybackProof, cancelRecoveredRetries, startupStatus, startupDiagnostics, networkObservationBackoff, sendBluetoothAddress).count { it }
+    val optionCount: Int get() = listOf(remotePlaybackProof, cancelRecoveredRetries, startupStatus, startupDiagnostics,
+        networkObservationBackoff, screenSessionIsolation, screenReconnectReset, screenDeliverySerialization,
+        sendBluetoothAddress).count { it }
 
     fun names(): List<String> = listOf(rememberSubscription to "remember_subscription", keepScanning to "keep_scanning",
         recordAdvertisements to "record_advertisements", sendBluetoothAddress to "send_bluetooth_address",
@@ -47,7 +55,10 @@ data class ExperimentalOptions(
         cancelRecoveredRetries to "cancel_recovered_retries",
         startupStatus to "startup_status",
         startupDiagnostics to "startup_diagnostics",
-        networkObservationBackoff to "network_observation_backoff")
+        networkObservationBackoff to "network_observation_backoff",
+        screenSessionIsolation to "screen_session_isolation",
+        screenReconnectReset to "screen_reconnect_reset",
+        screenDeliverySerialization to "screen_delivery_serialization")
         .filter { it.first }.map { it.second }
 
     companion object {
@@ -56,7 +67,10 @@ data class ExperimentalOptions(
             cancelRecoveredRetries = false,
             startupStatus = false,
             startupDiagnostics = false,
-            networkObservationBackoff = false)
+            networkObservationBackoff = false,
+            screenSessionIsolation = false,
+            screenReconnectReset = false,
+            screenDeliverySerialization = false)
 
         fun normalizedBluetoothAddress(value: String): String? {
             val octets = value.split(':')

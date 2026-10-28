@@ -17,10 +17,11 @@ import com.shilapi.xcertplay.airplay.MediaSinkDecoratorProvider
 import org.openxplay.direlay.admin.AndroidBluetoothVisibility
 import org.openxplay.direlay.admin.PairingWindow
 import org.openxplay.direlay.bridge.StreamBridgeSink
+import org.openxplay.direlay.bridge.toScreenSessionPolicy
 import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.service.AndroidRelayKeepAlive
 
-class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, com.shilapi.xcertplay.orchestration.WirelessConnectionPolicyProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider, com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler {
+class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.CarPlayEventObserverProvider, com.shilapi.xcertplay.orchestration.WirelessConnectionPolicyProvider, com.shilapi.xcertplay.airplay.ScreenSessionPolicyProvider, MediaSinkDecoratorProvider, com.shilapi.xcertplay.CarPlayCanvasProvider, com.shilapi.xcertplay.CarPlayViewAreaProvider, com.shilapi.xcertplay.CarPlayPhoneProvider, com.shilapi.xcertplay.CarPlayHostOverlayProvider, com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler {
     lateinit var runtime: RelayRuntime
         private set
     lateinit var keepAlive: AndroidRelayKeepAlive
@@ -33,6 +34,9 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
     override val cancelRecoveredRetries: Boolean get() = startupOptions()?.cancelRecoveredRetries == true
     override val startupDiagnosticsEnabled: Boolean get() = startupOptions()?.startupDiagnostics == true
     override val networkObservationBackoffEnabled: Boolean get() = startupOptions()?.networkObservationBackoff == true
+
+    override val screenSessionPolicy: com.shilapi.xcertplay.airplay.ScreenSessionPolicy
+        get() = (startupOptions() ?: org.openxplay.direlay.settings.ExperimentalOptions()).toScreenSessionPolicy()
 
     override val carPlayEventObserver: com.shilapi.xcertplay.orchestration.CarPlayEventObserver?
         get() = if (::runtime.isInitialized) org.openxplay.direlay.relay.CompositeCarPlayObserver(
