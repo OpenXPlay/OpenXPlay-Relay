@@ -148,5 +148,63 @@
         {"id": "cybertruck-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
       ]
     }]
+  }, {
+    "id": "zeekr",
+    "names": {"en": "ZEEKR", "zh-CN": "极氪"},
+    "models": [{
+      "id": "001",
+      "names": {"en": "001", "zh-CN": "001"},
+      "years": [
+        {"id": "001-2021", "names": {"en": "2021+", "zh-CN": "2021 起"}, "screens": []}
+      ]
+    }, {
+      "id": "001-fr",
+      "names": {"en": "001 FR", "zh-CN": "001 FR"},
+      "years": [
+        {"id": "001-fr-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
+      ]
+    }, {
+      "id": "007",
+      "names": {"en": "007", "zh-CN": "007"},
+      "years": [
+        {"id": "007-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
+      ]
+    }, {
+      "id": "007-gt",
+      "names": {"en": "007 GT", "zh-CN": "007 GT"},
+      "years": [
+        {"id": "007-gt-2025", "names": {"en": "2025+", "zh-CN": "2025 起"}, "screens": []}
+      ]
+    }, {
+      "id": "009",
+      "names": {"en": "009", "zh-CN": "009"},
+      "years": [
+        {"id": "009-2022", "names": {"en": "2022+", "zh-CN": "2022 起"}, "screens": []}
+      ]
+    }, {
+      "id": "9x",
+      "names": {"en": "9X", "zh-CN": "9X"},
+      "years": [
+        {"id": "9x-2025", "names": {"en": "2025+", "zh-CN": "2025 起"}, "screens": []}
+      ]
+    }, {
+      "id": "7x",
+      "names": {"en": "7X", "zh-CN": "7X"},
+      "years": [
+        {"id": "7x-2024", "names": {"en": "2024+", "zh-CN": "2024 起"}, "screens": []}
+      ]
+    }, {
+      "id": "x",
+      "names": {"en": "X", "zh-CN": "X"},
+      "years": [
+        {"id": "x-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
+      ]
+    }, {
+      "id": "mix",
+      "names": {"en": "MIX", "zh-CN": "MIX"},
+      "years": [
+        {"id": "mix-2024", "names": {"en": "2024+", "zh-CN": "2024 起"}, "screens": []}
+      ]
+    }]
   }]
 }

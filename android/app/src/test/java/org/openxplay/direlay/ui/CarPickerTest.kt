@@ -44,6 +44,29 @@ class CarPickerTest {
         assertEquals(listOf("", "other"), choices.years.map { it.id })
     }
 
+    @Test fun zeekrPickerLocalizesTheBrandAndLaunchYearWhileKeepingYearOptional() {
+        val catalog = CarModels(models.brands + CarBrand("zeekr", mapOf("en" to "ZEEKR", "zh-CN" to "极氪"),
+            listOf(CarModel("007-gt", mapOf("en" to "007 GT", "zh-CN" to "007 GT"),
+                listOf(CarYear("007-gt-2025", mapOf("en" to "2025+", "zh-CN" to "2025 起"), emptyList()))))))
+        val car = CarSelection("zeekr", model = "007-gt")
+        val english = carPickerOptions(car, catalog, Locale.ENGLISH, "Not sure", "Other")
+        val chinese = carPickerOptions(car, catalog, Locale.SIMPLIFIED_CHINESE, "不确定", "其他")
+        assertEquals(listOf("xpeng", "zeekr", "other"), english.brands.map { it.id })
+        assertEquals(CarPickerOption("zeekr", "ZEEKR"), english.brands[1])
+        assertEquals(CarPickerOption("zeekr", "极氪"), chinese.brands[1])
+        assertEquals(listOf(CarPickerOption("007-gt", "007 GT"), CarPickerOption("other", "Other")), english.models)
+        assertEquals("007 GT", chinese.models.first().label)
+        assertEquals(listOf(CarPickerOption("", "Not sure"), CarPickerOption("007-gt-2025", "2025+"),
+            CarPickerOption("other", "Other")), english.years)
+        assertEquals(listOf(CarPickerOption("", "不确定"), CarPickerOption("007-gt-2025", "2025 起"),
+            CarPickerOption("other", "其他")), chinese.years)
+        assertTrue(carSelectionErrors(car).isEmpty())
+        assertFalse(homeCarRowVisible(car))
+        assertEquals("ZEEKR · 007 GT", carSelectionSummary(car, catalog, Locale.ENGLISH, "None", "Other"))
+        assertEquals("极氪 · 007 GT · 2025 起",
+            carSelectionSummary(car.copy(year = "007-gt-2025"), catalog, Locale.SIMPLIFIED_CHINESE, "无", "其他"))
+    }
+
     @Test fun missingRequiredOtherTextHasAnErrorAndYearNeverDoes() {
         assertEquals(mapOf("car.brand" to R.string.car_brand_required, "car.model" to R.string.car_model_required),
             carSelectionErrors(CarSelection("other", " ", "other", " ")))
