@@ -149,6 +149,7 @@ impl AdminHotspot {
         inventory: &crate::net_inventory::Inventory,
         factory: impl FnOnce(&Inputs) -> Arc<dyn WirelessHotspotManager>,
     ) {
+        let password = password.unwrap_or(crate::linux_hotspot::DEFAULT_HOTSPOT_PASSWORD);
         let mut state = self.state.lock().unwrap();
         state.shared = plan.time_shared_with.as_deref() == Some("carlink");
         let interface = inventory
@@ -159,7 +160,7 @@ impl AdminHotspot {
             Some(("off", None))
         } else if interface.is_none() || plan.role.missing {
             Some(("waiting-interface", None))
-        } else if !password.is_some_and(crate::network_roles::valid_password) {
+        } else if !crate::network_roles::valid_password(password) {
             Some(("failed", Some("admin-hotspot-password")))
         } else if interface.and_then(|i| i.wifi.as_ref()).is_some_and(|w| {
             !w.capabilities.ap
@@ -202,7 +203,7 @@ impl AdminHotspot {
             interface: interface.name.clone(),
             mac,
             ssid: plan.ssid.clone(),
-            password: password.unwrap().into(),
+            password: password.into(),
             band: plan.band.clone(),
             channel: plan.channel,
         };
@@ -361,10 +362,31 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn missing_password_uses_default_without_marking_password_set() {
+        let (admin, mut plan, inventory, dir) = fixture(Duration::ZERO);
+        std::fs::create_dir_all(&dir).unwrap();
+        plan.password_set = false;
+        let fake = Arc::new(Fake::default());
+        admin.reconcile_with(&plan, None, &inventory, |inputs| {
+            assert_eq!(inputs.password, "openxplay");
+            fake.clone()
+        });
+        assert_eq!(admin.status().state, "up");
+        assert_eq!(admin.status().reason, None);
+        assert_eq!(fake.starts.load(Ordering::SeqCst), 1);
+        admin.reconcile_with(&plan, None, &inventory, |_| panic!("already running"));
+        assert_eq!(fake.starts.load(Ordering::SeqCst), 1);
+        assert!(!plan.password_set);
+        admin.close().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn missing_busy_disabled_and_admin_changes_do_not_reclaim_a_foreign_ap() {
         let (admin, mut plan, mut inventory, dir) = fixture(Duration::ZERO);
         let fake = Arc::new(Fake::default());
-        admin.reconcile_with(&plan, None, &inventory, |_| panic!("no password"));
+        admin.reconcile_with(&plan, Some("short"), &inventory, |_| {
+            panic!("invalid password")
+        });
         assert_eq!(
             admin.status().reason.as_deref(),
             Some("admin-hotspot-password")

@@ -604,13 +604,6 @@ impl LinuxRelayAdmin {
         {
             changes.push("adminHotspot".into());
         }
-        if status
-            .checks
-            .iter()
-            .any(|c| c.code == "admin-hotspot-password")
-        {
-            return SaveResult::Checks(status.checks);
-        }
         if save {
             if status.checks.iter().any(|c| c.level == "error") {
                 return SaveResult::Checks(status.checks);
@@ -9948,7 +9941,75 @@ esac
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn admin_api_requires_password_hides_it_and_preserves_other_automatic_links() {
+    fn admin_api_defaults_password_without_saving_or_exporting_it() {
+        use crate::network_roles::SaveResult;
+        let (a, dir) = fake();
+        a.inventory.set(role_inventory());
+        let values = serde_json::json!({"networkRoles":{"mode":"auto","adminHotspot":{
+            "enabled":true,"interface":null,"ssid":"Test-Admin","band":"auto","channel":0
+        }}})
+        .as_object()
+        .unwrap()
+        .clone();
+        for save in [false, true] {
+            let SaveResult::Saved(proposal) = a.propose_roles(values.clone(), save) else {
+                panic!("default password is usable");
+            };
+            assert!(proposal.plan.admin_hotspot.enabled);
+            assert!(!proposal.plan.admin_hotspot.password_set);
+            assert!(!proposal
+                .checks
+                .iter()
+                .any(|c| c.code == "admin-hotspot-password"));
+            assert!(a.settings.lock().unwrap().admin_hotspot_password.is_none());
+        }
+        assert!(Settings::load(&dir)
+            .unwrap()
+            .admin_hotspot_password
+            .is_none());
+        assert!(!a.settings().values.contains_key("adminHotspotPassword"));
+        for value in [
+            a.config_export(false).unwrap(),
+            a.config_export(true).unwrap(),
+        ] {
+            assert!(!value.to_string().contains("adminHotspotPassword"));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn admin_api_rejects_invalid_submitted_passwords() {
+        use crate::network_roles::SaveResult;
+        let (a, dir) = fake();
+        a.inventory.set(role_inventory());
+        let before = std::fs::read(dir.join("settings.json")).ok();
+        for password in [
+            "".into(),
+            "short".into(),
+            "a".repeat(64),
+            "has\nnewline".into(),
+            "non-ascii-é".into(),
+        ] {
+            let values = serde_json::json!({
+                "networkRoles":{"mode":"auto"},"adminHotspotPassword":password
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            for save in [false, true] {
+                let SaveResult::Checks(checks) = a.propose_roles(values.clone(), save) else {
+                    panic!("invalid password must be rejected");
+                };
+                assert!(checks
+                    .iter()
+                    .any(|c| c.code == "admin-hotspot-password" && c.level == "error"));
+                assert!(a.settings.lock().unwrap().admin_hotspot_password.is_none());
+                assert_eq!(std::fs::read(dir.join("settings.json")).ok(), before);
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn admin_api_hides_saved_password_and_preserves_other_automatic_links() {
         use crate::network_roles::{AdminHotspot, SaveResult};
         let (a, dir) = fake();
         let mut inv = role_inventory();
@@ -9967,14 +10028,6 @@ esac
                 .unwrap()
                 .clone()
         };
-        for save in [false, true] {
-            let SaveResult::Checks(checks) = a.propose_roles(values(), save) else {
-                panic!("password required");
-            };
-            assert!(checks
-                .iter()
-                .any(|c| c.code == "admin-hotspot-password" && c.level == "error"));
-        }
         a.settings.lock().unwrap().admin_hotspot_password =
             Some("synthetic-private-password".into());
         let before = a.network_status(&a.settings.lock().unwrap());
