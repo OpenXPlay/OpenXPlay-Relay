@@ -83,3 +83,23 @@ it('keeps paused, automatic and armed startup facts consistent in every Linux fi
     if (status.running || status.pathInput!.iphone!.armed || startup.arrival.pending) expect(startup.paused).toBe(false);
   }
 });
+
+it.each(['usb-waiting', 'usb-trust', 'usb-control', 'usb-video'])('renders the wired iPhone steps for Linux %s', state => {
+  const status = linuxStatusFixtures[state];
+  expect(status.pathInput!.setup!.network).toBe('USB');
+  const path = presentPath(status.pathInput!);
+  const ids = path.sections.flatMap(section => section.steps.map(step => step.id));
+  for (const id of ['USB_HOST', 'USB_IPHONE', 'USB_TRUST', 'USB_CONTROL', 'SESSION']) expect(ids).toContain(id);
+  for (const id of ['IPHONE_PAIRED', 'IPHONE_BLUETOOTH', 'IPHONE_AUTH', 'IPHONE_WIFI']) expect(ids).not.toContain(id);
+  const active = ({ 'usb-waiting': 'USB_HOST', 'usb-trust': 'USB_TRUST', 'usb-control': 'USB_CONTROL', 'usb-video': 'PICTURE' } as Record<string, string>)[state];
+  const steps = path.sections.flatMap(section => section.steps);
+  expect(steps.find(step => step.id === active)?.state).toBe(state === 'usb-control' ? 'WORKING' : state === 'usb-video' ? 'OK' : 'WAITING');
+});
+
+it('hides Bluetooth-only Linux settings with the USB transport', () => {
+  const usb = JSON.parse(readFileSync(new URL('./fixtures/linux/settings-usb.json', import.meta.url), 'utf8')) as Settings;
+  expect(usb.values.transport).toBe('usb');
+  const fields = usb.schema.flatMap(section => section.fields);
+  for (const key of ['iphone', 'rfcommChannel']) expect(fields.find(field => field.key === key)?.visibleWhen).toEqual({ key: 'transport', equals: ['wireless'] });
+  expect(fields.find(field => field.key === 'transport')?.options?.map(option => option.value)).toEqual(['wireless', 'usb']);
+});

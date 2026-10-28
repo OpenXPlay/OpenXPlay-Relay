@@ -1423,7 +1423,9 @@ impl LinuxRelayAdmin {
             .network_addresses()?
             .into_iter()
             .filter(|(i, a, _)| {
-                !a.is_loopback() && (!carplay_hotspot || i != &options.wifi_interface)
+                !i.starts_with("oxpusb")
+                    && !a.is_loopback()
+                    && (!carplay_hotspot || i != &options.wifi_interface)
             })
             .map(|(_, a, _)| a)
             .collect::<Vec<_>>();
@@ -2760,6 +2762,7 @@ pub fn settings_schema() -> Vec<Section> {
         ("hotspotBand", "choice"),
         ("hotspotSecurity", "choice"),
         ("hotspotChannel", "number"),
+        ("transport", "choice"),
         ("iphone", "phone"),
         ("wifiInterface", "text"),
         ("rfcommChannel", "number"),
@@ -2900,6 +2903,18 @@ pub fn settings_schema() -> Vec<Section> {
                     })
                     .collect(),
             ),
+            "transport" => Some(
+                ["wireless", "usb"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        labels: None,
+                        value: v.into(),
+                        label_key: format!("option.transport.{v}"),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            ),
             "networkMode" => Some(
                 ["device-hotspot", "shared-wifi"]
                     .into_iter()
@@ -2939,6 +2954,10 @@ pub fn settings_schema() -> Vec<Section> {
             _ => None,
         },
         visible_when: match key {
+            "iphone" | "rfcommChannel" => Some(VisibleWhen {
+                key: "transport".into(),
+                equals: vec!["wireless".into()],
+            }),
             "mfiI2cPath" => Some(VisibleWhen {
                 key: "mfiTarget".into(),
                 equals: vec!["i2c".into()],
@@ -3098,6 +3117,7 @@ fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static st
     changed!(mfi_target, "mfiTarget");
     changed!(mfi_i2c_path, "mfiI2cPath");
     changed!(mfi_remote_server, "mfiRemoteServer");
+    changed!(transport, "transport");
     changed!(iphone, "iphone");
     changed!(rfcomm_channel, "rfcommChannel");
     changed!(wifi_interface, "wifiInterface");
@@ -3863,7 +3883,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                             .and_then(|flags| {
                                 u32::from_str_radix(flags.trim().trim_start_matches("0x"), 16).ok()
                             });
-                    !a.is_loopback() && flags.is_none_or(|flags| flags & 1 != 0)
+                    !interface.starts_with("oxpusb")
+                        && !a.is_loopback()
+                        && flags.is_none_or(|flags| flags & 1 != 0)
                 })
                 .map(|(interface, a, _)| AdminHostAddress::new(interface, a.to_string()))
                 .collect(),
@@ -4683,6 +4705,77 @@ mod tests {
     use super::*;
     include!("admin_contract_tests.rs");
     include!("identity_admin_tests.rs");
+    #[test]
+    fn wired_interfaces_never_reach_admin_or_mdns_host_addresses() {
+        let (mut admin, dir) = fake();
+        Arc::get_mut(&mut admin).unwrap().runtime.addresses = Arc::new(|| {
+            Ok(vec![
+                ("eth0".into(), "192.0.2.1".parse().unwrap(), 24),
+                ("oxpusb0".into(), "192.0.2.2".parse().unwrap(), 24),
+                ("oxpusb1".into(), "192.0.2.3".parse().unwrap(), 24),
+            ])
+        });
+        assert_eq!(
+            admin.host_addresses().unwrap(),
+            ["192.0.2.1".parse::<std::net::Ipv4Addr>().unwrap()]
+        );
+        let status = admin.status();
+        assert_eq!(status.host_addresses.len(), 1);
+        assert_eq!(status.host_addresses[0].interface, "eth0");
+        assert!(AdminHostAddress::new("oxpusb0".into(), "192.0.2.2".into()).developer_only);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn transport_defaults_cli_validation_and_restart_contract() {
+        let (admin, dir) = fake();
+        let args = vec!["--state-dir".to_owned(), dir.to_str().unwrap().to_owned()];
+        let default = Options::parse(&args).unwrap();
+        assert_eq!(default.transport, "wireless");
+        assert_eq!(default.usb_charging_ma, 500);
+        for ma in [500, 1500, 2400] {
+            let mut args = args.clone();
+            args.extend([
+                "--transport".into(),
+                "usb".into(),
+                "--usb-charging-ma".into(),
+                ma.to_string(),
+            ]);
+            let options = Options::parse(&args).unwrap();
+            assert_eq!(options.transport, "usb");
+            assert_eq!(options.settings.transport, "usb");
+            assert_eq!(options.usb_charging_ma, ma);
+        }
+        for (key, value) in [
+            ("--transport", "bluetooth"),
+            ("--usb-charging-ma", "1000"),
+            ("--usb-charging-ma", "-1"),
+            ("--usb-charging-ma", "abc"),
+        ] {
+            let mut args = args.clone();
+            args.extend([key.into(), value.into()]);
+            assert!(Options::parse(&args).is_err());
+        }
+        let current = admin.settings.lock().unwrap().clone();
+        let next = update_settings(
+            &current,
+            serde_json::json!({"transport":"usb"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(settings_restart_keys(&current, &next), ["transport"]);
+        next.save(&dir).unwrap();
+        assert_eq!(Settings::load(&dir).unwrap().transport, "usb");
+        assert!(!serde_json::to_value(next)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("usbChargingMa"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn failure_hotspot_password_redaction_preserves_public_default() {
         let (admin, dir) = fake();

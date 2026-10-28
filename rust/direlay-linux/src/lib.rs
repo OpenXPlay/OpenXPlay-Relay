@@ -28,6 +28,7 @@ pub mod linux_car_play_controller;
 pub mod linux_hotspot;
 /// linux microphone protocol module.
 pub mod linux_microphone;
+pub mod linux_wired_link;
 /// linux wireless platform protocol module.
 pub mod linux_wireless_platform;
 pub mod local_audio;
@@ -48,6 +49,7 @@ pub mod transcode_capabilities;
 pub use cli::Options;
 pub use cli::PersistentState;
 pub use di_play_input::DiPlayInput;
+pub use linux_air_play_server::BindAddress;
 pub use linux_air_play_server::LinuxAirPlayServer;
 pub use linux_air_play_server::LinuxStreamTransport;
 pub use linux_air_play_server::SessionMedia;

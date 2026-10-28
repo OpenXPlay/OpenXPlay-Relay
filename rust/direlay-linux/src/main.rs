@@ -26,6 +26,8 @@ pub struct Options {
     pub state_dir: PathBuf,
     pub wifi_interface: String,
     pub wifi_channel: u8,
+    pub transport: String,
+    pub usb_charging_ma: u16,
     pub iphone: Option<String>,
     pub rfcomm_channel: Option<u8>,
     pub pair_seconds: Option<u32>,
@@ -102,6 +104,8 @@ impl Options {
                 "--carlink-interface",
                 "--wifi-channel",
                 "--identity-dir",
+                "--transport",
+                "--usb-charging-ma",
                 "--iphone",
                 "--rfcomm-channel",
                 "--pair",
@@ -157,6 +161,8 @@ impl Options {
             state_dir: state.clone(),
             wifi_interface: settings.wifi_interface.clone(),
             wifi_channel: settings.hotspot_channel,
+            transport: settings.transport.clone(),
+            usb_charging_ma: 500,
             iphone: settings.iphone.clone(),
             rfcomm_channel: settings.rfcomm_channel,
             pair_seconds: None,
@@ -235,6 +241,15 @@ impl Options {
                 "--wifi-channel" => {
                     s.hotspot_channel = v.parse().map_err(|_| invalid("Invalid Wi-Fi channel"))?
                 }
+                "--transport" => s.transport = v.clone(),
+                "--usb-charging-ma" => {
+                    self.usb_charging_ma = v
+                        .parse()
+                        .map_err(|_| invalid("USB charging must be 500, 1500 or 2400 mA"))?;
+                    if ![500, 1500, 2400].contains(&self.usb_charging_ma) {
+                        return Err(invalid("USB charging must be 500, 1500 or 2400 mA"));
+                    }
+                }
                 "--iphone" => s.iphone = Some(v.clone()),
                 "--rfcomm-channel" => {
                     s.rfcomm_channel = Some(
@@ -273,6 +288,7 @@ impl Options {
         s.validate()?;
         self.wifi_interface = s.wifi_interface.clone();
         self.wifi_channel = s.hotspot_channel;
+        self.transport = s.transport.clone();
         self.iphone = s.iphone.clone();
         self.rfcomm_channel = s.rfcomm_channel;
         Ok(())
@@ -466,7 +482,7 @@ pub fn run() -> Result<()> {
     let _services = ServicesGuard(admin.clone());
     let addresses = crate::linux_hotspot::interface_addresses()?
         .into_iter()
-        .filter(|(_, a, _)| !a.is_loopback())
+        .filter(|(interface, a, _)| !interface.starts_with("oxpusb") && !a.is_loopback())
         .map(|(_, a, _)| a)
         .collect::<Vec<_>>();
     let auth = crate::admin::AdminAuth::new(Box::new(crate::admin::FileAuthStore(
@@ -544,4 +560,4 @@ pub fn run() -> Result<()> {
     }
     state.close()
 }
-pub const USAGE:&str="Usage: openxplay-relay [options]\n  --identity-dir DIR    Local identity.pk8 and certificate.p7b (default /var/lib/openxplay/mfi)\n  --state-dir DIR       Private state (default /var/lib/openxplay)\n  --host-profile PATH  Device profile (default /etc/openxplay/host.json)\n  --device-preset ID   Device preset: auto, msm8916, phicomm-n1, generic (default auto)\n  --network-mode MODE   device-hotspot or shared-wifi\n  --wifi-interface IF   Wi-Fi interface (profile default, otherwise wlan0)\n  --carlink-interface IF Carlink station interface (empty = Wi-Fi interface)\n  --wifi-channel N      AP channel (0 = automatic; 2.4 GHz fallback 6)\n  --wifi-ssid SSID      Shared Wi-Fi SSID\n  --wifi-password PASS  Shared Wi-Fi password\n  --iphone ADDR         Select bonded iPhone\n  --rfcomm-channel N    iAP2 RFCOMM channel override (1..30)\n  --pair SECONDS        Auto-accept pairing window (1..3600)\n  --stream-socket PATH  oxp-relay socket (default /tmp/oxp-relay.sock)\n  --oxp-relay PATH      Output binary\n  --web-root DIR        Receiver web assets\n  --plugins-root DIR   Installed plugins (default /opt/openxplay/share/plugins)\n  --admin-root DIR      Admin assets (default /opt/openxplay/share/admin)\n  --bluetooth-guard-status PATH Bluetooth guard state (default /run/openxplay/bluetooth-guard.json)\n  --receiver-port PORT  Receiver HTTPS port (default 8443)\n  --pairing             Require receiver pairing code\n  --output MODE        web, carlink or both\n  --record DIR          Record decrypted media\n  --test-input replay:PATH[,PATH]  Test mode: replay Annex B clips (files or directories; a <file>.jsonl timing index from --record is used when present) instead of an iPhone\n  --test-keyframe RULES Test-mode key-frame answers: immediate (default), delay:MS, ignore-first, ignore:N, ignore-all, stream-restart; comma-separated, an h264: or h265: prefix limits a rule to that codec\n  --test-context FILE   Test-mode context script (JSON) or demo; needs the plugins setting\n  --enable-admin        Enable head-unit admin access and exit (stop the service first)\n  --reset-admin-password Reset admin password and exit\n  --help                Show this help";
+pub const USAGE:&str="Usage: openxplay-relay [options]\n  --identity-dir DIR    Local identity.pk8 and certificate.p7b (default /var/lib/openxplay/mfi)\n  --state-dir DIR       Private state (default /var/lib/openxplay)\n  --host-profile PATH  Device profile (default /etc/openxplay/host.json)\n  --device-preset ID   Device preset: auto, msm8916, phicomm-n1, generic (default auto)\n  --network-mode MODE   device-hotspot or shared-wifi\n  --wifi-interface IF   Wi-Fi interface (profile default, otherwise wlan0)\n  --carlink-interface IF Carlink station interface (empty = Wi-Fi interface)\n  --wifi-channel N      AP channel (0 = automatic; 2.4 GHz fallback 6)\n  --wifi-ssid SSID      Shared Wi-Fi SSID\n  --wifi-password PASS  Shared Wi-Fi password\n  --transport MODE      wireless (default) or usb\n  --usb-charging-ma MA  USB charging offer: 500 (default), 1500 or 2400\n  --iphone ADDR         Select bonded iPhone\n  --rfcomm-channel N    iAP2 RFCOMM channel override (1..30)\n  --pair SECONDS        Auto-accept pairing window (1..3600)\n  --stream-socket PATH  oxp-relay socket (default /tmp/oxp-relay.sock)\n  --oxp-relay PATH      Output binary\n  --web-root DIR        Receiver web assets\n  --plugins-root DIR   Installed plugins (default /opt/openxplay/share/plugins)\n  --admin-root DIR      Admin assets (default /opt/openxplay/share/admin)\n  --bluetooth-guard-status PATH Bluetooth guard state (default /run/openxplay/bluetooth-guard.json)\n  --receiver-port PORT  Receiver HTTPS port (default 8443)\n  --pairing             Require receiver pairing code\n  --output MODE        web, carlink or both\n  --record DIR          Record decrypted media\n  --test-input replay:PATH[,PATH]  Test mode: replay Annex B clips (files or directories; a <file>.jsonl timing index from --record is used when present) instead of an iPhone\n  --test-keyframe RULES Test-mode key-frame answers: immediate (default), delay:MS, ignore-first, ignore:N, ignore-all, stream-restart; comma-separated, an h264: or h265: prefix limits a rule to that codec\n  --test-context FILE   Test-mode context script (JSON) or demo; needs the plugins setting\n  --enable-admin        Enable head-unit admin access and exit (stop the service first)\n  --reset-admin-password Reset admin password and exit\n  --help                Show this help";

@@ -4,6 +4,18 @@
 
 use oxp_core::model::FrameRatePreference;
 
+pub const DISCOVERING_MFI: &str = "DiscoveringMfi";
+pub const MFI_READY: &str = "MfiReady";
+pub const WAITING_FOR_IPHONE_USB: &str = "WaitingForIphoneUsb";
+pub const REQUESTING_CARPLAY_MODE: &str = "RequestingCarPlayMode";
+pub const WAITING_FOR_REENUMERATION: &str = "WaitingForReenumeration";
+pub const SELECTING_USB_CONFIGURATION: &str = "SelectingUsbConfiguration";
+pub const OPENING_USBMUX: &str = "OpeningUsbmux";
+pub const PAIRING: &str = "Pairing";
+pub const CONNECTING_CONTROL: &str = "ConnectingControl";
+pub const RUNNING_CONTROL: &str = "RunningControl";
+pub const START_SESSION_SENT: &str = "StartSessionSent";
+
 pub fn screen_session_policy(
     settings: &crate::settings::Settings,
 ) -> carplay_airplay::ScreenSessionPolicy {
@@ -65,6 +77,9 @@ pub fn media_button(key: u16) -> Option<u8> {
 }
 /// Only use before RFCOMM connects. The same OS error after connection spends the startup budget.
 pub fn iphone_unreachable(error: &std::io::Error) -> bool {
+    if classify_failure(&error.to_string()) == "iphone_unplugged" {
+        return true;
+    }
     use std::io::ErrorKind;
     matches!(
         error.kind(),
@@ -79,7 +94,11 @@ pub fn iphone_unreachable(error: &std::io::Error) -> bool {
 }
 pub fn classify_failure(message: &str) -> &'static str {
     let m = message.to_ascii_lowercase();
-    if m.contains("carlink output did not become ready")
+    if m.contains("iphone unplugged") {
+        "iphone_unplugged"
+    } else if m.contains("usb interface busy") {
+        "usb_interface_busy"
+    } else if m.contains("carlink output did not become ready")
         || m.contains("carlink output was disabled while waiting")
     {
         "carlink_not_ready"
@@ -123,6 +142,10 @@ pub fn classify_failure(message: &str) -> &'static str {
 /// Only fixed, safe wording is exposed; command errors can contain network credentials.
 pub fn failure_text(code: &str) -> &'static str {
     match code {
+        "iphone_unplugged" => "The iPhone was unplugged. Connect it to the relay again",
+        "usb_interface_busy" => "Another program (usbmuxd?) holds the iPhone USB interface",
+        "usb_trust_denied" => "Reconnect the iPhone and tap Trust",
+        "iphone_locked" => "Unlock the iPhone and connect it again",
         "first_tcp_timeout" => "The iPhone did not connect over Wi-Fi in time",
         "hotspot_configuration" => "Check the wireless network settings",
         "hotspot_not_ready" => "The wireless network is not ready",
@@ -136,8 +159,17 @@ pub fn failure_text(code: &str) -> &'static str {
 }
 pub fn startup_stage(stage: &str) -> Option<(&'static str, &'static str)> {
     Some(match stage {
-        "DiscoveringMfi" | "MfiReady" | "StartingHotspot" | "HotspotReady" => {
+        DISCOVERING_MFI | MFI_READY | "StartingHotspot" | "HotspotReady" => {
             ("STARTING", "connecting")
+        }
+        WAITING_FOR_IPHONE_USB
+        | REQUESTING_CARPLAY_MODE
+        | WAITING_FOR_REENUMERATION
+        | SELECTING_USB_CONFIGURATION
+        | OPENING_USBMUX => ("USB_DETECT", "connecting"),
+        PAIRING => ("USB_TRUST", "authenticating"),
+        CONNECTING_CONTROL | RUNNING_CONTROL | START_SESSION_SENT => {
+            ("USB_CONTROL", "authenticating")
         }
         "WaitingForBluetooth" => ("BLUETOOTH", "connecting"),
         "WaitingForPairedIphone" | "AttachingNetwork" => ("WAITING_IPHONE", "connecting"),
@@ -263,6 +295,42 @@ mod tests {
         ] {
             assert_eq!(classify_failure(text), code);
         }
+    }
+    #[test]
+    fn wired_stages_failures_and_unplug_reachability() {
+        for stage in [
+            WAITING_FOR_IPHONE_USB,
+            REQUESTING_CARPLAY_MODE,
+            WAITING_FOR_REENUMERATION,
+            SELECTING_USB_CONFIGURATION,
+            OPENING_USBMUX,
+        ] {
+            assert_eq!(startup_stage(stage).unwrap().0, "USB_DETECT");
+        }
+        assert_eq!(startup_stage(PAIRING).unwrap().0, "USB_TRUST");
+        for stage in [CONNECTING_CONTROL, RUNNING_CONTROL, START_SESSION_SENT] {
+            assert_eq!(startup_stage(stage).unwrap().0, "USB_CONTROL");
+        }
+        for (message, code) in [
+            ("iPhone unplugged", "iphone_unplugged"),
+            ("USB interface busy", "usb_interface_busy"),
+            ("UserDeniedPairing", "usb_trust_denied"),
+            ("PasswordProtected", "iphone_locked"),
+        ] {
+            assert_eq!(classify_failure(message), code);
+            assert_ne!(failure_text(code), failure_text("unknown"));
+        }
+        assert!(iphone_unreachable(&std::io::Error::other(
+            "iPhone unplugged"
+        )));
+        let mut budget = crate::start_policy::RetryBudget::default();
+        for _ in 0..20 {
+            assert!(budget.failed("iphone_unplugged", false));
+        }
+        for _ in 0..crate::start_policy::MAX_STARTUP_RETRIES {
+            assert!(budget.failed("unknown", false));
+        }
+        assert!(!budget.failed("unknown", false));
     }
     #[test]
     fn startup_reason_mapping() {

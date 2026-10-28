@@ -261,6 +261,7 @@ pub fn interface_names(root: &Path) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| !name.starts_with("oxpusb"))
         .collect();
     names.sort();
     names

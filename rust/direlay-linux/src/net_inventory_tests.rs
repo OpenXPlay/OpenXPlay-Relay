@@ -61,6 +61,8 @@ fn inventory_filters_virtual_devices_caches_phy_and_reads_identity() {
     device(&root, "wlan0", true, "sdio");
     device(&root, "wlan1", true, "usb");
     device(&root, "eth0", false, "platform");
+    device(&root, "oxpusb0", false, "usb");
+    device(&root, "oxpusb1", false, "usb");
     for name in ["lo", "sit0", "ip6tnl0", "tun0", "veth0", "br0"] {
         let path = root.join("sys/class/net").join(name);
         fs::create_dir_all(&path).unwrap();

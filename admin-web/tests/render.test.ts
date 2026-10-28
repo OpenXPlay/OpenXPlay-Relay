@@ -29,11 +29,12 @@ class Cdp {
   async js(expression: string) { const result = await this.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }).catch(error => { throw new Error(`${error.message} in ${expression}`); }); if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
 }
 function renderSource(status: Status, settings: unknown, language: string, token = "fixture") {
-  return `window.fixtureToken=${JSON.stringify(token)}; localStorage.setItem('openxplay.language', ${JSON.stringify(language)}); window.renderErrors = []; window.adminWrites = []; window.adminCalls = []; window.addEventListener('error', e => window.renderErrors.push(e.message)); window.addEventListener('unhandledrejection', e => window.renderErrors.push(String(e.reason))); const fixtureStatus = ${JSON.stringify(status)}, fixtureSettings = ${JSON.stringify(settings)}; window.fetch = async (url, init = {}) => { const path = String(url).split('?')[0]; if(init.method && init.method !== 'GET') window.adminCalls.push(path); let data = {}; let code = 200; if (path.endsWith('/session')) data = {state:'ready',defaultPassword:false}; else if (path.endsWith('/settings')) { if (init.method === 'PUT') { window.adminWrites.push(JSON.parse(init.body)); Object.assign(fixtureSettings.values, JSON.parse(init.body)); data={ok:true,applied:'now'}; } else data=fixtureSettings; } else if (path.endsWith('/status')) data=fixtureStatus; else if (path.endsWith('/phones')) data=[]; else if (path.endsWith('/logs/receipt')) code=404; else if (path.endsWith('/carlink-trace')) data={enabled:false,running:false,status:null,files:[]}; else if (path.includes('/carlink-trace/tail')) data={lines:[]}; return new Response(JSON.stringify(data), {status:code,headers:{'Content-Type':'application/json'}}); };`;
+  return `window.fixtureToken=${JSON.stringify(token)}; localStorage.setItem('openxplay.language', ${JSON.stringify(language)}); window.renderErrors = []; window.adminWrites = []; window.adminCalls = []; window.addEventListener('error', e => window.renderErrors.push(e.message)); window.addEventListener('unhandledrejection', e => window.renderErrors.push(String(e.reason))); const fixtureStatus = ${JSON.stringify(status)}, fixtureSettings = ${JSON.stringify(settings)}; window.fetch = async (url, init = {}) => { const path = String(url).split('?')[0]; if(init.method && init.method !== 'GET') window.adminCalls.push(path); let data = {}; let code = 200; if (path.endsWith('/session')) data = {state:'ready',defaultPassword:false}; else if (path.endsWith('/settings')) { if (init.method === 'PUT') { window.adminWrites.push(JSON.parse(init.body)); Object.assign(fixtureSettings.values, JSON.parse(init.body)); data={ok:true,applied:'now'}; } else data=fixtureSettings; } else if (path.endsWith('/status')) data=fixtureStatus; else if (path.endsWith('/identity')) data=fixtureStatus.identity; else if (path.endsWith('/phones')) data=[]; else if (path.endsWith('/logs/receipt')) code=404; else if (path.endsWith('/carlink-trace')) data={enabled:false,running:false,status:null,files:[]}; else if (path.includes('/carlink-trace/tail')) data={lines:[]}; return new Response(JSON.stringify(data), {status:code,headers:{'Content-Type':'application/json'}}); };`;
 }
 const routes = ['home', 'settings', ...setupSteps.map(step => 'setup/' + step), ...new Set([...pages.map(([page]) => 'settings/' + page), ...Object.keys(pageKeys).map(page => 'settings/' + page), ...developerPages.map(page => 'settings/developer/' + page), 'settings/access/admin'])];
 const carlinkSettings = JSON.parse(readFileSync(new URL('./fixtures/linux/settings-carlink.json', import.meta.url), 'utf8'));
-const cases = Object.entries(linuxStatusFixtures).map(([state, status]) => ({ state, platform: 'linux', status, settings: status.output === 'web' ? linuxSettings : carlinkSettings }));
+const usbSettings = JSON.parse(readFileSync(new URL('./fixtures/linux/settings-usb.json', import.meta.url), 'utf8'));
+const cases = Object.entries(linuxStatusFixtures).map(([state, status]) => ({ state, platform: 'linux', status, settings: status.pathInput?.setup?.network === 'USB' ? usbSettings : status.output === 'web' ? linuxSettings : carlinkSettings }));
 for (const state of ['idle', 'ready', 'pairing', 'carlink-scanning', 'carlink-pin', 'failure', 'live']) {
   const status = structuredClone(linuxStatusFixtures.ready) as Status;
   status.platform = 'android'; delete status.adminFeatures; delete status.hostProfile; delete status.publicName;
@@ -76,6 +77,21 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     }
     }
   }, 30000);
+  it('confirms Linux USB with cable advice and hides the Bluetooth picker after saving', async () => {
+    await showFixture(linuxStatusFixtures.ready, 'settings/connection', linuxSettings);
+    await cdp.js(`document.querySelector('#field-transport').click(); new Promise(r=>setTimeout(r,50))`);
+    expect(await cdp.js(`document.querySelector('dialog').innerText`)).toContain('USB-A');
+    await cdp.js(`document.querySelector('dialog [data-option="1"]').click(); new Promise(r=>setTimeout(r,100))`);
+    const advice = await cdp.js(`document.querySelector('dialog:last-of-type').innerText`);
+    expect(advice).toContain('USB-A to Lightning');
+    expect(advice).toContain('Charge-only cables do not work');
+    expect(advice).not.toContain('battery');
+    expect(await cdp.js('window.adminWrites')).toEqual([]);
+    await cdp.js(`document.querySelector('dialog:last-of-type [data-confirm]').click(); new Promise(r=>setTimeout(r,600))`);
+    expect(await cdp.js('window.adminWrites.at(-1)')).toEqual({ transport: 'usb' });
+    expect(await cdp.js(`document.querySelector('#field-iphone').closest('.field').hidden`)).toBe(true);
+    expect(await cdp.js('window.renderErrors')).toEqual([]);
+  }, 10000);
   it('edits saved sizes atomically, tries without saving, and uses phone controls', async () => {
     await showFixture(linuxStatusFixtures['live-carlink'], 'settings/picture');
     const add = async (width: number, height: number) => cdp.js(`{ const form = document.querySelector('.picture-size-form'); form.elements.width.value='${width}'; form.elements.height.value='${height}'; form.dispatchEvent(new Event('input', {bubbles:true})); form.requestSubmit(); } new Promise(r=>setTimeout(r,20))`);

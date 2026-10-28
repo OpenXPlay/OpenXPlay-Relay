@@ -663,6 +663,9 @@ fn import_key(
         "receiverPort" => value
             .as_u64()
             .is_some_and(|v| (1..=65535).contains(&v) && v != 6975),
+        "transport" => value
+            .as_str()
+            .is_some_and(|v| ["wireless", "usb"].contains(&v)),
         "networkMode" => value
             .as_str()
             .is_some_and(|v| ["device-hotspot", "shared-wifi"].contains(&v)),
@@ -775,6 +778,24 @@ mod tests {
             false
         );
         assert_eq!(exported["settings"]["developer"]["carlinkHevc"], "signal");
+    }
+    #[test]
+    fn transport_import_validates_and_round_trips() {
+        for transport in ["wireless", "usb"] {
+            let file = json!({"format":USER_FORMAT,"version":1,"settings":{"transport":transport}});
+            let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+            assert!(p.report.ignored.is_empty());
+            let mut values = current();
+            values.extend(p.values);
+            assert_eq!(values["transport"], transport);
+            assert_eq!(
+                export_user_values(values, 0).unwrap()["settings"]["transport"],
+                transport
+            );
+        }
+        let invalid =
+            json!({"format":USER_FORMAT,"version":1,"settings":{"transport":"bluetooth"}});
+        assert!(plan(&serde_json::to_vec(&invalid).unwrap(), &current()).is_err());
     }
     #[test]
     fn linux_https_port_and_android_integral_channels_keep_their_platform_rules() {

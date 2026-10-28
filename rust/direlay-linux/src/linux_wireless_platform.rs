@@ -850,7 +850,7 @@ impl NetworkAttachment for LinuxNetwork {
             watchdog: self.watchdog.clone(),
         });
         let mut server = LinuxAirPlayServer::new(
-            address,
+            address.into(),
             self.config.clone(),
             self.identity.clone(),
             self.pairings.clone(),
