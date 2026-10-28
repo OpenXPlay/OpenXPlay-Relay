@@ -62,15 +62,14 @@ function choice(key: string, values: string[], extra: Partial<Field> = {}): Fiel
 }
 const when = (key: string, ...equals: Value[]) => ({ key, equals });
 // Trusted HTTPS as the Linux relay describes it (public-name.json); the token never comes back.
-const PUBLIC_NAME_OFF = { publicNameEnabled: false, publicNameProvider: '', publicName: '', publicNameToken: '', publicNameTokenSet: false, publicNameAgreeTerms: false, publicNameProviders: { duckdns: { name: '', tokenSet: false }, dynv6: { name: '', tokenSet: false } } };
+const PUBLIC_NAME_OFF = { privacyConfigAvailable: false, publicNameEnabled: false, publicNameProvider: '', publicName: '', publicNameToken: '', publicNameTokenSet: false, publicNameAgreeTerms: false, publicNameProviders: { duckdns: { name: '', tokenSet: false }, dynv6: { name: '', tokenSet: false } } };
 function publicNameSection(): Section {
-  const shown = { visibleWhen: when('publicNameEnabled', true) };
   return { id: 'publicName', titleKey: 'publicName.title', fields: [
     field('publicNameEnabled', 'bool', { labelKey: 'publicName.enabled', hintKey: 'publicName.summary' }),
-    choice('publicNameProvider', ['duckdns', 'dynv6'], { labelKey: 'publicName.provider', ...shown }),
-    field('publicName', 'text', { labelKey: 'publicName.name', hintKey: 'publicName.nameHint', ...shown }),
-    field('publicNameToken', 'secret', { labelKey: 'publicName.token', hintKey: 'publicName.tokenHint', ...shown }),
-    field('publicNameAgreeTerms', 'bool', { labelKey: 'publicName.terms', ...shown }),
+    choice('publicNameProvider', ['duckdns', 'dynv6'], { labelKey: 'publicName.provider' }),
+    field('publicName', 'text', { labelKey: 'publicName.name', hintKey: 'publicName.nameHint' }),
+    field('publicNameToken', 'secret', { labelKey: 'publicName.token', hintKey: 'publicName.tokenHint' }),
+    field('publicNameAgreeTerms', 'bool', { labelKey: 'publicName.terms' }),
   ] };
 }
 function mockWireless(values: Settings['values']): Wireless {
@@ -342,10 +341,10 @@ export function mockApi(linux = false): Plugin {
         if (!['openxplay-user-config', 'openxplay-privacy-config'].includes(String(body.format)) || body.version !== 1) return send(422, { error: 'error.invalid' });
         if (body.format === 'openxplay-privacy-config') {
           const keys = Object.keys(body).filter(key => !['format', 'version', 'platform', 'appVersion', 'exportedAt'].includes(key));
-          const allowed = ['publicName', 'publicNameCertificate', 'publicNameAccount', 'providers', 'importedCertificate', 'mfiRemoteToken'];
+          const allowed = ['publicName', 'publicNameCertificate', 'publicNameAccount', 'providers'];
           const applied = keys.filter(key => allowed.includes(key)), ignored = keys.filter(key => !allowed.includes(key));
           if (url.searchParams.get('dryRun') !== '1') privacyConfig = { ...privacyConfig, ...Object.fromEntries(applied.map(key => [key, body[key]])) };
-          return send(200, { applied, ignored, restartNeeded: applied.length > 0 });
+          return send(200, { applied, ignored, restartNeeded: false });
         }
         if (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings)) return send(422, { error: 'error.invalid' });
         const known = new Set(settings.schema.flatMap(s => s.fields).map(f => f.key).filter(key => key !== 'carlinkPictureTry'));
@@ -478,7 +477,7 @@ export function mockApi(linux = false): Plugin {
         settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name, tokenSet: true } };
         return send(200, { ok: true, provider, name });
       }
-      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
+      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, privacyConfigAvailable: !!settings.values.publicNameProvider || Object.keys(privacyConfig).length > 0, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
       if (path === '/phones' && method === 'GET') return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id })));
       if (path === '/settings' && method === 'PUT') {
         const errors: Record<string, string> = {};

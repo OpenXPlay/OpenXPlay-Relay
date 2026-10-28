@@ -12,6 +12,7 @@ pub mod dns;
 pub mod http;
 pub mod jws;
 pub mod local_dns;
+pub mod privacy;
 pub mod providers;
 pub mod schedule;
 pub mod service;

@@ -28,7 +28,7 @@ pub struct ImportReport {
 pub struct Plan {
     pub report: ImportReport,
     pub values: Values,
-    pub public_name: Option<String>,
+    pub privacy: Option<crate::public_name::privacy::Import>,
 }
 fn protected(key: &str) -> bool {
     matches!(
@@ -138,10 +138,10 @@ pub fn export_user(settings: &Settings, display: &Value, now: u64) -> Result<Val
     value["settings"] = Value::Object(values);
     bounded(value)
 }
-pub fn export_privacy(public_name: Option<Value>, now: u64) -> Result<Value, Errors> {
+pub fn export_privacy(sections: Value, now: u64) -> Result<Value, Errors> {
     let mut value = envelope(PRIVACY_FORMAT, now);
-    if let Some(config) = public_name {
-        value["publicName"] = config;
+    if let Some(sections) = sections.as_object() {
+        value.as_object_mut().unwrap().extend(sections.clone());
     }
     bounded(value)
 }
@@ -152,7 +152,21 @@ fn bounded(value: Value) -> Result<Value, Errors> {
         Ok(value)
     }
 }
+#[cfg(test)]
 pub fn plan(bytes: &[u8], current: &Values) -> Result<Plan, Errors> {
+    plan_with_privacy(
+        bytes,
+        current,
+        None,
+        crate::platform::wall_clock().as_secs(),
+    )
+}
+pub fn plan_with_privacy(
+    bytes: &[u8],
+    current: &Values,
+    public: Option<&crate::public_name::config::Config>,
+    now: u64,
+) -> Result<Plan, Errors> {
     if bytes.len() > MAX_BYTES {
         return Err(error("file", "too-large"));
     }
@@ -165,7 +179,7 @@ pub fn plan(bytes: &[u8], current: &Values) -> Result<Plan, Errors> {
     let mut plan = Plan {
         report: ImportReport::default(),
         values: Values::new(),
-        public_name: None,
+        privacy: None,
     };
     match object.get("format").and_then(Value::as_str) {
         Some(USER_FORMAT) => {
@@ -200,19 +214,9 @@ pub fn plan(bytes: &[u8], current: &Values) -> Result<Plan, Errors> {
             plan.report.restart_needed = plan.values.keys().any(|key| restart_key(key));
         }
         Some(PRIVACY_FORMAT) => {
-            if let Some(public) = object.get("publicName") {
-                let bytes = serde_json::to_vec(public).unwrap();
-                let parsed = crate::public_name::config::parse(&bytes);
-                if !parsed.errors.is_empty() {
-                    return Err(parsed
-                        .errors
-                        .into_iter()
-                        .map(|(key, value)| (format!("publicName.{key}"), value))
-                        .collect());
-                }
-                plan.public_name = Some(String::from_utf8(bytes).unwrap());
-                plan.report.applied.push("publicName".into());
-            }
+            let privacy = crate::public_name::privacy::decode(&value, public, now)?;
+            plan.report.applied = privacy.sections();
+            plan.privacy = Some(privacy);
             for key in object.keys() {
                 if ![
                     "format",
@@ -221,6 +225,9 @@ pub fn plan(bytes: &[u8], current: &Values) -> Result<Plan, Errors> {
                     "appVersion",
                     "exportedAt",
                     "publicName",
+                    "providers",
+                    "publicNameCertificate",
+                    "publicNameAccount",
                 ]
                 .contains(&key.as_str())
                 {
@@ -496,15 +503,16 @@ mod tests {
     #[test]
     fn privacy_setup_round_trip_and_android_only_material_is_reported() {
         let public = json!({"version":1,"enabled":false,"provider":"dynv6","name":"test.dynv6.net","token":"secret-token","agreeLetsEncryptTerms":true});
-        let mut file = export_privacy(Some(public.clone()), 1000).unwrap();
+        let mut file = export_privacy(json!({"publicName":public}), 1000).unwrap();
         file["importedCertificate"] = json!({});
+        file["mfiRemoteToken"] = json!("ignored");
         let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
         assert_eq!(
-            serde_json::from_str::<Value>(&p.public_name.unwrap()).unwrap(),
+            serde_json::from_slice::<Value>(&p.privacy.unwrap().config.unwrap().to_json()).unwrap(),
             public
         );
         assert_eq!(p.report.applied, ["publicName"]);
-        assert_eq!(p.report.ignored, ["importedCertificate"]);
+        assert_eq!(p.report.ignored, ["importedCertificate", "mfiRemoteToken"]);
         assert!(!p.report.restart_needed);
     }
     #[test]

@@ -247,7 +247,7 @@ impl<'a> Client<'a> {
     }
     /// The suggested renewal window of the certificate `cert_id`, as Unix seconds, when the
     /// directory offers renewal information.
-    pub fn renewal_window(&self, cert_id: &str) -> Result<Option<(u64, u64)>, AcmeError> {
+    pub fn renewal_window(&self, cert_id: &str) -> Result<Option<RenewalWindow>, AcmeError> {
         let Some(base) = &self.directory.renewal_info else {
             return Ok(None);
         };
@@ -263,10 +263,20 @@ impl<'a> Client<'a> {
         let window = &body["suggestedWindow"];
         let at = |key: &str| window[key].as_str().and_then(time::parse_rfc3339);
         match (at("start"), at("end")) {
-            (Some(start), Some(end)) if start <= end => Ok(Some((start, end))),
+            (Some(start), Some(end)) if start <= end => Ok(Some(RenewalWindow {
+                start,
+                end,
+                retry_after: response.retry_after(self.now),
+            })),
             _ => Err(AcmeError::Unreachable),
         }
     }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenewalWindow {
+    pub start: u64,
+    pub end: u64,
+    pub retry_after: Option<u64>,
 }
 fn origin(url: &str) -> &str {
     let rest = url.find("://").map_or(0, |i| i + 3);
@@ -643,7 +653,11 @@ mod tests {
         let client = Client::connect(&http, &acme.directory(), &key, None, now()).unwrap();
         assert_eq!(
             client.renewal_window(&cert_id).unwrap(),
-            Some((1_797_724_800, 1_797_897_600))
+            Some(RenewalWindow {
+                start: 1_797_724_800,
+                end: 1_797_897_600,
+                retry_after: Some(21_600)
+            })
         );
         assert!(order(&acme, &key, None, Some(&cert_id)).0.is_ok());
         assert_eq!(acme.replaced(), std::slice::from_ref(&cert_id));

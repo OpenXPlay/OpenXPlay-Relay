@@ -1841,6 +1841,7 @@ fn plugin_arguments_off_golden_and_on_filtered_in_order() {
         "/opt/openxplay/share/receiver",
         "--web-bind",
         "0.0.0.0",
+        "--control-stdin",
         "--tls-self-signed",
         "/var/lib/openxplay/receiver-tls",
         "--tls-san",

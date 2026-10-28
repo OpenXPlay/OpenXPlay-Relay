@@ -875,48 +875,24 @@
               "value": "dynv6"
             }
           ],
-          "type": "choice",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "choice"
         },
         {
           "hintKey": "publicName.nameHint",
           "key": "publicName",
           "labelKey": "publicName.name",
-          "type": "text",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "text"
         },
         {
           "hintKey": "publicName.tokenHint",
           "key": "publicNameToken",
           "labelKey": "publicName.token",
-          "type": "secret",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "secret"
         },
         {
           "key": "publicNameAgreeTerms",
           "labelKey": "publicName.terms",
-          "type": "bool",
-          "visibleWhen": {
-            "equals": [
-              true
-            ],
-            "key": "publicNameEnabled"
-          }
+          "type": "bool"
         }
       ],
       "id": "publicName",
@@ -991,6 +967,7 @@
     "output": "both",
     "plugins": false,
     "pluginsEnabled": [],
+    "privacyConfigAvailable": false,
     "publicName": "",
     "publicNameAgreeTerms": false,
     "publicNameEnabled": false,

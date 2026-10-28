@@ -18,6 +18,12 @@ use std::{
     time::{Duration, Instant},
 };
 pub type EventSink = Arc<dyn Fn(Value) + Send + Sync>;
+#[path = "receiver_tls_control.rs"]
+mod receiver_tls_control;
+use receiver_tls_control::WebTlsControl;
+#[cfg(test)]
+#[path = "receiver_tls_tests.rs"]
+pub(crate) mod receiver_tls_tests;
 #[derive(Clone, Debug)]
 pub struct CarlinkSettings {
     pub name: String,
@@ -81,6 +87,7 @@ impl SupervisorSettings {
                 self.web_root.as_os_str().into(),
                 "--web-bind".into(),
                 "0.0.0.0".into(),
+                "--control-stdin".into(),
             ];
             if let Some(pem) = pem {
                 args.extend([
@@ -121,8 +128,10 @@ impl SupervisorSettings {
                 args.extend([
                     "--clink-trace".into(),
                     self.state_dir.join("carlink-trace").into_os_string(),
-                    "--control-stdin".into(),
                 ]);
+                if self.web_port == 0 {
+                    args.push("--control-stdin".into());
+                }
             }
             args.extend([
                 "--state-dir".into(),
@@ -253,9 +262,9 @@ impl SupervisorSettings {
         settings.arguments()
     }
 }
-/// A nonblocking pipe: one small atomic write, never waiting for a reader or another request.
+/// One nonblocking write, never waiting for a reader or another request.
 #[derive(Clone)]
-pub struct ControlPipe(Arc<Mutex<ChildStdin>>);
+pub struct ControlPipe(Arc<Mutex<Option<ChildStdin>>>);
 impl ControlPipe {
     fn new(stdin: ChildStdin) -> io::Result<Self> {
         use std::os::fd::AsRawFd;
@@ -264,28 +273,31 @@ impl ControlPipe {
         if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(Self(Arc::new(Mutex::new(stdin))))
+        Ok(Self(Arc::new(Mutex::new(Some(stdin)))))
     }
     pub fn send_control(&self, value: &Value) -> io::Result<()> {
         use std::os::fd::AsRawFd;
         let mut bytes = serde_json::to_vec(value)?;
-        bytes.push(b'\n');
-        // POSIX guarantees atomic pipe writes of at least 512 bytes; our commands are much smaller.
-        if bytes.len() > 512 {
+        if bytes.len() > 4096 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "control too long",
             ));
         }
-        let pipe = self
+        bytes.push(b'\n');
+        let mut pipe = self
             .0
             .try_lock()
             .map_err(|_| io::Error::from(io::ErrorKind::WouldBlock))?;
-        let written = unsafe { libc::write(pipe.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
+        let stdin = pipe.as_ref().ok_or(io::ErrorKind::BrokenPipe)?;
+        let written = unsafe { libc::write(stdin.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
         if written < 0 {
             return Err(io::Error::last_os_error());
         }
         if written as usize != bytes.len() {
+            // Larger W2 requests may exceed PIPE_BUF on non-Linux hosts. Close on a partial
+            // write so a following capture/clear command cannot complete malformed JSON.
+            *pipe = None;
             return Err(io::Error::from(io::ErrorKind::WriteZero));
         }
         Ok(())
@@ -536,6 +548,7 @@ pub struct RelaySupervisor {
     hevc_disabled: Arc<AtomicBool>,
     control: Arc<Mutex<Option<ControlPipe>>>,
     tracing: Arc<AtomicBool>,
+    web_tls: Arc<WebTlsControl>,
 }
 impl RelaySupervisor {
     pub fn new(
@@ -544,6 +557,7 @@ impl RelaySupervisor {
         events: EventSink,
     ) -> Self {
         Self {
+            web_tls: Arc::new(WebTlsControl::new(&settings)),
             settings,
             factory,
             events,
@@ -574,7 +588,9 @@ impl RelaySupervisor {
         self.policy = policy;
     }
     pub fn receiver_urls(&self, host: &str) -> Vec<String> {
-        let mut urls = self.settings.receiver_urls(host);
+        let mut settings = self.settings.clone();
+        settings.addresses = self.web_tls.settings().sans;
+        let mut urls = settings.receiver_urls(host);
         if let Some(fragment) = self.pairing_fragment.lock().unwrap().as_ref() {
             for url in &mut urls {
                 url.push('#');
@@ -598,6 +614,22 @@ impl RelaySupervisor {
             .as_ref()
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?
             .send_control(value)
+    }
+    /// Wait only on the action worker. Reader callbacks acknowledge W2's matching request;
+    /// subsequent automatic child retries use only the last acknowledged complete set.
+    pub fn update_web_tls(
+        &self,
+        pem: Option<PemTls>,
+        sans: Vec<Ipv4Addr>,
+        timeout: Duration,
+    ) -> io::Result<()> {
+        let control = self.control.lock().unwrap();
+        let pipe = control.as_ref().ok_or(io::ErrorKind::NotConnected)?;
+        let id = self
+            .web_tls
+            .send(pipe, receiver_tls_control::Settings { pem, sans })?;
+        drop(control);
+        self.web_tls.wait(&id, timeout)
     }
     /// Serialize offline clearing with child startup, without waiting for the lifecycle worker.
     pub fn clear_trace(&self, when_stopped: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
@@ -640,6 +672,7 @@ impl RelaySupervisor {
             self.running.clone(),
         );
         let control = self.control.clone();
+        let web_tls = self.web_tls.clone();
         let tracing = self.tracing.clone();
         let connect = self.connect.clone();
         let restart = self.restart.clone();
@@ -764,6 +797,12 @@ impl RelaySupervisor {
                     remove_stale_socket(&settings.socket);
                     restart.store(false, Ordering::Release);
                     let mut launch = settings.clone();
+                    let (generation, tls) = {
+                        let _guard = control.lock().unwrap();
+                        web_tls.begin_child()
+                    };
+                    launch.pem_tls = tls.pem;
+                    launch.addresses = tls.sans;
                     if hevc_disabled.load(Ordering::Acquire) {
                         if let Some(carlink) = launch.carlink.as_mut() {
                             carlink.hevc = "off".into();
@@ -776,16 +815,22 @@ impl RelaySupervisor {
                     };
                     {
                         let _guard = control.lock().unwrap();
-                        tracing.store(arguments.iter().any(|a| a == "--control-stdin"), Ordering::Release);
+                        tracing.store(arguments.iter().any(|a| a == "--clink-trace"), Ordering::Release);
                     }
                     // Reset session observations before the child can emit its first event.
                     events(json!({"type":"receiver-starting"}));
-                    match factory.spawn(&settings.binary, &arguments, child_events.clone()) {
+                    let replies = web_tls.clone();
+                    let forward = child_events.clone();
+                    let generation_events: EventSink = Arc::new(move |event| {
+                        replies.observe(generation, &event);
+                        forward(event);
+                    });
+                    match factory.spawn(&settings.binary, &arguments, generation_events) {
                         Ok(mut child) => {
                             let pipe = child.control();
                             {
                                 let mut available = control.lock().unwrap();
-                                tracing.store(pipe.is_some(), Ordering::Release);
+                                tracing.store(pipe.is_some() && arguments.iter().any(|a| a == "--clink-trace"), Ordering::Release);
                                 *available = pipe;
                             }
                             running.store(true, Ordering::Relaxed);
@@ -808,7 +853,11 @@ impl RelaySupervisor {
                                     }
                                 }
                             }
-                            *control.lock().unwrap() = None;
+                            {
+                                let mut pipe = control.lock().unwrap();
+                                *pipe = None;
+                                web_tls.disconnect(generation);
+                            }
                             running.store(false, Ordering::Relaxed);
                             if let Err(e) = child.stop() {
                                 events(json!({"type": "receiver-error", "message": e.to_string()}));
@@ -817,6 +866,7 @@ impl RelaySupervisor {
                             events(json!({"type":"receiver-stopped"}));
                         }
                         Err(e) => {
+                            web_tls.disconnect(generation);
                             tracing.store(false, Ordering::Release);
                             events(json!({"type": "receiver-error", "message": e.to_string()}));
                         },
@@ -1275,7 +1325,7 @@ mod tls_tests {
         }
     }
     #[test]
-    fn without_a_trusted_certificate_the_arguments_are_exactly_as_before() {
+    fn web_arguments_always_enable_control_and_keep_optional_trusted_material() {
         let dir = std::env::temp_dir().join(format!(
             "supervisor-tls-{}",
             crate::admin::auth::random_hex(6).unwrap()
@@ -1290,6 +1340,7 @@ mod tls_tests {
             "/opt/openxplay/share/web",
             "--web-bind",
             "0.0.0.0",
+            "--control-stdin",
             "--tls-self-signed",
             &format!("{state}/receiver-tls"),
             "--tls-san",
@@ -1322,7 +1373,7 @@ mod tls_tests {
         let args = strings(with.arguments());
         let mut expected: Vec<String> = legacy.iter().map(|s| s.to_string()).collect();
         expected.splice(
-            8..8,
+            9..9,
             [
                 "--tls-cert".into(),
                 format!("{state}/public-name/cert.pem"),
@@ -1349,7 +1400,7 @@ mod tls_tests {
 mod trace_tests {
     use super::*;
     #[test]
-    fn pipe_is_only_created_with_trace_and_dead_or_stuck_children_never_block() {
+    fn pipe_is_created_only_with_control_and_dead_or_stuck_children_never_block() {
         let factory = ProcessChildFactory;
         let sink: EventSink = Arc::new(|_| {});
         let mut off = factory

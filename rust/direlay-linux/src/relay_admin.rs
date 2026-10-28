@@ -39,7 +39,7 @@ enum Operation {
     Startup,
     Initialize,
     Outputs(Option<Box<Operation>>),
-    /// The head-unit page's certificate changed (trusted HTTPS): restart its child.
+    /// Apply the complete receiver TLS set, coalescing certificate and address changes.
     ReceiverTls,
     Hotspot,
     Roles(Vec<String>),
@@ -180,6 +180,8 @@ pub struct LinuxRelayAdmin {
     admin_certificate: crate::admin::server::NamedCertificate,
     /// What the running head-unit page serves; `None` while there is no web output.
     receiver_tls: Mutex<Option<Option<crate::public_name::Served>>>,
+    /// Self-signed IP SANs frozen with the running child (up to 16, retaining old networks).
+    receiver_tls_sans: Mutex<Vec<std::net::Ipv4Addr>>,
     /// The public-name generation the admin certificate follows.
     public_name_generation: std::sync::atomic::AtomicU64,
     receiver_tls_queued: AtomicBool,
@@ -366,6 +368,7 @@ impl LinuxRelayAdmin {
             public_name,
             admin_certificate: Default::default(),
             receiver_tls: Mutex::new(None),
+            receiver_tls_sans: Mutex::new(Vec::new()),
             public_name_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             receiver_tls_queued: AtomicBool::new(false),
             tesla: Mutex::new(crate::tesla_address::Session::new(runtime.runner.clone())),
@@ -698,11 +701,7 @@ impl LinuxRelayAdmin {
             self.reconcile_carlink_network()?;
         }
         self.input.set_plugins_enabled(o.settings.plugins);
-        let addresses = (self.runtime.addresses)()?
-            .into_iter()
-            .filter(|(_, a, _)| !a.is_loopback())
-            .map(|(_, a, _)| a)
-            .collect::<Vec<_>>();
+        let addresses = self.receiver_sans()?;
         let occupied = (self.runtime.addresses)()?
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
@@ -744,17 +743,31 @@ impl LinuxRelayAdmin {
             ble_adapter,
             station_5ghz,
         );
+        settings.addresses.sort();
+        settings.addresses.dedup();
+        settings.addresses.truncate(16);
         if !self.wifi_present(o.carlink_interface()) {
             settings.carlink = None;
         }
-        *self.receiver_tesla_tls.lock().unwrap() = crate::tesla_address::tls_address(&o.settings);
-        let served = self.public_name.served();
+        let tesla_tls = crate::tesla_address::tls_address(&o.settings);
+        let served = self
+            .public_name
+            .certificate_snapshot(&self.options.state_dir)?;
         settings.pem_tls = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
             cert: s.cert.clone(),
             key: s.key.clone(),
         });
-        *self.receiver_tls.lock().unwrap() = (settings.web_port != 0).then_some(served);
+        if served.is_none() {
+            for name in ["named-cert.pem", "named-key.pem"] {
+                match std::fs::remove_file(self.options.state_dir.join("receiver-tls").join(name)) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                    _ => {}
+                }
+            }
+        }
+        let receiver_tls = (settings.web_port != 0).then_some(served);
+        let receiver_sans = settings.addresses.clone();
         *self.carlink.lock().unwrap() = AdminCarlink {
             state: "waiting".into(),
             ..Default::default()
@@ -895,6 +908,9 @@ impl LinuxRelayAdmin {
             .with_carlink_backoff(self.carlink_backoff.lock().unwrap().clone())
             .with_hevc_disabled(self.carlink_hevc_disabled.clone());
         supervisor.start()?;
+        *self.receiver_tesla_tls.lock().unwrap() = tesla_tls.filter(|a| receiver_sans.contains(a));
+        *self.receiver_tls.lock().unwrap() = receiver_tls;
+        *self.receiver_tls_sans.lock().unwrap() = receiver_sans;
         *self.supervisor.lock().unwrap() = Some(supervisor);
         *self.running_links.lock().unwrap() = Some(running_links);
         Ok(())
@@ -1059,21 +1075,9 @@ impl LinuxRelayAdmin {
                 self.apply_pending.store(false, Ordering::Release);
             }
             Operation::ReceiverTls => {
+                let result = self.update_receiver_tls(Duration::from_secs(3));
                 self.receiver_tls_queued.store(false, Ordering::Release);
-                // A session may have begun since the SAN update was queued.
-                if self.input.session_active()
-                    && self.receiver_tls.lock().unwrap().as_ref()
-                        == Some(&self.public_name.served())
-                {
-                    return Ok(());
-                }
-                let running = self.supervisor.lock().unwrap().take();
-                // Nothing to compare until a supervisor runs again.
-                *self.receiver_tls.lock().unwrap() = None;
-                if let Some(mut supervisor) = running {
-                    supervisor.stop();
-                    self.start_supervisor()?;
-                }
+                result?;
             }
             Operation::Restart => {
                 self.input.accept_picture_default();
@@ -1391,11 +1395,10 @@ impl LinuxRelayAdmin {
         drop(tesla);
         self.public_name.published_address_override(published);
     }
-    /// Small TLS-update hook for W2: replace the deferred respawn with the Stream TLS control
-    /// message here once available. The live CarPlay session must keep running throughout.
+    /// Compare selected Tesla coverage with the last acknowledged receiver set.
     fn tesla_tls_changed(&self) -> bool {
         let desired = crate::tesla_address::tls_address(&self.settings.lock().unwrap());
-        desired != *self.receiver_tesla_tls.lock().unwrap() && !self.input.session_active()
+        desired != *self.receiver_tesla_tls.lock().unwrap()
     }
     fn tesla_url(&self) -> Option<String> {
         let web = self.input.runtime_path_facts().web;
@@ -1423,7 +1426,7 @@ impl LinuxRelayAdmin {
         Some(format!("https://{host}:{}/", web.port))
     }
     /// Follows the trusted-HTTPS certificate: the admin page swaps it at once, the head-unit
-    /// page by restarting its child when the restart rule allows.
+    /// page through its acknowledged control channel.
     fn apply_public_name(&self) {
         let served = self.public_name.served();
         let generation = self.public_name.generation();
@@ -1441,24 +1444,115 @@ impl LinuxRelayAdmin {
                 _ => self.admin_certificate.clear(),
             }
         }
+        if let Ok(sans) = self.receiver_sans() {
+            self.apply_receiver_tls(served, sans);
+        }
+    }
+    fn receiver_sans(&self) -> Result<Vec<std::net::Ipv4Addr>> {
+        let rows = (self.runtime.addresses)()?;
+        let occupied: Vec<_> = rows
+            .iter()
+            .map(|(_, address, prefix)| format!("{address}/{prefix}"))
+            .collect();
+        let mut addresses: Vec<_> = rows
+            .into_iter()
+            .map(|(_, address, _)| address)
+            .filter(|a| !a.is_loopback())
+            .collect();
+        if let Some(address) = crate::tesla_address::tls_address(&self.settings.lock().unwrap()) {
+            addresses.push(address);
+        }
+        addresses.push(std::net::Ipv4Addr::new(10, 78, 0, 1));
+        if let Ok(address) = crate::HotspotAddressPolicy::select_subnet(&occupied) {
+            addresses.push(address);
+        }
+        addresses.sort();
+        addresses.dedup();
+        for address in self.receiver_tls_sans.lock().unwrap().iter() {
+            if !addresses.contains(address) {
+                addresses.push(*address);
+            }
+        }
+        addresses.truncate(16);
+        addresses.sort();
+        Ok(addresses)
+    }
+    /// Single production queue for trusted material, network SANs and Tesla coverage.
+    /// The action reads the latest desired set when it runs, coalescing waiting changes.
+    fn apply_receiver_tls(
+        &self,
+        served: Option<crate::public_name::Served>,
+        sans: Vec<std::net::Ipv4Addr>,
+    ) {
         let Some(current) = self.receiver_tls.lock().unwrap().clone() else {
             return;
         };
-        if self.receiver_tls_queued.load(Ordering::Acquire) {
-            return;
-        }
-        if (crate::public_name::service::should_restart(
+        let changed = crate::public_name::service::should_restart(
             current.as_ref(),
             served.as_ref(),
-            self.input.session_active(),
+            false,
             crate::public_name::service::trusted_clock(),
-        ) || self.tesla_tls_changed())
-            && self.operations.try_send(Operation::ReceiverTls).is_ok()
+        ) || *self.receiver_tls_sans.lock().unwrap() != sans
+            || self.tesla_tls_changed();
+        if changed
+            && !self.receiver_tls_queued.swap(true, Ordering::AcqRel)
+            && self.operations.try_send(Operation::ReceiverTls).is_err()
         {
-            self.receiver_tls_queued.store(true, Ordering::Release);
-            self.events
-                .log("receiver certificate changed; restarting the head-unit page");
+            self.receiver_tls_queued.store(false, Ordering::Release);
         }
+    }
+    fn update_receiver_tls(&self, timeout: Duration) -> Result<()> {
+        let Some(current) = self.receiver_tls.lock().unwrap().clone() else {
+            return Ok(());
+        };
+        // Freeze complete private PEMs before sending paths. A failed request never overwrites
+        // the pair used by automatic retries of the currently served child.
+        let served = self
+            .public_name
+            .certificate_snapshot(&self.options.state_dir)?;
+        let sans = self.receiver_sans()?;
+        let tesla = crate::tesla_address::tls_address(&self.settings.lock().unwrap());
+        let pem = served.as_ref().map(|s| PemTls {
+            name: s.name.clone(),
+            cert: s.cert.clone(),
+            key: s.key.clone(),
+        });
+        let swapped = self
+            .supervisor
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotConnected))
+            .and_then(|supervisor| supervisor.update_web_tls(pem, sans.clone(), timeout));
+        match swapped {
+            Ok(()) => {
+                *self.receiver_tls.lock().unwrap() = Some(served);
+                *self.receiver_tls_sans.lock().unwrap() = sans.clone();
+                *self.receiver_tesla_tls.lock().unwrap() = tesla.filter(|a| sans.contains(a));
+                self.events.log("receiver TLS updated live");
+            }
+            Err(error) => {
+                self.events
+                    .log(&format!("receiver TLS update not acknowledged: {error}"));
+                // Recheck now: a session may have begun while the request was pending.
+                let restart = !self.input.session_active()
+                    || crate::public_name::service::should_restart(
+                        current.as_ref(),
+                        served.as_ref(),
+                        true,
+                        crate::public_name::service::trusted_clock(),
+                    );
+                if restart {
+                    let running = self.supervisor.lock().unwrap().take();
+                    if let Some(mut supervisor) = running {
+                        supervisor.stop();
+                        *self.receiver_tls.lock().unwrap() = None;
+                        self.start_supervisor()?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
     fn apply_wifi_country(&self) {
         let country = self.settings.lock().unwrap().wifi_country.clone();
@@ -1777,6 +1871,18 @@ fn public_name_url(
         .map_or(String::new(), |(_, f)| format!("#{f}"));
     Some(format!("https://{name}:{port}/{fragment}"))
 }
+/// A stored certificate is not necessarily loaded by the page child yet.
+fn receiver_public_name(
+    mut status: crate::public_name::PublicNameStatus,
+    served: Option<&crate::public_name::Served>,
+    now: Option<u64>,
+) -> crate::public_name::PublicNameStatus {
+    status.trusted_name = status.trusted_name.filter(|name| {
+        served.is_some_and(|s| s.name == *name && now.is_none_or(|now| now < s.not_after))
+    });
+    status.not_after = served.map(|s| s.not_after);
+    status
+}
 fn admin_urls(
     status: &crate::public_name::PublicNameStatus,
     head_unit: Option<std::net::Ipv4Addr>,
@@ -1948,10 +2054,7 @@ fn public_name_section() -> Section {
                 })
                 .collect()
         }),
-        visible_when: (key != "publicNameEnabled").then(|| VisibleWhen {
-            key: "publicNameEnabled".into(),
-            equals: vec![true.into()],
-        }),
+        visible_when: None,
         min: None,
         max: None,
     };
@@ -2579,11 +2682,11 @@ impl RelayAdmin for LinuxRelayAdmin {
     ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
         let now = crate::logs::now_millis();
         if privacy {
-            let public =
-                crate::public_name::config::load(&self.options.state_dir.join("public-name.json"))
-                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?
-                    .map(|(config, _)| serde_json::from_slice(&config.to_json()).unwrap());
-            crate::config_files::export_privacy(public, now)
+            let sections = self
+                .public_name
+                .privacy_export()
+                .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+            crate::config_files::export_privacy(sections, now)
         } else {
             crate::config_files::export_user(
                 &self.settings.lock().unwrap(),
@@ -2599,9 +2702,11 @@ impl RelayAdmin for LinuxRelayAdmin {
     ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
         let current = self.settings.lock().unwrap().clone();
         let mut display = oxp_wire::display_settings(&self.input.display_settings());
-        let plan = crate::config_files::plan(
+        let plan = crate::config_files::plan_with_privacy(
             bytes,
             &crate::config_files::settings_values(&current, &display),
+            self.public_name.config().as_ref(),
+            crate::platform::wall_clock().as_secs(),
         )?;
         let mut settings = plan.values.clone();
         for key in ["resolution", "screenWidth", "videoCodec"] {
@@ -2627,13 +2732,10 @@ impl RelayAdmin for LinuxRelayAdmin {
             }
         }
         if !dry_run {
-            if let Some(public) = plan.public_name {
-                self.public_name.import(&public).map_err(|e| match e {
-                    crate::public_name::service::ImportError::Invalid(errors) => errors,
-                    crate::public_name::service::ImportError::Storage => {
-                        BTreeMap::from([("file".into(), "io".into())])
-                    }
-                })?;
+            if let Some(privacy) = plan.privacy {
+                self.public_name
+                    .import_privacy(privacy)
+                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
             }
             if !plan.values.is_empty() {
                 if let AdminUpdate::Errors(errors) = self.update(plan.values) {
@@ -2756,7 +2858,30 @@ impl RelayAdmin for LinuxRelayAdmin {
             !selected_tesla.is_some_and(|a| u.contains(&format!("://{a}:")))
                 && !served_tesla.is_some_and(|a| u.contains(&format!("://{a}:")))
         });
-        let public_name = self.public_name.status();
+        let worker_public_name = self.public_name.status();
+        let mut admin_public_name = worker_public_name.clone();
+        let admin_name = self.admin_certificate.name();
+        admin_public_name.trusted_name = admin_public_name
+            .trusted_name
+            .filter(|name| admin_name.as_ref() == Some(name));
+        let child_running = self
+            .supervisor
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|s| s.running());
+        let current = self
+            .receiver_tls
+            .lock()
+            .unwrap()
+            .clone()
+            .flatten()
+            .filter(|_| child_running);
+        let public_name = receiver_public_name(
+            worker_public_name,
+            current.as_ref(),
+            crate::public_name::service::trusted_clock(),
+        );
         if let Some(url) =
             public_name_url(&public_name, &receiver_urls, options.settings.receiver_port)
         {
@@ -2884,7 +3009,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .into(),
             }),
             admin_url: "https://openxplay-linux.local:6975/".into(),
-            admin_urls: admin_urls(&public_name, head_unit, &host_addresses),
+            admin_urls: admin_urls(&admin_public_name, head_unit, &host_addresses),
             receiver_urls,
             state: stage,
             running: controller.is_some(),
@@ -3447,12 +3572,21 @@ mod tests {
     #[test]
     fn privacy_file_dry_run_does_not_write_and_apply_reuses_public_name_import() {
         let (admin, dir) = fake();
+        admin.settings.lock().unwrap().unknown.insert(
+            "linux-local-extension".into(),
+            serde_json::json!({"keep":true}),
+        );
+        let before = admin.settings.lock().unwrap().clone();
         let public = serde_json::json!({"version":1,"enabled":false,"provider":"dynv6","name":"test.dynv6.net","token":"private-token","agreeLetsEncryptTerms":true});
         let bytes=serde_json::to_vec(&serde_json::json!({"format":"openxplay-privacy-config","version":1,"publicName":public})).unwrap();
         let preview = admin.config_import(&bytes, true).unwrap();
         assert!(!dir.join("public-name.json").exists());
         assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
         assert_eq!(admin.config_export(true).unwrap()["publicName"], public);
+        assert_eq!(
+            serde_json::to_value(&*admin.settings.lock().unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
         assert!(!admin
             .config_export(false)
             .unwrap()
@@ -3700,6 +3834,258 @@ mod tests {
         std::fs::write(admin.net_root.join("wlan0/address"), "02:00:00:00:00:01").unwrap();
         (Arc::new(admin), dir)
     }
+    struct TlsSessionControl;
+    impl carplay_airplay::SessionControl for TlsSessionControl {
+        fn send_touch(&self, _: &[carplay_airplay::AirPlayContact]) -> Result<bool> {
+            Ok(false)
+        }
+        fn send_media_button(&self, _: u8) -> Result<bool> {
+            Ok(false)
+        }
+    }
+    fn tls_fake_admin() -> (
+        Arc<LinuxRelayAdmin>,
+        std::path::PathBuf,
+        Arc<crate::supervisor::receiver_tls_tests::FakeChildFactory>,
+        std::sync::mpsc::Receiver<crate::supervisor::receiver_tls_tests::Request>,
+    ) {
+        let (mut admin, dir) = fake();
+        let (factory, rx) = crate::supervisor::receiver_tls_tests::FakeChildFactory::new();
+        let inner = Arc::get_mut(&mut admin).unwrap();
+        inner.child_factory = factory.clone();
+        inner.runtime.addresses =
+            Arc::new(|| Ok(vec![("wlan0".into(), "10.77.0.1".parse().unwrap(), 24)]));
+        admin.start_supervisor().unwrap();
+        factory.wait_started();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !admin.supervisor.lock().unwrap().as_ref().unwrap().running() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        (admin, dir, factory, rx)
+    }
+    fn next_tls_operation(admin: &LinuxRelayAdmin) -> Operation {
+        let operation = admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .try_recv()
+            .unwrap();
+        assert!(matches!(operation, Operation::ReceiverTls));
+        operation
+    }
+    #[test]
+    fn tesla_direct_switch_and_coalesced_updates_hot_swap_during_the_same_session() {
+        use crate::tesla_address::Mode;
+        let (admin, dir, factory, rx) = tls_fake_admin();
+        let session = admin.input.begin(Arc::new(TlsSessionControl)).unwrap();
+        admin.settings.lock().unwrap().tesla_browser = Mode::PublicAddress;
+        admin.apply_public_name();
+        admin.apply_public_name();
+        let operation = next_tls_operation(&admin);
+        assert!(admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .try_recv()
+            .is_err());
+        // A later edit supersedes the queued address before any request is sent.
+        admin.settings.lock().unwrap().tesla_browser = Mode::TeslaAndroid;
+        let settings = admin.settings.lock().unwrap().clone();
+        admin
+            .tesla
+            .lock()
+            .unwrap()
+            .tick(true, true, &settings, false, || Ok(vec![]), 1);
+        {
+            let mut facts = admin.events.facts.lock().unwrap();
+            facts.web.phase = "LISTENING".into();
+            facts.web.port = 8443;
+        }
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.perform_operation(operation));
+            let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(request.value["trusted"], serde_json::Value::Null);
+            assert!(request.value["sans"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("3.3.3.1")));
+            assert!(!request.value["sans"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("169.254.88.1")));
+            assert!(admin.receiver_tesla_tls.lock().unwrap().is_none());
+            assert!(admin.tesla_url().is_none());
+            // Changes arriving while an acknowledgement is pending are picked up next tick.
+            admin.settings.lock().unwrap().tesla_android_address = "3.3.3.2".into();
+            admin.apply_public_name();
+            assert!(admin
+                .operation_rx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .try_recv()
+                .is_err());
+            request.applied();
+            update.join().unwrap().unwrap();
+        });
+        assert_eq!(
+            *admin.receiver_tesla_tls.lock().unwrap(),
+            Some("3.3.3.1".parse().unwrap())
+        );
+        assert_eq!(admin.tesla_url().as_deref(), Some("https://3.3.3.1:8443/"));
+        admin.apply_public_name();
+        let operation = next_tls_operation(&admin);
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.perform_operation(operation));
+            let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            for address in ["3.3.3.1", "3.3.3.2", "10.77.0.1", "openxplay-linux.local"] {
+                assert!(request.value["sans"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!(address)));
+            }
+            request.applied();
+            update.join().unwrap().unwrap();
+        });
+        assert!(admin.input.session_active());
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(factory.launches.lock().unwrap().len(), 1);
+        admin.input.end(session).unwrap();
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tls_error_and_timeout_keep_served_state_until_the_idle_respawn_fallback() {
+        use crate::tesla_address::Mode;
+        let (admin, dir, factory, rx) = tls_fake_admin();
+        let session = admin.input.begin(Arc::new(TlsSessionControl)).unwrap();
+        let before = admin.receiver_tls_sans.lock().unwrap().clone();
+        admin.settings.lock().unwrap().tesla_browser = Mode::TeslaAndroid;
+        for reject in [true, false] {
+            let started = std::time::Instant::now();
+            std::thread::scope(|scope| {
+                let update = scope.spawn(|| admin.update_receiver_tls(Duration::from_millis(80)));
+                let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                if reject {
+                    request.rejected();
+                }
+                update.join().unwrap().unwrap();
+                request.applied(); // A late success cannot change the old served state.
+            });
+            assert!(started.elapsed() < Duration::from_secs(2));
+            assert_eq!(*admin.receiver_tls.lock().unwrap(), Some(None));
+            assert_eq!(*admin.receiver_tls_sans.lock().unwrap(), before);
+            assert!(admin.receiver_tesla_tls.lock().unwrap().is_none());
+            assert!(admin.input.session_active());
+            assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        }
+        admin.input.end(session).unwrap();
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.update_receiver_tls(Duration::from_secs(2)));
+            rx.recv_timeout(Duration::from_secs(2)).unwrap().rejected();
+            update.join().unwrap().unwrap();
+        });
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *admin.receiver_tesla_tls.lock().unwrap(),
+            Some("3.3.3.1".parse().unwrap())
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn certificate_issued_during_a_session_is_advertised_only_after_the_swap() {
+        use crate::public_name::{
+            http::UreqHttp, privacy, testing::FakeHttp, Network, PublicNameService,
+        };
+        struct Host;
+        impl crate::public_name::Host for Host {
+            fn address(&self) -> Option<std::net::Ipv4Addr> {
+                Some("10.77.0.1".parse().unwrap())
+            }
+            fn online(&self) -> bool {
+                true
+            }
+            fn clock(&self) -> Option<u64> {
+                Some(crate::platform::wall_clock().as_secs())
+            }
+        }
+        let (mut admin, dir, factory, rx) = tls_fake_admin();
+        let provider = FakeHttp::start(|_| (200, vec![], b"OK".to_vec()));
+        let mut network = Network::internet(None);
+        network.http = Arc::new(UreqHttp::new(false));
+        network.endpoints.duckdns = provider.url();
+        network.tick = Duration::from_millis(20);
+        network.settle = Duration::from_millis(5);
+        Arc::get_mut(&mut admin).unwrap().public_name =
+            Arc::new(PublicNameService::new(&dir, network));
+        let session = admin.input.begin(Arc::new(TlsSessionControl)).unwrap();
+        let name = "myrelay.duckdns.org";
+        let issued = rcgen::generate_simple_self_signed(vec![name.into()]).unwrap();
+        let chain = issued.cert.pem();
+        let key = issued.key_pair.serialize_pem();
+        let backup = serde_json::json!({"publicName":{"version":1,"enabled":true,"provider":"duckdns",
+            "name":name,"token":"12345678-1234-1234-1234-123456789abc","agreeLetsEncryptTerms":true},
+            "publicNameCertificate":{"name":name,"chainPem":chain,"keyPem":key}});
+        admin
+            .public_name
+            .import_privacy(
+                privacy::decode(&backup, None, crate::platform::wall_clock().as_secs())
+                    .unwrap_or_else(|e| panic!("{e:?}")),
+            )
+            .unwrap();
+        admin.public_name.start(Arc::new(Host)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while admin.public_name.status().trusted_name.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "certificate not ready: {:?}",
+                admin.public_name.status()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(admin.status().public_name.unwrap().trusted_name.is_none());
+        admin.apply_public_name();
+        let operation = next_tls_operation(&admin);
+        std::thread::scope(|scope| {
+            let update = scope.spawn(|| admin.perform_operation(operation));
+            let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(request.value["trusted"]["name"], name);
+            use std::os::unix::fs::PermissionsExt;
+            for (field, expected) in [("cert", &chain), ("key", &key)] {
+                let path = request.value["trusted"][field].as_str().unwrap();
+                assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
+                assert_eq!(
+                    std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+            assert_eq!(*admin.receiver_tls.lock().unwrap(), Some(None));
+            let pending = receiver_public_name(admin.public_name.status(), None, None);
+            assert!(pending.trusted_name.is_none());
+            request.applied();
+            update.join().unwrap().unwrap();
+        });
+        let status = admin.status();
+        assert_eq!(
+            status.public_name.unwrap().trusted_name.as_deref(),
+            Some(name)
+        );
+        assert_eq!(status.path_input["car"]["web"]["trustedName"], name);
+        assert!(status.receiver_urls[0].starts_with(&format!("https://{name}:")));
+        assert!(admin.input.session_active());
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        admin.input.end(session).unwrap();
+        admin.public_name.stop();
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn tesla_settings_apply_live_and_config_previews_share_collision_validation() {
         use crate::tesla_address::Mode;
@@ -3791,8 +4177,8 @@ mod tests {
         *a.receiver_tls.lock().unwrap() = Some(None);
         let session = a.input.begin(Arc::new(Control)).unwrap();
         assert!(
-            !a.tesla_tls_changed(),
-            "defer SAN changes while CarPlay runs"
+            a.tesla_tls_changed(),
+            "live SAN changes are allowed while CarPlay runs"
         );
         a.perform_operation(Operation::ReceiverTls).unwrap();
         assert!(
@@ -6919,7 +7305,9 @@ esac
                 .unwrap()
                 .clone(),
         ) {
-            AdminUpdate::Errors(errors) => assert_eq!(errors["publicName"], "error.invalid"),
+            AdminUpdate::Errors(errors) => {
+                assert_eq!(errors["publicName"], "publicName.nameInvalid")
+            }
             _ => panic!("invalid name accepted"),
         }
         assert!(a.action("public-name-renew").is_ok());
@@ -6954,6 +7342,109 @@ esac
             ..ready
         };
         assert_eq!(public_name_url(&untrusted, &urls, 8443), None);
+    }
+    #[test]
+    fn advertised_name_and_path_input_wait_for_the_certificate_served_by_the_child() {
+        let ready = crate::public_name::PublicNameStatus {
+            state: "ready".into(),
+            trusted_name: Some("myrelay.duckdns.org".into()),
+            not_after: Some(1_900_000_000),
+            ..Default::default()
+        };
+        let certificate = crate::public_name::Served {
+            name: "myrelay.duckdns.org".into(),
+            cert: "cert".into(),
+            key: "key".into(),
+            not_after: 1_850_000_000,
+            fingerprint: "old".into(),
+        };
+        let urls = vec!["https://10.77.0.1:8443/#pairing".into()];
+        for served in [
+            None,
+            Some(&crate::public_name::Served {
+                name: "other.duckdns.org".into(),
+                ..certificate.clone()
+            }),
+        ] {
+            let pending = receiver_public_name(ready.clone(), served, Some(1_800_000_000));
+            assert!(pending.trusted_name.is_none());
+            assert!(public_name_url(&pending, &urls, 8443).is_none());
+        }
+        let serving = receiver_public_name(ready.clone(), Some(&certificate), Some(1_800_000_000));
+        assert_eq!(serving.not_after, Some(certificate.not_after));
+        assert_eq!(
+            public_name_url(&serving, &urls, 8443).as_deref(),
+            Some("https://myrelay.duckdns.org:8443/#pairing")
+        );
+        let expired = receiver_public_name(ready, Some(&certificate), Some(certificate.not_after));
+        assert!(expired.trusted_name.is_none());
+        let (admin, dir) = fake();
+        let mut status = admin.status();
+        status.public_name = Some(serving);
+        let facts = crate::path_facts::RuntimePathFacts::default();
+        let settings = Settings::default();
+        let path = crate::path_input::build(&facts, &settings, &status, 0, true, true);
+        assert_eq!(path["car"]["web"]["trustedName"], "myrelay.duckdns.org");
+        status.public_name = Some(expired);
+        let path = crate::path_input::build(&facts, &settings, &status, 0, true, true);
+        assert!(path["car"]["web"]["trustedName"].is_null());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn receiver_certificate_and_sans_share_one_queued_update() {
+        let (admin, dir) = fake();
+        *admin.receiver_tls.lock().unwrap() = Some(None);
+        let sans = vec![std::net::Ipv4Addr::new(10, 77, 0, 1)];
+        admin.apply_receiver_tls(None, sans.clone());
+        assert!(admin.receiver_tls_queued.load(Ordering::Acquire));
+        assert!(matches!(
+            admin
+                .operation_rx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .try_recv(),
+            Ok(Operation::ReceiverTls)
+        ));
+        admin.apply_receiver_tls(None, sans);
+        assert!(
+            admin
+                .operation_rx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .try_recv()
+                .is_err(),
+            "coalesced while queued"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn receiver_sans_follow_new_networks_retain_old_ones_and_stay_bounded() {
+        let (mut admin, dir) = fake();
+        Arc::get_mut(&mut admin).unwrap().runtime.addresses = Arc::new(|| {
+            Ok(vec![
+                ("lo".into(), std::net::Ipv4Addr::LOCALHOST, 8),
+                ("ap0".into(), std::net::Ipv4Addr::new(10, 77, 0, 1), 24),
+            ])
+        });
+        *admin.receiver_tls_sans.lock().unwrap() = (1..=20)
+            .map(|n| std::net::Ipv4Addr::new(192, 168, 1, n))
+            .collect();
+        let sans = admin.receiver_sans().unwrap();
+        assert_eq!(sans.len(), 16);
+        assert!(sans.contains(&std::net::Ipv4Addr::new(10, 77, 0, 1)));
+        assert!(sans.contains(&std::net::Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(!sans.contains(&std::net::Ipv4Addr::LOCALHOST));
+        *admin.receiver_tls_sans.lock().unwrap() = sans.clone();
+        assert_eq!(
+            admin.receiver_sans().unwrap(),
+            sans,
+            "address flapping does not replace the certificate"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn provider_switches_and_empty_tokens_keep_each_saved_setup() {

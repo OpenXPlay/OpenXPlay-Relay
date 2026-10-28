@@ -563,6 +563,7 @@ impl AcmeState {
                 return (200, vec![("Replay-Nonce".into(), nonce)], Vec::new());
             }
             ("GET", path) if path.starts_with("/ari/") => {
+                self.log.push("renewalInfo".into());
                 let id = &path[5..];
                 let known = self.orders.iter().any(|o| o.cert_id.as_deref() == Some(id));
                 return match (&self.options.ari, known) {

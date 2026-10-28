@@ -51,10 +51,10 @@ export function publicNameNameHint(values: Values): string {
 }
 export function publicNameGuidance(values: Values, t: Translate, language: string): string {
   const provider = values.publicNameProvider;
-  if (provider !== 'duckdns' && provider !== 'dynv6') return '';
+  if (provider !== 'duckdns' && provider !== 'dynv6') return esc(t('publicName.perProvider'));
   const url = provider === 'duckdns' ? 'https://www.duckdns.org/' : 'https://dynv6.com/';
   const guide = language === 'zh-CN' ? 'https://openxplay.org/trusted-https' : 'https://openxplay.org/en/trusted-https';
-  return `${esc(t(`publicName.hint.${provider}`))}<br><a href="${url}" target="_blank" rel="noopener">${esc(t(`publicName.open.${provider}`))}</a> · <a href="${guide}" target="_blank" rel="noopener">${esc(t('publicName.guide'))}</a>`;
+  return `${esc(t('publicName.perProvider'))}<br>${esc(t(`publicName.hint.${provider}`))}<br><a href="${url}" target="_blank" rel="noopener">${esc(t(`publicName.open.${provider}`))}</a> · <a href="${guide}" target="_blank" rel="noopener">${esc(t('publicName.guide'))}</a>`;
 }
 export async function importPublicNameFile(file: Pick<File, 'size' | 'text'>, send = api.publicNameImport): Promise<PublicNameImport> {
   if (file.size > PUBLIC_NAME_MAX_BYTES) throw new ApiError(422, 'error.request', { file: 'too-large' });
@@ -70,16 +70,19 @@ export function publicNameMessageLines(message: PublicNameMessage, t: Translate)
 export function hasPublicName(settings: Settings): boolean {
   return settings.schema.some(section => section.id === 'publicName');
 }
-/** Whether `public-name.json` holds anything, so that Remove has something to remove. */
+/** Whether the public-name stores hold anything, so that Remove has something to remove. */
 export function publicNameConfigured(values: Values, status?: PublicNameStatus): boolean {
-  return values.publicNameEnabled === true || values.publicNameTokenSet === true || !!values.publicName || !!values.publicNameProvider || (!!status && status.state !== 'off');
+  return values.privacyConfigAvailable === true || values.publicNameEnabled === true || values.publicNameTokenSet === true || !!values.publicName || !!values.publicNameProvider || (!!status && status.state !== 'off');
 }
 const time = (seconds: number, language: string, withDate: boolean) => new Date(seconds * 1000).toLocaleString(language, withDate ? { dateStyle: 'medium' } : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 /** The status line: one of the shared labels, with the head-unit address, dates and error filled in. */
 export function publicNameLine(status: Status, t: Translate, language: string): string {
   const p = status.publicName;
   if (!p) return '';
-  if (p.state === 'ready') return t('publicName.status.ready', { address: publicNameUrl(status) ?? '', date: p.notAfter ? time(p.notAfter, language, true) : '—' });
+  if (p.state === 'ready') {
+    const url = publicNameUrl(status);
+    return url ? t('publicName.status.ready', { address: url, date: p.notAfter ? time(p.notAfter, language, true) : '—' }) : t('publicName.state.ready');
+  }
   if (p.state === 'error') {
     const problem = t(`publicName.error.${p.error ?? 'provider-unreachable'}`, { detail: p.errorDetail ?? '' });
     return t('publicName.status.error', { problem, time: p.nextAttempt ? time(p.nextAttempt, language, false) : '—' });
@@ -97,5 +100,5 @@ export function publicNamePanel(status: Status, settings: Settings, busy: boolea
   const enabled = values.publicNameEnabled === true;
   const tone = status.publicName?.state === 'error' ? 'error' : status.publicName?.state === 'ready' ? 'state-active' : 'muted';
   const files = publicNameFileErrors(status, t);
-  return `${enabled ? `<p class="muted"><a href="${TERMS_URL}" target="_blank" rel="noopener">${esc(TERMS_URL)}</a></p>` : ''}<p id="public-name-status" class="${tone}" role="status" aria-live="polite">${esc(publicNameLine(status, t, language))}</p>${files.map(line => `<p class="error">${esc(line)}</p>`).join('')}<div class="public-name-actions"><button id="public-name-import" type="button" ${busy ? 'disabled' : ''}>${t('publicName.import')}</button><input id="public-name-file" type="file" accept=".json" hidden>${enabled && status.publicName?.state === 'error' ? `<button id="public-name-renew" type="button" ${busy ? 'disabled' : ''}>${t('publicName.renew')}</button>` : ''}${publicNameConfigured(values, status.publicName) ? `<button id="public-name-remove" type="button" class="quiet" ${busy ? 'disabled' : ''}>${t('publicName.remove')}</button>` : ''}</div><div id="public-name-result" class="${typeof message === 'object' && 'ok' in message ? 'muted' : 'error'}" role="alert">${publicNameMessageLines(message, t).map(line => `<p>${esc(line)}</p>`).join('')}</div>`;
+  return `<p class="muted"><a href="${TERMS_URL}" target="_blank" rel="noopener">${esc(TERMS_URL)}</a></p><p id="public-name-status" class="${tone}" role="status" aria-live="polite">${esc(publicNameLine(status, t, language))}</p>${files.map(line => `<p class="error">${esc(line)}</p>`).join('')}<div class="public-name-actions"><button id="public-name-import" type="button" ${busy ? 'disabled' : ''}>${t('publicName.import')}</button><input id="public-name-file" type="file" accept=".json" hidden>${enabled && status.publicName?.state === 'error' ? `<button id="public-name-renew" type="button" ${busy ? 'disabled' : ''}>${t('publicName.renew')}</button>` : ''}${publicNameConfigured(values, status.publicName) ? `<button id="public-name-remove" type="button" class="quiet" ${busy ? 'disabled' : ''}>${t('publicName.remove')}</button>` : ''}</div><div id="public-name-result" class="${typeof message === 'object' && 'ok' in message ? 'muted' : 'error'}" role="alert">${publicNameMessageLines(message, t).map(line => `<p>${esc(line)}</p>`).join('')}</div>`;
 }
