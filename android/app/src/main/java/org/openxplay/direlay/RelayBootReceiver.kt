@@ -14,8 +14,7 @@ class RelayBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED || !AirPlayPersistence.loadAutoStartOnBoot(context)) return
         try {
-            context.startActivity(Intent(context, RelayActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(RelayActivity.intent(context).apply {
                 putExtra(RelayActivity.EXTRA_AUTO_START, true)
             })
         } catch (failure: RuntimeException) {

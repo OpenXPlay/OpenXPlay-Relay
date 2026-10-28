@@ -31,8 +31,12 @@ import org.openxplay.direlay.path.*
 import java.text.DateFormat
 import java.util.Date
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable fun RelaySheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    RelaySurface { RelaySheetContent(onDismiss, content) }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun RelaySheetContent(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val body: @Composable ColumnScope.() -> Unit = {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState())

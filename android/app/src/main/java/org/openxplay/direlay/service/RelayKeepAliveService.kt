@@ -52,7 +52,7 @@ class RelayKeepAliveService : Service() {
         manager.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.relay_keep_alive_channel),
             NotificationManager.IMPORTANCE_MIN).apply { setSound(null, null); setShowBadge(false) })
         val open = PendingIntent.getActivity(this, NOTIFICATION_ID,
-            Intent(this, RelayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            RelayActivity.intent(this),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_diplay_notification)

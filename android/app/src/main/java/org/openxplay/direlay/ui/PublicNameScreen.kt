@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-20
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -134,7 +135,7 @@ internal val publicNameProviderResources = mapOf(
             }
         }
     }
-    if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false },
+    if (confirmRemove) RelayDecisionDialog(onDismissRequest = { confirmRemove = false },
         title = { Text(stringResource(R.string.public_name_remove)) },
         text = { Text(stringResource(R.string.public_name_remove_confirm)) },
         confirmButton = { TextButton(onClick = {

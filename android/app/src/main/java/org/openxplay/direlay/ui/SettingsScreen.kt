@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.*
@@ -109,7 +110,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     val ms = if (LocalRelayMotion.current) 220 else 0
     confirmOutput?.let { next ->
         val miracast = next.miracastOutput
-        AlertDialog(onDismissRequest = { confirmOutput = null },
+        RelayDecisionDialog(onDismissRequest = { confirmOutput = null },
             title = { Text(stringResource(if (miracast) R.string.wireless_miracast else R.string.ui_carlink)) },
             text = { Text(stringResource(if (miracast) R.string.miracast_wifi_direct_confirm else R.string.carlink_wifi_direct_confirm)) },
             confirmButton = { TextButton(onClick = { draft = next; confirmOutput = null }) { Text(stringResource(android.R.string.ok)) } },

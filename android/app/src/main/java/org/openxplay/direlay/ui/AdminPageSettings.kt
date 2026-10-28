@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,7 +35,7 @@ import org.openxplay.direlay.R
             if (failed) Text(stringResource(R.string.settings_save_error), color = MaterialTheme.colorScheme.error)
         }
     }
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
+    if (confirm) RelayDecisionDialog(onDismissRequest = { confirm = false },
         title = { Text(stringResource(R.string.admin_reset_password)) },
         text = { Text(stringResource(R.string.admin_reset_confirm)) },
         confirmButton = { TextButton(onClick = {

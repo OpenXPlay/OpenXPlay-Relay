@@ -10,6 +10,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.openxplay.direlay.R
+import org.openxplay.direlay.RelayActivity
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -37,6 +38,7 @@ class AndroidBluetoothVisibilityTest {
         assertEquals("Bluetooth pairing is waiting", shadowOf(posted).contentTitle)
         assertEquals("Tap to make this device visible to your iPhone.", shadowOf(posted).contentText)
         assertNotNull(posted.contentIntent)
+        assertEquals(RelayActivity.intent(context).flags, shadowOf(posted.contentIntent).savedIntent.flags)
         assertEquals(PairingWindow.SECONDS * 1000L, posted.timeoutAfter)
         visibility.withdraw()
         assertTrue(shadowOf(manager).allNotifications.isEmpty())

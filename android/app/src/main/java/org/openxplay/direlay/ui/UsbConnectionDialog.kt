@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,7 +17,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.ui.design.*
 
 @Composable fun UsbConnectionDialog(confirm: () -> Unit, dismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = dismiss,
+    RelayDecisionDialog(onDismissRequest = dismiss,
         shape = RelayTokens.card, containerColor = MaterialTheme.colorScheme.surface,
         icon = { IconTile(R.drawable.symbol_usb, IconHue.IPHONE) },
         title = { Text(stringResource(R.string.usb_confirm_title)) },

@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.text.format.Formatter
@@ -115,7 +116,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
         }
     }
     when (step) {
-        LogsStep.PERIOD -> AlertDialog(onDismissRequest = { step = null },
+        LogsStep.PERIOD -> RelayDecisionDialog(onDismissRequest = { step = null },
             title = { Text(stringResource(R.string.logs_choose_period)) },
             text = { Column(Modifier.selectableGroup()) {
                 LogRange.entries.forEach { option ->
@@ -169,7 +170,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
                 })
         }
         LogsStep.READY -> file?.let { archive ->
-            AlertDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_ready)) },
+            RelayDecisionDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_ready)) },
                 text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("${archive.name}\n${Formatter.formatFileSize(context, archive.length())}")
                     Text(stringResource(R.string.logs_upload_hint), style = MaterialTheme.typography.bodySmall,
@@ -182,7 +183,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
                 } })
         }
         LogsStep.CONSENT -> file?.let { archive ->
-            AlertDialog(onDismissRequest = { step = LogsStep.READY }, title = { Text(stringResource(R.string.logs_consent_title)) },
+            RelayDecisionDialog(onDismissRequest = { step = LogsStep.READY }, title = { Text(stringResource(R.string.logs_consent_title)) },
                 text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.logs_consent_destination))
                     Text(stringResource(R.string.logs_privacy_server))
@@ -221,8 +222,8 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
                     TextButton(onClick = { step = LogsStep.READY }) { Text(stringResource(android.R.string.cancel)) }
                 } })
         }
-        LogsStep.QR -> AlertDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_qr_title)) },
-            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp),
+        LogsStep.QR -> RelayInfoSheet(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_qr_title)) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 qr?.let { Image(it, stringResource(R.string.logs_qr_description), Modifier.size(240.dp), filterQuality = FilterQuality.None) }
                     ?: Text(stringResource(R.string.logs_qr_unavailable))
@@ -240,7 +241,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
             dismissButton = { TextButton(onClick = { receipt?.let { clipboard.setText(AnnotatedString(it.link)); copied = true } }) {
                 Text(stringResource(R.string.logs_copy))
             } })
-        LogsStep.RESULT -> AlertDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_title)) },
+        LogsStep.RESULT -> RelayInfoSheet(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_title)) },
             text = { Text(message) }, confirmButton = { TextButton(onClick = { step = null }) { Text(stringResource(android.R.string.ok)) } },
             dismissButton = if (uploadError) ({ TextButton(onClick = { step = LogsStep.READY }) { Text(stringResource(R.string.ui_back)) } }) else null)
         null -> Unit
@@ -258,7 +259,8 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
             elapsed = (SystemClock.elapsedRealtime() - started) / 1000
         }
     }
-    AlertDialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+    // Work in progress is a blocking decision: only Cancel ends it, never a stray swipe or Back.
+    RelayDecisionDialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
         title = { Text(stringResource(title), Modifier.semantics { liveRegion = LiveRegionMode.Polite }) },
         text = { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (transfer != null) {

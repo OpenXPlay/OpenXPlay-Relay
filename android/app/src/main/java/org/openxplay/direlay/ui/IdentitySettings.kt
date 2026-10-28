@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
@@ -51,7 +52,7 @@ fun IdentitySettings(state: SettingsEditorState, view: DeveloperView, copy: (Str
             }
         }
     }
-    confirm?.let { identity -> AlertDialog(onDismissRequest = { confirm = null },
+    confirm?.let { identity -> RelayDecisionDialog(onDismissRequest = { confirm = null },
         title = { Text(if (identity) stringResource(R.string.dev_remove_identity_question) else stringResource(R.string.dev_remove_tls_question)) },
         confirmButton = { TextButton(onClick = { remove(identity); confirm = null }) { Text(stringResource(R.string.direlay_remove)) } },
         dismissButton = { TextButton(onClick = { confirm = null }) { Text(stringResource(android.R.string.cancel)) } }) }
