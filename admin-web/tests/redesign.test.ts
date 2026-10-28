@@ -6,7 +6,7 @@ import { describe, expect, it, afterEach, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { mockSettings, previewStatus } from '../dev-server';
 import { STAGE_STATES, mockPathInput } from '../dev-fixtures';
-import { settingsPlacement, fieldRoute, normalizeRoute, parentRoute, pageFields } from '../src/settings-tree';
+import { settingsPlacement, fieldEnabled, fieldRoute, normalizeRoute, parentRoute, pageFields } from '../src/settings-tree';
 import { stepCommand, stageCommand } from '../src/path/actions';
 import { actions, type StepAction } from '../src/path/model';
 import { presentPath } from '../src/path/present-path';
@@ -91,4 +91,15 @@ it('uses exact new APIs, never retries an upload or configuration import', async
 it('handles an offline update response even when the transport returned 200', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"offline"}')));
   await expect(api.updateCheck('stable')).rejects.toMatchObject({ key: 'offline' });
+});
+
+it('disables parked developer and experimental controls without changing saved choices', () => {
+  const values = { developerActive: false, experimentalActive: false, carlinkTrace: 'on', experimentalSendBluetoothAddress: true, experimentalBluetoothAddress: '02:12:34:56:78:9a' };
+  for (const key of ['carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress']) expect(fieldEnabled(key, values), key).toBe(false);
+  for (const key of ['developerActive', 'experimentalActive', 'hotspotSecurity', 'output']) expect(fieldEnabled(key, values), key).toBe(true);
+  values.developerActive = true; values.experimentalActive = true;
+  expect(fieldEnabled('carlinkTrace', values)).toBe(true);
+  expect(fieldEnabled('experimentalBluetoothAddress', values)).toBe(true);
+  expect(values.carlinkTrace).toBe('on');
+  expect(values.experimentalSendBluetoothAddress).toBe(true);
 });

@@ -113,6 +113,18 @@ pub fn export_user(settings: &Settings, display: &Value, now: u64) -> Result<Val
     }
     let mut experimental: Values = [
         ("experimentalActive", "active"),
+        (
+            "experimentalScreenSessionIsolation",
+            "screenSessionIsolation",
+        ),
+        ("experimentalScreenReconnectReset", "screenReconnectReset"),
+        (
+            "experimentalScreenDeliverySerialization",
+            "screenDeliverySerialization",
+        ),
+        ("experimentalRemotePlaybackProof", "remotePlaybackProof"),
+        ("experimentalStartupStatus", "startupStatus"),
+        ("experimentalStartupDiagnostics", "startupDiagnostics"),
         ("experimentalSendBluetoothAddress", "sendBluetoothAddress"),
         ("experimentalBluetoothAddress", "bluetoothAddress"),
     ]
@@ -244,6 +256,9 @@ pub fn plan_with_privacy(
     Ok(plan)
 }
 fn restart_key(key: &str) -> bool {
+    if key.starts_with("experimental") {
+        return false;
+    }
     !matches!(
         key,
         "teslaBrowser"
@@ -315,6 +330,17 @@ fn import_key(
                     ("car", "modelText") => "carModelText",
                     ("car", "year") => "carYear",
                     ("experimental", "active") => "experimentalActive",
+                    ("experimental", "screenSessionIsolation") => {
+                        "experimentalScreenSessionIsolation"
+                    }
+                    ("experimental", "screenReconnectReset") => "experimentalScreenReconnectReset",
+                    ("experimental", "screenDeliverySerialization") => {
+                        "experimentalScreenDeliverySerialization"
+                    }
+                    ("experimental", "remotePlaybackProof") => "experimentalRemotePlaybackProof",
+                    ("experimental", "startupStatus") => "experimentalStartupStatus",
+                    ("experimental", "startupDiagnostics") => "experimentalStartupDiagnostics",
+
                     ("experimental", "bluetoothAddress") => "experimentalBluetoothAddress",
                     ("experimental", "sendBluetoothAddress") => "experimentalSendBluetoothAddress",
                     ("experimental", "version") if value == 2 => continue,
@@ -515,29 +541,42 @@ mod tests {
         assert!(crate::relay_admin::update_settings(&Settings::default(), settings).is_ok());
     }
     #[test]
-    fn android_screen_experiments_are_ignored_without_changing_linux_settings() {
+    fn android_experiments_v2_import_export_preserves_all_choices() {
         for enabled in [true, false] {
-            let current = current();
-            let file = json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{
-                "experimental":{"version":2,"screenSessionIsolation":enabled,
-                    "screenReconnectReset":enabled,"screenDeliverySerialization":enabled}
-            }});
+            let mut current = current();
+            let names = [
+                "ScreenSessionIsolation",
+                "ScreenReconnectReset",
+                "ScreenDeliverySerialization",
+                "RemotePlaybackProof",
+                "StartupStatus",
+                "StartupDiagnostics",
+                "SendBluetoothAddress",
+            ];
+            let mut experiments = serde_json::Map::new();
+            experiments.insert("version".into(), json!(2));
+            for name in names {
+                current.insert(format!("experimental{name}"), json!(!enabled));
+                let key = format!("{}{}", name[..1].to_lowercase(), &name[1..]);
+                experiments.insert(key, json!(enabled));
+            }
+            experiments.insert("active".into(), json!(false));
+            let file = json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{"experimental":experiments}});
             let p = plan(&serde_json::to_vec(&file).unwrap(), &current).unwrap();
-            assert_eq!(
-                p.report.ignored,
-                [
-                    "experimental.screenDeliverySerialization",
-                    "experimental.screenReconnectReset",
-                    "experimental.screenSessionIsolation",
-                ]
-            );
-            assert!(p.report.applied.is_empty());
+            assert!(p.report.ignored.is_empty());
             assert!(!p.report.restart_needed);
-            assert!(p.values.is_empty());
-            assert!(p.privacy.is_none());
-            let mut after = current.clone();
-            after.extend(p.values);
-            assert_eq!(after, current);
+            for name in names {
+                assert_eq!(p.values[&format!("experimental{name}")], enabled);
+            }
+            let settings =
+                crate::relay_admin::update_settings(&Settings::default(), p.values).unwrap();
+            let output = export_user(&settings, &json!({}), 0).unwrap();
+            assert_eq!(output["settings"]["experimental"]["version"], 2);
+            for name in names {
+                let key = format!("{}{}", name[..1].to_lowercase(), &name[1..]);
+                assert_eq!(output["settings"]["experimental"][key], enabled);
+            }
+            assert!(!settings.experimental_active);
         }
     }
     #[test]

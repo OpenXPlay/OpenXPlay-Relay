@@ -21,10 +21,15 @@ export const pageKeys: Record<string, string[]> = {
   'access/public-name': ['publicNameEnabled', 'publicNameProvider', 'publicName', 'publicNameToken', 'publicNameAgreeTerms'],
   'developer/carlink': ['carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
   'developer/video': ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
-  'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'wifiChannel', 'devicePreset'],
+  'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
   'developer/identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget'],
-  'experimental': ['experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
+  developer: ['developerActive'],
+  'experimental': ['experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
 };
+export function fieldEnabled(key: string, values: Settings['values']): boolean {
+  if (key.startsWith('experimental') && key !== 'experimentalActive') return values.experimentalActive !== false;
+  return !['carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
+}
 export function fieldRoute(key: string): string {
   return 'settings/' + (Object.entries(pageKeys).find(([, keys]) => keys.includes(key))?.[0] ?? 'developer/other');
 }

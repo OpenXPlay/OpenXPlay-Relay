@@ -424,9 +424,11 @@ export function mockApi(linux = false): Plugin {
       if (linux && path === '/hotspot' && method === 'PUT') {
         if (typeof body.ssid !== 'string' || typeof body.password !== 'string') return send(422, { error: 'error.invalid' });
         if (body.band !== undefined && !['auto', '2.4', '5'].includes(body.band)) return send(422, { error: 'error.invalid' });
-        const error = validateHotspot(body.ssid, body.password);
+        const error = validateHotspot(body.ssid, body.password, true);
         if (error) return send(422, { error });
-        settings.values.hotspotSsid = body.ssid; settings.values.hotspotPassword = body.password;
+        if (body.security !== undefined && !['open', 'wpa2', 'wpa3-transition', 'wpa3'].includes(body.security)) return send(422, { error: 'error.invalid' });
+        settings.values.hotspotSsid = body.ssid; if (body.password) settings.values.hotspotPassword = body.password;
+        if (body.security !== undefined) settings.values.hotspotSecurity = body.security;
         if (body.band !== undefined) settings.values.hotspotBand = body.band;
         networkChanged = true;
         if (settings.values.networkMode === 'device-hotspot') outageUntil = Date.now() + 2000;
@@ -494,7 +496,7 @@ export function mockApi(linux = false): Plugin {
         for (const [key, value] of Object.entries(body)) {
           const field = settings.schema.flatMap(section => section.fields).find(field => field.key === key);
           if (!field) { errors[key] = 'error.invalid'; continue; }
-          if (key === 'experimentalBluetoothAddress' && (typeof value !== 'string' || !/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(value) || (parseInt(value.slice(0, 2), 16) & 1) !== 0 || ['00:00:00:00:00:00', '02:00:00:00:00:00'].includes(value.toLowerCase()))) errors[key] = 'error.invalid';
+          if (key === 'experimentalBluetoothAddress' && (body.experimentalActive ?? settings.values.experimentalActive) !== false && (body.experimentalSendBluetoothAddress ?? settings.values.experimentalSendBluetoothAddress) !== false && value !== '' && (typeof value !== 'string' || !/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(value) || (parseInt(value.slice(0, 2), 16) & 1) !== 0 || ['00:00:00:00:00:00', '02:00:00:00:00:00'].includes(value.toLowerCase()))) errors[key] = 'error.invalid';
           const pictureSize = (size: unknown) => !!size && typeof size === 'object' && validPictureSize(size as import('./src/schema').PictureSize);
           if (key === 'carlinkPictureSizes' && (!Array.isArray(value) || value.length > 5 || !value.every(pictureSize) || normalizedSizes(value as import('./src/schema').PictureSize[]).length !== value.length)) errors[key] = 'error.invalid';
           if (['carlinkPictureDefault', 'carlinkPictureTry'].includes(key) && value !== null && !pictureSize(value)) errors[key] = 'error.invalid';
@@ -561,7 +563,7 @@ export function mockApi(linux = false): Plugin {
           wifiClient = shared ? { ssid: (settings.values.sharedWifiNetworks as SavedNetwork[])[0].ssid, ip: '192.168.1.78', signal: 82, setupHotspot: false } : { ssid: null, ip: null, signal: null, setupHotspot: false };
           redactNetworks();
         }
-        return send(200, { ok: true, applied: body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => key.startsWith('publicName') || ['plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
+        return send(200, { ok: true, applied: body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => key.startsWith('publicName') || key.startsWith('experimental') || ['plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
       }
       if (path === '/status' && method === 'GET') {
         if (Date.now() < outageUntil) return send(503, { error: 'error.network' });
@@ -570,7 +572,7 @@ export function mockApi(linux = false): Plugin {
           ...(linux ? linuxFixtureStatus(preview ? previewState : running ? 'live-browser' : 'idle') : {}),
           platform: linux ? 'linux' : 'android', name: 'OpenXPlay Relay', version: '0.2.1', host: `openxplay-${linux ? 'linux' : 'android'}.local`, adminUrl: `https://openxplay-${linux ? 'linux' : 'android'}.local:6975/`,
           wifiControl: linux,
-          hotspot: { hasPassword: !!String(settings.values.hotspotPassword ?? 'openxplay123'), ssid: String(settings.values.hotspotSsid ?? 'OpenXPlay'), password: String(settings.values.hotspotPassword ?? 'openxplay123'), ip: settings.values.networkMode !== 'shared-wifi' ? '10.42.0.1' : wifiClient.setupHotspot ? '10.78.0.1' : null, active: settings.values.networkMode !== 'shared-wifi' || wifiClient.setupHotspot === true },
+          hotspot: { security: (settings.values.hotspotSecurity ?? 'wpa2') as 'open' | 'wpa2' | 'wpa3-transition' | 'wpa3', supportedSecurity: ['open', 'wpa2', 'wpa3-transition', 'wpa3'], hasPassword: settings.values.hotspotSecurity !== 'open', ssid: String(settings.values.hotspotSsid ?? 'OpenXPlay'), password: String(settings.values.hotspotPassword ?? 'openxplay123'), ip: settings.values.networkMode !== 'shared-wifi' ? '10.42.0.1' : wifiClient.setupHotspot ? '10.78.0.1' : null, active: settings.values.networkMode !== 'shared-wifi' || wifiClient.setupHotspot === true },
           ...(linux ? { wifiProvisioning: true, wifiClient } : {}),
           receiverPort: 8443, adminPort: 6975,
           hostAddresses: [{ interface: 'wlan0', ipv4: settings.values.networkMode !== 'shared-wifi' ? '10.42.0.1' : wifiClient.ip ?? '192.168.5.171', developerOnly: false }],

@@ -622,6 +622,34 @@ impl LinuxRelayAdmin {
             applied: save.then_some(true),
         }))
     }
+    fn validate_hotspot_security_change(
+        &self,
+        current: &Settings,
+        next: &Settings,
+    ) -> std::result::Result<(), BTreeMap<String, String>> {
+        if next.hotspot_security != current.hotspot_security
+            && !crate::linux_hotspot::security_supported(
+                &next.hotspot_security,
+                &self.supported_hotspot_security(&next.wifi_interface),
+            )
+        {
+            return Err(BTreeMap::from([(
+                "hotspotSecurity".into(),
+                "error.hotspotSecurity".into(),
+            )]));
+        }
+        Ok(())
+    }
+    pub fn receiver_port(&self) -> Result<u16> {
+        Ok(self.effective_options()?.settings.receiver_port)
+    }
+    fn supported_hotspot_security(&self, interface: &str) -> Vec<String> {
+        self.capabilities
+            .cached_wifi(interface)
+            .map(|c| c.hotspot_security)
+            .filter(|values| !values.is_empty())
+            .unwrap_or_else(|| vec!["open".into(), "wpa2".into()])
+    }
     fn effective_options(&self) -> Result<Options> {
         Ok(self.effective_options_with_status()?.0)
     }
@@ -629,7 +657,7 @@ impl LinuxRelayAdmin {
         &self,
     ) -> Result<(Options, crate::network_roles::NetworkStatus)> {
         let mut o = self.options.clone();
-        o.settings = self.settings.lock().unwrap().clone();
+        o.settings = self.settings.lock().unwrap().effective_developer();
         o.apply_overrides()?;
         let status = self.network_status(&o.settings);
         if status.probing {
@@ -782,6 +810,13 @@ impl LinuxRelayAdmin {
             ble_adapter,
             station_5ghz,
         );
+        if let Some(ble) = settings.carlink.as_mut().and_then(|c| c.ble.as_mut()) {
+            ble.default_phone_mac = self
+                .backends
+                .bluetooth
+                .selected_adapter()
+                .and_then(|adapter| crate::carlink_policy::bluetooth_address(&adapter.address));
+        }
         settings.addresses.sort();
         settings.addresses.dedup();
         settings.addresses.truncate(16);
@@ -1999,6 +2034,7 @@ impl LinuxRelayAdmin {
         self.events
             .failure_secrets(failure_secrets(&options.settings, &options.state_dir));
         self.input.configure_runtime_settings(&options.settings)?;
+        self.input.configure_connection_experiments();
         {
             let mut policy = self.start_policy.lock().unwrap();
             if !policy.requested() {
@@ -2393,7 +2429,8 @@ fn runtime_section(id: &str, keys: &[(&str, &str)]) -> Section {
                 key: (*key).into(),
                 field_type: (*kind).into(),
                 label_key: format!("field.{key}"),
-                hint_key: None,
+                hint_key: (key.starts_with("experimental") || *key == "developerActive")
+                    .then(|| format!("hint.field.{key}")),
                 options: (*key == "carlinkPictureSize").then(|| {
                     ["window", "mode"]
                         .into_iter()
@@ -2492,6 +2529,7 @@ pub fn settings_schema() -> Vec<Section> {
         ("devicePreset", "choice"),
         ("sharedWifiNetworks", "networks"),
         ("hotspotBand", "choice"),
+        ("hotspotSecurity", "choice"),
         ("hotspotChannel", "number"),
         ("iphone", "phone"),
         ("wifiInterface", "text"),
@@ -2573,6 +2611,18 @@ pub fn settings_schema() -> Vec<Section> {
                         labels: None,
                         value: v.into(),
                         label_key: format!("option.devicePreset.{v}"),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            ),
+            "hotspotSecurity" => Some(
+                ["open", "wpa2", "wpa3-transition", "wpa3"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        labels: None,
+                        value: v.into(),
+                        label_key: format!("option.hotspotSecurity.{v}"),
                         hint_key: None,
                         illustration: None,
                     })
@@ -2695,10 +2745,17 @@ pub fn settings_schema() -> Vec<Section> {
             "experimental",
             &[
                 ("experimentalActive", "bool"),
+                ("experimentalScreenSessionIsolation", "bool"),
+                ("experimentalScreenReconnectReset", "bool"),
+                ("experimentalScreenDeliverySerialization", "bool"),
+                ("experimentalRemotePlaybackProof", "bool"),
+                ("experimentalStartupStatus", "bool"),
+                ("experimentalStartupDiagnostics", "bool"),
                 ("experimentalSendBluetoothAddress", "bool"),
                 ("experimentalBluetoothAddress", "text"),
             ],
         ),
+        runtime_section("developer", &[("developerActive", "bool")]),
         tesla_section(),
         public_name_section(),
         Section {
@@ -3053,6 +3110,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             .map_err(|_| BTreeMap::from([("settings".into(), "error.linuxPicture".into())]))?;
         let next = update_settings(&current, settings)?;
         self.validate_tesla_change(&current, &next)?;
+        self.validate_hotspot_security_change(&current, &next)?;
         if plan.values.contains_key("pluginsEnabled") {
             let installed = crate::plugins::installed(&self.options.plugins_root);
             if next
@@ -3084,7 +3142,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         let enabled = self
             .settings
             .try_lock()
-            .is_ok_and(|s| s.carlink_trace == "on");
+            .is_ok_and(|s| s.developer_active && s.carlink_trace == "on");
         let running = self
             .supervisor
             .try_lock()
@@ -3099,7 +3157,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         let enabled = self
             .settings
             .try_lock()
-            .is_ok_and(|s| s.carlink_trace == "on");
+            .is_ok_and(|s| s.developer_active && s.carlink_trace == "on");
         let supervisor = self
             .supervisor
             .try_lock()
@@ -3244,7 +3302,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                     None
                 };
                 AdminHotspot {
-                    has_password: !password.is_empty(),
+                    security: options.settings.hotspot_security.clone(),
+                    supported_security: self.supported_hotspot_security(&options.wifi_interface),
+                    has_password: options.settings.hotspot_security != "open",
                     ssid,
                     password,
                     active: ip.is_some(),
@@ -3588,26 +3648,31 @@ impl RelayAdmin for LinuxRelayAdmin {
                         )]));
                     }
                 }
+                if let Err(errors) = self.validate_hotspot_security_change(&current, &next) {
+                    return AdminUpdate::Errors(errors);
+                }
                 let mode_changed = next.network_mode != current.network_mode;
                 let networks_changed = next.shared_wifi_networks != current.shared_wifi_networks;
                 let network_update = mode_changed || networks_changed;
+                let effective_next = next.effective_developer();
+                let effective_current = current.effective_developer();
                 let outputs_changed = picture.video_codec
                     != self.input.display_settings().video_codec
                     || next.plugins != current.plugins
                     || next.plugins_enabled != current.plugins_enabled
                     || next.output != current.output
                     || next.require_pairing_code != current.require_pairing_code
-                    || next.receiver_port != current.receiver_port
+                    || effective_next.receiver_port != effective_current.receiver_port
                     || next.carlink_interface != current.carlink_interface
-                    || next.carlink_link != current.carlink_link
-                    || next.carlink_address != current.carlink_address
-                    || next.carlink_head_unit != current.carlink_head_unit
-                    || next.carlink_local != current.carlink_local
-                    || next.carlink_pin != current.carlink_pin
-                    || next.carlink_ports != current.carlink_ports
+                    || effective_next.carlink_link != effective_current.carlink_link
+                    || effective_next.carlink_address != effective_current.carlink_address
+                    || effective_next.carlink_head_unit != effective_current.carlink_head_unit
+                    || effective_next.carlink_local != effective_current.carlink_local
+                    || effective_next.carlink_pin != effective_current.carlink_pin
+                    || effective_next.carlink_ports != effective_current.carlink_ports
                     || next.carlink_name != current.carlink_name
-                    || next.carlink_model != current.carlink_model
-                    || next.carlink_trace != current.carlink_trace
+                    || effective_next.carlink_model != effective_current.carlink_model
+                    || effective_next.carlink_trace != effective_current.carlink_trace
                     || next.carlink_auto_reconnect != current.carlink_auto_reconnect
                     || next.experimental_active != current.experimental_active
                     || next.experimental_send_bluetooth_address
@@ -3615,15 +3680,16 @@ impl RelayAdmin for LinuxRelayAdmin {
                     || next.experimental_bluetooth_address
                         != current.experimental_bluetooth_address;
                 let controller_changed = next.iphone != current.iphone
-                    || next.rfcomm_channel != current.rfcomm_channel
+                    || effective_next.rfcomm_channel != effective_current.rfcomm_channel
                     || next.wifi_interface != current.wifi_interface
                     || next.hotspot_channel != current.hotspot_channel
                     || next.hotspot_band != current.hotspot_band
-                    || next.device_preset != current.device_preset
+                    || next.hotspot_security != current.hotspot_security
+                    || effective_next.device_preset != effective_current.device_preset
                     // Read when the controller builds the AirPlay receiver for the iPhone.
                     || next.car_bluetooth_audio != current.car_bluetooth_audio
                     || next.carlink_picture_default!=current.carlink_picture_default
-                    || next.carlink_picture_size!=current.carlink_picture_size;
+                    || effective_next.carlink_picture_size != effective_current.carlink_picture_size;
                 let network = if network_update {
                     let ssid = self
                         .provision
@@ -3644,7 +3710,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 } else {
                     None
                 };
-                let carlink_changed = next.carlink_hevc != current.carlink_hevc
+                let carlink_changed = effective_next.carlink_hevc != effective_current.carlink_hevc
                     || next.vehicle_information != current.vehicle_information;
                 let operation = if outputs_changed {
                     Some(Operation::Outputs(network.map(Box::new)))
@@ -3875,17 +3941,51 @@ impl RelayAdmin for LinuxRelayAdmin {
             })
             .collect()
     }
-    fn hotspot_update(&self, ssid: &str, password: &str, band: Option<&str>) -> AdminResult {
+    fn hotspot_update(
+        &self,
+        ssid: &str,
+        password: &str,
+        band: Option<&str>,
+        security: Option<&str>,
+    ) -> AdminResult {
+        let (_, saved_password) =
+            crate::linux_hotspot::hotspot_credentials(&self.options.state_dir)
+                .map_err(|_| "error.request".to_string())?;
+        let password = if password.is_empty() {
+            &saved_password
+        } else {
+            password
+        };
+        let selected = security
+            .map(str::to_string)
+            .unwrap_or_else(|| self.settings.lock().unwrap().hotspot_security.clone());
+        if !crate::linux_hotspot::HOTSPOT_SECURITY.contains(&selected.as_str()) {
+            return Err("error.invalid".into());
+        }
+        if !crate::linux_hotspot::security_supported(
+            &selected,
+            &self.supported_hotspot_security(
+                &self
+                    .effective_options()
+                    .map_err(|_| "error.request".to_string())?
+                    .wifi_interface,
+            ),
+        ) {
+            return Err("error.hotspotSecurity".into());
+        }
         crate::linux_hotspot::validate_hotspot_credentials(ssid, password)
             .map_err(str::to_owned)?;
         if band.is_some_and(|b| !["auto", "2.4", "5"].contains(&b)) {
             return Err("error.invalid".into());
         }
         self.defer(Operation::Hotspot)?;
-        if let Some(band) = band {
+        {
             let mut current = self.settings.lock().unwrap();
             let mut next = current.clone();
-            next.hotspot_band = band.into();
+            if let Some(band) = band {
+                next.hotspot_band = band.into();
+            }
+            next.hotspot_security = selected;
             if next.save(&self.options.state_dir).is_err() {
                 self.response_failed();
                 return Err("error.request".into());
@@ -4022,39 +4122,130 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn android_screen_experiments_import_and_dry_run_leave_linux_settings_unchanged() {
+    fn android_experiment_import_stages_next_connection_without_restarting_output() {
         let (admin, dir) = fake();
-        let before_file = std::fs::read(dir.join("settings.json")).unwrap();
-        let before_export = admin.config_export(false).unwrap()["settings"].clone();
-        let before_settings = admin.settings().values;
-        for enabled in [true, false] {
-            let bytes = serde_json::to_vec(&serde_json::json!({
-                "format":"openxplay-user-config","version":1,"platform":"android",
-                "settings":{"experimental":{"version":2,"screenSessionIsolation":enabled,
-                    "screenReconnectReset":enabled,"screenDeliverySerialization":enabled}}
-            }))
-            .unwrap();
-            for dry_run in [true, false] {
-                assert_eq!(
-                    admin.config_import(&bytes, dry_run).unwrap(),
-                    serde_json::json!({
-                        "applied":[],"ignored":["experimental.screenDeliverySerialization",
-                            "experimental.screenReconnectReset","experimental.screenSessionIsolation"],
-                        "restartNeeded":false
-                    })
-                );
-                assert_eq!(admin.settings().values, before_settings);
-                assert_eq!(
-                    admin.config_export(false).unwrap()["settings"],
-                    before_export
-                );
-                assert_eq!(
-                    std::fs::read(dir.join("settings.json")).unwrap(),
-                    before_file
-                );
-                assert!(admin.pending.lock().unwrap().is_empty());
-            }
+        let before = admin.settings.lock().unwrap().clone();
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "format":"openxplay-user-config","version":1,"platform":"android",
+            "settings":{"experimental":{"version":2,"screenSessionIsolation":false,
+                "screenReconnectReset":false,"screenDeliverySerialization":false,
+                "remotePlaybackProof":false,"startupStatus":false,"startupDiagnostics":false}}
+        }))
+        .unwrap();
+        let report = admin.config_import(&bytes, true).unwrap();
+        assert_eq!(*admin.settings.lock().unwrap(), before);
+        assert_eq!(report["restartNeeded"], false);
+        assert_eq!(report["ignored"], serde_json::json!([]));
+        assert_eq!(report["applied"].as_array().unwrap().len(), 6);
+        assert_eq!(admin.config_import(&bytes, false).unwrap(), report);
+        assert!(admin.pending.lock().unwrap().is_empty());
+        assert!(
+            !admin
+                .input
+                .connection_settings()
+                .experimental_screen_session_isolation
+        );
+        assert!(
+            !crate::settings::Settings::load(&dir)
+                .unwrap()
+                .experimental_startup_status
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn developer_master_gates_effective_options_and_trace_but_keeps_raw_choices() {
+        let (admin, dir) = fake();
+        {
+            let mut settings = admin.settings.lock().unwrap();
+            settings.developer_active = false;
+            settings.carlink_trace = "on".into();
+            settings.receiver_port = 9443;
+            settings.carlink_model = "Parked model".into();
+            settings.carlink_link = "static".into();
+            settings.carlink_head_unit = "192.168.55.1".into();
         }
+        assert_eq!(admin.receiver_port().unwrap(), 8443);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_link,
+            "ble"
+        );
+        assert_eq!(
+            admin
+                .effective_options()
+                .unwrap()
+                .settings
+                .carlink_head_unit,
+            "192.168.43.1"
+        );
+        assert!(!admin.carlink_trace().unwrap().0);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_model,
+            crate::branding::MODEL
+        );
+        assert_eq!(admin.settings().values["receiverPort"], 9443);
+        assert_eq!(admin.settings().values["carlinkTrace"], "on");
+        admin.settings.lock().unwrap().developer_active = true;
+        assert_eq!(admin.receiver_port().unwrap(), 9443);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_link,
+            "static"
+        );
+        assert_eq!(
+            admin
+                .effective_options()
+                .unwrap()
+                .settings
+                .carlink_head_unit,
+            "192.168.55.1"
+        );
+        assert!(admin.carlink_trace().unwrap().0);
+        assert_eq!(
+            admin.effective_options().unwrap().settings.carlink_model,
+            "Parked model"
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn hotspot_rename_keeps_password_and_open_security_keeps_it_parked() {
+        let (admin, dir) = fake();
+        let unsupported = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"hotspotSecurity":"wpa3"}})).unwrap();
+        for dry_run in [true, false] {
+            assert_eq!(
+                admin.config_import(&unsupported, dry_run).unwrap_err()["hotspotSecurity"],
+                "error.hotspotSecurity"
+            );
+        }
+
+        crate::linux_hotspot::save_hotspot_credentials(&dir, "Before", "saved-password").unwrap();
+        admin
+            .hotspot_update("Renamed", "", None, Some("open"))
+            .unwrap();
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap(),
+            ("Renamed".into(), "saved-password".into())
+        );
+        assert_eq!(admin.settings.lock().unwrap().hotspot_security, "open");
+        assert!(!admin.status().hotspot.unwrap().has_password);
+        admin.response_failed();
+        admin
+            .hotspot_update("Renamed again", "", None, Some("wpa2"))
+            .unwrap();
+        assert_eq!(admin.settings.lock().unwrap().hotspot_security, "wpa2");
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap().1,
+            "saved-password"
+        );
+        admin.response_failed();
+        assert_eq!(
+            admin.hotspot_update("Unsupported", "", None, Some("wpa3")),
+            Err("error.hotspotSecurity".into())
+        );
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap().0,
+            "Renamed again"
+        );
         drop(admin);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -5373,7 +5564,7 @@ mod tests {
             })
         );
         a.status();
-        assert_eq!(runner.0.load(Ordering::SeqCst), 2);
+        assert_eq!(runner.0.load(Ordering::SeqCst), 3);
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -6237,7 +6428,7 @@ esac
         // In shared mode saving credentials leaves the current controller and AP alone.
         a.settings.lock().unwrap().network_mode = "shared-wifi".into();
         let controller = fake_controller(&a);
-        a.hotspot_update("Later", "laterpass1", None).unwrap();
+        a.hotspot_update("Later", "laterpass1", None, None).unwrap();
         a.response_sent();
         a.operation(rx.try_recv().unwrap()).unwrap();
         assert!(Arc::ptr_eq(

@@ -128,6 +128,12 @@ impl JsonEvents {
     /// Records a step towards a CarPlay session; the first ACTIVE session of a controller
     /// attempt logs the attempt's steps as one `boot-timing` event.
     pub fn milestone(&self, milestone: crate::boot_timing::Milestone) {
+        if !self
+            .startup_diagnostics
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
         if let Some(fields) = self.timing.mark(milestone) {
             self.emit("boot-timing", &fields);
         }
@@ -171,7 +177,17 @@ impl JsonEvents {
         *self.startup.lock().unwrap() = Some(listener);
     }
     pub fn startup_milestone(&self, name: &str) {
-        self.emit("airplay-milestone", &serde_json::json!({"name":name}));
+        if self
+            .startup_diagnostics
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.emit("airplay-milestone", &serde_json::json!({"name":name}));
+        } else if name == "first_video_received" {
+            self.facts
+                .lock()
+                .unwrap()
+                .video_received(wall_clock().as_millis() as u64, Instant::now());
+        }
     }
     /// W13 can apply the effective startup-diagnostics experiment at the next connection.
     pub fn set_startup_diagnostics(&self, enabled: bool) {
@@ -452,5 +468,15 @@ mod runtime_diagnostic_tests {
         events.set_startup_diagnostics(false);
         events.iap2_frame();
         assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 0);
+        events.startup_milestone("first_video_received");
+        assert_eq!(events.runtime_path_facts().iphone.step, "VIDEO");
+        assert!(events
+            .runtime_path_facts()
+            .stable_video(Instant::now() + crate::start_policy::STABLE_SESSION));
+        assert!(output
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["event"] != "airplay-milestone"));
     }
 }

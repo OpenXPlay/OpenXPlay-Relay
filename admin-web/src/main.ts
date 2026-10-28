@@ -13,7 +13,7 @@ import { mountStage, timer } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
 import type { StageAction } from './path/present-stage';
-import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons } from './settings-tree';
+import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons, fieldEnabled } from './settings-tree';
 import { mountVehicle, mountVehicleSample } from './vehicle';
 import { mountPictureField } from './picture-sizes';
 import { COUNTRY_CODES } from './wifi-countries';
@@ -25,7 +25,7 @@ import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDeta
 import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
 import type { SavedNetwork } from './schema';
-import { request, api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
+import { request, api, ApiError, NetworkError, events, type HotspotBand, type HotspotSecurity, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
 import { isVisible, optionLabel, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, translate, type Language } from './i18n';
 import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
@@ -169,6 +169,7 @@ function menuRow(target: string, title: string, summary = '', name = 'settings')
 }
 function pageSummary(target: string): string { return menuSummary(settings!, status!, target, language, t); }
 function editorField(field: Field): Field {
+  if (field.key === 'hotspotSecurity') { const supported = status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']; return { ...field, options: field.options?.filter(option => supported.includes(option.value as HotspotSecurity) || option.value === settings?.values.hotspotSecurity) }; }
   if (field.key !== 'wifiCountry') return field;
   const names = new Intl.DisplayNames([language], { type: 'region' });
   return { ...field, type: 'choice', options: [{ value: 'system', labelKey: 'roles.country.system' }, ...COUNTRY_CODES.map(value => ({ value, labelKey: '', labels: { en: names.of(value) ?? value, 'zh-CN': names.of(value) ?? value } }))] };
@@ -193,7 +194,9 @@ function renderReady() {
   if (route === 'settings') {
     patchMarkup(container, [pages.slice(0, 4), pages.slice(4, 6), pages.slice(6, 9), pages.slice(9)].map(group => `<div class="inset-group menu-group">${group.filter(([page]) => pageAvailable(settings!, status!, 'settings/' + page)).map(([page, title, name]) => menuRow('settings/' + page, title, pageSummary('settings/' + page), name)).join('')}</div>`).join(''));
   } else if (route === 'settings/developer') {
-    patchMarkup(container, `<div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
+    const master = pageFields(settings!, route);
+    patchMarkup(container, `<div class="inset-group">${master.map(fieldMarkup).join('')}</div><div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
+    master.forEach(bindField);
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
     mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {
@@ -201,6 +204,7 @@ function renderReady() {
       disposeVehicle = mountVehicle(container, t, errorKey);
     }
     if (route === 'settings/output' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/vehicle', 'vehicle.title', t(`vehicle.${(!status!.carlink?.vehicle || status!.carlink.vehicle.state === 'off') ? 'off' : status!.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`), 'car')}</div>`);
+    if (route === 'settings/experimental') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('hint.experimentalScope'))}</p>`);
     if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
     const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry'].includes(f.key)).map(editorField);
@@ -550,7 +554,7 @@ function fieldMarkup(field: Field): string {
   field = editorField(field);
   const id = fieldId(field.key), value = settings!.values[field.key], draft = drafts.get(field.key);
   const label = esc(t(field.labelKey));
-  const attr = `id="${id}" aria-describedby="${id}-hint ${id}-result"`;
+  const attr = `${fieldEnabled(field.key, settings!.values) ? '' : 'disabled '}id="${id}" aria-describedby="${id}-hint ${id}-result"`;
   let control = '';
   if (field.key === 'carlinkPictureSizes') control = `<div ${attr}></div>`;
   else if (field.type === 'plugins') control = `<div ${attr}>${pluginList(settings!, language, t, true)}</div>`;
@@ -569,12 +573,14 @@ function fieldMarkup(field: Field): string {
 function bindField(field: Field) {
   field = editorField(field);
   const el = document.getElementById(fieldId(field.key)); if (!el) return;
+  el.closest('.field')?.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea').forEach(control => { control.disabled = !fieldEnabled(field.key, settings!.values); });
+  if (!fieldEnabled(field.key, settings!.values)) return;
   if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.carlink?.appliedPicture ? `${status!.carlink.appliedPicture.width} × ${status!.carlink.appliedPicture.height}` : undefined); return; }
   if (field.type === 'plugins') on(el, 'change', event => { const input = event.target as HTMLInputElement; queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked)); });
   else if (field.type === 'bool' || field.key === 'carlinkTrace') on(el, 'change', () => queueSave(field, field.key === 'carlinkTrace' ? (el as HTMLInputElement).checked ? 'on' : 'off' : (el as HTMLInputElement).checked));
   else if (field.type === 'phone') on(el, 'click', () => void pickPhone(field));
   else if (field.type === 'choice') on(el, 'click', () => {
-    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
+    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : field.key === 'hotspotSecurity' && !(status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']).includes(option.value as HotspotSecurity) ? 'disabled' : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
     dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', async () => {
       const option = field.options![Number(button.dataset.option)];
       if (restartsPicture(field.key) && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
@@ -635,7 +641,7 @@ function renderRestart() {
 }
 function editHotspot() {
   if (!status?.hotspot) return;
-  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t, status.wireless));
+  const { dialog, close } = networkDialog(t('hotspot.change'), hotspotForm(status.hotspot.ssid, t, status.wireless, status.hotspot));
   const name = dialog.querySelector<HTMLInputElement>('#hotspot-name')!;
   const password = dialog.querySelector<HTMLInputElement>('#hotspot-password')!;
   on(dialog.querySelector('#hotspot-reveal')!, 'click', event => {
@@ -645,21 +651,22 @@ function editHotspot() {
   });
   on(dialog.querySelector('form')!, 'submit', event => {
     event.preventDefault();
-    const error = validateHotspot(name.value, password.value);
+    const error = validateHotspot(name.value, password.value, true);
     dialog.querySelector('#hotspot-error')!.textContent = t(error);
     name.setAttribute('aria-invalid', String(error === 'error.hotspotSsid'));
     password.setAttribute('aria-invalid', String(error === 'error.hotspotPassword'));
     if (error) return;
     const ssid = name.value, secret = password.value;
     const band = dialog.querySelector<HTMLSelectElement>('#hotspot-band')!.value as HotspotBand;
+    const security = dialog.querySelector<HTMLSelectElement>('#hotspot-security')!.value as HotspotSecurity;
     const active = status!.network.mode === 'device-hotspot';
     // Keep the form open underneath so Cancel returns to the entered values.
     const confirmation = networkDialog(t('hotspot.confirm'), `<p>${esc(t(active ? 'hotspot.warning' : 'hotspot.later'))}</p><p>${esc(ssid)}</p><p class="error" role="alert"></p><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button data-confirm class="primary">${t('hotspot.apply')}</button></div>`);
     on(confirmation.dialog.querySelector<HTMLButtonElement>('[data-confirm]')!, 'click', async event => {
       const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
       try {
-        await api.hotspot(ssid, secret, band);
-        status!.hotspot = { ...status!.hotspot!, ssid, password: secret, hasPassword: true };
+        await api.hotspot(ssid, secret, band, security);
+        status!.hotspot = { ...status!.hotspot!, ssid, password: secret || status!.hotspot!.password, security, hasPassword: security !== 'open' };
         confirmation.close(); close();
         networkAnnouncement = t(active ? 'hotspot.reconnecting' : 'ui.saved'); renderNetworkPanel(); void tick();
       } catch (error) { confirmation.dialog.querySelector('.error')!.textContent = t(errorKey(error)); }
@@ -821,7 +828,7 @@ async function queueSave(field: Field, raw: string | boolean) {
   if (field.key === 'transport' && value === 'wireless' && wifiDirectDisabled(status?.platform, settings!.values, settings!.values.networkMode)) settings!.values.networkMode = 'phone-hotspot';
   if (field.key === 'networkMode' && wifiDirectDisabled(status?.platform, settings!.values, value)) return;
   queueValue(field, value);
-  if (field.key === 'output') render();
+  if (['output', 'developerActive', 'experimentalActive'].includes(field.key)) render();
 }
 function queueValue(field: Field, value: Value) {
   settings!.values[field.key] = value;

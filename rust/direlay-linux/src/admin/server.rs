@@ -360,6 +360,15 @@ impl AdminServer {
                 }
             }
             ("PUT", "/hotspot") => match (string("ssid"), string("password")) {
+                _ if body.get("security").is_some_and(|s| {
+                    !matches!(
+                        s.as_str(),
+                        Some("open" | "wpa2" | "wpa3-transition" | "wpa3")
+                    )
+                }) =>
+                {
+                    Response::error(422, "error.invalid")
+                }
                 _ if body
                     .get("band")
                     .is_some_and(|b| !matches!(b.as_str(), Some("auto" | "2.4" | "5"))) =>
@@ -367,8 +376,20 @@ impl AdminServer {
                     Response::error(422, "error.invalid")
                 }
                 (Some(ssid), Some(password)) => {
-                    match validate_hotspot_credentials(ssid, password) {
-                        Ok(()) => result(self.admin.hotspot_update(ssid, password, string("band"))),
+                    match validate_hotspot_credentials(
+                        ssid,
+                        if password.is_empty() {
+                            "openxplay"
+                        } else {
+                            password
+                        },
+                    ) {
+                        Ok(()) => result(self.admin.hotspot_update(
+                            ssid,
+                            password,
+                            string("band"),
+                            string("security"),
+                        )),
                         Err(key) => Response::error(422, key),
                     }
                 }

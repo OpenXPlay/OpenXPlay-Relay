@@ -51,6 +51,20 @@ pub struct BleCarlinkSettings {
     /// Carlink band the head unit creates its group on: 0 is 2.4 GHz, 1 allows 5 GHz.
     pub band: u8,
     pub phone_mac: Option<String>,
+    /// The selected local adapter address when the saved override is empty.
+    pub default_phone_mac: Option<String>,
+}
+impl BleCarlinkSettings {
+    /// Resolve a saved experiment snapshot only when starting a new Carlink connection.
+    pub fn phone_mac_for_connection(&self, settings: &crate::settings::Settings) -> Option<String> {
+        if !settings.experimental_active || !settings.experimental_send_bluetooth_address {
+            return None;
+        }
+        if settings.experimental_bluetooth_address.is_empty() {
+            return self.default_phone_mac.clone();
+        }
+        crate::carlink_policy::bluetooth_address(&settings.experimental_bluetooth_address)
+    }
 }
 /// A certificate for the head-unit page from PEM files (the trusted-HTTPS name's).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,7 +172,17 @@ impl SupervisorSettings {
             ]);
             if let Some(ble) = &c.ble {
                 args.extend(["--clink-scan".into(), "continuous".into()]);
-                if let Some(mac) = &ble.phone_mac {
+                // Reconnects reuse the supervisor, but must capture the latest parked choice.
+                let saved = std::fs::read(self.state_dir.join("settings.json"))
+                    .ok()
+                    .and_then(|bytes| {
+                        serde_json::from_slice::<crate::settings::Settings>(&bytes).ok()
+                    });
+                let phone_mac = saved
+                    .as_ref()
+                    .map(|settings| ble.phone_mac_for_connection(settings))
+                    .unwrap_or_else(|| ble.phone_mac.clone());
+                if let Some(mac) = &phone_mac {
                     args.extend(["--clink-phone-mac".into(), mac.into()]);
                 }
                 args.extend([
@@ -1250,6 +1274,7 @@ mod tls_tests {
                     id: "id".into(),
                     band: 1,
                     phone_mac: None,
+                    default_phone_mac: None,
                 }),
                 head_unit: Ipv4Addr::new(192, 168, 43, 1),
                 local: Ipv4Addr::new(192, 168, 43, 2),

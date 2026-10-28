@@ -289,7 +289,7 @@ impl Harness {
                 bridge.clone(),
                 transport.clone(),
                 false,
-                crate::carplay_policy::screen_session_policy(),
+                crate::carplay_policy::screen_session_policy(&Default::default()),
             ));
             self.engines.push(engine.clone());
             let media = Media {

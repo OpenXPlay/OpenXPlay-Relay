@@ -102,7 +102,12 @@
     "hasPassword": true,
     "ip": "10.42.0.1",
     "password": "openxplay123",
-    "ssid": "OpenXPlay-1A2B"
+    "security": "wpa2",
+    "ssid": "OpenXPlay-1A2B",
+    "supportedSecurity": [
+      "open",
+      "wpa2"
+    ]
   },
   "iphone": {
     "name": "iPhone",

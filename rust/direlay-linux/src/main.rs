@@ -477,13 +477,14 @@ pub fn run() -> Result<()> {
     ));
     let mut http = server.start()?;
     admin.start_services()?;
+    let mut receiver_port = admin.receiver_port()?;
     let mut mdns = if addresses.is_empty() {
         None
     } else {
         Some(crate::mdns_host::MdnsHost::new(
             &addresses,
             6975,
-            options.settings.receiver_port,
+            receiver_port,
         )?)
     };
     unsafe {
@@ -504,8 +505,14 @@ pub fn run() -> Result<()> {
             http.update_addresses(&admin_addresses)?;
             previous_admin = admin_addresses;
         }
+        let next_receiver_port = admin.receiver_port()?;
+        let port_changed = next_receiver_port != receiver_port;
+        if port_changed {
+            mdns.take();
+            receiver_port = next_receiver_port;
+        }
         let addresses = admin.host_addresses()?;
-        if addresses != previous {
+        if addresses != previous || port_changed {
             if addresses.is_empty() {
                 mdns.take();
             } else if let Some(host) = &mdns {
@@ -514,7 +521,7 @@ pub fn run() -> Result<()> {
                 mdns = Some(crate::mdns_host::MdnsHost::new(
                     &addresses,
                     6975,
-                    options.settings.receiver_port,
+                    receiver_port,
                 )?);
             }
             previous = addresses;
