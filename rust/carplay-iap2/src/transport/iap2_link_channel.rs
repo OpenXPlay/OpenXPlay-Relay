@@ -56,6 +56,14 @@ pub struct Iap2LinkChannel {
     shared: Arc<Shared>,
 }
 impl Iap2LinkChannel {
+    pub fn open_wired(
+        stream: Arc<dyn DuplexStream>,
+        mut config: Iap2LinkConfig,
+    ) -> Result<Arc<Self>> {
+        config.zero_acknowledgements = true;
+        Self::open(stream, config, true)
+    }
+
     pub fn open_wireless(
         stream: Arc<dyn DuplexStream>,
         config: Iap2LinkConfig,

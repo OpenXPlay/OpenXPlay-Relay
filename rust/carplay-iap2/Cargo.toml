@@ -19,6 +19,11 @@ sha2.workspace = true
 der.workspace = true
 serde_json.workspace = true
 base64ct.workspace = true
+rsa.workspace = true
+sha1.workspace = true
+plist = { workspace = true, features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
+rustls.workspace = true
+rustls-pki-types.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true

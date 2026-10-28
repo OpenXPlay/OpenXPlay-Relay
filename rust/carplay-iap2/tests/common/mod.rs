@@ -34,6 +34,7 @@ pub fn endpoint() -> Iap2WirelessCarPlayEndpoint {
 }
 pub fn config() -> Iap2IdentificationConfig {
     Iap2IdentificationConfig {
+        car_play_usb_interface_number: 3,
         route_guidance: false,
         name: "LIVI".into(),
         model_identifier: "LIVI".into(),
