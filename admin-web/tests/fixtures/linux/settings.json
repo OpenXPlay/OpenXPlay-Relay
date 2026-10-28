@@ -311,6 +311,11 @@
           }
         },
         {
+          "key": "vehicleInformation",
+          "labelKey": "field.vehicleInformation",
+          "type": "bool"
+        },
+        {
           "hintKey": "hint.field.carlinkReconnectOnResize",
           "key": "carlinkReconnectOnResize",
           "labelKey": "field.carlinkReconnectOnResize",
@@ -335,6 +340,10 @@
             {
               "labelKey": "option.carlinkHevc.off",
               "value": "off"
+            },
+            {
+              "labelKey": "option.carlinkHevc.signal",
+              "value": "signal"
             }
           ],
           "type": "choice",
@@ -882,6 +891,7 @@
     "teslaMirrorAddress": "100.88.0.1",
     "teslaPublicAddress": "169.254.88.1",
     "teslaVirtualAddress": "169.254.88.1",
+    "vehicleInformation": false,
     "videoCodec": "auto",
     "videoStats": "off",
     "wifiCountry": "system",

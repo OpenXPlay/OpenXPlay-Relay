@@ -14,6 +14,7 @@ import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
 import type { StageAction } from './path/present-stage';
 import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons } from './settings-tree';
+import { mountVehicle, mountVehicleSample } from './vehicle';
 import { mountPictureField } from './picture-sizes';
 import { COUNTRY_CODES } from './wifi-countries';
 import { mountFeaturePage } from './feature-pages';
@@ -24,7 +25,7 @@ import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDeta
 import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
 import type { SavedNetwork } from './schema';
-import { api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
+import { request, api, ApiError, NetworkError, events, type HotspotBand, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
 import { isVisible, optionLabel, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, translate, type Language } from './i18n';
 import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
@@ -34,6 +35,7 @@ import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
 import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
+let disposeVehicle: (() => void) | null = null;
 let disposeTrace: (() => void) | null = null;
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let languagePreference = (() => { try { const value = localStorage.getItem('openxplay.language'); return value === 'en' || value === 'zh-CN' ? value : 'auto'; } catch { return 'auto'; } })();
@@ -70,7 +72,7 @@ const videoStats = new VideoStatsSnapshot();
 let carlinkError = '';
 let connectPin = '';
 let connectBusy = false;
-let dismissedPin: number | null = null;
+let dismissedPin: string | null = null;
 let pairingBusy = false;
 let pairingError = '';
 let publicNameBusy = false;
@@ -117,7 +119,7 @@ function shell() {
 }
 function render() {
   stage?.destroy(); stage = null; clearInterval(visibleTimer); visibleTimer = undefined;
-  disposeTrace?.(); disposeTrace = null;
+  disposeTrace?.(); disposeTrace = null; disposeVehicle?.(); disposeVehicle = null;
   shell();
   if (switching) renderSwitching();
   else if (handoff) renderHandoff();
@@ -183,6 +185,7 @@ function renderReady() {
       bindDetails: scope => { bindCopies(scope); const auto = fields().find(f => f.key === 'autoStart'); if (auto) bindField(auto); renderPairingPanel(); syncVisibleTimer(); },
       notice: notice => { if (notice === 'DISPLAY_CHANGED') void dispatchStage({ type: 'Step', action: 'RETRY', step: 'CARPLAY_START', label: null }); else showSettings(notice === 'CHOOSE_CAR' ? 'settings/car' : 'settings'); },
     });
+    main.insertAdjacentHTML('beforeend', status!.platform === 'linux' ? `<a class="inset-group inset-row" href="#settings/vehicle" data-vehicle-tile>${t('vehicle.title')}</a>` : '');
     updateDashboard(); return;
   }
   patchMarkup(main, `<div class="settings-page"><h1 class="large-title">${esc(t(routeTitle(route)))}</h1><div id="settings"></div></div>`);
@@ -194,6 +197,10 @@ function renderReady() {
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
     mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {
+    if (route === 'settings/vehicle') {
+      disposeVehicle = mountVehicle(container, t, errorKey);
+    }
+    if (route === 'settings/output' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/vehicle', 'vehicle.title', t(`vehicle.${(!status!.carlink?.vehicle || status!.carlink.vehicle.state === 'off') ? 'off' : status!.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`), 'car')}</div>`);
     if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
     const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry'].includes(f.key)).map(editorField);
@@ -216,7 +223,7 @@ function renderReady() {
     }
     if (route === 'settings/car' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group"><div class="inset-row"><span>${t('car.savedScreen')} · ${esc(status!.pathInput?.car?.savedScreen ?? t('stage.noScreen'))}</span></div><button class="quiet full-width" id="clear-saved-head-unit">${t('car.clearSaved')}</button><p id="clear-saved-result" role="status"></p></div>`);
     on(document.getElementById('clear-saved-head-unit'), 'click', async () => { if (!await confirmSheet(t('carlink.clearSavedHint'), t('car.clearSaved'), t('ui.cancel'))) return; try { await api.action('clear-saved-head-unit'); document.getElementById('clear-saved-result')!.textContent = t('ui.saved'); } catch (e) { document.getElementById('clear-saved-result')!.textContent = t(errorKey(e)); } });
-    if (route === 'settings/developer/diagnostics') { container.insertAdjacentHTML('beforeend', '<div id="diagnostics" class="inset-group"></div>'); renderDiagnostics(); }
+    if (route === 'settings/developer/diagnostics') { container.insertAdjacentHTML('beforeend', '<div id="vehicle-sample" class="inset-group"></div><div id="diagnostics" class="inset-group"></div>'); renderDiagnostics(); if (status!.platform === 'linux') disposeVehicle = mountVehicleSample(document.getElementById('vehicle-sample')!, t, errorKey); }
     if (route === 'settings/developer/connection') {
       container.insertAdjacentHTML('beforeend', `<div class="inset-group"><button id="developer-restart">${t('home.restart')}</button><button id="forget-all-wifi">${t('net.forgetAll')}</button>${status!.platform === 'linux' ? `<button id="carlink-forget">${t('carlink.forget')}</button><button id="regenerate-code">${t('stage.regenerate')}</button>` : ''}</div>`);
       on(document.getElementById('developer-restart')!, 'click', async () => { if (await confirmSheet(t('home.restartHint'), t('home.restart'), t('ui.cancel'))) void api.action('restart').then(() => tick()); });
@@ -254,6 +261,11 @@ async function dispatchStage(action: StageAction) {
   }
 }
 function updateDashboard() {
+  const applied = status?.carlink?.appliedPicture;
+  const currentPicture = document.querySelector<HTMLElement>('[data-current-picture]');
+  if (currentPicture) currentPicture.textContent = applied ? `${t('picture.current')}: ${applied.width} × ${applied.height}` : t('picture.pending');
+  const vehicleTile = document.querySelector<HTMLElement>('[data-vehicle-tile]');
+  if (vehicleTile) vehicleTile.textContent = t(`vehicle.${(!status?.carlink?.vehicle || status.carlink.vehicle.state === 'off') ? 'off' : status?.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`);
   if (!status || !stage) { if (status && document.getElementById('context-action')) renderCarlink(); syncPinDialog(); syncVisibleTimer(); return; }
   stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: needsRestart || restartRequired(status.notices), carIncomplete: !status.pathInput?.car?.screen && !status.pathInput?.car?.savedScreen && !settings?.values.carBrand && !settings?.values.carModel }, pageError);
   syncPinDialog(); syncVisibleTimer();
@@ -454,35 +466,45 @@ function renderCarlink() {
 function syncPinDialog() {
   let dialog = document.querySelector<HTMLDialogElement>('#carlink-pin-dialog');
   const view = status && carlinkView(status);
-  const deadline = status?.carlink?.pinDeadline ?? null;
-  if (session !== 'ready' || switching || !view?.pinRequested || dismissedPin === deadline) {
+  const deadline = status?.carlink?.pinRequest ?? status?.carlink?.pinDeadline ?? null;
+  const generation = status?.carlink?.generation ?? 0;
+  const prompt = `${generation}:${deadline}`;
+  const confirmation = status?.carlink?.pinConfirmation === true;
+  if (session !== 'ready' || switching || !view?.pinRequested || dismissedPin === prompt) {
+    if (!view?.pinRequested) dismissedPin = null;
     if (dialog) { dialog.close(); dialog.remove(); }
     return;
   }
-  if (dialog && (dialog.dataset.deadline !== String(deadline) || dialog.dataset.language !== language)) {
+  if (dialog && (dialog.dataset.deadline !== prompt || dialog.dataset.language !== language)) {
     dialog.close(); dialog.remove(); dialog = null;
   }
   if (!dialog) {
     dialog = document.createElement('dialog'); dialog.id = 'carlink-pin-dialog';
-    dialog.dataset.deadline = String(deadline); dialog.dataset.language = language;
+    dialog.dataset.deadline = prompt; dialog.dataset.language = language;
     dialog.setAttribute('aria-labelledby', 'carlink-pin-title');
-    patchMarkup(dialog, `<form><h2 id="carlink-pin-title">${t('carlink.enterPin')}</h2><p>${t('carlink.pinHint')}</p><label for="carlink-pin">${t('carlink.pin')}</label><input id="carlink-pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="off" required aria-describedby="carlink-countdown carlink-pin-error"><p id="carlink-countdown" role="timer"></p><p id="carlink-pin-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="cancel">${t('ui.cancel')}</button><button type="submit" class="primary">${t('carlink.submitPin')}</button></div></form>`);
+    patchMarkup(dialog, `<form><h2 id="carlink-pin-title">${t(confirmation ? 'carlink.confirm' : 'carlink.enterPin')}</h2><p>${esc(confirmation ? t('carlink.confirmHint', { client: status?.carlink?.pinClient ?? '' }) : t('carlink.pinHint'))}</p>${confirmation ? '' : `<label for="carlink-pin">${t('carlink.pin')}</label><input id="carlink-pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="off" required aria-describedby="carlink-countdown carlink-pin-error">`}<p id="carlink-countdown" role="timer"></p><p id="carlink-pin-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="cancel">${t('ui.cancel')}</button><button type="submit" class="primary">${t(confirmation ? 'carlink.approve' : 'carlink.submitPin')}</button></div></form>`);
     document.body.append(dialog); dialog.showModal();
     const currentDialog = dialog;
-    const close = () => { dismissedPin = deadline; currentDialog.close(); currentDialog.remove(); document.getElementById('carlink-enter-pin')?.focus(); };
-    on(dialog.querySelector('.cancel')!, 'click', close);
-    on(dialog, 'cancel', event => { event.preventDefault(); close(); });
+    const close = () => { dismissedPin = prompt; currentDialog.close(); currentDialog.remove(); document.getElementById('carlink-enter-pin')?.focus(); };
+    const answer = async (action: 'approve' | 'pin' | 'cancel', pin?: string) => {
+      if (status?.platform === 'linux') await request('/carlink/pairing', 'POST', { request: deadline, generation, action, ...(pin ? { pin } : {}) });
+      else if (action === 'pin') await api.carlinkPin(pin!);
+      else await request(`/actions/${action === 'cancel' ? 'cancel-carlink-pairing' : 'approve-carlink-pairing'}`, 'POST', {});
+    };
+    const cancel = async () => { try { await answer('cancel'); close(); void tick(); } catch (e) { currentDialog.querySelector('#carlink-pin-error')!.textContent = t(errorKey(e)); } };
+    on(dialog.querySelector('.cancel')!, 'click', () => void cancel());
+    on(dialog, 'cancel', event => { event.preventDefault(); void cancel(); });
     on(dialog.querySelector('form')!, 'submit', async event => {
       event.preventDefault();
       const input = currentDialog.querySelector<HTMLInputElement>('input')!;
       const errorEl = currentDialog.querySelector<HTMLElement>('#carlink-pin-error')!;
-      if (!validCarlinkPin(input.value)) { errorEl.textContent = t('error.carlinkPin'); return; }
+      if (!confirmation && !validCarlinkPin(input.value)) { errorEl.textContent = t('error.carlinkPin'); return; }
       const button = currentDialog.querySelector<HTMLButtonElement>('[type="submit"]')!; button.disabled = true;
       const current = epoch;
       try {
-        await api.carlinkPin(input.value);
-        input.value = '';
-        if (current === epoch && status?.carlink?.pinDeadline === deadline) {
+        await answer(confirmation ? 'approve' : 'pin', input?.value);
+        if (input) input.value = '';
+        if (current === epoch && status?.carlink && (status.carlink.generation ?? 0) === generation && (status.carlink.pinRequest ?? status?.carlink?.pinDeadline) === deadline) {
           status.carlink.pinRequested = false; status.carlink.pinDeadline = null; status.carlink.pinIncorrect = false;
           carlinkError = ''; close(); dismissedPin = null; updateDashboard();
         }
@@ -547,7 +569,7 @@ function fieldMarkup(field: Field): string {
 function bindField(field: Field) {
   field = editorField(field);
   const el = document.getElementById(fieldId(field.key)); if (!el) return;
-  if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.pathInput?.car?.carlink?.picture ?? undefined); return; }
+  if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.carlink?.appliedPicture ? `${status!.carlink.appliedPicture.width} × ${status!.carlink.appliedPicture.height}` : undefined); return; }
   if (field.type === 'plugins') on(el, 'change', event => { const input = event.target as HTMLInputElement; queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked)); });
   else if (field.type === 'bool' || field.key === 'carlinkTrace') on(el, 'change', () => queueSave(field, field.key === 'carlinkTrace' ? (el as HTMLInputElement).checked ? 'on' : 'off' : (el as HTMLInputElement).checked));
   else if (field.type === 'phone') on(el, 'click', () => void pickPhone(field));

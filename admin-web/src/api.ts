@@ -12,6 +12,10 @@ export interface Session { state: SessionState; defaultPassword: boolean }
 export interface WifiNetwork { ssid: string; signal: number; secure: boolean; known: boolean }
 export interface WifiClient { ssid: string | null; ip: string | null; signal: number | null; setupHotspot?: boolean }
 export interface CarlinkStatus {
+  generation?: number | null; appliedPicture?: { width: number; height: number } | null;
+  pinRequest?: number | null; pinConfirmation?: boolean; pinClient?: string | null;
+  vehicle?: { sample?: boolean; enabled: boolean; state: string; sensorActive: boolean; storageFailed: boolean };
+  summary?: Record<string, string>;
   trusted?: boolean; state: string; detail: string; lastLostReason?: string | null; lastError?: string | null;
   headUnit?: { address: string; name?: string | null } | null;
   network?: { ssid: string; interface: string } | null;

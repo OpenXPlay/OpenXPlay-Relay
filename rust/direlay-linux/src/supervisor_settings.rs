@@ -8,6 +8,15 @@ use crate::{
 };
 use std::net::Ipv4Addr;
 
+/// Both outputs share the iPhone stream until a hardware encoder is available.
+pub fn carlink_hevc<'a>(settings: &'a crate::settings::Settings, video_codec: &str) -> &'a str {
+    if settings.output == "carlink" && video_codec != "h264" {
+        &settings.carlink_hevc
+    } else {
+        "off"
+    }
+}
+
 /// Pure assembly: callers supply the current host observations.
 pub fn supervisor_settings(
     o: &Options,
@@ -28,17 +37,13 @@ pub fn supervisor_settings(
         Some(CarlinkSettings {
             name: o.settings.carlink_name.clone(),
             trace: o.settings.carlink_trace == "on",
+            vehicle_data: o.settings.vehicle_information,
+            picture: o.settings.carlink_picture_default,
             model: o.settings.carlink_model.clone(),
-            // Linux has no H.265 encoder; both outputs share the iPhone stream.
-            hevc: if o.settings.carlink_hevc == "auto"
-                && o.settings.output == "carlink"
-                && crate::display::DisplayState::load(&o.state_dir.join("display.json")).video_codec
-                    != "h264"
-            {
-                "auto"
-            } else {
-                "off"
-            }
+            hevc: carlink_hevc(
+                &o.settings,
+                &crate::display::DisplayState::load(&o.state_dir.join("display.json")).video_codec,
+            )
             .into(),
             auto_reconnect: o.settings.carlink_auto_reconnect,
             ble: if o.settings.carlink_link == "ble" {
@@ -166,7 +171,7 @@ mod tests {
         ));
         let mut options =
             Options::parse(&["--state-dir".into(), root.to_string_lossy().into_owned()]).unwrap();
-        for hevc in ["auto", "off"] {
+        for hevc in ["auto", "off", "signal"] {
             for output in ["web", "carlink", "both"] {
                 for codec in ["auto", "h264", "h265"] {
                     options.settings.carlink_hevc = hevc.into();
@@ -182,8 +187,8 @@ mod tests {
                     if output == "web" {
                         assert!(!args.iter().any(|a| a == "--clink-hevc"));
                     } else {
-                        let expected = if hevc == "auto" && output == "carlink" && codec != "h264" {
-                            "auto"
+                        let expected = if hevc != "off" && output == "carlink" && codec != "h264" {
+                            hevc
                         } else {
                             "off"
                         };

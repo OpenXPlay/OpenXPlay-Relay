@@ -63,7 +63,7 @@ it('uses exact Link and Error filters and stops fetching after the card is dispo
   await vi.advanceTimersByTimeAsync(0); expect(content.innerHTML).toContain('Link');
   for (const type of ['Link', 'Error']) {
     select.value = type; select.addEventListener.mock.calls[0][1](); await vi.advanceTimersByTimeAsync(0);
-    expect(fetch.mock.calls.some(([url]) => url.endsWith(`limit=200&type=${type}`))).toBe(true);
+    expect(fetch.mock.calls.some(([url]) => url.endsWith(`limit=5000&type=${type}`))).toBe(true);
   }
   expect(traceFilters).toEqual(['', 'Rtsp', 'Frame', 'Media', 'Link', 'Error']);
   dispose(); const count = fetch.mock.calls.length;

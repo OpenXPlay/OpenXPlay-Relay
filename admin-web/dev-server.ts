@@ -209,6 +209,7 @@ export function mockApi(linux = false): Plugin {
   let pairingDeadline: number | null = null;
   let pinDeadline = Date.now() / 1000 + 120;
   let pinAccepted = false;
+  let sampleVehicle = false;
   let password = 'openxplay';
   let defaultPassword = true;
   let wifiClient: WifiClient = { ssid: null, ip: '10.78.0.1', signal: null, setupHotspot: true };
@@ -366,6 +367,14 @@ export function mockApi(linux = false): Plugin {
         if (path === '/network-roles') { settings.values.networkRoles = roles; if (body.wifiCountry) settings.values.wifiCountry = String(body.wifiCountry); }
         return send(200, { plan: { ...network.plan, source: roles.mode }, checks: [], changes: ['controller', 'carlink'], ...(path === '/network-roles' ? { applied: true } : {}) });
       }
+      if (linux && path === '/vehicle' && method === 'GET') return send(200, { sample: sampleVehicle, enabled: sampleVehicle || settings.values.vehicleInformation === true, sensorActive: false, malformedFrames: 0, storageFailed: false, reports: sampleVehicle ? [{ kind: 'Gear', fields: { gear: 'D', speed: 40 }, receivedAt: Date.now() }] : [], history: [] });
+      if (linux && path === '/vehicle/sample' && method === 'POST') { if (typeof body.enabled !== 'boolean') return send(422, { error: 'error.invalid' }); sampleVehicle = body.enabled; return send(200, { ok: true }); }
+      if (linux && path === '/actions/clear-vehicle-history' && method === 'POST') return send(200, { ok: true });
+      if (linux && path === '/carlink/pairing' && method === 'POST') {
+        if (!['approve', 'pin', 'cancel'].includes(String(body.action)) || body.request !== 17 || pinAccepted || previewState !== 'carlink-pin') return send(409, { error: 'error.carlinkPinNotRequested' });
+        if (body.action === 'approve' || body.action === 'pin' && !/^\d{1,128}$/.test(String(body.pin))) return send(422, { error: 'error.carlinkPin' });
+        pinAccepted = true; return send(200, { ok: true });
+      }
       if (path === '/carlink/pin' && method === 'POST') { if (!/^\d{4,8}$/.test(String(body.pin))) return send(422, { error: 'error.carlinkPin' }); pinAccepted = true; return send(200, { ok: true }); }
       if (path === '/carlink/connect' && method === 'POST') return send(200, { ok: true });
       if (path === '/actions/clear-saved-head-unit' || path === '/actions/forget-carlink') return send(200, { ok: true });
@@ -382,8 +391,8 @@ export function mockApi(linux = false): Plugin {
             capture: { state: capturing ? 'capturing' : 'idle', bytes: capturing ? 1880 : 188, file: capturing ? mediaName + '.part' : null, reason: null } }, files });
         if (path === '/carlink-trace/tail' && method === 'GET') {
           const type = url.searchParams.get('type');
-          const limit = Number(url.searchParams.get('limit') ?? 200);
-          if (!Number.isInteger(limit) || limit < 0 || limit > 500 || (type !== null && !['Rtsp', 'Frame', 'Socket', 'Negotiation', 'Media', 'Video', 'Input', 'Error', 'Link'].includes(type))) return send(422, { error: 'error.invalid' });
+          const limit = Number(url.searchParams.get('limit') ?? 5000);
+          if (!Number.isInteger(limit) || limit < 0 || limit > 5000 || (type !== null && !['Rtsp', 'Frame', 'Socket', 'Negotiation', 'Media', 'Video', 'Input', 'Error', 'Link'].includes(type))) return send(422, { error: 'error.invalid' });
           return send(200, { lines: traceLines.filter(line => !type || JSON.parse(line).type === type).slice().reverse().slice(0, limit) });
         }
         if (method === 'GET' && (path === '/carlink-trace/download' || path.startsWith('/carlink-trace/files/'))) {
@@ -509,7 +518,7 @@ export function mockApi(linux = false): Plugin {
           else if (['hotspotSsid', 'carlinkName'].includes(key) && !String(value).trim()) errors[key] = 'error.required';
           else if (key === 'publicName' && value !== '' && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(String(value))) errors[key] = 'error.invalid';
         }
-        if (linux && 'carlinkPictureTry' in body && (settings.values.output === 'web' || Object.keys(body).length > 1)) errors.carlinkPictureTry = 'error.conflict';
+        if (linux && 'carlinkPictureTry' in body && settings.values.output === 'web') errors.carlinkPictureTry = 'error.conflict';
         if (linux && ('carlinkPictureDefault' in body || 'carlinkPictureSizes' in body)) {
           const nextDefault = Object.hasOwn(body, 'carlinkPictureDefault') ? body.carlinkPictureDefault : settings.values.carlinkPictureDefault;
           const saved = body.carlinkPictureSizes ?? settings.values.carlinkPictureSizes;
@@ -584,9 +593,13 @@ export function mockApi(linux = false): Plugin {
         result.pathInput = linux ? linuxFixtureStatus(preview ? previewState : running ? 'live-browser' : 'idle').pathInput : mockPathInput(result, preview ? previewState : '', Date.now(), previewPathEpoch);
         if (linux) result.adminFeatures = ['logs', 'config-files', 'update-check'];
         if (previewState === 'pairing' && preview) pairingDeadline ??= Date.now() / 1000 + 600;
-        if (previewState === 'carlink-pin' && preview && !pinAccepted) { result.output = 'carlink'; result.carlink = { state: 'authenticating', detail: '', trusted: false, pinRequested: true, pinDeadline }; }
+        if (previewState === 'carlink-pin' && preview && !pinAccepted) { result.output = 'carlink'; result.carlink = { state: 'authenticating', detail: '', trusted: false, pinRequested: true, pinDeadline, pinRequest: 17, pinConfirmation: false, generation: 1 }; }
         result.pairingDeadline = pairingDeadline && pairingDeadline > Date.now() / 1000 ? pairingDeadline : null;
         result.pairingRemaining = result.pairingDeadline ? Math.ceil(result.pairingDeadline - Date.now() / 1000) : null;
+        if (linux && result.carlink) {
+          result.carlink.vehicle = { enabled: settings.values.vehicleInformation === true, state: settings.values.vehicleInformation === true ? 'waiting' : 'off', sensorActive: false, storageFailed: false };
+          if (pictureTrial && typeof pictureTrial === 'object' && 'width' in pictureTrial && 'height' in pictureTrial && result.pathInput?.car?.carlink?.phase === 'PLAYING') result.carlink.appliedPicture = { width: Number(pictureTrial.width), height: Number(pictureTrial.height) };
+        }
         if (pictureTrial && typeof pictureTrial === 'object' && 'width' in pictureTrial && result.pathInput?.car?.carlink) result.pathInput.car.carlink.picture = `${pictureTrial.width}×${pictureTrial.height} H.265`;
         if (pinAccepted && result.pathInput?.car?.carlink) { result.pathInput.car.carlink.phase = 'PLAYING'; result.pathInput.car.carlink.pinPending = false; result.pathInput.car.carlink.trusted = true; }
         if (linux && result.video) {

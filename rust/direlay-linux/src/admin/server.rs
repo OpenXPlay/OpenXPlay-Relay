@@ -295,6 +295,26 @@ impl AdminServer {
                     _ => Response::error(422, "error.carlinkPin"),
                 }
             }
+            ("POST", "/vehicle/sample") => match body.get("enabled").and_then(Value::as_bool) {
+                Some(enabled) => result(self.admin.vehicle_sample(enabled)),
+                None => Response::error(422, "error.invalid"),
+            },
+            ("GET", "/vehicle") => Response::json(200, self.admin.vehicle()),
+            ("POST", "/carlink/pairing") => {
+                let Some(request) = body.get("request").and_then(Value::as_u64) else {
+                    return Response::error(422, "error.invalid");
+                };
+                let Some(generation) = body.get("generation").and_then(Value::as_u64) else {
+                    return Response::error(422, "error.invalid");
+                };
+                let Some(action) = string("action") else {
+                    return Response::error(422, "error.invalid");
+                };
+                result(
+                    self.admin
+                        .carlink_pairing(request, generation, action, string("pin")),
+                )
+            }
             ("GET", "/settings") => Response::json(200, json!(self.admin.settings())),
             ("POST", "/public-name/import") => {
                 use crate::public_name::service::ImportError;
@@ -379,6 +399,7 @@ impl AdminServer {
                     "restart",
                     "regenerate-pairing-code",
                     "forget-wifi",
+                    "clear-vehicle-history",
                     "forget-carlink",
                     "pair-iphone",
                     "cancel-pairing",
@@ -411,7 +432,7 @@ impl AdminServer {
             },
             ("GET", "/carlink-trace/tail") => {
                 let mut filter = None;
-                let mut limit = 200;
+                let mut limit = 5000;
                 for pair in request
                     .path
                     .split_once('?')
@@ -437,7 +458,7 @@ impl AdminServer {
                             filter = Some(t)
                         }
                         Some(("limit", n)) => match n.parse::<usize>() {
-                            Ok(n) if n <= 500 => limit = n,
+                            Ok(n) if n <= 5000 => limit = n,
                             _ => return Response::error(422, "error.invalid"),
                         },
                         _ => return Response::error(422, "error.invalid"),
