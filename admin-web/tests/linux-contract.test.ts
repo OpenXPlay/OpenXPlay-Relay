@@ -30,7 +30,7 @@ it.each(['en', 'zh-CN'] as const)('resolves every production Linux field, sectio
   }
 });
 it.each(Object.entries(linuxStatusFixtures))('accepts the real Linux %s response in both presenters', (_state, status) => {
-  expect(status.adminFeatures).toEqual(['logs', 'config-files', 'update-check']);
+  expect(status.adminFeatures).toEqual(['logs', 'config-files', 'update-check', 'identity']);
   expect(status.pathInput?.platform).toBe('linux');
   const path = presentPath(status.pathInput!);
   expect(presentStage(path)).toBeDefined();
@@ -73,4 +73,13 @@ it('presents an unreachable iPhone as waiting in English and Simplified Chinese'
   expect(stage.headline).toEqual({ res: 'state.waiting', args: [] });
   expect(translate('en', stage.headline.res!)).toBe('Waiting for iPhone');
   expect(translate('zh-CN', stage.headline.res!)).toBe('等待 iPhone');
+});
+
+it('keeps paused, automatic and armed startup facts consistent in every Linux fixture', () => {
+  for (const status of Object.values(linuxStatusFixtures)) {
+    const startup = status.pathInput!.startup!;
+    expect(startup.paused).toBe(status.autoStartPaused);
+    if (startup.paused) { expect(startup.automatic).toBe(false); expect(status.pathInput!.iphone!.armed).toBe(false); }
+    if (status.running || status.pathInput!.iphone!.armed || startup.arrival.pending) expect(startup.paused).toBe(false);
+  }
 });

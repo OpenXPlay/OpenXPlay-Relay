@@ -13,6 +13,7 @@ pub mod cli;
 pub mod di_play_input;
 pub mod display;
 pub mod hotspot_lifetime;
+pub mod identity;
 /// linux air play server protocol module.
 pub mod linux_air_play_server;
 /// linux audio protocol module.
@@ -29,6 +30,7 @@ pub mod linux_hotspot;
 pub mod linux_microphone;
 /// linux wireless platform protocol module.
 pub mod linux_wireless_platform;
+pub mod local_audio;
 /// network protocol module.
 pub mod network;
 /// platform protocol module.
@@ -41,6 +43,7 @@ pub mod replay_input;
 pub mod stream_bridge_sink;
 /// stream connection protocol module.
 pub mod stream_connection;
+pub mod transcode_capabilities;
 
 pub use cli::Options;
 pub use cli::PersistentState;
@@ -90,6 +93,7 @@ pub mod bluetooth_wake;
 pub mod boot_timing;
 pub mod branding;
 pub mod mdns_host;
+pub mod mfi_sources;
 pub mod plugins;
 pub mod provision;
 pub mod public_name;

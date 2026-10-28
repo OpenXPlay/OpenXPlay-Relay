@@ -144,6 +144,7 @@ enum InputCommand {
     Touch(u64, Vec<AirPlayContact>),
 }
 pub struct DiPlayInput {
+    pub(crate) transcoding: Mutex<crate::transcode_capabilities::Capabilities>,
     pub(crate) display: Arc<Mutex<crate::display::DisplayRuntime>>,
     pub(crate) context: Mutex<Option<crate::context::Producer>>,
     pub(crate) state: Arc<Mutex<InputState>>,
@@ -241,6 +242,7 @@ impl DiPlayInput {
             recovery: tx,
             events,
             clock,
+            transcoding: Mutex::default(),
             codec_written: Mutex::new((0, None)),
             context: Mutex::new(plugins.then(crate::context::Producer::default)),
         }

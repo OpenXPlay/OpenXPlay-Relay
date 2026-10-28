@@ -27,6 +27,7 @@ impl Request {
 }
 pub(crate) struct FakeChildFactory {
     requests: mpsc::Sender<Request>,
+    pub events: Mutex<Option<EventSink>>,
     pub launches: Mutex<Vec<Vec<OsString>>>,
     pub stops: Arc<AtomicUsize>,
     exited: Arc<AtomicBool>,
@@ -37,6 +38,7 @@ impl FakeChildFactory {
         (
             Arc::new(Self {
                 requests: tx,
+                events: Mutex::default(),
                 launches: Mutex::default(),
                 stops: Arc::default(),
                 exited: Arc::default(),
@@ -93,6 +95,7 @@ impl ChildFactory for FakeChildFactory {
         let output = unsafe { OwnedFd::from_raw_fd(fds[1]) };
         let pipe = ControlPipe::new(ChildStdin::from(output))?;
         let tx = self.requests.clone();
+        *self.events.lock().unwrap() = Some(events.clone());
         let reader = thread::spawn(move || {
             for line in BufReader::new(input).lines() {
                 let value = serde_json::from_str(&line.unwrap()).unwrap();
@@ -122,12 +125,14 @@ fn supervisor(factory: Arc<FakeChildFactory>) -> RelaySupervisor {
         socket: "/tmp/nonexistent-web-tls-test.sock".into(),
         web_port: 8443,
         web_root: "/web".into(),
+        web_transcode: true,
         plugins: None,
         state_dir: "/state".into(),
         addresses: vec!["10.77.0.1".parse().unwrap()],
         pairing: false,
         carlink: None,
         pem_tls: None,
+        default_tls: None,
     };
     let mut supervisor = RelaySupervisor::new(settings, factory.clone(), Arc::new(|_| {}));
     supervisor.start().unwrap();
@@ -263,5 +268,52 @@ fn replacing_the_child_wakes_the_waiter_and_rejects_old_generation_replies() {
         request.applied();
         update.join().unwrap().unwrap();
     });
+    supervisor.stop();
+}
+
+#[test]
+fn default_certificate_requires_matching_fingerprint_and_keeps_trusted_sni_separate() {
+    let (factory, rx) = FakeChildFactory::new();
+    let mut supervisor = supervisor(factory.clone());
+    let base = crate::identity::tls::DefaultTls {
+        cert: "/private/default.pem".into(),
+        key: "/private/default.key".into(),
+        fingerprint: "AA:BB".into(),
+    };
+    for accepted in [false, true] {
+        thread::scope(|scope| {
+            let update = scope.spawn(|| {
+                supervisor.update_web_tls_with_default(
+                    None,
+                    vec![],
+                    Some(base.clone()),
+                    Duration::from_secs(2),
+                )
+            });
+            let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(request.value["default"]["cert"], "/private/default.pem");
+            assert_eq!(request.value["trusted"], Value::Null);
+            (request.events)(
+                json!({"type":"web-tls","id":request.value["id"],"applied":true,"trustedName":null,"defaultFingerprint":if accepted {"AA:BB"} else {"wrong"}}),
+            );
+            assert_eq!(update.join().unwrap().is_ok(), accepted);
+        });
+        assert_eq!(
+            supervisor.web_tls.settings().default_tls.is_some(),
+            accepted
+        );
+    }
+    thread::scope(|scope| {
+        let update = scope.spawn(|| {
+            supervisor.update_web_tls_with_default(None, vec![], None, Duration::from_secs(2))
+        });
+        let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(request.value["default"], Value::Null);
+        (request.events)(
+            json!({"type":"web-tls","id":request.value["id"],"applied":true,"trustedName":null,"defaultFingerprint":null}),
+        );
+        update.join().unwrap().unwrap();
+    });
+    assert!(supervisor.web_tls.settings().default_tls.is_none());
     supervisor.stop();
 }

@@ -205,6 +205,9 @@ pub struct LinuxRelayAdmin {
     provisioning: Arc<crate::provision::ProvisioningGate>,
     /// Trusted HTTPS with a free domain name; off without `public-name.json`.
     public_name: Arc<crate::public_name::PublicNameService>,
+    identity_imports: Mutex<crate::identity::Imports>,
+    user_tls_lock: Mutex<()>,
+    receiver_default_tls: Arc<Mutex<Option<crate::identity::tls::DefaultTls>>>,
     /// The admin page's certificate for that name, chosen by SNI.
     admin_certificate: crate::admin::server::NamedCertificate,
     /// What the running head-unit page serves; `None` while there is no web output.
@@ -402,6 +405,9 @@ impl LinuxRelayAdmin {
             running_links: Mutex::new(None),
             browser_target: Arc::default(),
             public_name,
+            identity_imports: Mutex::default(),
+            user_tls_lock: Mutex::default(),
+            receiver_default_tls: Arc::default(),
             admin_certificate: Default::default(),
             receiver_tls: Mutex::new(None),
             receiver_tls_sans: Mutex::new(Vec::new()),
@@ -834,10 +840,29 @@ impl LinuxRelayAdmin {
         if !self.wifi_present(o.carlink_interface()) {
             settings.carlink = None;
         }
+        if let Some(carlink) = &mut settings.carlink {
+            carlink.picture = crate::supervisor_settings::carlink_picture(
+                &o.settings,
+                self.input.display.lock().unwrap().pictures.trial,
+            );
+            carlink.hevc = crate::supervisor_settings::carlink_hevc_with_encoder(
+                &o.settings,
+                &self.input.display.lock().unwrap().saved.video_codec,
+                self.input
+                    .transcoding
+                    .lock()
+                    .unwrap()
+                    .clink
+                    .converts("H265", carlink.picture),
+            )
+            .into();
+        }
         let tesla_tls = crate::tesla_address::tls_address(&o.settings);
         let served = self
             .public_name
             .certificate_snapshot(&self.options.state_dir)?;
+        settings.default_tls = crate::identity::tls::snapshot(&self.options.state_dir)?;
+        let default_tls = settings.default_tls.clone();
         settings.pem_tls = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
             cert: s.cert.clone(),
@@ -900,7 +925,49 @@ impl LinuxRelayAdmin {
         let hotspot = self.hotspot_lifetime.clone();
         let admin_hotspot = self.admin_hotspot.clone();
         let addresses = self.runtime.network_address_source();
+        let receiver_default_tls = self.receiver_default_tls.clone();
+        let launched_default_tls = default_tls.clone();
+        let tls_state = self.options.state_dir.clone();
+        *self.receiver_default_tls.lock().unwrap() = None;
+        let capability_settings = self.settings.clone();
+        let capability_tx = self.operations.clone();
         let event_sink: EventSink = Arc::new(move |mut event| {
+            if event["type"] == "tls-fingerprint" {
+                if let Some(base) = &launched_default_tls {
+                    if event["defaultFingerprint"].as_str() == Some(&base.fingerprint)
+                        && event["fingerprint"].as_str() == Some(&base.fingerprint)
+                        && crate::identity::tls::snapshot(&tls_state)
+                            .ok()
+                            .flatten()
+                            .as_ref()
+                            == Some(base)
+                    {
+                        *receiver_default_tls.lock().unwrap() = Some(base.clone());
+                    }
+                }
+            }
+            if event["type"] == "receiver-starting" {
+                *input.transcoding.lock().unwrap() = Default::default();
+                input.display.lock().unwrap().transcode_geometry = false;
+            }
+            if event["type"] == "transcode-capabilities" {
+                let effective = capability_settings.lock().unwrap().effective_developer();
+                let picture = crate::supervisor_settings::carlink_picture(
+                    &effective,
+                    input.display.lock().unwrap().pictures.trial,
+                );
+                let mut caps = input.transcoding.lock().unwrap();
+                let previous = caps.clink.converts("H265", picture);
+                if caps.observe(&event) && event["output"] == "clink" {
+                    let encoder = caps.clink.converts("H265", picture);
+                    let geometry = caps.clink.geometry(picture);
+                    drop(caps);
+                    input.display.lock().unwrap().transcode_geometry = geometry;
+                    if previous != encoder && effective.output != "web" {
+                        let _ = capability_tx.try_send(Operation::Carlink);
+                    }
+                }
+            }
             if vehicle
                 .lock()
                 .unwrap()
@@ -1113,20 +1180,30 @@ impl LinuxRelayAdmin {
                 self.apply_pending.store(false, Ordering::Release);
             }
             Operation::Carlink => {
-                let settings = self.settings.lock().unwrap().clone();
+                let settings = self.settings.lock().unwrap().effective_developer();
                 self.carlink_hevc_disabled.store(false, Ordering::Release);
                 self.vehicle
                     .lock()
                     .unwrap()
                     .enable(settings.vehicle_information);
-                let (picture, hevc) = {
+                let (picture, codec) = {
                     let d = self.input.display.lock().unwrap();
                     (
-                        d.pictures.trial.unwrap_or(d.picture_default),
-                        crate::supervisor_settings::carlink_hevc(&settings, &d.saved.video_codec)
-                            .to_owned(),
+                        crate::supervisor_settings::carlink_picture(&settings, d.pictures.trial),
+                        d.saved.video_codec.clone(),
                     )
                 };
+                let (encoder, geometry) = {
+                    let caps = self.input.transcoding.lock().unwrap();
+                    (
+                        caps.clink.converts("H265", picture),
+                        caps.clink.geometry(picture),
+                    )
+                };
+                self.input.display.lock().unwrap().transcode_geometry = geometry;
+                let hevc = crate::supervisor_settings::carlink_hevc_with_encoder(
+                    &settings, &codec, encoder,
+                );
                 if let Some(s) = self
                     .supervisor
                     .lock()
@@ -1134,7 +1211,7 @@ impl LinuxRelayAdmin {
                     .as_ref()
                     .filter(|_| settings.output != "web")
                 {
-                    s.restart_carlink(picture, &hevc, settings.vehicle_information)?;
+                    s.restart_carlink(picture, hevc, settings.vehicle_information)?;
                 }
             }
             Operation::ReceiverTls => {
@@ -1688,6 +1765,11 @@ impl LinuxRelayAdmin {
     }
     /// Single production queue for trusted material, network SANs and Tesla coverage.
     /// The action reads the latest desired set when it runs, coalescing waiting changes.
+    fn queue_user_tls(&self) {
+        if let Ok(sans) = self.receiver_sans() {
+            self.apply_receiver_tls(self.public_name.served(), sans);
+        }
+    }
     fn apply_receiver_tls(
         &self,
         served: Option<crate::public_name::Served>,
@@ -1702,7 +1784,11 @@ impl LinuxRelayAdmin {
             false,
             crate::public_name::service::trusted_clock(),
         ) || *self.receiver_tls_sans.lock().unwrap() != sans
-            || self.tesla_tls_changed();
+            || self.tesla_tls_changed()
+            || crate::identity::tls::snapshot(&self.options.state_dir)
+                .ok()
+                .flatten()
+                != *self.receiver_default_tls.lock().unwrap();
         if changed
             && !self.receiver_tls_queued.swap(true, Ordering::AcqRel)
             && self.operations.try_send(Operation::ReceiverTls).is_err()
@@ -1720,6 +1806,7 @@ impl LinuxRelayAdmin {
             .public_name
             .certificate_snapshot(&self.options.state_dir)?;
         let sans = self.receiver_sans()?;
+        let default_tls = crate::identity::tls::snapshot(&self.options.state_dir)?;
         let tesla = crate::tesla_address::tls_address(&self.settings.lock().unwrap());
         let pem = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
@@ -1732,10 +1819,19 @@ impl LinuxRelayAdmin {
             .unwrap()
             .as_ref()
             .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotConnected))
-            .and_then(|supervisor| supervisor.update_web_tls(pem, sans.clone(), timeout));
+            .and_then(|supervisor| {
+                supervisor.update_web_tls_with_default(
+                    pem,
+                    sans.clone(),
+                    default_tls.clone(),
+                    timeout,
+                )
+            });
         match swapped {
             Ok(()) => {
                 *self.receiver_tls.lock().unwrap() = Some(served);
+                *self.receiver_default_tls.lock().unwrap() = default_tls;
+                let _ = crate::identity::tls::prune(&self.options.state_dir);
                 *self.receiver_tls_sans.lock().unwrap() = sans.clone();
                 *self.receiver_tesla_tls.lock().unwrap() = tesla.filter(|a| sans.contains(a));
                 self.events.log("receiver TLS updated live");
@@ -1804,6 +1900,9 @@ impl LinuxRelayAdmin {
         self.stop_controller_for_restart(true);
     }
     fn tick_inner(&self) -> Result<()> {
+        if let Ok(mut imports) = self.identity_imports.try_lock() {
+            imports.expire();
+        }
         if self.runtime.inventory_refresh == InventoryRefresh::Automatic {
             self.inventory.refresh();
         }
@@ -1970,9 +2069,11 @@ impl LinuxRelayAdmin {
         let selection =
             crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
         let identity = self.options.test_input.is_some()
-            || ["identity.pk8", "certificate.p7b"].iter().all(|name| {
-                std::fs::metadata(options.identity_dir.join(name)).is_ok_and(|m| m.len() > 0)
-            });
+            || crate::mfi_sources::readiness(
+                &options.settings,
+                &options.state_dir,
+                &options.identity_dir,
+            ) == "ready";
         let network_ready = self.wifi_present(&options.wifi_interface)
             && wifi != Some(false)
             && (options.settings.network_mode != "shared-wifi"
@@ -2354,7 +2455,15 @@ fn picture_section() -> Section {
             key: key.into(),
             field_type: "choice".into(),
             label_key: format!("field.linux.{key}"),
-            hint_key: (key == "screenWidth").then(|| "hint.linux.screenWidth".into()),
+            hint_key: Some(
+                match key {
+                    "screenWidth" => "hint.linux.screenWidth",
+                    "resolution" => "hint.resolution",
+                    "videoCodec" => "hint.videoCodec",
+                    _ => "hint.frameRate",
+                }
+                .into(),
+            ),
             options: Some(
                 choices
                     .into_iter()
@@ -2544,8 +2653,9 @@ fn runtime_section(id: &str, keys: &[(&str, &str)]) -> Section {
                 key: (*key).into(),
                 field_type: (*kind).into(),
                 label_key: format!("field.{key}"),
-                hint_key: (key.starts_with("experimental") || *key == "developerActive")
-                    .then(|| format!("hint.field.{key}")),
+                hint_key: (key.starts_with("experimental")
+                    || matches!(*key, "developerActive" | "carlinkPictureSize"))
+                .then(|| format!("hint.field.{key}")),
                 options: (*key == "carlinkPictureSize").then(|| {
                     ["window", "mode"]
                         .into_iter()
@@ -2643,6 +2753,10 @@ fn car_section(car: &crate::car_models::CarSelection) -> Section {
 }
 pub fn settings_schema() -> Vec<Section> {
     let fields: Vec<Field> = [
+        ("mfiTarget", "choice"),
+        ("mfiI2cPath", "text"),
+        ("mfiRemoteServer", "text"),
+        ("mfiRemoteToken", "secret"),
         ("networkMode", "choice"),
         ("networkRoles", "object"),
         ("adminHotspotPassword", "secret"),
@@ -2663,6 +2777,10 @@ pub fn settings_schema() -> Vec<Section> {
         ("vehicleInformation", "bool"),
         ("carlinkReconnectOnResize", "bool"),
         ("carlinkHevc", "choice"),
+        ("webTranscode", "bool"),
+        ("playCarPlayAudio", "bool"),
+        ("microphoneSourceEnabled", "bool"),
+        ("microphoneSource", "choice"),
         ("carlinkTrace", "choice"),
         ("autoStart", "bool"),
         ("bootStart", "bool"),
@@ -2687,7 +2805,9 @@ pub fn settings_schema() -> Vec<Section> {
                 key
             }
         ),
-        hint_key: if key == "autoStart" {
+        hint_key: if key == "bootStart" {
+            Some("hint.field.bootStart".into())
+        } else if key == "autoStart" {
             Some("hint.field.linuxAutoStart".into())
         } else {
             matches!(
@@ -2697,6 +2817,7 @@ pub fn settings_schema() -> Vec<Section> {
                     | "carlinkReconnectOnResize"
                     | "carlinkHevc"
                     | "videoStats"
+                    | "carPlayViewAreas"
                     | "hotspotChannel"
                     | "carlinkLink"
                     | "carlinkInterface"
@@ -2707,6 +2828,30 @@ pub fn settings_schema() -> Vec<Section> {
             .then(|| format!("hint.field.{key}"))
         },
         options: match key {
+            "mfiTarget" => Some(
+                ["local", "remote", "usb-ch341", "i2c"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        value: v.into(),
+                        label_key: format!("option.mfiTarget.{v}"),
+                        labels: None,
+                        illustration: None,
+                        hint_key: None,
+                    })
+                    .collect(),
+            ),
+            "microphoneSource" => Some(
+                ["head-unit", "this-device"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        labels: None,
+                        value: v.into(),
+                        label_key: format!("option.microphoneSource.{v}"),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            ),
             "carlinkHevc" | "carlinkTrace" | "videoStats" => Some(
                 (if key == "carlinkHevc" {
                     vec!["auto", "off", "signal"]
@@ -2800,6 +2945,14 @@ pub fn settings_schema() -> Vec<Section> {
             _ => None,
         },
         visible_when: match key {
+            "mfiI2cPath" => Some(VisibleWhen {
+                key: "mfiTarget".into(),
+                equals: vec!["i2c".into()],
+            }),
+            "mfiRemoteServer" | "mfiRemoteToken" => Some(VisibleWhen {
+                key: "mfiTarget".into(),
+                equals: vec!["remote".into()],
+            }),
             "networkRoles"
             | "adminHotspotPassword"
             | "wifiCountry"
@@ -2919,6 +3072,9 @@ fn failure_secrets(settings: &Settings, state_dir: &std::path::Path) -> Vec<Stri
         .iter()
         .map(|n| n.password.clone())
         .collect();
+    if let Ok(token) = crate::mfi_sources::token(state_dir) {
+        secrets.push(token);
+    }
     secrets.extend(settings.carlink_pin.clone());
     secrets.extend(settings.admin_hotspot_password.clone());
     if let Ok((_, password)) = crate::linux_hotspot::hotspot_credentials(state_dir) {
@@ -2937,6 +3093,9 @@ fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static st
             }
         };
     }
+    changed!(mfi_target, "mfiTarget");
+    changed!(mfi_i2c_path, "mfiI2cPath");
+    changed!(mfi_remote_server, "mfiRemoteServer");
     changed!(iphone, "iphone");
     changed!(rfcomm_channel, "rfcommChannel");
     changed!(wifi_interface, "wifiInterface");
@@ -2952,6 +3111,9 @@ fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static st
     changed!(physical_width_enabled, "physicalWidthEnabled");
     changed!(physical_width_override_mm, "physicalWidthOverrideMm");
     changed!(car_bluetooth_audio, "carBluetoothAudio");
+    changed!(play_car_play_audio, "playCarPlayAudio");
+    changed!(microphone_source, "microphoneSource");
+    changed!(microphone_source_enabled, "microphoneSourceEnabled");
     changed!(carlink_picture_default, "carlinkPictureDefault");
     changed!(carlink_picture_size, "carlinkPictureSize");
     keys
@@ -3128,6 +3290,9 @@ impl LinuxRelayAdmin {
         let status = self.status();
         let settings = self.settings.lock().unwrap().clone();
         let mut known: Vec<(String, &str)> = Vec::new();
+        if let Ok(token) = crate::mfi_sources::token(&self.options.state_dir) {
+            known.push((token, "secret"));
+        }
         for network in &settings.shared_wifi_networks {
             known.push((network.password.clone(), "secret"));
         }
@@ -3273,16 +3438,99 @@ impl RelayAdmin for LinuxRelayAdmin {
             Err(failure) => serde_json::json!({"channel":channel,"failure":failure}),
         })
     }
+    fn identity_status(&self) -> serde_json::Value {
+        let mut tls = crate::identity::tls::status(&self.options.state_dir);
+        tls["pending"] = serde_json::json!(
+            self.receiver_tls.lock().unwrap().is_some()
+                && crate::identity::tls::snapshot(&self.options.state_dir)
+                    .ok()
+                    .flatten()
+                    != *self.receiver_default_tls.lock().unwrap()
+        );
+        serde_json::json!({"mfi":crate::identity::status(&self.options.identity_dir),"tls":tls})
+    }
+    fn identity_import(
+        &self,
+        body: &Values,
+    ) -> std::result::Result<serde_json::Value, &'static str> {
+        let result = self
+            .identity_imports
+            .lock()
+            .unwrap()
+            .select(&self.options.identity_dir, body)?;
+        self.wake_tick();
+        Ok(result)
+    }
+    fn identity_remove(&self) -> std::result::Result<(), &'static str> {
+        let mut imports = self.identity_imports.lock().unwrap();
+        crate::identity::remove(&self.options.identity_dir).map_err(|_| "error.request")?;
+        imports.clear();
+        self.wake_tick();
+        Ok(())
+    }
+    fn tls_import(&self, body: &Values) -> std::result::Result<(), &'static str> {
+        use base64ct::{Base64, Encoding};
+        let _lock = self.user_tls_lock.lock().unwrap();
+        if body.contains_key("chainPem") || body.contains_key("keyPem") {
+            if body.contains_key("data") || body.contains_key("password") {
+                return Err("identity_error_pem");
+            }
+            let chain = body
+                .get("chainPem")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("identity_error_pem")?;
+            let key = body
+                .get("keyPem")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("identity_error_pem")?;
+            let material = crate::identity::tls::validate(chain, key, None)
+                .map_err(|_| "identity_error_pem")?;
+            crate::identity::tls::install(&self.options.state_dir, &material)
+                .map_err(|_| "error.request")?;
+        } else {
+            let encoded = body
+                .get("data")
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| s.len() <= crate::identity::tls::MAX_FILE * 4 / 3 + 4)
+                .ok_or("identity_error_tls")?;
+            let bytes = zeroize::Zeroizing::new(
+                Base64::decode_vec(encoded).map_err(|_| "identity_error_tls")?,
+            );
+            let password = body
+                .get("password")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("identity_error_tls")?;
+            crate::identity::tls::import_pkcs12(&self.options.state_dir, &bytes, password)?;
+        }
+        self.queue_user_tls();
+        Ok(())
+    }
+    fn tls_remove(&self) -> std::result::Result<(), &'static str> {
+        let _lock = self.user_tls_lock.lock().unwrap();
+        crate::identity::tls::remove(&self.options.state_dir).map_err(|_| "error.request")?;
+        self.queue_user_tls();
+        Ok(())
+    }
     fn config_export(
         &self,
         privacy: bool,
     ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
         let now = crate::logs::now_millis();
         if privacy {
-            let sections = self
+            let mut sections = self
                 .public_name
                 .privacy_export()
                 .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+            let token = crate::mfi_sources::token(&self.options.state_dir)
+                .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+            if !token.is_empty() {
+                sections["mfiRemoteToken"] = token.into();
+            }
+            if let Some(material) = crate::identity::tls::export(&self.options.state_dir)
+                .map_err(|_| BTreeMap::from([("importedCertificate".into(), "io".into())]))?
+            {
+                sections["importedCertificate"] = material;
+            }
             crate::config_files::export_privacy(sections, now)
         } else {
             let display = oxp_wire::display_settings(&self.input.display_settings());
@@ -3354,8 +3602,29 @@ impl RelayAdmin for LinuxRelayAdmin {
             .cloned()
             .collect();
         plan.report.restart_needed = !plan.report.next_start.is_empty();
+        if plan.mfi_remote_token.is_some() {
+            plan.report
+                .applied_now
+                .retain(|key| key != "mfiRemoteToken");
+            plan.report.next_start.push("mfiRemoteToken".into());
+            plan.report.restart_needed = true;
+        }
         if !dry_run {
-            if let Some(privacy) = plan.privacy {
+            if let Some(token) = plan.mfi_remote_token {
+                crate::mfi_sources::save_token(&self.options.state_dir, &token)
+                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+                self.restart_required.store(true, Ordering::Release);
+                self.events
+                    .failure_secrets(failure_secrets(&current, &self.options.state_dir));
+            }
+            if let Some(mut privacy) = plan.privacy {
+                if let Some(material) = privacy.imported_certificate.take() {
+                    let _lock = self.user_tls_lock.lock().unwrap();
+                    crate::identity::tls::install(&self.options.state_dir, &material).map_err(
+                        |_| BTreeMap::from([("importedCertificate".into(), "io".into())]),
+                    )?;
+                    self.queue_user_tls();
+                }
                 self.public_name
                     .import_privacy(privacy)
                     .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
@@ -3554,8 +3823,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                 }
             });
         let mut status = AdminStatus {
+            identity: Some(self.identity_status()),
             path_input: serde_json::Value::Null,
-            admin_features: ["logs", "config-files", "update-check"]
+            admin_features: ["logs", "config-files", "update-check", "identity"]
                 .map(str::to_owned)
                 .to_vec(),
             video: self.input.video_status(),
@@ -3603,6 +3873,9 @@ impl RelayAdmin for LinuxRelayAdmin {
             host: "openxplay-linux.local".into(),
             admin_hotspot: Some(self.admin_hotspot.status()),
             host_capabilities: self.capabilities.get(),
+            local_audio: crate::local_audio::devices(&self.runtime.root),
+            transcoding: serde_json::to_value(&*self.input.transcoding.lock().unwrap())
+                .unwrap_or_default(),
             wireless: Some({
                 let wifi = self.capabilities.cached_wifi(&options.wifi_interface);
                 let phy = wifi.as_ref().and_then(|w| w.capabilities.as_ref());
@@ -3664,7 +3937,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             network: AdminNetwork {
                 planned: Some(self.network_status(&self.settings.lock().unwrap())),
                 following_carlink,
-                mode: options.settings.network_mode,
+                mode: options.settings.network_mode.clone(),
                 wifi: wifi.ssid.clone(),
             },
             output: options.settings.output.clone(),
@@ -3698,9 +3971,11 @@ impl RelayAdmin for LinuxRelayAdmin {
         };
         drop(controller);
         let identity_ready = self.options.test_input.is_some()
-            || ["identity.pk8", "certificate.p7b"].iter().all(|name| {
-                std::fs::metadata(options.identity_dir.join(name)).is_ok_and(|m| m.len() > 0)
-            });
+            || crate::mfi_sources::readiness(
+                &options.settings,
+                &options.state_dir,
+                &options.identity_dir,
+            ) == "ready";
         crate::path_input::update(
             &self.runtime_path_facts(),
             &self.settings.lock().unwrap(),
@@ -3709,6 +3984,9 @@ impl RelayAdmin for LinuxRelayAdmin {
             identity_ready,
             self.backends.bluetooth.check_radio().is_ok(),
         );
+        if let Some(enabled) = self.backends.access_point.wifi_enabled() {
+            status.path_input["relay"]["wifiOn"] = enabled.into();
+        }
         status
     }
     fn network_roles_update(&self, values: Values) -> Option<crate::network_roles::SaveResult> {
@@ -3775,6 +4053,31 @@ impl RelayAdmin for LinuxRelayAdmin {
         }
         // The token never leaves the relay: `publicNameTokenSet` says whether one is saved.
         values.extend(self.public_name.admin_values());
+        values.insert(
+            "publicNamePrivacyAvailable".into(),
+            values
+                .get("privacyConfigAvailable")
+                .cloned()
+                .unwrap_or(false.into()),
+        );
+        let token_set =
+            crate::mfi_sources::token(&self.options.state_dir).is_ok_and(|v| !v.is_empty());
+        values.insert("mfiRemoteTokenSet".into(), token_set.into());
+        if token_set
+            || crate::identity::tls::snapshot(&self.options.state_dir)
+                .is_ok_and(|tls| tls.is_some())
+        {
+            values.insert("privacyConfigAvailable".into(), true.into());
+        }
+        values.insert(
+            "mfiSourceStatus".into(),
+            crate::mfi_sources::readiness(
+                &self.settings.lock().unwrap(),
+                &self.options.state_dir,
+                &self.options.identity_dir,
+            )
+            .into(),
+        );
         AdminSettings {
             schema,
             values,
@@ -3791,6 +4094,40 @@ impl RelayAdmin for LinuxRelayAdmin {
                 "settings".into(),
                 "error.invalid".into(),
             )]));
+        }
+        // Remote credentials use a write-only field and an independent private store.
+        if let Some(value) = values.remove("mfiRemoteToken") {
+            let Some(token) = value
+                .as_str()
+                .filter(|v| crate::mfi_sources::valid_token(v))
+            else {
+                return AdminUpdate::Errors(BTreeMap::from([(
+                    "mfiRemoteToken".into(),
+                    "error.invalid".into(),
+                )]));
+            };
+            if let Err(errors) = update_settings(&self.settings.lock().unwrap(), values.clone()) {
+                return AdminUpdate::Errors(errors);
+            }
+            if crate::mfi_sources::save_token(&self.options.state_dir, token).is_err() {
+                return AdminUpdate::Errors(BTreeMap::from([(
+                    "mfiRemoteToken".into(),
+                    "error.invalid".into(),
+                )]));
+            }
+            self.events.failure_secrets(failure_secrets(
+                &self.settings.lock().unwrap(),
+                &self.options.state_dir,
+            ));
+            self.restart_required.store(true, Ordering::Release);
+            return match if values.is_empty() {
+                AdminUpdate::NextStart
+            } else {
+                self.update(values)
+            } {
+                AdminUpdate::Errors(e) => AdminUpdate::Errors(e),
+                _ => AdminUpdate::NextStart,
+            };
         }
         // Trusted HTTPS lives in its own file and applies at once.
         let public: Vec<String> = values
@@ -3903,6 +4240,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 let effective_current = current.effective_developer();
                 let outputs_changed = picture.video_codec
                     != self.input.display_settings().video_codec
+                    || effective_next.web_transcode != effective_current.web_transcode
                     || next.plugins != current.plugins
                     || next.plugins_enabled != current.plugins_enabled
                     || next.output != current.output
@@ -4048,6 +4386,18 @@ impl RelayAdmin for LinuxRelayAdmin {
                 }
                 Ok(())
             }
+            "enable-bluetooth" => self
+                .backends
+                .bluetooth
+                .power_on()
+                .map_err(|_| "error.radioBluetooth".into()),
+            "enable-wifi" => crate::platform::command(
+                self.runtime.runner.as_ref(),
+                &["nmcli", "radio", "wifi", "on"],
+                Duration::from_secs(3),
+            )
+            .map(|_| ())
+            .map_err(|_| "error.radioWifi".into()),
             "start" => self.defer(Operation::Start),
             "stop" | "cancel-arrival" => self.defer(Operation::Stop),
             "restart" => self.defer(Operation::Restart),
@@ -4312,6 +4662,145 @@ impl RelayAdmin for LinuxRelayAdmin {
 mod tests {
     use super::*;
     include!("admin_contract_tests.rs");
+    include!("identity_admin_tests.rs");
+    #[test]
+    fn mfi_sources_android_user_envelope_and_restart_contract() {
+        let (admin, dir) = fake();
+        for (target, path, server) in [
+            ("remote", "/dev/i2c-1", "https://mfi.example.org"),
+            ("i2c", "/dev/i2c-2", "https://mfi.example.org"),
+            ("usb-ch341", "/dev/i2c-2", "https://mfi.example.org"),
+            ("local", "/dev/i2c-2", "https://mfi.example.org"),
+        ] {
+            let envelope = serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"mfiTarget":target,"mfiI2cPath":path,"mfiRemoteServer":server}});
+            let bytes = serde_json::to_vec(&envelope).unwrap();
+            let preview = admin.config_import(&bytes, true).unwrap();
+            assert_eq!(preview["restartNeeded"], true);
+            assert!(preview["ignored"].as_array().unwrap().is_empty());
+            assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
+            let exported = admin.config_export(false).unwrap();
+            assert_eq!(exported["settings"]["mfiTarget"], target);
+            assert_eq!(exported["settings"]["mfiI2cPath"], path);
+            assert_eq!(exported["settings"]["mfiRemoteServer"], server);
+        }
+        for values in [
+            serde_json::json!({"mfiTarget":"unknown"}),
+            serde_json::json!({"mfiTarget":"i2c","mfiI2cPath":"/tmp/device"}),
+            serde_json::json!({"mfiTarget":"remote","mfiRemoteServer":"file:///tmp/server"}),
+        ] {
+            assert!(matches!(
+                admin.update(values.as_object().unwrap().clone()),
+                AdminUpdate::Errors(_)
+            ));
+        }
+        assert_eq!(admin.settings.lock().unwrap().mfi_target, "local");
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn mfi_token_is_write_only_private_exportable_and_applied_only_after_preview() {
+        use std::os::unix::fs::PermissionsExt;
+        let (admin, dir) = fake();
+        let bytes=br#"{"format":"openxplay-privacy-config","version":1,"mfiRemoteToken":"mfi-test-secret"}"#;
+        let preview = admin.config_import(bytes, true).unwrap();
+        assert_eq!(preview["nextStart"], serde_json::json!(["mfiRemoteToken"]));
+        assert_eq!(preview["restartNeeded"], true);
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "");
+        assert_eq!(admin.config_import(bytes, false).unwrap(), preview);
+        assert_eq!(
+            std::fs::metadata(dir.join("mfi-remote-token"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let settings = admin.settings();
+        assert_eq!(settings.values["mfiRemoteTokenSet"], true);
+        assert_eq!(settings.values["privacyConfigAvailable"], true);
+        assert_eq!(settings.values["publicNamePrivacyAvailable"], false);
+        assert!(!serde_json::to_string(&settings)
+            .unwrap()
+            .contains("mfi-test-secret"));
+        assert!(!admin
+            .config_export(false)
+            .unwrap()
+            .to_string()
+            .contains("mfi-test-secret"));
+        assert!(!std::fs::read_to_string(dir.join("settings.json"))
+            .unwrap()
+            .contains("mfi-test-secret"));
+        assert_eq!(
+            admin.config_export(true).unwrap()["mfiRemoteToken"],
+            "mfi-test-secret"
+        );
+        assert!(failure_secrets(&admin.settings.lock().unwrap(), &dir)
+            .contains(&"mfi-test-secret".into()));
+        assert!(matches!(admin.update(serde_json::json!({"mfiRemoteServer":"https://mfi.example.org","mfiTarget":"remote"}).as_object().unwrap().clone()),AdminUpdate::NextStart));
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "mfi-test-secret");
+        assert_eq!(admin.settings().values["mfiSourceStatus"], "ready");
+        assert!(matches!(
+            admin.update(
+                serde_json::json!({"mfiRemoteToken":"bad\nsecret"})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::Errors(_)
+        ));
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "mfi-test-secret");
+        assert!(matches!(
+            admin.update(
+                serde_json::json!({"mfiRemoteToken":""})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::NextStart
+        ));
+        assert_eq!(crate::mfi_sources::token(&dir).unwrap(), "");
+        assert_eq!(admin.settings().values["mfiRemoteTokenSet"], false);
+        assert_eq!(admin.settings().values["privacyConfigAvailable"], false);
+        assert!(admin
+            .config_export(true)
+            .unwrap()
+            .get("mfiRemoteToken")
+            .is_none());
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn admin_contract_mfi_sources() {
+        let (admin, dir) = fake();
+        crate::mfi_sources::save_token(&dir, "fixture-secret").unwrap();
+        for target in ["remote", "i2c", "usb-ch341"] {
+            {
+                let mut settings = admin.settings.lock().unwrap();
+                settings.mfi_target = target.into();
+                settings.mfi_remote_server = "https://mfi.example.org".into();
+            }
+            let mut settings = admin.settings();
+            settings
+                .values
+                .insert("experimentalBluetoothAddress".into(), "".into());
+            // Pin host-only capability facts; the device backends have their own fake-driver tests.
+            settings.values.insert(
+                "mfiSourceStatus".into(),
+                if target == "remote" {
+                    "ready"
+                } else {
+                    "missing"
+                }
+                .into(),
+            );
+            contract_fixture(
+                &format!("settings-mfi-{target}"),
+                &serde_json::to_value(settings).unwrap(),
+            );
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn config_file_preview_apply_and_validation_match_the_settings_editor() {
         let (admin, dir) = fake();
@@ -4892,6 +5381,77 @@ mod tests {
             .unwrap();
         assert!(matches!(operation, Operation::ReceiverTls));
         operation
+    }
+    #[test]
+    fn child_encoder_event_unlocks_dual_output_hevc_without_replacing_the_browser() {
+        let (mut admin, dir) = fake();
+        {
+            let mut settings = admin.settings.lock().unwrap();
+            settings.output = "both".into();
+            settings.developer_active = true;
+            settings.carlink_picture_size = "mode".into();
+        }
+        let (factory, rx) = crate::supervisor::receiver_tls_tests::FakeChildFactory::new();
+        Arc::get_mut(&mut admin).unwrap().child_factory = factory.clone();
+        admin.start_supervisor().unwrap();
+        factory.wait_started();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !admin.supervisor.lock().unwrap().as_ref().unwrap().running() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let event = factory.events.lock().unwrap().clone().unwrap();
+        let caps = serde_json::json!({"type":"transcode-capabilities","output":"clink","enabled":true,"available":true,"decode":["H264"],"encode":[{"codec":"H264","maxWidth":1920,"maxHeight":1080},{"codec":"H265","maxWidth":1920,"maxHeight":1080}],"scaling":true,"description":"fake encoder"});
+        event(caps.clone());
+        let operation = admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert!(matches!(operation, Operation::Carlink));
+        admin.operation(operation).unwrap();
+        let mut command = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        while command.value["hevc"] != "auto" {
+            command = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        assert_eq!(command.value["type"], "clink-restart");
+        assert_eq!(
+            command.value["picture"],
+            serde_json::json!({"width":1280,"height":720})
+        );
+        assert!(admin.input.display.lock().unwrap().transcode_geometry);
+        event(caps);
+        assert!(admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .try_recv()
+            .is_err());
+        assert_eq!(factory.launches.lock().unwrap().len(), 1);
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(admin.status().transcoding["clink"]["available"], true);
+        event(
+            serde_json::json!({"type":"receiver-info","client":"browser-1","info":{"refreshHz":60}}),
+        );
+        event(
+            serde_json::json!({"type":"receiver-disconnected","client":"browser-1","code":1000,"reason":"closed"}),
+        );
+        assert!(admin.receivers().is_empty());
+        assert_eq!(admin.receiver_history()["disconnects"][0]["code"], 1000);
+        assert_eq!(
+            admin.receiver_history()["disconnects"][0]["report"]["info"]["refreshHz"],
+            60
+        );
+        admin.shutdown();
+        drop(command);
+        drop(event);
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn tesla_direct_switch_and_coalesced_updates_hot_swap_during_the_same_session() {

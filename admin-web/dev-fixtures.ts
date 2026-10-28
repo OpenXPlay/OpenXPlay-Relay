@@ -5,7 +5,7 @@
 import type { Status } from './src/api';
 import { normalizeInput, type PathInput } from './src/path/model';
 const previewEpoch = Date.now();
-export const STAGE_STATES = ['idle', 'ready', 'pairing', 'carlink-scanning', 'carlink-pin', 'failure', 'car-first-wait', 'live'] as const;
+export const STAGE_STATES = ['idle', 'ready', 'pairing', 'carlink-scanning', 'carlink-pin', 'failure', 'car-first-wait', 'live', 'arrival', 'armed', 'identity-missing', 'bluetooth-off', 'wifi-off', 'multiple-iphones', 'unpaired-iphone', 'carlink-confirm', 'carlink-pin-rejected', 'startup-bluetooth', 'startup-auth', 'startup-wifi', 'startup-session', 'display-changed', 'feature-empty', 'feature-error'] as const;
 /** The same facts contract is used for Android and Linux previews. */
 export function mockPathInput(status: Status, state = '', nowMillis = Date.now(), phaseEpoch = previewEpoch): PathInput {
   const input = normalizeInput({ platform: status.platform, nowMillis, version: status.version,

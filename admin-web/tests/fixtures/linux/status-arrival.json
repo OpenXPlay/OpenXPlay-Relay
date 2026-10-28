@@ -2,7 +2,8 @@
   "adminFeatures": [
     "logs",
     "config-files",
-    "update-check"
+    "update-check",
+    "identity"
   ],
   "adminHotspot": {
     "reason": null,
@@ -13,7 +14,7 @@
   "adminUrls": [
     "https://10.42.0.1:6975/"
   ],
-  "autoStartPaused": true,
+  "autoStartPaused": false,
   "carlink": null,
   "host": "openxplay-linux.local",
   "hostAddresses": [
@@ -45,9 +46,27 @@
       "wpa2"
     ]
   },
+  "identity": {
+    "mfi": {
+      "fingerprint": null,
+      "state": "MISSING"
+    },
+    "tls": {
+      "fingerprint": null,
+      "imported": false,
+      "pending": false,
+      "state": "MISSING"
+    }
+  },
   "iphone": {
     "name": "iPhone",
     "reason": "Selected"
+  },
+  "localAudio": {
+    "capture": [],
+    "captureAvailable": false,
+    "playback": [],
+    "playbackAvailable": false
   },
   "name": "OpenXPlay Linux",
   "network": {
@@ -78,6 +97,7 @@
         "trail": [],
         "trusted": false
       },
+      "displayMismatch": false,
       "dlna": {
         "code": null,
         "name": null,
@@ -182,6 +202,7 @@
     "builtIn": false,
     "connected": false,
     "detected": null,
+    "displayMismatch": false,
     "enabled": true,
     "preference": null,
     "records": [],
@@ -194,6 +215,24 @@
     "switches": []
   },
   "state": "Idle",
+  "transcoding": {
+    "clink": {
+      "available": false,
+      "decode": [],
+      "description": "",
+      "enabled": false,
+      "encode": [],
+      "scaling": false
+    },
+    "web": {
+      "available": false,
+      "decode": [],
+      "description": "",
+      "enabled": false,
+      "encode": [],
+      "scaling": false
+    }
+  },
   "version": "0.1.6-beta.1",
   "video": {
     "active": false,

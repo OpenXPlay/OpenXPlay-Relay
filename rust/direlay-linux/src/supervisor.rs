@@ -78,6 +78,7 @@ pub struct SupervisorSettings {
     pub binary: PathBuf,
     pub socket: PathBuf,
     pub web_port: u16,
+    pub web_transcode: bool,
     pub web_root: PathBuf,
     pub plugins: Option<crate::plugins::OutputPlugins>,
     pub state_dir: PathBuf,
@@ -86,6 +87,7 @@ pub struct SupervisorSettings {
     pub carlink: Option<CarlinkSettings>,
     /// Serve this certificate for its SNI name while both files exist.
     pub pem_tls: Option<PemTls>,
+    pub default_tls: Option<crate::identity::tls::DefaultTls>,
 }
 impl SupervisorSettings {
     pub fn arguments(&self) -> Vec<OsString> {
@@ -118,6 +120,14 @@ impl SupervisorSettings {
                     pem.name.clone().into(),
                 ]);
             }
+            if let Some(base) = &self.default_tls {
+                args.extend([
+                    "--tls-default-cert".into(),
+                    base.cert.as_os_str().into(),
+                    "--tls-default-key".into(),
+                    base.key.as_os_str().into(),
+                ]);
+            }
             args.extend([
                 "--tls-self-signed".into(),
                 self.state_dir.join("receiver-tls").into_os_string(),
@@ -128,6 +138,12 @@ impl SupervisorSettings {
         };
         if !args.iter().any(|a| a == "--control-stdin") {
             args.push("--control-stdin".into());
+        }
+        if self.web_port != 0 {
+            args.extend([
+                "--web-transcode".into(),
+                if self.web_transcode { "auto" } else { "off" }.into(),
+            ]);
         }
         args.push("--host-ui".into());
         args.extend([
@@ -694,11 +710,25 @@ impl RelaySupervisor {
         sans: Vec<Ipv4Addr>,
         timeout: Duration,
     ) -> io::Result<()> {
+        self.update_web_tls_with_default(pem, sans, self.web_tls.settings().default_tls, timeout)
+    }
+    pub fn update_web_tls_with_default(
+        &self,
+        pem: Option<PemTls>,
+        sans: Vec<Ipv4Addr>,
+        default_tls: Option<crate::identity::tls::DefaultTls>,
+        timeout: Duration,
+    ) -> io::Result<()> {
         let control = self.control.lock().unwrap();
         let pipe = control.as_ref().ok_or(io::ErrorKind::NotConnected)?;
-        let id = self
-            .web_tls
-            .send(pipe, receiver_tls_control::Settings { pem, sans })?;
+        let id = self.web_tls.send(
+            pipe,
+            receiver_tls_control::Settings {
+                pem,
+                sans,
+                default_tls,
+            },
+        )?;
         drop(control);
         self.web_tls.wait(&id, timeout)
     }
@@ -798,6 +828,10 @@ impl RelaySupervisor {
             let mut failures = 0;
             while !*stop.0.lock().unwrap() {
                 *fragment.lock().unwrap() = None;
+                // A fresh child must prove its encoder before using HEVC beside the browser.
+                if settings.web_port != 0 && settings.carlink.is_some() {
+                    carlink_options.lock().unwrap()["hevc"] = "off".into();
+                }
                 let requested = carlink_options.lock().unwrap().clone();
                 let initial_picture = requested["picture"].is_object();
                 lifecycle.lock().unwrap().begin_child(initial_picture);
@@ -805,6 +839,7 @@ impl RelaySupervisor {
                 let (process_generation, tls) = web_tls.begin_child();
                 let mut launch = settings.clone();
                 launch.pem_tls = tls.pem;
+                launch.default_tls = tls.default_tls;
                 launch.addresses = tls.sans;
                 if let Some(c) = launch.carlink.as_mut() {
                     c.hevc=requested["hevc"].as_str().unwrap_or("off").into();
@@ -1020,11 +1055,13 @@ mod band_tests {
                 socket: dir.join("socket"),
                 web_port,
                 web_root: dir.clone(),
+                web_transcode: true,
                 plugins: None,
                 state_dir: dir.clone(),
                 addresses: vec![],
                 pairing: false,
                 pem_tls: None,
+                default_tls: None,
                 carlink: Some(CarlinkSettings {
                     ble: None,
                     head_unit: Ipv4Addr::LOCALHOST,
@@ -1232,7 +1269,8 @@ mod band_tests {
         let (args, new) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(args
             .windows(2)
-            .any(|a| a[0] == "--clink-hevc" && a[1] == "signal"));
+            .any(|a| a[0] == "--clink-hevc" && a[1] == "off"));
+        // The new process must report its encoder before HEVC can be restored beside web.
         assert!(args
             .windows(2)
             .any(|a| a[0] == "--clink-vehicle-data" && a[1] == "on"));
@@ -1298,12 +1336,14 @@ mod tls_tests {
             socket: "/tmp/oxp-relay.sock".into(),
             web_port: 8443,
             web_root: "/opt/openxplay/share/web".into(),
+            web_transcode: true,
             plugins: None,
             state_dir: dir.into(),
             addresses: vec![Ipv4Addr::new(10, 77, 0, 1), Ipv4Addr::new(192, 168, 1, 2)],
             pairing: false,
             carlink: None,
             pem_tls: None,
+            default_tls: None,
         }
     }
     fn strings(args: Vec<OsString>) -> Vec<String> {
@@ -1414,6 +1454,8 @@ mod tls_tests {
             &format!("{state}/receiver-tls"),
             "--tls-san",
             "openxplay-linux.local",
+            "--web-transcode",
+            "auto",
             "--host-ui",
             "--relay-name",
             crate::branding::DEVICE_NAME,
@@ -1433,6 +1475,7 @@ mod tls_tests {
         };
         let with = SupervisorSettings {
             pem_tls: Some(pem.clone()),
+            default_tls: None,
             ..settings(&dir)
         };
         assert_eq!(strings(with.arguments()), legacy);

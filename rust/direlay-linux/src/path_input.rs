@@ -103,7 +103,7 @@ pub fn build(
             "hotspotOn":hotspot.is_some_and(|h| h.active), "hotspotSsid":hotspot.map(|h| &h.ssid),
             "hotspotBand":settings.hotspot_band, "sharedWifiSsid":if shared {status.network.wifi.as_deref()} else {None},
             "overlayNeeded":false},
-        "car":{"address":address, "web":{"phase":if web {&facts.web.phase} else {"OFF"},
+        "car":{"displayMismatch":status.running && status.screen_data.as_ref().is_some_and(|d| d["displayMismatch"] == true), "address":address, "web":{"phase":if web {&facts.web.phase} else {"OFF"},
             "port":if facts.web.port > 0 {facts.web.port} else {settings.receiver_port},
             "code":facts.web.code, "trustedName":trusted_name, "sinceMillis":facts.web.since_millis},
             "pageUrl":if web {status.receiver_urls.first()} else {None}, "pages":facts.pages,

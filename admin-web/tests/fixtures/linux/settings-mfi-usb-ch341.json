@@ -1,0 +1,1286 @@
+{
+  "installedPlugins": [],
+  "schema": [
+    {
+      "fields": [
+        {
+          "hintKey": "hint.resolution",
+          "key": "resolution",
+          "labelKey": "field.linux.resolution",
+          "options": [
+            {
+              "labelKey": "option.linux.resolution.auto",
+              "value": "auto"
+            },
+            {
+              "labelKey": "option.linux.resolution.native",
+              "value": "native"
+            },
+            {
+              "labelKey": "option.linux.resolution.1080p",
+              "value": "1080p"
+            },
+            {
+              "labelKey": "option.linux.resolution.720p",
+              "value": "720p"
+            },
+            {
+              "labelKey": "option.linux.resolution.screen",
+              "value": "screen"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "hintKey": "hint.linux.screenWidth",
+          "key": "screenWidth",
+          "labelKey": "field.linux.screenWidth",
+          "options": [
+            {
+              "labelKey": "option.linux.screenWidth.125",
+              "value": 125
+            },
+            {
+              "labelKey": "option.linux.screenWidth.200",
+              "value": 200
+            },
+            {
+              "labelKey": "option.linux.screenWidth.250",
+              "value": 250
+            },
+            {
+              "labelKey": "option.linux.screenWidth.300",
+              "value": 300
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "hintKey": "hint.videoCodec",
+          "key": "videoCodec",
+          "labelKey": "field.linux.videoCodec",
+          "options": [
+            {
+              "labelKey": "option.linux.videoCodec.auto",
+              "value": "auto"
+            },
+            {
+              "labelKey": "option.linux.videoCodec.h265",
+              "value": "h265"
+            },
+            {
+              "labelKey": "option.linux.videoCodec.h264",
+              "value": "h264"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "hintKey": "hint.frameRate",
+          "key": "frameRate",
+          "labelKey": "field.linux.frameRate",
+          "options": [
+            {
+              "labelKey": "option.linux.frameRate.auto",
+              "value": "auto"
+            },
+            {
+              "labelKey": "option.linux.frameRate.30",
+              "value": "30"
+            },
+            {
+              "labelKey": "option.linux.frameRate.35",
+              "value": "35"
+            },
+            {
+              "labelKey": "option.linux.frameRate.40",
+              "value": "40"
+            },
+            {
+              "labelKey": "option.linux.frameRate.45",
+              "value": "45"
+            },
+            {
+              "labelKey": "option.linux.frameRate.50",
+              "value": "50"
+            },
+            {
+              "labelKey": "option.linux.frameRate.55",
+              "value": "55"
+            },
+            {
+              "labelKey": "option.linux.frameRate.60",
+              "value": "60"
+            }
+          ],
+          "type": "choice"
+        }
+      ],
+      "id": "picture",
+      "titleKey": "section.linuxPicture"
+    },
+    {
+      "fields": [
+        {
+          "key": "mfiTarget",
+          "labelKey": "field.mfiTarget",
+          "options": [
+            {
+              "labelKey": "option.mfiTarget.local",
+              "value": "local"
+            },
+            {
+              "labelKey": "option.mfiTarget.remote",
+              "value": "remote"
+            },
+            {
+              "labelKey": "option.mfiTarget.usb-ch341",
+              "value": "usb-ch341"
+            },
+            {
+              "labelKey": "option.mfiTarget.i2c",
+              "value": "i2c"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "mfiI2cPath",
+          "labelKey": "field.mfiI2cPath",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "i2c"
+            ],
+            "key": "mfiTarget"
+          }
+        },
+        {
+          "key": "mfiRemoteServer",
+          "labelKey": "field.mfiRemoteServer",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "remote"
+            ],
+            "key": "mfiTarget"
+          }
+        },
+        {
+          "key": "mfiRemoteToken",
+          "labelKey": "field.mfiRemoteToken",
+          "type": "secret",
+          "visibleWhen": {
+            "equals": [
+              "remote"
+            ],
+            "key": "mfiTarget"
+          }
+        },
+        {
+          "key": "networkMode",
+          "labelKey": "field.networkMode",
+          "options": [
+            {
+              "labelKey": "option.networkMode.device-hotspot",
+              "value": "device-hotspot"
+            },
+            {
+              "labelKey": "option.networkMode.shared-wifi",
+              "value": "shared-wifi"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "networkRoles",
+          "labelKey": "field.networkRoles",
+          "type": "object",
+          "visibleWhen": {
+            "equals": [],
+            "key": "networkRoles"
+          }
+        },
+        {
+          "key": "adminHotspotPassword",
+          "labelKey": "field.adminHotspotPassword",
+          "type": "secret",
+          "visibleWhen": {
+            "equals": [],
+            "key": "networkRoles"
+          }
+        },
+        {
+          "key": "wifiCountry",
+          "labelKey": "field.wifiCountry",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [],
+            "key": "networkRoles"
+          }
+        },
+        {
+          "key": "devicePreset",
+          "labelKey": "field.devicePreset",
+          "options": [
+            {
+              "labelKey": "option.devicePreset.auto",
+              "value": "auto"
+            },
+            {
+              "labelKey": "option.devicePreset.msm8916",
+              "value": "msm8916"
+            },
+            {
+              "labelKey": "option.devicePreset.phicomm-n1",
+              "value": "phicomm-n1"
+            },
+            {
+              "labelKey": "option.devicePreset.generic",
+              "value": "generic"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "sharedWifiNetworks",
+          "labelKey": "field.sharedWifiNetworks",
+          "type": "networks"
+        },
+        {
+          "key": "hotspotBand",
+          "labelKey": "field.hotspotBand",
+          "options": [
+            {
+              "labelKey": "option.hotspotBand.auto",
+              "value": "auto"
+            },
+            {
+              "labelKey": "option.hotspotBand.2.4",
+              "value": "2.4"
+            },
+            {
+              "labelKey": "option.hotspotBand.5",
+              "value": "5"
+            }
+          ],
+          "type": "choice",
+          "visibleWhen": {
+            "equals": [
+              "device-hotspot"
+            ],
+            "key": "networkMode"
+          }
+        },
+        {
+          "key": "hotspotSecurity",
+          "labelKey": "field.hotspotSecurity",
+          "options": [
+            {
+              "labelKey": "option.hotspotSecurity.open",
+              "value": "open"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa2",
+              "value": "wpa2"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa3-transition",
+              "value": "wpa3-transition"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa3",
+              "value": "wpa3"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "hintKey": "hint.field.hotspotChannel",
+          "key": "hotspotChannel",
+          "labelKey": "field.wifiChannel",
+          "max": 177.0,
+          "min": 0.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "device-hotspot"
+            ],
+            "key": "networkMode"
+          }
+        },
+        {
+          "key": "iphone",
+          "labelKey": "field.iphone",
+          "type": "phone"
+        },
+        {
+          "key": "wifiInterface",
+          "labelKey": "field.wifiInterface",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [],
+            "key": "networkRoles"
+          }
+        },
+        {
+          "key": "rfcommChannel",
+          "labelKey": "field.rfcommChannel",
+          "max": 30.0,
+          "min": 1.0,
+          "type": "number"
+        },
+        {
+          "key": "requirePairingCode",
+          "labelKey": "field.requirePairingCode",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.output",
+          "key": "output",
+          "labelKey": "field.output",
+          "options": [
+            {
+              "labelKey": "option.output.web",
+              "value": "web"
+            },
+            {
+              "labelKey": "option.output.carlink",
+              "value": "carlink"
+            },
+            {
+              "labelKey": "option.output.both",
+              "value": "both"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "carlinkName",
+          "labelKey": "field.carlinkName",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "key": "carlinkModel",
+          "labelKey": "field.carlinkModel",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "hintKey": "hint.field.carlinkAutoReconnect",
+          "key": "carlinkAutoReconnect",
+          "labelKey": "field.carlinkAutoReconnect",
+          "type": "bool",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "key": "vehicleInformation",
+          "labelKey": "field.vehicleInformation",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.carlinkReconnectOnResize",
+          "key": "carlinkReconnectOnResize",
+          "labelKey": "field.carlinkReconnectOnResize",
+          "type": "bool",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "hintKey": "hint.field.carlinkHevc",
+          "key": "carlinkHevc",
+          "labelKey": "field.carlinkHevc",
+          "options": [
+            {
+              "labelKey": "option.carlinkHevc.auto",
+              "value": "auto"
+            },
+            {
+              "labelKey": "option.carlinkHevc.off",
+              "value": "off"
+            },
+            {
+              "labelKey": "option.carlinkHevc.signal",
+              "value": "signal"
+            }
+          ],
+          "type": "choice",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "key": "webTranscode",
+          "labelKey": "field.webTranscode",
+          "type": "bool"
+        },
+        {
+          "key": "playCarPlayAudio",
+          "labelKey": "field.playCarPlayAudio",
+          "type": "bool"
+        },
+        {
+          "key": "microphoneSourceEnabled",
+          "labelKey": "field.microphoneSourceEnabled",
+          "type": "bool"
+        },
+        {
+          "key": "microphoneSource",
+          "labelKey": "field.microphoneSource",
+          "options": [
+            {
+              "labelKey": "option.microphoneSource.head-unit",
+              "value": "head-unit"
+            },
+            {
+              "labelKey": "option.microphoneSource.this-device",
+              "value": "this-device"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "carlinkTrace",
+          "labelKey": "field.carlinkTrace",
+          "options": [
+            {
+              "labelKey": "option.carlinkTrace.off",
+              "value": "off"
+            },
+            {
+              "labelKey": "option.carlinkTrace.on",
+              "value": "on"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "hintKey": "hint.field.linuxAutoStart",
+          "key": "autoStart",
+          "labelKey": "field.autoStart",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.bootStart",
+          "key": "bootStart",
+          "labelKey": "field.bootStart",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.videoStats",
+          "key": "videoStats",
+          "labelKey": "field.videoStats",
+          "options": [
+            {
+              "labelKey": "option.videoStats.off",
+              "value": "off"
+            },
+            {
+              "labelKey": "option.videoStats.5",
+              "value": "5"
+            },
+            {
+              "labelKey": "option.videoStats.15",
+              "value": "15"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "hintKey": "hint.field.carPlayViewAreas",
+          "key": "carPlayViewAreas",
+          "labelKey": "field.carPlayViewAreas",
+          "type": "bool"
+        },
+        {
+          "key": "receiverPort",
+          "labelKey": "field.receiverPort",
+          "max": 65535.0,
+          "min": 1.0,
+          "type": "number"
+        },
+        {
+          "hintKey": "hint.field.carlinkLink",
+          "key": "carlinkLink",
+          "labelKey": "field.carlinkLink",
+          "options": [
+            {
+              "labelKey": "option.carlinkLink.ble",
+              "value": "ble"
+            },
+            {
+              "labelKey": "option.carlinkLink.static",
+              "value": "static"
+            }
+          ],
+          "type": "choice",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "hintKey": "hint.field.carlinkInterface",
+          "key": "carlinkInterface",
+          "labelKey": "field.carlinkInterface",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [],
+            "key": "networkRoles"
+          }
+        },
+        {
+          "hintKey": "hint.field.carlinkAddress",
+          "key": "carlinkAddress",
+          "labelKey": "field.carlinkAddress",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "ble"
+            ],
+            "key": "carlinkLink"
+          }
+        },
+        {
+          "hintKey": "hint.field.carlinkHeadUnit",
+          "key": "carlinkHeadUnit",
+          "labelKey": "field.carlinkHeadUnit",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "static"
+            ],
+            "key": "carlinkLink"
+          }
+        },
+        {
+          "hintKey": "hint.field.carlinkLocal",
+          "key": "carlinkLocal",
+          "labelKey": "field.carlinkLocal",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "static"
+            ],
+            "key": "carlinkLink"
+          }
+        }
+      ],
+      "id": "connection",
+      "titleKey": "section.connection"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.field.carlinkPictureSize",
+          "key": "carlinkPictureSize",
+          "labelKey": "field.carlinkPictureSize",
+          "options": [
+            {
+              "labelKey": "option.carlinkPictureSize.window",
+              "value": "window"
+            },
+            {
+              "labelKey": "option.carlinkPictureSize.mode",
+              "value": "mode"
+            }
+          ],
+          "type": "choice",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "key": "carlinkPictureSizes",
+          "labelKey": "field.carlinkPictureSizes",
+          "type": "object",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "key": "carlinkPictureDefault",
+          "labelKey": "field.carlinkPictureDefault",
+          "type": "object",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        },
+        {
+          "key": "carlinkPictureTry",
+          "labelKey": "field.carlinkPictureTry",
+          "type": "object",
+          "visibleWhen": {
+            "equals": [
+              "carlink",
+              "both"
+            ],
+            "key": "output"
+          }
+        }
+      ],
+      "id": "output",
+      "titleKey": "section.output"
+    },
+    {
+      "fields": [
+        {
+          "key": "carBrand",
+          "labelKey": "field.carBrand",
+          "options": [
+            {
+              "labelKey": "option.carBrand.",
+              "value": ""
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "XPeng",
+                "zh-CN": "小鹏"
+              },
+              "value": "xpeng"
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "Tesla",
+                "zh-CN": "特斯拉"
+              },
+              "value": "tesla"
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "ZEEKR",
+                "zh-CN": "极氪"
+              },
+              "value": "zeekr"
+            },
+            {
+              "labelKey": "option.carBrand.other",
+              "value": "other"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "carBrandText",
+          "labelKey": "field.carBrandText",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "other"
+            ],
+            "key": "carBrand"
+          }
+        },
+        {
+          "key": "carModel",
+          "labelKey": "field.carModel",
+          "options": [
+            {
+              "labelKey": "option.carModel.",
+              "value": ""
+            },
+            {
+              "labelKey": "option.carModel.other",
+              "value": "other"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "carModelText",
+          "labelKey": "field.carModelText",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "other"
+            ],
+            "key": "carModel"
+          }
+        },
+        {
+          "key": "carYear",
+          "labelKey": "field.carYear",
+          "options": [
+            {
+              "labelKey": "option.carYear.",
+              "value": ""
+            },
+            {
+              "labelKey": "option.carYear.other",
+              "value": "other"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "carYearText",
+          "labelKey": "field.carYearText",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "other"
+            ],
+            "key": "carYear"
+          }
+        }
+      ],
+      "id": "car",
+      "titleKey": "section.car"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.displayMode",
+          "key": "displayMode",
+          "labelKey": "field.displayMode",
+          "options": [
+            {
+              "labelKey": "option.displayMode.automatic",
+              "value": "automatic"
+            },
+            {
+              "labelKey": "option.displayMode.fixed",
+              "value": "fixed"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "displayWidth",
+          "labelKey": "field.displayWidth",
+          "max": 3840.0,
+          "min": 320.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "key": "displayHeight",
+          "labelKey": "field.displayHeight",
+          "max": 2160.0,
+          "min": 240.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "key": "displayDensity",
+          "labelKey": "field.displayDensity",
+          "max": 640.0,
+          "min": 120.0,
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "fixed"
+            ],
+            "key": "displayMode"
+          }
+        },
+        {
+          "hintKey": "hint.physicalWidth",
+          "key": "physicalWidthEnabled",
+          "labelKey": "field.physicalWidthEnabled",
+          "type": "bool"
+        },
+        {
+          "key": "physicalWidthOverrideMm",
+          "labelKey": "field.physicalWidthOverrideMm",
+          "options": [
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "100 mm",
+                "zh-CN": "100 mm"
+              },
+              "value": 100
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "125 mm",
+                "zh-CN": "125 mm"
+              },
+              "value": 125
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "150 mm",
+                "zh-CN": "150 mm"
+              },
+              "value": 150
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "175 mm",
+                "zh-CN": "175 mm"
+              },
+              "value": 175
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "200 mm",
+                "zh-CN": "200 mm"
+              },
+              "value": 200
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "225 mm",
+                "zh-CN": "225 mm"
+              },
+              "value": 225
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "250 mm",
+                "zh-CN": "250 mm"
+              },
+              "value": 250
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "275 mm",
+                "zh-CN": "275 mm"
+              },
+              "value": 275
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "300 mm",
+                "zh-CN": "300 mm"
+              },
+              "value": 300
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "325 mm",
+                "zh-CN": "325 mm"
+              },
+              "value": 325
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "350 mm",
+                "zh-CN": "350 mm"
+              },
+              "value": 350
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "375 mm",
+                "zh-CN": "375 mm"
+              },
+              "value": 375
+            },
+            {
+              "labelKey": "",
+              "labels": {
+                "en": "400 mm",
+                "zh-CN": "400 mm"
+              },
+              "value": 400
+            }
+          ],
+          "type": "choice",
+          "visibleWhen": {
+            "equals": [
+              true
+            ],
+            "key": "physicalWidthEnabled"
+          }
+        }
+      ],
+      "id": "display",
+      "titleKey": "section.display"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.field.experimentalActive",
+          "key": "experimentalActive",
+          "labelKey": "field.experimentalActive",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalScreenSessionIsolation",
+          "key": "experimentalScreenSessionIsolation",
+          "labelKey": "field.experimentalScreenSessionIsolation",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalScreenReconnectReset",
+          "key": "experimentalScreenReconnectReset",
+          "labelKey": "field.experimentalScreenReconnectReset",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalScreenDeliverySerialization",
+          "key": "experimentalScreenDeliverySerialization",
+          "labelKey": "field.experimentalScreenDeliverySerialization",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalRemotePlaybackProof",
+          "key": "experimentalRemotePlaybackProof",
+          "labelKey": "field.experimentalRemotePlaybackProof",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalStartupStatus",
+          "key": "experimentalStartupStatus",
+          "labelKey": "field.experimentalStartupStatus",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalStartupDiagnostics",
+          "key": "experimentalStartupDiagnostics",
+          "labelKey": "field.experimentalStartupDiagnostics",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalSendBluetoothAddress",
+          "key": "experimentalSendBluetoothAddress",
+          "labelKey": "field.experimentalSendBluetoothAddress",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalBluetoothAddress",
+          "key": "experimentalBluetoothAddress",
+          "labelKey": "field.experimentalBluetoothAddress",
+          "type": "text"
+        }
+      ],
+      "id": "experimental",
+      "titleKey": "section.experimental"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.field.developerActive",
+          "key": "developerActive",
+          "labelKey": "field.developerActive",
+          "type": "bool"
+        }
+      ],
+      "id": "developer",
+      "titleKey": "section.developer"
+    },
+    {
+      "fields": [
+        {
+          "key": "teslaBrowser",
+          "labelKey": "tesla.mode",
+          "options": [
+            {
+              "hintKey": "tesla.nameHint",
+              "labelKey": "tesla.mode.teslamirror",
+              "value": "teslamirror"
+            },
+            {
+              "hintKey": "tesla.nameHint",
+              "labelKey": "tesla.mode.virtual-name",
+              "value": "virtual-name"
+            },
+            {
+              "hintKey": "tesla.directHint",
+              "labelKey": "tesla.mode.public-address",
+              "value": "public-address"
+            },
+            {
+              "hintKey": "tesla.directHint",
+              "labelKey": "tesla.mode.tesla-android",
+              "value": "tesla-android"
+            },
+            {
+              "labelKey": "tesla.mode.off",
+              "value": "off"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "teslaVirtualAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "virtual-name"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaPublicAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "public-address"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaMirrorAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "teslamirror"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaAndroidAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "tesla-android"
+            ],
+            "key": "teslaBrowser"
+          }
+        }
+      ],
+      "id": "tesla",
+      "titleKey": "tesla.title"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "publicName.summary",
+          "key": "publicNameEnabled",
+          "labelKey": "publicName.enabled",
+          "type": "bool"
+        },
+        {
+          "key": "publicNameProvider",
+          "labelKey": "publicName.provider",
+          "options": [
+            {
+              "labelKey": "option.publicNameProvider.duckdns",
+              "value": "duckdns"
+            },
+            {
+              "labelKey": "option.publicNameProvider.dynv6",
+              "value": "dynv6"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "hintKey": "publicName.nameHint",
+          "key": "publicName",
+          "labelKey": "publicName.name",
+          "type": "text"
+        },
+        {
+          "hintKey": "publicName.tokenHint",
+          "key": "publicNameToken",
+          "labelKey": "publicName.token",
+          "type": "secret"
+        },
+        {
+          "key": "publicNameAgreeTerms",
+          "labelKey": "publicName.terms",
+          "type": "bool"
+        }
+      ],
+      "id": "publicName",
+      "titleKey": "publicName.title"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.field.carBluetoothAudio",
+          "key": "carBluetoothAudio",
+          "labelKey": "field.carBluetoothAudio",
+          "type": "bool"
+        }
+      ],
+      "id": "audio",
+      "titleKey": "section.audio"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.plugins",
+          "key": "plugins",
+          "labelKey": "field.plugins",
+          "type": "bool"
+        },
+        {
+          "key": "pluginsEnabled",
+          "labelKey": "field.pluginsEnabled",
+          "type": "plugins"
+        }
+      ],
+      "id": "plugins",
+      "titleKey": "section.plugins"
+    }
+  ],
+  "values": {
+    "autoStart": true,
+    "bootStart": true,
+    "carBluetoothAudio": true,
+    "carBrand": "",
+    "carBrandText": "",
+    "carModel": "",
+    "carModelText": "",
+    "carPlayViewAreas": true,
+    "carYear": "",
+    "carYearText": "",
+    "carlinkAddress": null,
+    "carlinkAutoReconnect": true,
+    "carlinkHeadUnit": "192.168.43.1",
+    "carlinkHevc": "auto",
+    "carlinkInterface": "",
+    "carlinkLink": "ble",
+    "carlinkLocal": "192.168.43.2",
+    "carlinkModel": "OpenXPlay Relay Linux",
+    "carlinkName": "OpenXPlay Linux",
+    "carlinkPictureDefault": null,
+    "carlinkPictureSize": "window",
+    "carlinkPictureSizes": [],
+    "carlinkPictureTry": null,
+    "carlinkReconnectOnResize": false,
+    "carlinkTrace": "off",
+    "developerActive": true,
+    "devicePreset": "auto",
+    "displayDensity": 160,
+    "displayHeight": 720,
+    "displayMode": "automatic",
+    "displayWidth": 1280,
+    "experimentalActive": true,
+    "experimentalBluetoothAddress": "",
+    "experimentalRemotePlaybackProof": true,
+    "experimentalScreenDeliverySerialization": true,
+    "experimentalScreenReconnectReset": true,
+    "experimentalScreenSessionIsolation": true,
+    "experimentalSendBluetoothAddress": true,
+    "experimentalStartupDiagnostics": true,
+    "experimentalStartupStatus": true,
+    "frameRate": "auto",
+    "hotspotBand": "auto",
+    "hotspotChannel": 0,
+    "hotspotSecurity": "wpa2",
+    "iphone": "auto",
+    "mfiI2cPath": "/dev/i2c-1",
+    "mfiRemoteServer": "https://mfi.example.org",
+    "mfiRemoteTokenSet": true,
+    "mfiSourceStatus": "missing",
+    "mfiTarget": "usb-ch341",
+    "microphoneSource": "head-unit",
+    "microphoneSourceEnabled": false,
+    "networkMode": "device-hotspot",
+    "networkRoles": {
+      "mode": "auto"
+    },
+    "output": "web",
+    "physicalWidthEnabled": false,
+    "physicalWidthOverrideMm": 0,
+    "playCarPlayAudio": false,
+    "plugins": false,
+    "pluginsEnabled": [],
+    "privacyConfigAvailable": true,
+    "publicName": "",
+    "publicNameAgreeTerms": false,
+    "publicNameEnabled": false,
+    "publicNamePrivacyAvailable": false,
+    "publicNameProvider": "",
+    "publicNameProviders": {
+      "duckdns": {
+        "name": "",
+        "tokenSet": false
+      },
+      "dynv6": {
+        "name": "",
+        "tokenSet": false
+      }
+    },
+    "publicNameToken": "",
+    "publicNameTokenSet": false,
+    "receiverPort": 8443,
+    "requirePairingCode": false,
+    "resolution": "auto",
+    "rfcommChannel": null,
+    "screenWidth": 200,
+    "sharedWifiNetworks": [],
+    "teslaAndroidAddress": "3.3.3.1",
+    "teslaBrowser": "off",
+    "teslaMirrorAddress": "100.88.0.1",
+    "teslaPublicAddress": "169.254.88.1",
+    "teslaVirtualAddress": "169.254.88.1",
+    "vehicleInformation": false,
+    "videoCodec": "auto",
+    "videoStats": "off",
+    "webTranscode": true,
+    "wifiCountry": "system",
+    "wifiInterface": "wlan0"
+  }
+}

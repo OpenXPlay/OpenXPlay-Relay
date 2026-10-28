@@ -8,5 +8,5 @@ if (process.argv.includes('--states')) { process.env.DIRELAY_PREVIEW_STATES = '1
 const server = await createServer({ configLoader: 'runner', server: { host: '127.0.0.1' } });
 await server.listen();
 server.printUrls();
-if (process.argv.includes('--states')) console.info('Stage gallery: /states (Linux and Android; all eight stage states).');
+if (process.argv.includes('--states')) console.info('Stage gallery: /states (Linux and Android; stage, startup, repair and feature states).');
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await server.close(); process.exit(0); });

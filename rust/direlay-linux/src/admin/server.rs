@@ -32,7 +32,12 @@ pub const MAX_BODY: usize = 16_384;
 const MAX_IMPORT_BODY: usize = crate::public_name::config::MAX_BYTES * 6 + 1024;
 fn body_limit(path: &str) -> usize {
     if path.split('?').next() == Some("/api/v0/config/import") {
-        64 * 1024
+        crate::config_files::MAX_BYTES
+    } else if path.split('?').next() == Some("/api/v0/identity/import") {
+        crate::identity::MAX_ARCHIVE * 4 / 3 + 4096
+    } else if path.split('?').next() == Some("/api/v0/tls/import") {
+        // A PEM chain and key share this route with base64 PKCS#12; include JSON newlines.
+        crate::identity::tls::MAX_FILE * 4 + 32768
     } else if path.split('?').next() == Some("/api/v0/public-name/import") {
         MAX_IMPORT_BODY
     } else {
@@ -48,6 +53,24 @@ pub struct Request {
     pub headers: BTreeMap<String, String>,
     pub body: Vec<u8>,
     pub peer: IpAddr,
+}
+impl Drop for Request {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.body.zeroize();
+    }
+}
+fn wipe_values(values: &mut Values) {
+    fn wipe(value: &mut Value) {
+        use zeroize::Zeroize;
+        match value {
+            Value::String(text) => text.zeroize(),
+            Value::Array(items) => items.iter_mut().for_each(wipe),
+            Value::Object(values) => values.values_mut().for_each(wipe),
+            _ => {}
+        }
+    }
+    values.values_mut().for_each(wipe);
 }
 impl Request {
     fn token(&self) -> &str {
@@ -184,11 +207,15 @@ impl AdminServer {
             return Response::error(404, "error.request");
         };
         let method = request.method.as_str();
+        let enabled = self.auth.lock().unwrap().access_enabled();
+        if !enabled && path != "/session" && !request.peer.is_loopback() {
+            return Response::error(403, "admin.disabled");
+        }
         let ready = self.auth.lock().unwrap().ready(request.token(), now);
         if path != "/session" && path != "/login" && !ready {
             return Response::error(401, "password");
         }
-        let body = if method != "GET" {
+        let mut body = if method != "GET" {
             if request.headers.get("x-openxplay-admin").map(String::as_str) != Some("1")
                 || !request.headers.get("content-type").is_some_and(|s| {
                     s.split(';')
@@ -218,13 +245,16 @@ impl AdminServer {
             return self.trace_route(request, path, &body);
         }
         if let Some(response) = self.file_route(request, path, &body) {
+            if matches!(path, "/identity/import" | "/tls/import") {
+                wipe_values(&mut body);
+            }
             return response;
         }
         let string = |key: &str| body.get(key).and_then(Value::as_str);
         match (method, path) {
             ("GET", "/session") => Response::json(
                 200,
-                json!({"state": if ready {"ready"} else {"login"}, "defaultPassword": self.auth.lock().unwrap().default_password()}),
+                json!({"state": if ready {"ready"} else {"login"}, "defaultPassword": self.auth.lock().unwrap().default_password(), "adminEnabled": enabled, "adminAccessAllowed": enabled || request.peer.is_loopback()}),
             ),
             ("POST", "/login") => match self.auth.lock().unwrap().login(
                 request.peer,
@@ -242,6 +272,30 @@ impl AdminServer {
                 }
                 Err(LoginError::Storage(_)) => Response::error(500, "error.request"),
             },
+            ("POST", "/setup/complete") => match self.auth.lock().unwrap().complete_setup() {
+                Ok(()) => Response::json(200, json!({"ok":true})),
+                Err(_) => Response::error(500, "error.request"),
+            },
+            ("PUT", "/access") => match body.get("enabled").and_then(Value::as_bool) {
+                Some(value)
+                    if value || body.get("confirmed").and_then(Value::as_bool) == Some(true) =>
+                {
+                    match self.auth.lock().unwrap().set_access_enabled(value) {
+                        Ok(()) => Response::json(200, json!({"ok":true})),
+                        Err(_) => Response::error(500, "error.request"),
+                    }
+                }
+                _ => Response::error(422, "error.invalid"),
+            },
+            ("POST", "/password/reset") => {
+                if body.get("confirmed").and_then(Value::as_bool) != Some(true) {
+                    return Response::error(422, "error.invalid");
+                }
+                match self.auth.lock().unwrap().reset() {
+                    Ok(()) => Response::json(200, json!({"ok":true})).cookie("", 0),
+                    Err(_) => Response::error(500, "error.request"),
+                }
+            }
             ("POST", "/password") => match self
                 .auth
                 .lock()
@@ -271,7 +325,10 @@ impl AdminServer {
                     status.receivers = Some(self.admin.receivers());
                     status.receiver_history = Some(self.admin.receiver_history());
                 }
-                Response::json(200, json!(status))
+                let mut value = json!(status);
+                value["adminEnabled"] = json!(enabled);
+                value["setupCompleted"] = json!(self.auth.lock().unwrap().setup_completed());
+                Response::json(200, value)
             }
             ("POST", path @ ("/carlink/pin" | "/carlink/connect")) => {
                 let mut last = self.pin_attempt.lock().unwrap();
@@ -426,6 +483,8 @@ impl AdminServer {
                     "start",
                     "stop",
                     "cancel-arrival",
+                    "enable-bluetooth",
+                    "enable-wifi",
                     "restart",
                     "regenerate-pairing-code",
                     "clear-saved-head-unit",
@@ -839,6 +898,7 @@ impl NamedCertificate {
 /// clients that send no SNI (IP addresses), the relay's own.
 #[derive(Debug)]
 struct SniResolver {
+    state: PathBuf,
     own: Arc<rustls::sign::CertifiedKey>,
     named: NamedCertificate,
 }
@@ -854,7 +914,14 @@ impl rustls::server::ResolvesServerCert for SniResolver {
                 return Some(key.clone());
             }
         }
-        Some(self.own.clone())
+        match crate::identity::tls::material(&self.state) {
+            Ok(Some(material)) => {
+                crate::identity::tls::certified(material.chain.as_bytes(), material.key.as_bytes())
+                    .ok()
+            }
+            Ok(None) => Some(self.own.clone()),
+            Err(_) => None,
+        }
     }
 }
 /// Certificate and key are atomically stored together, never leaving a mismatched pair.
@@ -942,6 +1009,7 @@ pub fn tls_config_with(
         .map_err(io::Error::other)?
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(SniResolver {
+            state: state.to_owned(),
             own,
             named: named.clone(),
         }));
@@ -1124,6 +1192,28 @@ mod sni_tests {
         }
         let leaf = recorder.0.lock().unwrap().clone();
         leaf.unwrap()
+    }
+    #[test]
+    fn user_certificate_changes_new_admin_handshakes_and_remove_restores_automatic_tls() {
+        let state =
+            std::env::temp_dir().join(format!("admin-user-tls-{}", auth::random_hex(8).unwrap()));
+        let named = NamedCertificate::default();
+        let config = tls_config_with(&state, &[], &named).unwrap();
+        let name = || ServerName::try_from("relay.test".to_string()).unwrap();
+        let original = presented(&config, name());
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["relay.test".into()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        let material =
+            crate::identity::tls::validate(&cert.pem(), &key.serialize_pem(), None).unwrap();
+        crate::identity::tls::install(&state, &material).unwrap();
+        assert_eq!(presented(&config, name()), cert.der().to_vec());
+        assert_ne!(presented(&config, name()), original);
+        crate::identity::tls::remove(&state).unwrap();
+        assert_eq!(presented(&config, name()), original);
+        fs::remove_dir_all(state).unwrap();
     }
     #[test]
     fn the_named_certificate_answers_only_its_own_name() {

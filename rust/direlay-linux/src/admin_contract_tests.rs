@@ -53,6 +53,10 @@ fn admin_contract_status(state: &str) {
     let (admin, dir) = fake();
     let now = 1_793_000_000_000;
     let mut settings = admin.settings.lock().unwrap().clone();
+    if state == "identity-invalid" {
+        std::fs::create_dir_all(&admin.options.identity_dir).unwrap();
+        for name in ["identity.pk8","certificate.p7b"] { std::fs::write(admin.options.identity_dir.join(name),b"nonempty-invalid").unwrap(); }
+    }
     let mut status = admin.status();
     // Pin host observations and clocks; every serialized field comes from the production response.
     status.host_addresses = vec![AdminHostAddress::new("wlan0".into(), "10.42.0.1".into())];
@@ -103,19 +107,28 @@ fn admin_contract_status(state: &str) {
         };
     }
     match state {
+        "multiple-iphones" => { status.iphone.reason = "MultipleCandidates".into(); status.iphone.name = None; }
+        "unpaired-iphone" => { status.iphone.reason = "SelectedUnpaired".into(); }
+        "wifi-off" => { status.host_profile.as_mut().unwrap().wifi_present = false; settings.network_mode = "shared-wifi".into(); }
+        "startup-bluetooth" | "startup-auth" | "startup-wifi" | "startup-session" => {
+            status.running = true;
+            facts.iphone.step = match state { "startup-bluetooth" => "BLUETOOTH", "startup-auth" => "AUTH", "startup-wifi" => "JOINING", _ => "SESSION" }.into();
+            facts.iphone.since_millis = Some(now - 2000);
+        }
+        "display-changed" => { status.running = true; status.screen_data.as_mut().unwrap()["displayMismatch"] = true.into(); }
         "pairing" => {
             status.pairing_remaining = Some(600);
             status.pairing_deadline = Some(now / 1000 + 600);
             status.iphone.reason = "NoIphone".into();
             status.iphone.name = None;
         }
-        "carlink-scanning" | "carlink-pin" | "carlink-confirm" | "live-carlink" => {
+        "carlink-scanning" | "carlink-pin" | "carlink-pin-rejected" | "carlink-confirm" | "live-carlink" => {
             settings.output = "carlink".into();
             facts.web.phase = "OFF".into();
             facts.pages = 0;
             let event = match state {
                 "carlink-scanning" => serde_json::json!({"type":"link","state":"scanning"}),
-                "carlink-pin" => {
+                "carlink-pin" | "carlink-pin-rejected" => {
                     serde_json::json!({"type":"pin-request","generation":1,"request":17,"client":"car-unit","confirmation":false})
                 }
                 "carlink-confirm" => {
@@ -128,6 +141,9 @@ fn admin_contract_status(state: &str) {
             facts.carlink_event_at(&event, now - 1_000, clock);
             let mut clink = AdminCarlink::default();
             clink.apply_event(&event, 100);
+            if state == "carlink-pin-rejected" {
+                clink.apply_event(&serde_json::json!({"type":"clink-pin","generation":1,"result":"incorrect"}), 100);
+            }
             status.carlink = Some(clink.at(100, now / 1000));
             if state == "live-carlink" {
                 let stats = serde_json::json!({"type":"media-stats","generation":1,"liveFrames":10,"width":1920,"height":720,"codec":"H265"});
@@ -239,8 +255,13 @@ fn admin_contract_status(state: &str) {
         d.freeze();
         status.screen_data = Some(d.admin_status());
     }
+    if status.running || facts.iphone.armed || facts.arrival_until_millis.is_some() {
+        facts.auto_start_paused = false;
+    }
+    status.auto_start_paused = facts.auto_start_paused;
+    facts.automatic = settings.auto_start && !facts.auto_start_paused;
     status.output = settings.output.clone();
-    crate::path_input::update(&facts, &settings, &mut status, now, true, true);
+    crate::path_input::update(&facts, &settings, &mut status, now, !matches!(state, "identity-missing" | "identity-invalid"), state != "bluetooth-off");
     let p = &status.path_input;
     if state.starts_with("tesla-") {
         assert!(p["setup"]["outputs"]
@@ -263,6 +284,8 @@ fn admin_contract_status(state: &str) {
     assert_eq!(p["live"]["pictureOnCar"], state.starts_with("live-"));
     match state {
         "idle" | "pairing" => assert_eq!(p["iphone"]["pick"], "NONE"),
+        "multiple-iphones" => assert_eq!(p["iphone"]["pick"], "MULTIPLE"),
+        "unpaired-iphone" => assert_eq!(p["iphone"]["pick"], "UNPAIRED"),
         "carlink-scanning" => assert_eq!(p["car"]["carlink"]["phase"], "SCANNING"),
         "carlink-pin" => assert_eq!(p["car"]["carlink"]["pinPending"], true),
         "iphone-failure" => assert_eq!(p["iphone"]["failure"]["retrying"], true),
@@ -285,6 +308,7 @@ macro_rules! contract_states {
     ($($name:ident => $state:literal),* $(,)?) => { $(#[test] fn $name() { admin_contract_status($state); })* };
 }
 contract_states! {
+    admin_contract_invalid_identity => "identity-invalid",
     admin_contract_idle => "idle", admin_contract_ready => "ready", admin_contract_pairing => "pairing",
     admin_contract_scanning => "carlink-scanning", admin_contract_pin => "carlink-pin",
     admin_contract_confirm => "carlink-confirm",
@@ -295,6 +319,13 @@ contract_states! {
     admin_contract_tesla_ready => "tesla-ready", admin_contract_tesla_failed => "tesla-failed",
     admin_contract_arrival => "arrival", admin_contract_armed => "armed",
     admin_contract_carlink_timeout => "carlink-timeout-armed",
+    admin_contract_identity_missing => "identity-missing",
+    admin_contract_bluetooth_off => "bluetooth-off", admin_contract_wifi_off => "wifi-off",
+    admin_contract_multiple_iphones => "multiple-iphones", admin_contract_unpaired_iphone => "unpaired-iphone",
+    admin_contract_pin_rejected => "carlink-pin-rejected",
+    admin_contract_startup_bluetooth => "startup-bluetooth", admin_contract_startup_auth => "startup-auth",
+    admin_contract_startup_wifi => "startup-wifi", admin_contract_startup_session => "startup-session",
+    admin_contract_display_changed => "display-changed",
 }
 
 #[test]

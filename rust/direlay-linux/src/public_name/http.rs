@@ -90,10 +90,15 @@ pub trait Http: Send + Sync {
 /// image's store would age, while these roots update with the relay.
 pub struct UreqHttp {
     agent: ureq::Agent,
+    maximum_body: u64,
 }
 impl UreqHttp {
     /// Production clients use HTTPS only; tests talk plain HTTP to local fakes.
     pub fn new(https_only: bool) -> Self {
+        Self::bounded(https_only, TIMEOUT, TIMEOUT, MAX_BODY)
+    }
+    /// Shared HTTP implementation with caller-specific timeouts and response limits.
+    pub fn bounded(https_only: bool, connect: Duration, read: Duration, maximum_body: u64) -> Self {
         let agent = ureq::Agent::config_builder()
             // Straight to the provider or the CA: no proxy taken from the environment.
             .proxy(None)
@@ -102,15 +107,18 @@ impl UreqHttp {
             .max_redirects(0)
             .max_redirects_will_error(false)
             .user_agent(user_agent())
-            .timeout_resolve(Some(TIMEOUT))
-            .timeout_connect(Some(TIMEOUT))
-            .timeout_send_request(Some(TIMEOUT))
-            .timeout_send_body(Some(TIMEOUT))
-            .timeout_recv_response(Some(TIMEOUT))
-            .timeout_recv_body(Some(TIMEOUT))
+            .timeout_resolve(Some(connect))
+            .timeout_connect(Some(connect))
+            .timeout_send_request(Some(read))
+            .timeout_send_body(Some(read))
+            .timeout_recv_response(Some(read))
+            .timeout_recv_body(Some(read))
             .build()
             .into();
-        Self { agent }
+        Self {
+            agent,
+            maximum_body,
+        }
     }
 }
 pub fn user_agent() -> String {
@@ -160,7 +168,7 @@ impl Http for UreqHttp {
             response
                 .body_mut()
                 .with_config()
-                .limit(MAX_BODY)
+                .limit(self.maximum_body)
                 .read_to_vec()
                 .map_err(|e| failure(&e))?
         };

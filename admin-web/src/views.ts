@@ -10,6 +10,7 @@ import { carlinkStatsView } from './video-stats';
 import { videoLine } from './diagnostics';
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
 import { esc } from './html';
+import { on } from './dom';
 export function statusView(s: Status, t: Translate, defaultPassword = false) {
   const v = homeView(s, undefined, defaultPassword);
   const link = (connected: boolean, label: string) => `<span class="journey-link ${connected ? 'connected' : 'waiting'}"><span class="sr-only">${t(label)}: ${t(connected ? 'ui.connected' : 'home.disconnected')}</span></span>`;
@@ -17,9 +18,10 @@ export function statusView(s: Status, t: Translate, defaultPassword = false) {
 }
 export function addressesView(s: Status, _developer: boolean, t: Translate) {
   const addresses = addressViews(s, false);
+  const extraUrls = s.receiverUrls.filter(url => !addresses.some(address => address.receiver === url || address.fallback === url));
   const adminUrls = s.platform === 'linux' ? s.adminUrls : undefined;
   const copy = (value: string) => `<button class="icon-button" data-copy="${esc(value)}" aria-label="${t('ui.copy')}: ${esc(value)}" title="${t('ui.copy')}">${icon('copy')}<span class="copy-feedback" role="status"></span></button>`;
-  return `<article class="card addresses ${homeView(s).promoteAddresses ? 'promoted' : ''}"><h2>${t('home.addresses')}</h2>${s.hostProfile && !s.hostProfile.wifiPresent ? `<p class="notice" role="alert">${esc(t('host.wifiMissing', { interface: s.hostProfile.wifiInterface }))}</p>` : ''}${s.network.mode !== 'shared-wifi' && s.hotspot ? s.screenConnected === true ? `<p class="muted">${esc(t('net.joinedHotspot', { ssid: s.hotspot.ssid }))}</p>` : `<p>${esc(t('net.joinHotspot', { ssid: s.hotspot.ssid }))}</p>${hotspotDetails(s, t)}` : ''}${addresses.length > 1 ? `<label class="sr-only" for="address-network">${t('ui.network')}</label><select id="address-network">${addresses.map((a, i) => `<option value="${i}">${esc(t(a.label))} · ${esc(a.ipv4)}</option>`).join('')}</select>` : ''}${addresses.map((a, i) => `<section class="network-address" data-address="${i}" ${i ? 'hidden' : ''}><span class="muted">${esc(t(a.label))}</span><div class="address-row"><div><span class="copy-text ip" tabindex="0">${esc(a.ipv4)}</span><small class="muted">${esc(a.host)}</small></div>${copy(a.ipv4)}</div><div class="address-row receiver-address"><div><strong>${t('settings.screen')}</strong><a class="copy-text" href="${esc(a.receiver)}" target="_blank" rel="noopener">${esc(a.receiver)}</a>${a.fallback ? `<small class="muted">${esc(t('publicName.fallback', { address: a.fallback }))}</small>` : ''}</div>${copy(a.receiver)}</div>${adminUrls ? '' : `<div class="address-row admin-address"><div><span class="muted">${t('ui.admin')}</span><a class="copy-text" href="${esc(a.admin)}" target="_blank" rel="noopener">${esc(a.admin)}</a></div>${copy(a.admin)}</div>`}</section>`).join('') || `<p>${t('ui.noUrls')}</p>`}${adminUrls ? adminUrls.map(url => `<div class="address-row admin-address"><div><span class="muted">${t('home.adminPage')}</span><a class="copy-text" href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></div>${copy(url)}</div>`).join('') : ''}</article>`;
+  return `<article class="card addresses ${homeView(s).promoteAddresses ? 'promoted' : ''}"><h2>${t('home.addresses')}</h2>${s.hostProfile && !s.hostProfile.wifiPresent ? `<p class="notice" role="alert">${esc(t('host.wifiMissing', { interface: s.hostProfile.wifiInterface }))}</p>` : ''}${s.network.mode !== 'shared-wifi' && s.hotspot ? s.screenConnected === true ? `<p class="muted">${esc(t('net.joinedHotspot', { ssid: s.hotspot.ssid }))}</p>` : `<p>${esc(t('net.joinHotspot', { ssid: s.hotspot.ssid }))}</p>${hotspotDetails(s, t)}` : ''}${addresses.length > 1 ? `<label class="sr-only" for="address-network">${t('ui.network')}</label><select id="address-network">${addresses.map((a, i) => `<option value="${i}">${esc(t(a.label))} · ${esc(a.ipv4)}</option>`).join('')}</select>` : ''}${addresses.map((a, i) => `<section class="network-address" data-address="${i}" ${i ? 'hidden' : ''}><span class="muted">${esc(t(a.label))}</span><div class="address-row"><div><span class="copy-text ip" tabindex="0">${esc(a.ipv4)}</span><small class="muted">${esc(a.host)}</small></div>${copy(a.ipv4)}</div><div class="address-row receiver-address"><div><strong>${t('settings.screen')}</strong><a class="copy-text" href="${esc(a.receiver)}" target="_blank" rel="noopener">${esc(a.receiver)}</a>${a.fallback ? `<small class="muted">${esc(t('publicName.fallback', { address: a.fallback }))}</small>` : ''}</div>${copy(a.receiver)}</div>${adminUrls ? '' : `<div class="address-row admin-address"><div><span class="muted">${t('ui.admin')}</span><a class="copy-text" href="${esc(a.admin)}" target="_blank" rel="noopener">${esc(a.admin)}</a></div>${copy(a.admin)}</div>`}</section>`).join('') || `<p>${t('ui.noUrls')}</p>`}${extraUrls.map(url => `<div class="address-row receiver-address"><a class="copy-text" href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>${copy(url)}</div>`).join('')}${adminUrls ? adminUrls.map(url => `<div class="address-row admin-address"><div><span class="muted">${t('home.adminPage')}</span><a class="copy-text" href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></div>${copy(url)}</div>`).join('') : ''}</article>`;
 }
 export function devicesView(s: Status, _developer: boolean, t: Translate) {
   const v = homeView(s);
@@ -50,4 +52,16 @@ export function nearbyNetworksView(networks: WifiNetwork[], t: Translate): strin
     const bars = Math.ceil(signal / 25);
     return `<button type="button" class="phone-row" data-nearby="${index}"><span>${esc(network.ssid)}</span><span class="network-indicators"><span class="signal-bars" role="img" aria-label="${esc(t('wifi.signal', { signal }))}">${[1, 2, 3, 4].map(bar => `<i aria-hidden="true" class="${bar <= bars ? 'filled' : ''}"></i>`).join('')}</span>${network.secure ? `<span role="img" aria-label="${esc(t('wifi.secured'))}">${icon('lock')}</span>` : ''}</span></button>`;
   }).join('');
+}
+
+/** Keep the chosen URL across live drawer patches, falling back when its interface disappears. */
+export function bindAddressSelector(scope: ParentNode, selected: string | null, changed: (url: string) => void): void {
+  const select = scope.querySelector<HTMLSelectElement>('#address-network');
+  if (!select) return;
+  const sections = [...scope.querySelectorAll<HTMLElement>('[data-address]')];
+  const url = (section: HTMLElement) => section.querySelector<HTMLAnchorElement>('.receiver-address a')?.href ?? '';
+  const index = Math.max(0, sections.findIndex(section => url(section) === selected));
+  select.value = String(index);
+  const apply = () => { sections.forEach((section, i) => { section.hidden = i !== Number(select.value); }); changed(url(sections[Number(select.value)])); };
+  apply(); on(select, 'change', apply);
 }

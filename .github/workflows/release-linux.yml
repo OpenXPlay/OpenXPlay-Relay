@@ -159,6 +159,7 @@ jobs:
           install -m 0644 OpenXPlay-Relay/LICENSE OpenXPlay-Relay/LICENSE-GPL-3.0 OpenXPlay-Relay/NOTICE "$pkg/"
           install -m 0644 OpenXPlay-Stream/NOTICE OpenXPlay-Stream/THIRD-PARTY-LICENSES.md "$pkg/licenses/OpenXPlay-Stream/"
           install -m 0755 OpenXPlay-Relay/rust/packaging/install.sh "$pkg/rust/packaging/"
+          install -m 0644 OpenXPlay-Relay/rust/packaging/plugins-bundle.py "$pkg/rust/packaging/"
           install -m 0644 OpenXPlay-Relay/rust/packaging/openxplay-relay.service "$pkg/rust/packaging/"
           cp -a OpenXPlay-Relay/rust/packaging/host "$pkg/rust/packaging/host"
           # Install into a staging root to prove the package meets the installer's input checks.

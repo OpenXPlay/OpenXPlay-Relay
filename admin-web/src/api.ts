@@ -8,7 +8,7 @@ export interface RuntimeStartup {
   automatic: boolean; bootStart: boolean; paused: boolean;
   arrival: { pending: boolean; deadlineMillis: number | null; remainingMillis: number | null };
 }
-export interface Session { state: SessionState; defaultPassword: boolean }
+export interface Session { state: SessionState; defaultPassword: boolean; adminEnabled?: boolean; adminAccessAllowed?: boolean }
 export interface WifiNetwork { ssid: string; signal: number; secure: boolean; known: boolean }
 export interface WifiClient { ssid: string | null; ip: string | null; signal: number | null; setupHotspot?: boolean }
 export interface CarlinkStatus {
@@ -74,14 +74,17 @@ export interface PlannedNetwork {
 }
 export interface NetworkProposal { plan: NetworkPlan; checks: NetworkCheck[]; changes: ('controller' | 'carlink' | 'carBrowserAddress' | 'adminHotspot' | 'wifiCountry')[]; applied?: true }
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
+export interface TranscodeCapability { enabled: boolean; available: boolean; decode: string[]; encode: { codec: string; maxWidth: number | null; maxHeight: number | null }[]; scaling: boolean; description: string }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
 export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updating-address' | 'requesting-certificate' | 'ready' | 'error';
 // trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
+  identity?: import('./identity').IdentityStatus;
+  adminEnabled?: boolean; setupCompleted?: boolean;
   screenData?: import('./car-screen').ScreenData;
-  adminFeatures?: ('logs' | 'config-files' | 'update-check')[];
+  adminFeatures?: ('logs' | 'config-files' | 'update-check' | 'identity')[];
   pathInput?: import('./path/model').PartialInput & {
     startup?: RuntimeStartup;
     iphone?: import('./path/model').PartialInput['iphone'] & { trail?: string[]; runtimeIap2Frames?: number };
@@ -92,7 +95,10 @@ export interface Status {
   // Android 12+: the Nearby devices step of a pairing window, and whether the request waits in a notification.
   pairingNeedsPermission?: boolean; pairingPermissionDenied?: boolean; pairingNotified?: boolean;
   receiverHistory?: { screens: { width: number; height: number; densityDpi: number; info: Record<string, unknown> }[];
+    disconnects?: { time: number; client: string; code: number; reason: string; report: unknown }[];
     fullscreenExits: { time: number; client: string; report: Record<string, unknown> }[] };
+  transcoding?: { web: TranscodeCapability; clink: TranscodeCapability };
+  localAudio?: { playback: string[]; capture: string[]; playbackAvailable: boolean; captureAvailable: boolean };
   video?: VideoStatus; receivers?: ReceiverReport[]; bluetoothGuard?: BluetoothGuard;
   hotspot?: { security?: HotspotSecurity; supportedSecurity?: HotspotSecurity[]; hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;
@@ -128,6 +134,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
   events.dispatchEvent(new Event('online'));
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (data.error === 'admin.disabled') events.dispatchEvent(new Event('admin-disabled'));
     if (response.status === 401) events.dispatchEvent(new Event('unauthorized'));
     throw new ApiError(response.status, response.status === 429 ? 'error.rateLimit' : data.error ?? 'error.request', data.errors ?? {}, Number(response.headers.get('Retry-After')) || 60, data.checks || []);
   }
@@ -145,6 +152,9 @@ export const api = {
   saveRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles, ...extra }, false),
   session: () => request<Session>('/session'),
   login: (password: string) => request('/login', 'POST', { password }),
+  access: (enabled: boolean) => request('/access', 'PUT', { enabled, confirmed: !enabled }, false),
+  resetPassword: () => request('/password/reset', 'POST', { confirmed: true }, false),
+  completeSetup: () => request('/setup/complete', 'POST', {}, false),
   password: (current: string, next: string) => request('/password', 'POST', { current, new: next }, false),
   networks: () => request<WifiNetwork[]>('/wifi/networks'),
   wifi: (ssid: string, password?: string) => request('/wifi', 'PUT', { ssid, ...(password === undefined ? {} : { password }) }, false),
@@ -158,7 +168,7 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
-  action: (name: 'start' | 'stop' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'clear-window-records' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink', 'regenerate-pairing-code'].includes(name)),
+  action: (name: 'start' | 'stop' | 'enable-bluetooth' | 'enable-wifi' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'clear-window-records' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, false),
   showViewArea: (index: number) => request('/view-area', 'POST', { index }, false),
   phones: () => request<Phone[]>('/phones'),
 };

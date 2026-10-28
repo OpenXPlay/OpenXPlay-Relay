@@ -536,6 +536,7 @@ pub(crate) struct DisplayRuntime {
     pub pending_picture_default: bool,
     pub carlink_primary: bool,
     pub carlink_mode: bool,
+    pub transcode_geometry: bool,
     pub fallback: Option<(HeadUnit, Vec<Record>)>,
     pub disable_view_areas: bool,
     pub path: Option<PathBuf>,
@@ -611,12 +612,15 @@ impl DisplayRuntime {
         profile_density(canvas)
     }
     pub fn view_areas_enabled(&self) -> bool {
-        !self.disable_view_areas && self.fixed_profile.is_none() && self.pictures.applied.is_none()
+        !self.disable_view_areas
+            && self.fixed_profile.is_none()
+            && (self.transcode_geometry || self.pictures.applied.is_none())
     }
     fn target(&self) -> Target {
         let canvas = self
             .pictures
             .applied
+            .filter(|_| !self.transcode_geometry)
             .or_else(|| {
                 self.fixed_profile.map(|p| Size {
                     width: p.width,
@@ -746,10 +750,25 @@ impl DisplayRuntime {
         json!({"savedCanvas":{"width":canvas.width,"height":canvas.height,"densityDpi":self.automatic_density(canvas,saved_head),
             "source":if self.saved.head_unit.is_some() {"remembered"} else if self.fallback.is_some() {"built-in model"} else {"default"}},
             "detected": self.saved.records.first().map(|r| r.screen),
-            "builtIn":self.fallback.is_some(), "records":self.saved.records,
+            "displayMismatch":self.display_mismatch(), "builtIn":self.fallback.is_some(), "records":self.saved.records,
             "areas":self.areas.iter().enumerate().map(|(index,a)| json!({"index":index,"width":a.size.width,"height":a.size.height,"fullscreen":a.fullscreen,"windowed":a.windowed})).collect::<Vec<_>>(),
             "active":self.active,"preference":head.and_then(|h| h.fullscreen_preferred),"switches":self.area_switches,
             "enabled":self.view_areas_enabled(),"connected":self.connected})
+    }
+    /// Screen changes that the current automatic input session has not adopted yet.
+    pub fn display_mismatch(&self) -> bool {
+        if self.fixed_profile.is_some() || self.pictures.applied.is_some() {
+            return false;
+        }
+        let desired = self.target();
+        self.applied.as_ref().is_some_and(|old| {
+            if self.view_areas_enabled() {
+                old.screen != desired.screen
+            } else {
+                matches!(self.saved.resolution.as_str(), "screen" | "native")
+                    && old.canvas != desired.canvas
+            }
+        })
     }
     pub fn persist(&self) -> std::io::Result<()> {
         if let Some(path) = &self.path {
@@ -780,7 +799,9 @@ impl DisplayRuntime {
         if self.fixed_profile.is_none() {
             self.saved.canvas = target.canvas;
         }
-        self.areas = if self.pictures.applied.is_some() || target.disable_view_areas {
+        self.areas = if (!self.transcode_geometry && self.pictures.applied.is_some())
+            || target.disable_view_areas
+        {
             plan_areas(target.canvas, None, &[])
         } else {
             let records = merge_records(
@@ -967,6 +988,31 @@ mod tests {
         }
     }
     #[test]
+    fn display_mismatch_clears_when_session_adopts_screen_and_ignores_fixed_profiles() {
+        let mut d = DisplayRuntime {
+            connected: true,
+            ..Default::default()
+        };
+        d.observe(head(), None, 1);
+        d.freeze();
+        assert!(!d.display_mismatch());
+        let mut changed = head();
+        changed.screen.width += 200;
+        d.observe(changed, None, 2);
+        assert!(d.display_mismatch());
+        d.freeze();
+        assert!(!d.display_mismatch());
+        d.fixed_profile = Some(head().screen);
+        d.observe(head(), None, 3);
+        assert!(!d.display_mismatch());
+        d.fixed_profile = None;
+        d.pictures.applied = Some(Size {
+            width: 1280,
+            height: 720,
+        });
+        assert!(!d.display_mismatch());
+    }
+    #[test]
     fn clear_during_use_keeps_declarations_history_and_ignores_identical_refresh() {
         let mut d = DisplayRuntime {
             connected: true,
@@ -1117,6 +1163,47 @@ mod tests {
         assert!(d.saved.head_unit.is_none());
         assert_ne!(d.saved.canvas, DisplayState::default().canvas);
         assert!(d.areas.len() > 1);
+    }
+    #[test]
+    fn encoder_keeps_output_picture_separate_from_the_iphone_canvas_and_crop() {
+        let canvas = Size {
+            width: 1920,
+            height: 1080,
+        };
+        let mut d = DisplayRuntime {
+            carlink_primary: true,
+            carlink_mode: true,
+            transcode_geometry: true,
+            ..Default::default()
+        };
+        d.saved.canvas = canvas;
+        d.freeze();
+        assert_eq!(
+            d.pictures.applied,
+            Some(Size {
+                width: 1280,
+                height: 720
+            })
+        );
+        assert_eq!(d.saved.canvas, canvas);
+        assert_eq!(d.target().canvas, canvas);
+        assert!(d.view_areas_enabled());
+        d.picture_default = Some(Size {
+            width: 1280,
+            height: 800,
+        });
+        d.freeze();
+        assert_eq!(d.target().canvas, canvas);
+        d.transcode_geometry = false;
+        d.freeze();
+        assert_eq!(
+            d.target().canvas,
+            Size {
+                width: 1280,
+                height: 800
+            }
+        );
+        assert!(!d.view_areas_enabled());
     }
     #[test]
     fn picture_pins_canvas_and_whole_view_until_connection_ends() {
