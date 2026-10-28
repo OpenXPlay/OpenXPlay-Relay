@@ -6,6 +6,7 @@ use crate::Result;
 use crate::*;
 use crate::{
     admin::*,
+    linux_hotspot::DEFAULT_HOTSPOT_PASSWORD,
     provision::*,
     settings::{Settings, SharedWifiNetwork},
     supervisor::*,
@@ -3069,9 +3070,17 @@ fn failure_secrets(settings: &Settings, state_dir: &std::path::Path) -> Vec<Stri
         secrets.push(token);
     }
     secrets.extend(settings.carlink_pin.clone());
-    secrets.extend(settings.admin_hotspot_password.clone());
+    secrets.extend(
+        settings
+            .admin_hotspot_password
+            .as_ref()
+            .filter(|password| password.as_str() != DEFAULT_HOTSPOT_PASSWORD)
+            .cloned(),
+    );
     if let Ok((_, password)) = crate::linux_hotspot::hotspot_credentials(state_dir) {
-        secrets.push(password);
+        if password != DEFAULT_HOTSPOT_PASSWORD {
+            secrets.push(password);
+        }
     }
     secrets
 }
@@ -3278,10 +3287,11 @@ impl LinuxRelayAdmin {
             .or_insert_with(|| serde_json::json!("wpa2"));
         Ok(values)
     }
-    fn build_log_export(&self, range: &str) -> std::io::Result<crate::logs::Export> {
-        let range = serde_json::from_value::<crate::logs::Range>(serde_json::json!(range))?;
-        let status = self.status();
-        let settings = self.settings.lock().unwrap().clone();
+    fn log_export_known_values(
+        &self,
+        settings: &Settings,
+        status: &AdminStatus,
+    ) -> std::io::Result<Vec<(String, &'static str)>> {
         let mut known: Vec<(String, &str)> = Vec::new();
         if let Ok(token) = crate::mfi_sources::token(&self.options.state_dir) {
             known.push((token, "secret"));
@@ -3289,16 +3299,24 @@ impl LinuxRelayAdmin {
         for network in &settings.shared_wifi_networks {
             known.push((network.password.clone(), "secret"));
         }
-        if let Some(hotspot) = status.hotspot {
-            known.push((hotspot.password, "secret"));
+        if let Some(hotspot) = status
+            .hotspot
+            .as_ref()
+            .filter(|hotspot| hotspot.password != DEFAULT_HOTSPOT_PASSWORD)
+        {
+            known.push((hotspot.password.clone(), "secret"));
         }
-        for device in status.paired_devices {
-            known.push((device.name, "name"));
+        for device in &status.paired_devices {
+            known.push((device.name.clone(), "name"));
         }
         if let Some(pin) = settings.carlink_pin.as_ref() {
             known.push((pin.clone(), "secret"));
         }
-        if let Some(password) = settings.admin_hotspot_password.as_ref() {
+        if let Some(password) = settings
+            .admin_hotspot_password
+            .as_ref()
+            .filter(|password| password.as_str() != DEFAULT_HOTSPOT_PASSWORD)
+        {
             known.push((password.clone(), "secret"));
         }
         if let Some(pin) = self.armed_pin.lock().unwrap().as_ref() {
@@ -3315,7 +3333,9 @@ impl LinuxRelayAdmin {
                     Some((lines.next()?.into(), lines.next()?.into()))
                 });
             if let Some((ssid, password)) = credentials {
-                known.push((password, "secret"));
+                if password != DEFAULT_HOTSPOT_PASSWORD {
+                    known.push((password, "secret"));
+                }
             }
         }
         for (key, value) in &self.options.overrides {
@@ -3344,6 +3364,13 @@ impl LinuxRelayAdmin {
                 }
             }
         }
+        Ok(known)
+    }
+    fn build_log_export(&self, range: &str) -> std::io::Result<crate::logs::Export> {
+        let range = serde_json::from_value::<crate::logs::Range>(serde_json::json!(range))?;
+        let status = self.status();
+        let settings = self.settings.lock().unwrap().clone();
+        let known = self.log_export_known_values(&settings, &status)?;
         let mut safe = crate::config_files::settings_values(
             &settings,
             &oxp_wire::display_settings(&self.input.display_settings()),
@@ -4656,6 +4683,105 @@ mod tests {
     use super::*;
     include!("admin_contract_tests.rs");
     include!("identity_admin_tests.rs");
+    #[test]
+    fn failure_hotspot_password_redaction_preserves_public_default() {
+        let (admin, dir) = fake();
+        let line = "/var/lib/openxplay openxplay-linux.local openxplay-relay logs.openxplay.org";
+        for source in ["carplay", "admin"] {
+            for password in [DEFAULT_HOTSPOT_PASSWORD, "private-hotspot-pass"] {
+                let settings = Settings {
+                    admin_hotspot_password: Some(
+                        if source == "admin" {
+                            password
+                        } else {
+                            DEFAULT_HOTSPOT_PASSWORD
+                        }
+                        .into(),
+                    ),
+                    ..Settings::default()
+                };
+                crate::linux_hotspot::save_hotspot_credentials(
+                    &dir,
+                    "Relay",
+                    if source == "carplay" {
+                        password
+                    } else {
+                        DEFAULT_HOTSPOT_PASSWORD
+                    },
+                )
+                .unwrap();
+                let secrets = failure_secrets(&settings, &dir);
+                assert!(!secrets
+                    .iter()
+                    .any(|value| value == DEFAULT_HOTSPOT_PASSWORD));
+                assert_eq!(crate::failure_text::redact(line, &secrets), line);
+                if password != DEFAULT_HOTSPOT_PASSWORD {
+                    assert_eq!(
+                        crate::failure_text::redact(&format!("{line} {password}"), &secrets),
+                        format!("{line} [redacted]")
+                    );
+                }
+            }
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn log_export_hotspot_password_redaction_preserves_public_default() {
+        let (admin, dir) = fake();
+        let line = "/var/lib/openxplay openxplay-linux.local openxplay-relay logs.openxplay.org";
+        for source in ["status", "saved", "legacy", "admin"] {
+            for password in [DEFAULT_HOTSPOT_PASSWORD, "private-hotspot-pass"] {
+                let settings = Settings {
+                    admin_hotspot_password: Some(
+                        if source == "admin" {
+                            password
+                        } else {
+                            DEFAULT_HOTSPOT_PASSWORD
+                        }
+                        .into(),
+                    ),
+                    ..Settings::default()
+                };
+                let saved = if matches!(source, "saved" | "legacy") {
+                    password
+                } else {
+                    DEFAULT_HOTSPOT_PASSWORD
+                };
+                crate::linux_hotspot::save_hotspot_credentials(&dir, "Relay", saved).unwrap();
+                let mut status = admin.status();
+                if source == "status" {
+                    status.hotspot.as_mut().unwrap().password = password.into();
+                } else {
+                    status.hotspot = None;
+                }
+                if source == "legacy" {
+                    crate::platform::private_state_file(
+                        &dir.join("hotspot.credentials"),
+                        format!("Relay\n{saved}\n").as_bytes(),
+                    )
+                    .unwrap();
+                }
+                let known = admin.log_export_known_values(&settings, &status).unwrap();
+                assert!(!known
+                    .iter()
+                    .any(|(value, class)| value == DEFAULT_HOTSPOT_PASSWORD && *class == "secret"));
+                let mut redactor = crate::logs::redactor::Redactor::new([0; 32]);
+                for (value, class) in known {
+                    redactor.remember(&value, class);
+                }
+                assert_eq!(redactor.redact(line), line);
+                if password != DEFAULT_HOTSPOT_PASSWORD {
+                    assert_eq!(
+                        redactor.redact(&format!("{line} {password}")),
+                        format!("{line} {}", redactor.token(password, "secret"))
+                    );
+                }
+            }
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn mfi_sources_android_user_envelope_and_restart_contract() {
         let (admin, dir) = fake();
