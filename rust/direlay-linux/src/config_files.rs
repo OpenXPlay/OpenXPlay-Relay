@@ -501,6 +501,32 @@ mod tests {
         assert!(crate::relay_admin::update_settings(&Settings::default(), settings).is_ok());
     }
     #[test]
+    fn android_screen_experiments_are_ignored_without_changing_linux_settings() {
+        for enabled in [true, false] {
+            let current = current();
+            let file = json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{
+                "experimental":{"version":2,"screenSessionIsolation":enabled,
+                    "screenReconnectReset":enabled,"screenDeliverySerialization":enabled}
+            }});
+            let p = plan(&serde_json::to_vec(&file).unwrap(), &current).unwrap();
+            assert_eq!(
+                p.report.ignored,
+                [
+                    "experimental.screenDeliverySerialization",
+                    "experimental.screenReconnectReset",
+                    "experimental.screenSessionIsolation",
+                ]
+            );
+            assert!(p.report.applied.is_empty());
+            assert!(!p.report.restart_needed);
+            assert!(p.values.is_empty());
+            assert!(p.public_name.is_none());
+            let mut after = current.clone();
+            after.extend(p.values);
+            assert_eq!(after, current);
+        }
+    }
+    #[test]
     fn privacy_setup_round_trip_and_android_only_material_is_reported() {
         let public = json!({"version":1,"enabled":false,"provider":"dynv6","name":"test.dynv6.net","token":"secret-token","agreeLetsEncryptTerms":true});
         let mut file = export_privacy(json!({"publicName":public}), 1000).unwrap();

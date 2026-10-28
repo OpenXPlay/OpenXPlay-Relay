@@ -66,6 +66,8 @@ pub mod pairing_store;
 pub mod rtp_clock_probe;
 /// rtsp message protocol module.
 pub mod rtsp_message;
+/// Captured screen ownership and delivery policy.
+pub mod screen_session_policy;
 /// screen stream protocol module.
 pub mod screen_stream;
 /// srp6a protocol module.
@@ -128,6 +130,7 @@ pub use rtsp_message::ParsedRequest;
 pub use rtsp_message::RtspMessage;
 pub use rtsp_message::RtspRequest;
 pub use rtsp_message::RtspResponse;
+pub use screen_session_policy::{ScreenSessionPolicy, ScreenSessionPolicyProvider};
 pub use screen_stream::DatagramTransport;
 pub use screen_stream::ScreenCodec;
 pub use screen_stream::ScreenListener;

@@ -66,4 +66,38 @@ class CarSelectionTest {
         assertEquals(40, bounded.brandText.length); assertEquals(40, bounded.modelText.length); assertEquals(40, bounded.yearText.length)
         assertEquals(bounded, bounded.normalized())
     }
+
+    @Test fun zeekrKeepsLeadingZerosAndScopesModelsAndYearsToTheirParents() {
+        val car = CarSelection("zeekr", model = "001", year = "001-2021")
+        assertEquals(car, car.normalized())
+        assertTrue(car.complete)
+        assertEquals(car, CarSelection("zeekr", model = "001-2021").normalized())
+        assertEquals(CarSelection("zeekr", model = "001-fr", year = "001-fr-2023"),
+            CarSelection("zeekr", model = "001-fr-2023").normalized())
+        assertEquals(car.copy(year = ""), car.copy(year = "001-fr-2023").normalized())
+        assertEquals(CarSelection("zeekr"), car.copy(model = "1").normalized())
+        assertEquals(CarSelection("tesla"), car.copy(brand = "tesla").normalized())
+        assertEquals(CarSelection("zeekr"), CarSelection("zeekr", model = "model-x", year = "model-x-2021").normalized())
+        assertEquals(CarSelection("zeekr", model = "x", year = "x-2023"),
+            CarSelection("zeekr", model = "x", year = "x-2023").normalized())
+    }
+
+    @Test fun trustedHttpsIsRecommendedAsSoonAsZeekrIsChosenUntilConfigured() {
+        val cars = listOf(CarSelection("zeekr"), CarSelection("zeekr", model = "001"),
+            CarSelection("zeekr", model = "007-gt", year = "007-gt-2025"),
+            CarSelection("zeekr", model = "mix-2024"), CarSelection("zeekr", model = "other", modelText = "Custom"),
+            CarSelection("zeekr", model = "unknown", year = "unknown"))
+        for (car in cars) {
+            assertTrue(car.toString(), trustedHttpsRecommended(car, trustedConfigured = false))
+            assertFalse(car.toString(), trustedHttpsRecommended(car, trustedConfigured = true))
+        }
+    }
+
+    @Test fun trustedHttpsRecommendationDoesNotApplyToOtherOrInvalidBrands() {
+        val cars = listOf(CarSelection(), CarSelection("xpeng", model = "g6"), CarSelection("tesla", model = "model-x"),
+            CarSelection("other", "ZEEKR", "other", "001"), CarSelection("ZEEKR", model = "001"),
+            CarSelection("unknown", "zeekr", "001", year = "001-2021"), CarSelection(model = "001", year = "001-2021"))
+        for (car in cars) for (configured in listOf(false, true))
+            assertFalse(car.toString(), trustedHttpsRecommended(car, configured))
+    }
 }

@@ -73,6 +73,7 @@ fun CollapsibleCard(key: String, title: String, summary: String, initiallyExpand
 fun settingsPageTitle(route: String) = when (route) {
     "settings/output" -> R.string.ui_output
     "settings/car" -> R.string.car_and_screen
+    "settings/tesla" -> R.string.tesla_title
     "settings/picture" -> R.string.picture_title
     "settings/audio" -> R.string.audio_title
     "settings/connection" -> R.string.ui_iphone_connection
@@ -90,21 +91,31 @@ internal val settingsFilePages = listOf(
     SettingsFilePage(R.string.config_title, "settings/configFiles"),
     SettingsFilePage(R.string.logs_title, "settings/logs"))
 
+internal data class SettingsMenuPage(val title: Int, val route: String, val icon: Int)
+internal val settingsMainPages = listOf(
+    SettingsMenuPage(R.string.ui_output, "settings/output", R.drawable.symbol_car),
+    SettingsMenuPage(R.string.car_and_screen, "settings/car", R.drawable.symbol_car),
+    SettingsMenuPage(R.string.tesla_title, "settings/tesla", R.drawable.symbol_car),
+    SettingsMenuPage(R.string.picture_title, "settings/picture", R.drawable.symbol_monitor),
+    SettingsMenuPage(R.string.audio_title, "settings/audio", R.drawable.symbol_bluetooth))
+
+internal fun settingsMenuHue(title: Int) = when (title) {
+    R.string.audio_title -> IconHue.BLUETOOTH
+    R.string.ui_network -> IconHue.NETWORK
+    R.string.ui_output, R.string.car_and_screen, R.string.tesla_title, R.string.ui_carlink -> IconHue.CAR
+    R.string.ui_iphone_connection -> IconHue.IPHONE
+    R.string.menu_identity -> IconHue.IDENTITY
+    R.string.menu_access -> IconHue.PERMISSIONS
+    R.string.public_name_title, R.string.menu_connection_outputs -> IconHue.NETWORK
+    R.string.settings_startup -> IconHue.PERMISSIONS
+    R.string.picture_title, R.string.menu_video -> IconHue.PICTURE
+    R.string.logs_title, R.string.config_title -> IconHue.LOGS
+    else -> IconHue.DEVELOPER
+}
+
 @Composable
 fun SettingsMenuRow(title: Int, summary: String?, icon: Int, error: Boolean = false, action: () -> Unit) {
-    val hue = when (title) {
-        R.string.audio_title -> IconHue.BLUETOOTH
-        R.string.ui_network -> IconHue.NETWORK
-        R.string.ui_output, R.string.car_and_screen, R.string.ui_carlink -> IconHue.CAR
-        R.string.ui_iphone_connection -> IconHue.IPHONE
-        R.string.menu_identity -> IconHue.IDENTITY
-        R.string.menu_access -> IconHue.PERMISSIONS
-        R.string.public_name_title, R.string.menu_connection_outputs -> IconHue.NETWORK
-        R.string.settings_startup -> IconHue.PERMISSIONS
-        R.string.picture_title, R.string.menu_video -> IconHue.PICTURE
-        R.string.logs_title, R.string.config_title -> IconHue.LOGS
-        else -> IconHue.DEVELOPER
-    }
+    val hue = settingsMenuHue(title)
     val errorLabel = stringResource(R.string.settings_advanced_error)
     InsetRow(icon, hue, stringResource(title), summary, onClick = action, trailing = {
         if (error) CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.error) {
@@ -121,17 +132,19 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
     val context = LocalContext.current
     val version = LocalAppVersion.current
     InsetGroup {
-        SettingsMenuRow(R.string.ui_output, outputSummary(draft),
-            R.drawable.symbol_car, "settings/output" in invalidPages) { open("settings/output") }
-        InsetDivider()
-        SettingsMenuRow(R.string.car_and_screen, carSummary,
-            R.drawable.symbol_car, !carComplete || "settings/car" in invalidPages) { open("settings/car") }
-        InsetDivider()
-        SettingsMenuRow(R.string.picture_title, pictureMenuSummary(resolutionSummary(draft), draft.carplayScreenWidth.mm, codecSummary(draft), frameRate),
-            R.drawable.symbol_monitor) { open("settings/picture") }
-        InsetDivider()
-        SettingsMenuRow(R.string.audio_title, stringResource(R.string.menu_audio_summary, menuToggleSummary(draft.carBluetoothAudio)),
-            R.drawable.symbol_bluetooth) { open("settings/audio") }
+        settingsMainPages.forEachIndexed { index, page ->
+            val summary = when (page.route) {
+                "settings/output" -> outputSummary(draft)
+                "settings/car" -> carSummary
+                "settings/tesla" -> stringResource(teslaBrowserOption(draft.teslaBrowser).title)
+                "settings/picture" -> pictureMenuSummary(resolutionSummary(draft), draft.carplayScreenWidth.mm, codecSummary(draft), frameRate)
+                "settings/audio" -> stringResource(R.string.menu_audio_summary, menuToggleSummary(draft.carBluetoothAudio))
+                else -> null
+            }
+            SettingsMenuRow(page.title, summary, page.icon,
+                page.route in invalidPages || page.route == "settings/car" && !carComplete) { open(page.route) }
+            if (index < settingsMainPages.lastIndex) InsetDivider()
+        }
     }
     InsetGroup {
         SettingsMenuRow(R.string.ui_iphone_connection, stringResource(if (wireless) R.string.direlay_wireless else R.string.ui_usb),
