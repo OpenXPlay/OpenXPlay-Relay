@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn embedded_asset_format_names_and_fallback() {
         let data = CarModels::parse(ASSET).unwrap();
-        assert_eq!(data.brands.len(), 2);
+        assert_eq!(data.brands.len(), 3);
         let c = CarSelection {
             brand: "xpeng".into(),
             model: "g6-2023".into(),

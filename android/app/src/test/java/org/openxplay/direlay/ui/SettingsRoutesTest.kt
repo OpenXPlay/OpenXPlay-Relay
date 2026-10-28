@@ -10,6 +10,7 @@ class SettingsRoutesTest {
     @Test fun everyLegacyFieldLinkOpensItsPageAndParents() {
         val routes = mapOf(
             "" to "settings", "output" to "settings/output#output", "car" to "settings/car#car",
+            "tesla" to "settings/tesla",
             "picture" to "settings/picture", "audio" to "settings/audio",
             "connection" to "settings/connection#connection", "iphone" to "settings/connection#iphone",
             "network" to "settings/connection/network", "sharedWifi" to "settings/connection/network#sharedWifi",
@@ -23,6 +24,14 @@ class SettingsRoutesTest {
             assertEquals(stack, stack.open("settings:$key"))
         }
         assertEquals("settings", relayRoute("settings:unknown"))
+    }
+
+    @Test fun teslaLinksOpenADirectChildOfSettings() {
+        assertEquals("settings/tesla", relayRoute("settings:tesla"))
+        assertEquals("settings/tesla", relayRoute("settings/tesla"))
+        assertEquals(listOf("settings"), relayRouteParents("settings/tesla"))
+        assertEquals(listOf("settings"), relayRouteParents("settings/tesla#teslaAddress"))
+        assertTrue(settingsSessionActive(RelayBackStack().open("settings:tesla").entries))
     }
 
     @Test fun identityAliasesResolveToATopLevelSettingsPage() {
@@ -64,7 +73,7 @@ class SettingsRoutesTest {
 
     @Test fun diagnosticsAndIdentityStatusPollingFollowTheDestination() {
         val diagnostics = setOf("developer", "developer/diagnostics", "developer/carlink", "settings/identity")
-        val routes = diagnostics + listOf("home", "setup", "vehicle", "settings", "settings/output", "settings/car",
+        val routes = diagnostics + listOf("home", "setup", "vehicle", "settings", "settings/output", "settings/car", "settings/tesla",
             "settings/picture", "settings/audio", "settings/connection", "settings/connection/network", "settings/startup",
             "settings/access", "settings/access/publicName", "settings/about", "developer/video",
             "developer/connection", "developer/identity")
@@ -76,8 +85,8 @@ class SettingsRoutesTest {
 
     @Test fun errorPagesFollowTheSettingsMenuOrder() {
         assertEquals("settings", firstSettingsErrorPage(emptySet()))
-        val order = listOf("settings/output", "settings/connection/network", "settings/identity",
-            "developer/video", "developer/connection")
+        val order = listOf("settings/output", "settings/tesla", "settings/connection/network", "settings/identity",
+            "developer/video", "developer/connection", "experimental")
         order.forEachIndexed { index, page ->
             assertEquals(page, firstSettingsErrorPage(order.drop(index).reversed().toSet()))
         }

@@ -562,6 +562,14 @@
               "value": "tesla"
             },
             {
+              "labelKey": "",
+              "labels": {
+                "en": "ZEEKR",
+                "zh-CN": "极氪"
+              },
+              "value": "zeekr"
+            },
+            {
               "labelKey": "option.carBrand.other",
               "value": "other"
             }
