@@ -8,20 +8,24 @@
 # flasher. Same files as rust/packaging/install.sh installs, with the unit in /lib/systemd/system
 # and /usr/sbin/openxplay-relay-update. Never contains an accessory identity.
 #
-# Usage: build-deb.sh [--version VERSION] PACKAGE_DIR_OR_TARBALL OUTPUT_DIR
+# Usage: build-deb.sh [--version VERSION] [--plugins-bundle DIR] PACKAGE_DIR_OR_TARBALL OUTPUT_DIR
 # Needs dpkg-deb; without it the build runs in a debian:bullseye container (Docker). Output is
 # byte-identical for identical inputs and SOURCE_DATE_EPOCH (default: newest file in the package).
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 fail() { echo "Error: $*" >&2; exit 1; }
 version=
+plugins=
+plugins_staged=
 while [ "$#" -gt 2 ]; do
     case "$1" in
     --version) version=$2; shift 2 ;;
+    --plugins-bundle) plugins=$2; shift 2 ;;
+    --staged-plugins) plugins_staged=$2; shift 2 ;;
     *) fail "Unknown option: $1" ;;
     esac
 done
-[ "$#" -eq 2 ] || fail "Usage: $0 [--version VERSION] PACKAGE_DIR_OR_TARBALL OUTPUT_DIR"
+[ "$#" -eq 2 ] || fail "Usage: $0 [--version VERSION] [--plugins-bundle DIR] PACKAGE_DIR_OR_TARBALL OUTPUT_DIR"
 src=$1
 mkdir -p "$2"
 out=$(CDPATH= cd -- "$2" && pwd)
@@ -35,6 +39,15 @@ if [ -f "$src" ]; then
     pkg=$1
 else
     pkg=$(CDPATH= cd -- "$src" && pwd)
+fi
+# The Docker child receives the host-filtered tree, so its base image needs no Python.
+if [ -n "$plugins_staged" ]; then
+    [ -d "$plugins_staged" ] || fail "Missing staged plugins"
+    cp -R "$plugins_staged" "$work/plugins"
+elif [ -n "$plugins" ]; then
+    python3 "$here/plugins-bundle.py" "$plugins" "$work/plugins"
+elif [ -d "$pkg/plugins" ]; then
+    python3 "$here/plugins-bundle.py" "$pkg/plugins" "$work/plugins"
 fi
 if [ -z "$version" ]; then
     version=$(basename "$pkg" | sed -n 's/^openxplay-relay-\(.*\)-linux-aarch64$/\1/p')
@@ -63,11 +76,16 @@ if ! command -v dpkg-deb >/dev/null 2>&1; then
     # Docker on macOS may not share these directories with its VM, so the inputs go in as a tar stream.
     mkdir -p "$work/in/packaging"
     cp -R "$pkg" "$work/in/openxplay-relay-$version-linux-aarch64"
-    cp -Rf "$here/host" "$here/deb" "$here/build-deb.sh" "$here/openxplay-relay-update.sh" "$here/install.sh" "$here/openxplay-relay.service" "$work/in/packaging/"
+    plugin_args=
+    if [ -d "$work/plugins" ]; then
+        cp -R "$work/plugins" "$work/in/plugins"
+        plugin_args='--staged-plugins /work/plugins'
+    fi
+    cp -Rf "$here/plugins-bundle.py" "$here/host" "$here/deb" "$here/build-deb.sh" "$here/openxplay-relay-update.sh" "$here/install.sh" "$here/openxplay-relay.service" "$work/in/packaging/"
     COPYFILE_DISABLE=1 tar --no-xattrs -cf - -C "$work/in" . |
         docker run -i --rm --platform linux/arm64 -e SOURCE_DATE_EPOCH debian:bullseye sh -c \
             "mkdir -p /work /out && tar -xf - -C /work &&
-             sh /work/packaging/build-deb.sh --version '$version' /work/openxplay-relay-$version-linux-aarch64 /out >&2 &&
+             sh /work/packaging/build-deb.sh --version '$version' $plugin_args /work/openxplay-relay-$version-linux-aarch64 /out >&2 &&
              tar -cf - -C /out ." |
         tar -xf - -C "$out"
     exit 0
@@ -81,6 +99,7 @@ install -d "$root/opt/openxplay/bin" "$root/opt/openxplay/share" "$root/lib/syst
 install -m 0755 "$pkg/bin/openxplay-relay" "$pkg/bin/oxp-relay" "$root/opt/openxplay/bin/"
 cp -R "$pkg/web" "$root/opt/openxplay/share/web"
 cp -R "$pkg/admin" "$root/opt/openxplay/share/admin"
+if [ -d "$work/plugins" ]; then cp -R "$work/plugins" "$root/opt/openxplay/share/plugins"; fi
 install -m 0644 "$pkg/LICENSE" "$pkg/LICENSE-GPL-3.0" "$pkg/NOTICE" "$root/opt/openxplay/share/licenses/"
 if [ -d "$pkg/licenses" ]; then cp -R "$pkg/licenses/." "$root/opt/openxplay/share/licenses/"; fi
 install -m 0644 "$here/openxplay-relay.service" "$root/lib/systemd/system/openxplay-relay.service"

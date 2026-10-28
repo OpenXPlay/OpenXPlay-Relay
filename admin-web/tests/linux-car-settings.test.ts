@@ -84,6 +84,6 @@ it('explains the Linux HEVC policy in both languages and allows low receiver por
   const fields = mockSettings(true).schema.flatMap(s => s.fields);
   expect(fields.find(f => f.key === 'carlinkHevc')?.hintKey).toBe('hint.field.carlinkHevc');
   expect(fields.find(f => f.key === 'receiverPort')?.min).toBe(1);
-  expect(translate('en', 'hint.field.carlinkHevc')).toBe('Automatic uses H.265 only when the relay outputs to Carlink alone and the video codec is not forced to H.264.');
+  expect(translate('en', 'hint.field.carlinkHevc')).toBe('Automatic sends H.265 to head units that advertise support; Off always sends H.264. Reconnect Carlink after changing.');
   expect(translate('zh-CN', 'hint.field.carlinkHevc')).toContain('H.264');
 });

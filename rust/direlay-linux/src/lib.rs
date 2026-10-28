@@ -29,6 +29,7 @@ pub mod linux_hotspot;
 pub mod linux_microphone;
 /// linux wireless platform protocol module.
 pub mod linux_wireless_platform;
+pub mod local_audio;
 /// network protocol module.
 pub mod network;
 /// platform protocol module.
@@ -41,6 +42,7 @@ pub mod replay_input;
 pub mod stream_bridge_sink;
 /// stream connection protocol module.
 pub mod stream_connection;
+pub mod transcode_capabilities;
 
 pub use cli::Options;
 pub use cli::PersistentState;

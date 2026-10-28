@@ -34,6 +34,7 @@ import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkV
 import { icon } from './icons';
 import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
 import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-stats';
+import { capabilityFieldEnabled, capabilityView } from './capabilities';
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
 import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
@@ -240,6 +241,7 @@ function renderReady() {
         catch (e) { pageError = errorKey(e); }
       }));
     }
+    if (['settings/developer/carlink', 'settings/developer/video', 'settings/developer/connection'].includes(route)) container.insertAdjacentHTML('beforeend', `<div id="capabilities">${capabilityView(status!, t)}</div>`);
     if (route === 'settings/developer/diagnostics') { container.insertAdjacentHTML('beforeend', '<div id="vehicle-sample" class="inset-group"></div><div id="diagnostics" class="inset-group"></div>'); renderDiagnostics(); if (status!.platform === 'linux') disposeVehicle = mountVehicleSample(document.getElementById('vehicle-sample')!, t, errorKey); }
     if (route === 'settings/developer/connection') {
       container.insertAdjacentHTML('beforeend', `<div class="inset-group"><button id="developer-restart">${t('home.restart')}</button><button id="forget-all-wifi">${t('net.forgetAll')}</button>${status!.platform === 'linux' ? `<button id="carlink-forget">${t('carlink.forget')}</button><button id="regenerate-code" ${settings!.values.requirePairingCode && settings!.values.output !== 'carlink' ? '' : 'disabled'}>${t('stage.regenerate')}</button>` : ''}</div>`);
@@ -392,9 +394,17 @@ function confirmRemovePublicName() {
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
   on(dialog.querySelector('.confirm')!, 'click', () => { close(); void publicNameAction('public-name-remove'); });
 }
+function renderCapabilities() {
+  const node = document.getElementById('capabilities'); if (!node || !status || !settings) return;
+  patchMarkup(node, capabilityView(status, t));
+  for (const field of fields()) {
+    const control = document.getElementById(fieldId(field.key));
+    control?.closest('.field')?.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea').forEach(input => { input.disabled = !fieldEnabled(field.key, settings!.values) || !capabilityFieldEnabled(field.key, status!); });
+  }
+}
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
-  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.receiverHistory, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, status.platform === 'linux' ? status.network : null, language]);
+  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.receiverHistory, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.transcoding, status.localAudio, status.wireless, status.platform === 'linux' ? status.network : null, language]);
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   const open = new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-details]')].filter(d => d.open).map(d => d.dataset.details));
@@ -590,7 +600,7 @@ function fieldMarkup(field: Field): string {
   field = editorField(field);
   const id = fieldId(field.key), value = settings!.values[field.key], draft = drafts.get(field.key);
   const label = esc(t(field.labelKey));
-  const attr = `${fieldEnabled(field.key, settings!.values) ? '' : 'disabled '}id="${id}" aria-describedby="${id}-hint ${id}-result"`;
+  const attr = `${(fieldEnabled(field.key, settings!.values) && capabilityFieldEnabled(field.key, status!)) ? '' : 'disabled '}id="${id}" aria-describedby="${id}-hint ${id}-result"`;
   let control = '';
   if (field.key === 'carlinkPictureSizes') control = `<div ${attr}></div>`;
   else if (field.type === 'plugins') control = `<div ${attr}>${pluginList(settings!, language, t, true)}</div>`;
@@ -609,8 +619,8 @@ function fieldMarkup(field: Field): string {
 function bindField(field: Field) {
   field = editorField(field);
   const el = document.getElementById(fieldId(field.key)); if (!el) return;
-  el.closest('.field')?.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea').forEach(control => { control.disabled = !fieldEnabled(field.key, settings!.values); });
-  if (!fieldEnabled(field.key, settings!.values)) return;
+  el.closest('.field')?.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea').forEach(control => { control.disabled = !(fieldEnabled(field.key, settings!.values) && capabilityFieldEnabled(field.key, status!)); });
+  if (!(fieldEnabled(field.key, settings!.values) && capabilityFieldEnabled(field.key, status!))) return;
   if (['carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'].includes(field.key)) { mountPictureField(el, field, settings!.values, t, async changes => { const response = await api.save(changes); needsRestart ||= restartRequired([], response.applied); renderRestart(); }, status!.carlink?.appliedPicture ? `${status!.carlink.appliedPicture.width} × ${status!.carlink.appliedPicture.height}` : undefined); return; }
   if (field.type === 'plugins') on(el, 'change', event => { const input = event.target as HTMLInputElement; queueValue(field, togglePlugin(settings!.values.pluginsEnabled, input.dataset.plugin!, input.checked)); });
   else if (field.type === 'bool' || field.key === 'carlinkTrace') on(el, 'change', () => queueSave(field, field.key === 'carlinkTrace' ? (el as HTMLInputElement).checked ? 'on' : 'off' : (el as HTMLInputElement).checked));
@@ -1010,7 +1020,7 @@ async function tick() {
           for (const [key, item] of pending) settings.values[key] = item.value;
           if (pending.has('publicNameProvider')) publicNameDrafts.select(String(settings.values.publicNameProvider), settings.values);
           switching = null; render(); document.getElementById('network-switch')?.focus();
-        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderTesla(); renderCarScreen(); renderConnections(); } }
+        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderCapabilities(); renderDiagnostics(); renderPublicName(); renderTesla(); renderCarScreen(); renderConnections(); } }
     }
   } catch (error) { if (!(error instanceof NetworkError)) { pageError = errorKey(error); if (!status) render(); } }
   finally { polling = false; }

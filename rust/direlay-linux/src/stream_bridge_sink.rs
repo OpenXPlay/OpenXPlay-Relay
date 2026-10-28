@@ -23,6 +23,8 @@ struct BridgeState {
     tails: BTreeMap<u16, Arc<AudioPolicyRun>>,
 }
 pub struct StreamBridgeSink {
+    audio_devices: crate::local_audio::Devices,
+    audio_settings: crate::settings::Settings,
     clock: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
     input: Arc<DiPlayInput>,
     delegate: Arc<dyn MediaSink>,
@@ -43,6 +45,8 @@ impl StreamBridgeSink {
             f.session = Some(session);
         }
         Self {
+            audio_devices: crate::local_audio::devices(std::path::Path::new("/")),
+            audio_settings: input.connection_settings().effective_developer(),
             clock: None,
             input,
             delegate,
@@ -299,10 +303,26 @@ impl MediaSink for StreamBridgeSink {
                     let predecessor = s.tails.get(&stream).cloned();
                     let announced = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let started = announced.clone();
+                    let playback = if self.audio_settings.play_car_play_audio {
+                        match crate::local_audio::Playback::open(format, &self.audio_devices) {
+                            Ok(playback) => Some(playback),
+                            Err(e) => {
+                                self.dropped("local-audio-unavailable", e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    let playback = Arc::new(Mutex::new(playback));
+                    let playback_end = playback.clone();
                     let run = Arc::new(AudioPolicyRun::new(
                         format.clone(),
                         predecessor,
                         Arc::new(move |payload, pts| {
+                            if let Some(playback) = &*playback.lock().unwrap() {
+                                playback.offer(&payload);
+                            }
                             if !started.swap(true, std::sync::atomic::Ordering::AcqRel) {
                                 if let Ok(m) = Message::audio_format(stream as u8, Some(&target)) {
                                     input.publish(session, &format!("2-audio-{stream}"), m);
@@ -325,6 +345,7 @@ impl MediaSink for StreamBridgeSink {
                             );
                         }),
                         Arc::new(move || {
+                            playback_end.lock().unwrap().take();
                             if let Ok(m) = Message::audio_format(stream as u8, None) {
                                 end_input.publish(session, &format!("2-audio-{stream}"), m);
                             }
@@ -374,7 +395,18 @@ impl MediaSink for StreamBridgeSink {
     fn on_microphone_started(&self, id: &AudioStreamId, config: &MicrophoneConfig) -> Result<()> {
         if let Some(stream) = AudioPolicy::stream(id) {
             let session = self.state.lock().unwrap().session;
-            let uplink = Arc::new(LinuxMicrophoneUplink::new(config.clone())?);
+            let local = self.audio_settings.microphone_source == "this-device";
+            let uplink: Arc<dyn MicrophoneUplink> = if local {
+                match crate::local_audio::Capture::open(config.clone(), &self.audio_devices) {
+                    Ok(capture) => Arc::new(capture),
+                    Err(e) => {
+                        self.dropped("local-microphone-unavailable", e);
+                        return Ok(());
+                    }
+                }
+            } else {
+                Arc::new(LinuxMicrophoneUplink::new(config.clone())?)
+            };
             let old = {
                 let mut s = self.input.state.lock().unwrap();
                 if s.current != Some(session) {
@@ -391,6 +423,9 @@ impl MediaSink for StreamBridgeSink {
                 _ => return Err(std::io::Error::other("Unsupported microphone codec")),
             };
             uplink.start()?;
+            if local {
+                return self.delegate.on_microphone_started(id, config);
+            }
             self.input.publish(
                 session,
                 &format!("3-mic-{stream}"),

@@ -824,6 +824,23 @@ impl LinuxRelayAdmin {
         if !self.wifi_present(o.carlink_interface()) {
             settings.carlink = None;
         }
+        if let Some(carlink) = &mut settings.carlink {
+            carlink.picture = crate::supervisor_settings::carlink_picture(
+                &o.settings,
+                self.input.display.lock().unwrap().pictures.trial,
+            );
+            carlink.hevc = crate::supervisor_settings::carlink_hevc_with_encoder(
+                &o.settings,
+                &self.input.display.lock().unwrap().saved.video_codec,
+                self.input
+                    .transcoding
+                    .lock()
+                    .unwrap()
+                    .clink
+                    .converts("H265", carlink.picture),
+            )
+            .into();
+        }
         let tesla_tls = crate::tesla_address::tls_address(&o.settings);
         let served = self
             .public_name
@@ -890,7 +907,31 @@ impl LinuxRelayAdmin {
         let hotspot = self.hotspot_lifetime.clone();
         let admin_hotspot = self.admin_hotspot.clone();
         let addresses = self.runtime.addresses.clone();
+        let capability_settings = self.settings.clone();
+        let capability_tx = self.operations.clone();
         let event_sink: EventSink = Arc::new(move |mut event| {
+            if event["type"] == "receiver-starting" {
+                *input.transcoding.lock().unwrap() = Default::default();
+                input.display.lock().unwrap().transcode_geometry = false;
+            }
+            if event["type"] == "transcode-capabilities" {
+                let effective = capability_settings.lock().unwrap().effective_developer();
+                let picture = crate::supervisor_settings::carlink_picture(
+                    &effective,
+                    input.display.lock().unwrap().pictures.trial,
+                );
+                let mut caps = input.transcoding.lock().unwrap();
+                let previous = caps.clink.converts("H265", picture);
+                if caps.observe(&event) && event["output"] == "clink" {
+                    let encoder = caps.clink.converts("H265", picture);
+                    let geometry = caps.clink.geometry(picture);
+                    drop(caps);
+                    input.display.lock().unwrap().transcode_geometry = geometry;
+                    if previous != encoder && effective.output != "web" {
+                        let _ = capability_tx.try_send(Operation::Carlink);
+                    }
+                }
+            }
             if vehicle
                 .lock()
                 .unwrap()
@@ -1173,20 +1214,30 @@ impl LinuxRelayAdmin {
                 self.apply_pending.store(false, Ordering::Release);
             }
             Operation::Carlink => {
-                let settings = self.settings.lock().unwrap().clone();
+                let settings = self.settings.lock().unwrap().effective_developer();
                 self.carlink_hevc_disabled.store(false, Ordering::Release);
                 self.vehicle
                     .lock()
                     .unwrap()
                     .enable(settings.vehicle_information);
-                let (picture, hevc) = {
+                let (picture, codec) = {
                     let d = self.input.display.lock().unwrap();
                     (
-                        d.pictures.trial.unwrap_or(d.picture_default),
-                        crate::supervisor_settings::carlink_hevc(&settings, &d.saved.video_codec)
-                            .to_owned(),
+                        crate::supervisor_settings::carlink_picture(&settings, d.pictures.trial),
+                        d.saved.video_codec.clone(),
                     )
                 };
+                let (encoder, geometry) = {
+                    let caps = self.input.transcoding.lock().unwrap();
+                    (
+                        caps.clink.converts("H265", picture),
+                        caps.clink.geometry(picture),
+                    )
+                };
+                self.input.display.lock().unwrap().transcode_geometry = geometry;
+                let hevc = crate::supervisor_settings::carlink_hevc_with_encoder(
+                    &settings, &codec, encoder,
+                );
                 if let Some(s) = self
                     .supervisor
                     .lock()
@@ -1194,7 +1245,7 @@ impl LinuxRelayAdmin {
                     .as_ref()
                     .filter(|_| settings.output != "web")
                 {
-                    s.restart_carlink(picture, &hevc, settings.vehicle_information)?;
+                    s.restart_carlink(picture, hevc, settings.vehicle_information)?;
                 }
             }
             Operation::ReceiverTls => {
@@ -2524,8 +2575,9 @@ fn runtime_section(id: &str, keys: &[(&str, &str)]) -> Section {
                 key: (*key).into(),
                 field_type: (*kind).into(),
                 label_key: format!("field.{key}"),
-                hint_key: (key.starts_with("experimental") || *key == "developerActive")
-                    .then(|| format!("hint.field.{key}")),
+                hint_key: (key.starts_with("experimental")
+                    || matches!(*key, "developerActive" | "carlinkPictureSize"))
+                .then(|| format!("hint.field.{key}")),
                 options: (*key == "carlinkPictureSize").then(|| {
                     ["window", "mode"]
                         .into_iter()
@@ -2643,6 +2695,10 @@ pub fn settings_schema() -> Vec<Section> {
         ("vehicleInformation", "bool"),
         ("carlinkReconnectOnResize", "bool"),
         ("carlinkHevc", "choice"),
+        ("webTranscode", "bool"),
+        ("playCarPlayAudio", "bool"),
+        ("microphoneSourceEnabled", "bool"),
+        ("microphoneSource", "choice"),
         ("carlinkTrace", "choice"),
         ("autoStart", "bool"),
         ("bootStart", "bool"),
@@ -2687,6 +2743,18 @@ pub fn settings_schema() -> Vec<Section> {
             .then(|| format!("hint.field.{key}"))
         },
         options: match key {
+            "microphoneSource" => Some(
+                ["head-unit", "this-device"]
+                    .into_iter()
+                    .map(|v| FieldOption {
+                        labels: None,
+                        value: v.into(),
+                        label_key: format!("option.microphoneSource.{v}"),
+                        hint_key: None,
+                        illustration: None,
+                    })
+                    .collect(),
+            ),
             "carlinkHevc" | "carlinkTrace" | "videoStats" => Some(
                 (if key == "carlinkHevc" {
                     vec!["auto", "off", "signal"]
@@ -2932,6 +3000,9 @@ fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static st
     changed!(physical_width_enabled, "physicalWidthEnabled");
     changed!(physical_width_override_mm, "physicalWidthOverrideMm");
     changed!(car_bluetooth_audio, "carBluetoothAudio");
+    changed!(play_car_play_audio, "playCarPlayAudio");
+    changed!(microphone_source, "microphoneSource");
+    changed!(microphone_source_enabled, "microphoneSourceEnabled");
     changed!(carlink_picture_default, "carlinkPictureDefault");
     changed!(carlink_picture_size, "carlinkPictureSize");
     keys
@@ -3581,6 +3652,9 @@ impl RelayAdmin for LinuxRelayAdmin {
             host: "openxplay-linux.local".into(),
             admin_hotspot: Some(self.admin_hotspot.status()),
             host_capabilities: self.capabilities.get(),
+            local_audio: crate::local_audio::devices(&self.runtime.root),
+            transcoding: serde_json::to_value(&*self.input.transcoding.lock().unwrap())
+                .unwrap_or_default(),
             wireless: Some({
                 let wifi = self.capabilities.cached_wifi(&options.wifi_interface);
                 let phy = wifi.as_ref().and_then(|w| w.capabilities.as_ref());
@@ -3881,6 +3955,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 let effective_current = current.effective_developer();
                 let outputs_changed = picture.video_codec
                     != self.input.display_settings().video_codec
+                    || effective_next.web_transcode != effective_current.web_transcode
                     || next.plugins != current.plugins
                     || next.plugins_enabled != current.plugins_enabled
                     || next.output != current.output
@@ -4864,6 +4939,77 @@ mod tests {
             .unwrap();
         assert!(matches!(operation, Operation::ReceiverTls));
         operation
+    }
+    #[test]
+    fn child_encoder_event_unlocks_dual_output_hevc_without_replacing_the_browser() {
+        let (mut admin, dir) = fake();
+        {
+            let mut settings = admin.settings.lock().unwrap();
+            settings.output = "both".into();
+            settings.developer_active = true;
+            settings.carlink_picture_size = "mode".into();
+        }
+        let (factory, rx) = crate::supervisor::receiver_tls_tests::FakeChildFactory::new();
+        Arc::get_mut(&mut admin).unwrap().child_factory = factory.clone();
+        admin.start_supervisor().unwrap();
+        factory.wait_started();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !admin.supervisor.lock().unwrap().as_ref().unwrap().running() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let event = factory.events.lock().unwrap().clone().unwrap();
+        let caps = serde_json::json!({"type":"transcode-capabilities","output":"clink","enabled":true,"available":true,"decode":["H264"],"encode":[{"codec":"H264","maxWidth":1920,"maxHeight":1080},{"codec":"H265","maxWidth":1920,"maxHeight":1080}],"scaling":true,"description":"fake encoder"});
+        event(caps.clone());
+        let operation = admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert!(matches!(operation, Operation::Carlink));
+        admin.operation(operation).unwrap();
+        let mut command = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        while command.value["hevc"] != "auto" {
+            command = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        assert_eq!(command.value["type"], "clink-restart");
+        assert_eq!(
+            command.value["picture"],
+            serde_json::json!({"width":1280,"height":720})
+        );
+        assert!(admin.input.display.lock().unwrap().transcode_geometry);
+        event(caps);
+        assert!(admin
+            .operation_rx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .try_recv()
+            .is_err());
+        assert_eq!(factory.launches.lock().unwrap().len(), 1);
+        assert_eq!(factory.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(admin.status().transcoding["clink"]["available"], true);
+        event(
+            serde_json::json!({"type":"receiver-info","client":"browser-1","info":{"refreshHz":60}}),
+        );
+        event(
+            serde_json::json!({"type":"receiver-disconnected","client":"browser-1","code":1000,"reason":"closed"}),
+        );
+        assert!(admin.receivers().is_empty());
+        assert_eq!(admin.receiver_history()["disconnects"][0]["code"], 1000);
+        assert_eq!(
+            admin.receiver_history()["disconnects"][0]["report"]["info"]["refreshHz"],
+            60
+        );
+        admin.shutdown();
+        drop(command);
+        drop(event);
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn tesla_direct_switch_and_coalesced_updates_hot_swap_during_the_same_session() {

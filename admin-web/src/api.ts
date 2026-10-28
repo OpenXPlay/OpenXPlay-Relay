@@ -74,6 +74,7 @@ export interface PlannedNetwork {
 }
 export interface NetworkProposal { plan: NetworkPlan; checks: NetworkCheck[]; changes: ('controller' | 'carlink' | 'carBrowserAddress' | 'adminHotspot' | 'wifiCountry')[]; applied?: true }
 export interface BluetoothGuard { state: 'ok' | 'recovering' | 'failed'; attempts: number; lastRecovery: string | null; lastError: string | null; address: string | null }
+export interface TranscodeCapability { enabled: boolean; available: boolean; decode: string[]; encode: { codec: string; maxWidth: number | null; maxHeight: number | null }[]; scaling: boolean; description: string }
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
 export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updating-address' | 'requesting-certificate' | 'ready' | 'error';
@@ -92,7 +93,10 @@ export interface Status {
   // Android 12+: the Nearby devices step of a pairing window, and whether the request waits in a notification.
   pairingNeedsPermission?: boolean; pairingPermissionDenied?: boolean; pairingNotified?: boolean;
   receiverHistory?: { screens: { width: number; height: number; densityDpi: number; info: Record<string, unknown> }[];
+    disconnects?: { time: number; client: string; code: number; reason: string; report: unknown }[];
     fullscreenExits: { time: number; client: string; report: Record<string, unknown> }[] };
+  transcoding?: { web: TranscodeCapability; clink: TranscodeCapability };
+  localAudio?: { playback: string[]; capture: string[]; playbackAvailable: boolean; captureAvailable: boolean };
   video?: VideoStatus; receivers?: ReceiverReport[]; bluetoothGuard?: BluetoothGuard;
   hotspot?: { security?: HotspotSecurity; supportedSecurity?: HotspotSecurity[]; hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;

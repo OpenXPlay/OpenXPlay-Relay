@@ -536,6 +536,7 @@ pub(crate) struct DisplayRuntime {
     pub pending_picture_default: bool,
     pub carlink_primary: bool,
     pub carlink_mode: bool,
+    pub transcode_geometry: bool,
     pub fallback: Option<(HeadUnit, Vec<Record>)>,
     pub disable_view_areas: bool,
     pub path: Option<PathBuf>,
@@ -611,12 +612,15 @@ impl DisplayRuntime {
         profile_density(canvas)
     }
     pub fn view_areas_enabled(&self) -> bool {
-        !self.disable_view_areas && self.fixed_profile.is_none() && self.pictures.applied.is_none()
+        !self.disable_view_areas
+            && self.fixed_profile.is_none()
+            && (self.transcode_geometry || self.pictures.applied.is_none())
     }
     fn target(&self) -> Target {
         let canvas = self
             .pictures
             .applied
+            .filter(|_| !self.transcode_geometry)
             .or_else(|| {
                 self.fixed_profile.map(|p| Size {
                     width: p.width,
@@ -780,7 +784,9 @@ impl DisplayRuntime {
         if self.fixed_profile.is_none() {
             self.saved.canvas = target.canvas;
         }
-        self.areas = if self.pictures.applied.is_some() || target.disable_view_areas {
+        self.areas = if (!self.transcode_geometry && self.pictures.applied.is_some())
+            || target.disable_view_areas
+        {
             plan_areas(target.canvas, None, &[])
         } else {
             let records = merge_records(
@@ -1117,6 +1123,47 @@ mod tests {
         assert!(d.saved.head_unit.is_none());
         assert_ne!(d.saved.canvas, DisplayState::default().canvas);
         assert!(d.areas.len() > 1);
+    }
+    #[test]
+    fn encoder_keeps_output_picture_separate_from_the_iphone_canvas_and_crop() {
+        let canvas = Size {
+            width: 1920,
+            height: 1080,
+        };
+        let mut d = DisplayRuntime {
+            carlink_primary: true,
+            carlink_mode: true,
+            transcode_geometry: true,
+            ..Default::default()
+        };
+        d.saved.canvas = canvas;
+        d.freeze();
+        assert_eq!(
+            d.pictures.applied,
+            Some(Size {
+                width: 1280,
+                height: 720
+            })
+        );
+        assert_eq!(d.saved.canvas, canvas);
+        assert_eq!(d.target().canvas, canvas);
+        assert!(d.view_areas_enabled());
+        d.picture_default = Some(Size {
+            width: 1280,
+            height: 800,
+        });
+        d.freeze();
+        assert_eq!(d.target().canvas, canvas);
+        d.transcode_geometry = false;
+        d.freeze();
+        assert_eq!(
+            d.target().canvas,
+            Size {
+                width: 1280,
+                height: 800
+            }
+        );
+        assert!(!d.view_areas_enabled());
     }
     #[test]
     fn picture_pins_canvas_and_whole_view_until_connection_ends() {

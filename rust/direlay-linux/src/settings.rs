@@ -50,6 +50,10 @@ pub struct Settings {
     pub carlink_model: String,
     pub carlink_auto_reconnect: bool,
     pub carlink_reconnect_on_resize: bool,
+    pub web_transcode: bool,
+    pub play_car_play_audio: bool,
+    pub microphone_source: String,
+    pub microphone_source_enabled: bool,
     pub carlink_hevc: String,
     pub carlink_trace: String,
     pub vehicle_information: bool,
@@ -133,6 +137,10 @@ impl Default for Settings {
             carlink_model: crate::branding::MODEL.into(),
             carlink_auto_reconnect: true,
             carlink_reconnect_on_resize: false,
+            web_transcode: true,
+            play_car_play_audio: false,
+            microphone_source: "head-unit".into(),
+            microphone_source_enabled: false,
             carlink_hevc: "auto".into(),
             carlink_trace: "off".into(),
             vehicle_information: false,
@@ -199,6 +207,9 @@ impl Settings {
         let mut value = self.clone();
         if !self.developer_active {
             let defaults = Self::default();
+            value.play_car_play_audio = false;
+            value.microphone_source = defaults.microphone_source;
+            value.web_transcode = defaults.web_transcode;
             value.carlink_trace = defaults.carlink_trace;
             value.carlink_hevc = defaults.carlink_hevc;
             value.carlink_picture_size = defaults.carlink_picture_size;
@@ -212,6 +223,9 @@ impl Settings {
             value.carlink_local = defaults.carlink_local;
             value.carlink_pin = defaults.carlink_pin;
             value.carlink_ports = defaults.carlink_ports;
+        }
+        if !self.microphone_source_enabled {
+            value.microphone_source = "head-unit".into();
         }
         value
     }
@@ -459,6 +473,9 @@ impl Settings {
             if !(1..=128).contains(&value.len()) || value.chars().any(char::is_control) {
                 return Err(invalid(key));
             }
+        }
+        if !["head-unit", "this-device"].contains(&self.microphone_source.as_str()) {
+            return Err(invalid("error.invalid"));
         }
         if !["auto", "off", "signal"].contains(&self.carlink_hevc.as_str()) {
             return Err(invalid("Invalid carlinkHevc"));

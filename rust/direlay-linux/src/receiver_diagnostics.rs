@@ -13,7 +13,7 @@ use std::{
 
 pub const MAX_CLIENTS: usize = 8;
 pub const MAX_SAMPLES: usize = 30;
-/// oxp-relay reports no disconnects; a browser that stayed silent this long has gone.
+/// Compatibility expiry for children that do not report socket termination.
 pub const EXPIRY: Duration = Duration::from_secs(60);
 const MAX_INFO_BYTES: usize = 64 * 1024;
 const MAX_SAMPLE_BYTES: usize = 4 * 1024;
@@ -31,6 +31,7 @@ struct DiagnosticsState {
     clients: Vec<Client>,
     screens: VecDeque<((u32, u32, u32), Value)>,
     exits: VecDeque<Value>,
+    disconnects: VecDeque<Value>,
 }
 #[derive(Default)]
 pub struct ReceiverDiagnostics {
@@ -44,6 +45,34 @@ impl ReceiverDiagnostics {
         if matches!(kind, "receiver-stopped" | "receiver-restarting") {
             self.state.lock().unwrap().clients.clear();
             return false;
+        }
+        if kind == "receiver-disconnected" {
+            let Some(id) = client_id(&event["client"]) else {
+                return true;
+            };
+            let Some(code) = event["code"].as_u64().filter(|v| *v <= u16::MAX.into()) else {
+                return true;
+            };
+            let Some(reason) = event["reason"]
+                .as_str()
+                .filter(|r| matches!(*r, "closed" | "timeout" | "error"))
+            else {
+                return true;
+            };
+            let mut state = self.state.lock().unwrap();
+            let client = state
+                .clients
+                .iter()
+                .position(|c| c.id == id)
+                .map(|i| state.clients.remove(i));
+            let report = client.map(
+                |c| json!({"info":c.info,"stats":c.stats,"fullscreenExits":c.fullscreen_exits}),
+            );
+            if state.disconnects.len() == MAX_SAMPLES {
+                state.disconnects.pop_front();
+            }
+            state.disconnects.push_back(json!({"time":crate::platform::wall_clock().as_millis() as u64,"client":id,"code":code,"reason":reason,"report":report}));
+            return true;
         }
         if !matches!(kind, "receiver-info" | "stats" | "fullscreen-exit") {
             return false;
@@ -135,7 +164,7 @@ impl ReceiverDiagnostics {
         let state = self.state.lock().unwrap();
         let screens: Vec<_> = state.screens.iter().map(|((width, height, density), info)|
             json!({"width":width,"height":height,"densityDpi":density,"info":info})).collect();
-        json!({"screens":screens,"fullscreenExits":state.exits})
+        json!({"screens":screens,"fullscreenExits":state.exits,"disconnects":state.disconnects})
     }
     pub fn page_count(&self, now: Instant) -> usize {
         self.state
@@ -190,6 +219,40 @@ mod tests {
     use super::*;
     fn stats(client: &str, fps: u32) -> Value {
         json!({"type":"stats","client":client,"screen":0,"renderedFps":fps,"wsBytesPerSecond":500000})
+    }
+    #[test]
+    fn disconnect_removes_live_page_and_retains_bounded_reports_across_restarts() {
+        let d = ReceiverDiagnostics::default();
+        let now = Instant::now();
+        d.observe(
+            &json!({"type":"receiver-info","client":"browser-1","info":{"refreshHz":60}}),
+            now,
+        );
+        d.observe(&stats("browser-1", 60), now);
+        d.observe(&json!({"type":"receiver-disconnected","client":"browser-1","code":1011,"reason":"timeout","secret":"untrusted"}),now);
+        assert_eq!(d.page_count(now), 0);
+        assert!(d.snapshot(now).is_empty());
+        let history = d.history();
+        assert_eq!(
+            history["disconnects"][0]["report"]["stats"][0]["renderedFps"],
+            60
+        );
+        assert_eq!(history["disconnects"][0]["code"], 1011);
+        assert!(!history.to_string().contains("untrusted"));
+        d.observe(&json!({"type":"receiver-stopped"}), now);
+        assert_eq!(d.history(), history);
+        for n in 0..40 {
+            d.observe(
+                &json!({"type":"receiver-disconnected","client":n,"code":1000,"reason":"closed"}),
+                now,
+            );
+        }
+        assert_eq!(
+            d.history()["disconnects"].as_array().unwrap().len(),
+            MAX_SAMPLES
+        );
+        d.clear();
+        assert!(d.history()["disconnects"].as_array().unwrap().is_empty());
     }
     #[test]
     fn keeps_latest_info_and_a_rolling_stats_window_per_browser() {

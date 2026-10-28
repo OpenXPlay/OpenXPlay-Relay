@@ -313,7 +313,7 @@ impl Timeline {
             lines.push(client.attempt.line(
                 "browser",
                 mark,
-                json!({"client":id, "source":event}),
+                json!({"client":id, "source":event, "code":fields["code"].as_u64().filter(|c| *c <= 65535), "reason":fields["reason"].as_str().filter(|r| matches!(*r,"closed"|"timeout"|"error"))}),
                 at,
             ));
         }
@@ -376,6 +376,25 @@ mod tests {
             timeline.observe("stage", &stage, start + Duration::from_millis(3000))[0]["attempt"],
             2
         );
+    }
+    #[test]
+    fn receiver_disconnect_keeps_the_host_close_classification_in_the_browser_attempt() {
+        let mut timeline = Timeline::default();
+        let now = Instant::now();
+        timeline.browser(
+            "receiver-info",
+            &json!({"client":"browser-1","info":{}}),
+            now,
+        );
+        let lines = timeline.browser(
+            "receiver-disconnected",
+            &json!({"client":"browser-1","code":1006,"reason":"error","text":"secret"}),
+            now,
+        );
+        assert_eq!(lines[0]["mark"], "client_disconnected");
+        assert_eq!(lines[0]["detail"]["code"], 1006);
+        assert_eq!(lines[0]["detail"]["reason"], "error");
+        assert!(!serde_json::to_string(&lines).unwrap().contains("secret"));
     }
     #[test]
     fn carlink_generations_reject_late_events_and_keep_summary_identifiers() {

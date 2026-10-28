@@ -17,6 +17,32 @@ pub fn carlink_hevc<'a>(settings: &'a crate::settings::Settings, video_codec: &s
     }
 }
 
+/// The browser keeps its H.264 source; a compatible encoder converts only Carlink.
+pub fn carlink_hevc_with_encoder<'a>(
+    settings: &'a crate::settings::Settings,
+    video_codec: &str,
+    encoder: bool,
+) -> &'a str {
+    if encoder && settings.output != "web" {
+        &settings.carlink_hevc
+    } else {
+        carlink_hevc(settings, video_codec)
+    }
+}
+pub fn carlink_picture(
+    settings: &crate::settings::Settings,
+    trial: Option<Option<crate::display::Size>>,
+) -> Option<crate::display::Size> {
+    trial
+        .unwrap_or(settings.carlink_picture_default)
+        .or_else(|| {
+            (settings.carlink_picture_size == "mode").then_some(crate::display::Size {
+                width: 1280,
+                height: 720,
+            })
+        })
+}
+
 /// Pure assembly: callers supply the current host observations.
 pub fn supervisor_settings(
     o: &Options,
@@ -88,6 +114,7 @@ pub fn supervisor_settings(
         None
     };
     SupervisorSettings {
+        web_transcode: o.settings.web_transcode,
         binary: o.oxp_relay.clone(),
         socket: o.stream_socket.clone(),
         web_port: if o.settings.output == "carlink" {

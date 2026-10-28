@@ -12,8 +12,8 @@ mod mdns_host;
 #[path = "../src/provision.rs"]
 mod provision;
 use openxplay_relay::{
-    boot_timing, carlink_policy, device_preset, display, host_capabilities, network_roles,
-    platform, plugins, public_name, runtime_paths, settings, wifi_capabilities,
+    boot_timing, carlink_policy, device_preset, display, host_capabilities, local_audio,
+    network_roles, platform, plugins, public_name, runtime_paths, settings, wifi_capabilities,
 };
 #[path = "../src/supervisor.rs"]
 mod supervisor;
@@ -825,6 +825,7 @@ fn supervisor_settings() -> supervisor::SupervisorSettings {
         socket: "/tmp/receiver.sock".into(),
         web_port: 8443,
         web_root: "/opt/openxplay/share/receiver".into(),
+        web_transcode: true,
         plugins: None,
         state_dir: "/var/lib/openxplay".into(),
         addresses: vec!["192.168.1.78".parse().unwrap()],
@@ -1743,6 +1744,8 @@ fn plugin_arguments_off_golden_and_on_filtered_in_order() {
         "/var/lib/openxplay/receiver-tls",
         "--tls-san",
         "openxplay-linux.local",
+        "--web-transcode",
+        "auto",
         "--host-ui",
         "--relay-name",
         "OpenXPlay Linux",

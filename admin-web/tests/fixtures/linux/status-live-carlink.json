@@ -113,6 +113,12 @@
     "name": "iPhone",
     "reason": "Selected"
   },
+  "localAudio": {
+    "capture": [],
+    "captureAvailable": false,
+    "playback": [],
+    "playbackAvailable": false
+  },
   "name": "OpenXPlay Linux",
   "network": {
     "followingCarlink": false,
@@ -277,6 +283,24 @@
     "switches": []
   },
   "state": "Idle",
+  "transcoding": {
+    "clink": {
+      "available": false,
+      "decode": [],
+      "description": "",
+      "enabled": false,
+      "encode": [],
+      "scaling": false
+    },
+    "web": {
+      "available": false,
+      "decode": [],
+      "description": "",
+      "enabled": false,
+      "encode": [],
+      "scaling": false
+    }
+  },
   "version": "0.1.6-beta.1",
   "video": {
     "active": false,
