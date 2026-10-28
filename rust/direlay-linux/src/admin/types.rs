@@ -569,6 +569,10 @@ pub trait RelayAdmin: Send + Sync + 'static {
     fn logs_upload(&self, _id: &str) -> Result<Value, String> {
         Err("rejected".into())
     }
+    /// Poll/cancel a single explicit background upload; cancellation does not remove its ZIP.
+    fn logs_upload_status(&self, _id: &str, _cancel: bool) -> Option<Value> {
+        None
+    }
     fn logs_receipt(&self) -> std::io::Result<Option<Value>> {
         Ok(None)
     }

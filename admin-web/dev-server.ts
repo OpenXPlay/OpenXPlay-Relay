@@ -234,6 +234,7 @@ export function mockApi(linux = false): Plugin {
     return result;
   };
   let settings = demoSettings(linux);
+  const logJobs = new Map<string, { job: import('./src/logs-page').LogJob; started: number }>();
   let latestReceipt: import('./src/feature-pages').LogReceipt | null = null;
   let privacyConfig: Record<string, unknown> = {};
   const exports = new Map<string, { data: Buffer; createdMillis: number }>();
@@ -318,7 +319,7 @@ export function mockApi(linux = false): Plugin {
         const id = randomUUID(), createdMillis = Date.now();
         const data = mockZip({ 'relay.log': `OpenXPlay mock log, range ${body.range}\nBluetooth <redacted>\n`, 'info.txt': `platform=${linux ? 'linux' : 'android'}\nversion=0.2.1\n`, 'timeline.txt': 'Carlink scanning → Wi-Fi joined → first video received\n' });
         exports.set(id, { data, createdMillis });
-        return send(200, { id, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex'), createdMillis });
+        return send(200, { id, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex'), createdMillis, firstMillis: createdMillis - 60000, lastMillis: createdMillis, empty: false, truncated: false });
       }
       if (path.startsWith('/logs/export/') && method === 'GET') {
         const file = exports.get(decodeURIComponent(path.slice('/logs/export/'.length)));
@@ -328,8 +329,28 @@ export function mockApi(linux = false): Plugin {
       if (path === '/logs/upload' && method === 'POST') {
         const error = previewUrl.searchParams.get('uploadError'); if (error && ['offline', 'too_large', 'rejected', 'timeout'].includes(error)) return send(503, { error });
         if (!exports.has(String(body.id))) return send(404, { error: 'error.request' });
-        latestReceipt = { logId: 'DEMO-20261027', trackingUrl: 'https://logs.openxplay.org/receipts/DEMO-20261027', qrCodeUrl: '/api/v0/logs/qr.png', expiresMillis: Date.now() + 48 * 3600000 };
-        return send(200, latestReceipt);
+        const receipt = { logId: 'DEMO-20261027', trackingUrl: 'https://logs.openxplay.org/receipts/DEMO-20261027', qrCodeUrl: '/api/v0/logs/qr.png', expiresMillis: Date.now() + 48 * 3600000 };
+        if (!linux) { latestReceipt = receipt; return send(200, receipt); }
+        if ([...logJobs.values()].some(entry => entry.job.state === 'running')) return send(409, { error: 'rejected' });
+        const id = randomUUID(), total = exports.get(String(body.id))!.data.length;
+        const job: import('./src/logs-page').LogJob = { id, exportId: String(body.id), state: 'running', phase: 'Connecting', sent: 0, total, elapsedMillis: 0, receipt: null, error: null };
+        if (logJobs.size >= 8) logJobs.delete(logJobs.keys().next().value!);
+        logJobs.set(id, { job, started: Date.now() }); return send(200, job);
+      }
+      if (linux && path.startsWith('/logs/upload/') && ['GET', 'DELETE'].includes(method)) {
+        const entry = logJobs.get(decodeURIComponent(path.slice('/logs/upload/'.length)));
+        if (!entry) return send(404, { error: 'error.request' });
+        const job = entry.job;
+        if (job.state === 'running') {
+          job.elapsedMillis = Date.now() - entry.started;
+          if (method === 'DELETE') job.state = 'cancelled';
+          else if (job.elapsedMillis >= 3000) {
+            job.state = 'completed';
+            latestReceipt = job.receipt = { logId: 'DEMO-20261027', trackingUrl: 'https://logs.openxplay.org/receipts/DEMO-20261027', qrCodeUrl: '/api/v0/logs/qr.png', expiresMillis: Date.now() + 48 * 3600000 };
+          } else if (job.elapsedMillis >= 2000) { job.phase = 'AwaitingReceipt'; job.sent = job.total; }
+          else if (job.elapsedMillis >= 1000) { job.phase = 'Sending'; job.sent = Math.floor(job.total / 2); }
+        }
+        return send(200, job);
       }
       if (path === '/logs/receipt' && method === 'GET') return send(latestReceipt ? 200 : 404, latestReceipt ?? { error: 'error.request' });
       if (path === '/logs/qr.png' && method === 'GET') { res.setHeader('Content-Type', 'image/png'); return res.end(MOCK_QR); }

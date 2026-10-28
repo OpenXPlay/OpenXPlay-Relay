@@ -44,7 +44,12 @@ pub fn archive(entries: &[(&str, &[u8])], seconds: u64) -> io::Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     for (name, body) in entries {
-        if name.is_empty() || name.contains(['/', '\\', '\0']) {
+        if name.is_empty()
+            || name.contains(['\\', '\0'])
+            || name
+                .split('/')
+                .any(|part| part.is_empty() || matches!(part, "." | ".."))
+        {
             return Err(invalid());
         }
         let name_len = u16::try_from(name.len()).map_err(|_| invalid())?;

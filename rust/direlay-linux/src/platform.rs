@@ -107,6 +107,7 @@ pub struct JsonEvents {
     startup_diagnostics: std::sync::atomic::AtomicBool,
     output: Arc<dyn Fn(String) + Send + Sync>,
     gate: Mutex<()>,
+    log_timeline: Mutex<crate::logs::timeline::Timeline>,
     follow_timeline: Mutex<Option<(Instant, Instant, bool)>>,
     timing: crate::boot_timing::BootTiming,
     pub(crate) facts: Arc<Mutex<crate::path_facts::RuntimePathFacts>>,
@@ -119,6 +120,7 @@ impl JsonEvents {
             startup_diagnostics: std::sync::atomic::AtomicBool::new(true),
             output,
             gate: Mutex::new(()),
+            log_timeline: Mutex::default(),
             follow_timeline: Mutex::new(None),
             timing: Default::default(),
             facts: Arc::default(),
@@ -233,9 +235,35 @@ impl JsonEvents {
         }
         filter(&mut fields, &secrets);
         drop(secrets);
+        crate::logs::journal::value(&mut fields);
         fields
     }
+    /// Observations that need accounting but must not put periodic stats in the journal.
+    pub fn log_observation(&self, event: &str, fields: &serde_json::Value) {
+        let at = Instant::now();
+        let fields = self.filtered(fields);
+        let mut timeline = self.log_timeline.lock().unwrap();
+        let records = if event == "network-observed" {
+            timeline.observe(event, &fields, at)
+        } else {
+            timeline.browser(event, &fields, at)
+        };
+        drop(timeline);
+        if records.is_empty() {
+            return;
+        }
+        let _gate = self.gate.lock().unwrap();
+        for mut record in records {
+            record["time"] = serde_json::json!(timestamp());
+            (self.output)(record.to_string());
+        }
+    }
     pub fn emit(&self, event: &str, fields: &serde_json::Value) {
+        // Raw vehicle data belongs to the opt-in history consumer, never to journald.
+        if event == "clink-vehicle" {
+            return;
+        }
+        let observed_at = Instant::now();
         let fields = self.filtered(fields);
         if event == "stage" && fields["stage"] == "WirelessActive" {
             self.follow_over("iphone-connected");
@@ -258,7 +286,16 @@ impl JsonEvents {
                 v[k] = x.clone();
             }
         }
+        let timeline = self
+            .log_timeline
+            .lock()
+            .unwrap()
+            .observe(event, &fields, observed_at);
         (self.output)(v.to_string());
+        for mut record in timeline {
+            record["time"] = v["time"].clone();
+            (self.output)(record.to_string());
+        }
     }
     pub fn log(&self, message: &str) {
         self.emit("diagnostic", &serde_json::json!({"message":message}));

@@ -135,7 +135,9 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
 }
 export const api = {
   logExport: (range: '10m' | '30m' | '24h') => request<import('./feature-pages').LogExport>('/logs/export', 'POST', { range }, false, 60000),
-  logUpload: (id: string) => request<import('./feature-pages').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
+  logUpload: (id: string) => request<import('./logs-page').LogJob | import('./logs-page').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
+  logUploadStatus: (id: string) => request<import('./logs-page').LogJob>('/logs/upload/' + encodeURIComponent(id), 'GET', undefined, false),
+  logUploadCancel: (id: string) => request<import('./logs-page').LogJob>('/logs/upload/' + encodeURIComponent(id), 'DELETE', {}, false),
   logReceipt: () => request<import('./feature-pages').LogReceipt>('/logs/receipt', 'GET', undefined, false),
   configImport: (envelope: unknown, dryRun = false) => request<import('./feature-pages').ConfigImport>('/config/import' + (dryRun ? '?dryRun=1' : ''), 'POST', envelope, false, 8000, typeof envelope === 'string'),
   updateCheck: async (channel: 'stable' | 'beta') => { const result = await request<import('./update-check').UpdateResponse | { error: string }>('/update?channel=' + channel + '&fresh=1', 'GET', undefined, false, 45000); if ('error' in result) throw new ApiError(503, result.error); return result; },
