@@ -261,7 +261,7 @@ pub fn hotspot_credentials(state_dir: &std::path::Path) -> Result<(String, Strin
                 crate::branding::HOTSPOT_SSID_PREFIX,
                 random_characters(4, b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")?
             );
-            let password = random_characters(10, b"abcdefghijklmnopqrstuvwxyz0123456789")?;
+            let password = "openxplay";
             let s = format!("{ssid}\n{password}\n");
             private_state_file(&p, s.as_bytes())?;
             s
@@ -1020,7 +1020,7 @@ mod credential_tests {
     use super::*;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     #[test]
-    fn fresh_credentials_are_short_and_existing_files_are_unchanged() {
+    fn fresh_credentials_use_default_password_and_existing_files_are_unchanged() {
         let dir = std::env::temp_dir().join(format!(
             "hotspot-{}",
             crate::admin::auth::random_hex(8).unwrap()
@@ -1031,10 +1031,8 @@ mod credential_tests {
         assert!(suffix
             .bytes()
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
-        assert_eq!(password.len(), 10);
-        assert!(password
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
+        assert_eq!(password, "openxplay");
+        assert_eq!(hotspot_credentials(&dir).unwrap(), (ssid, password));
         let path = dir.join("hotspot.credentials");
         let legacy = b"Old-Hotspot-12345678\nlong-legacy-password-1234567890\n";
         std::fs::write(&path, legacy).unwrap();
