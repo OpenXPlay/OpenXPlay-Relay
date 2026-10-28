@@ -19,6 +19,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.presentation.CarScreenView
+import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 
 @Composable fun CarScreenSettings(draft: RelaySettings, view: CarScreenView, wireless: (RelaySettings) -> Boolean,
     clearHeadUnit: () -> Unit, target: String = "", openTrustedHttps: () -> Unit = {}, change: (RelaySettings) -> Unit) {
@@ -36,6 +37,12 @@ import org.openxplay.direlay.presentation.CarScreenView
     SettingsGroup("car", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.car_and_screen), carSelectionSummary(car, models, locale, none, other), initiallyExpanded = false,
         targeted = target == "car", error = !car.complete) {
         CarPicker(car, models, locale) { change(draft.copy(car = it)) }
+        if (trustedHttpsRecommended(car, view.publicName.hasTrustedNameConfiguration())) {
+            Hint(stringResource(R.string.car_zeekr_trusted_https_hint))
+            TextButton(onClick = openTrustedHttps, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.car_open_trusted_https))
+            }
+        }
     }
     SettingsGroup("canvas", R.drawable.symbol_monitor, IconHue.CAR, stringResource(R.string.car_saved_canvas), savedCanvas?.let { "${it.profile.width} × ${it.profile.height}" } ?: none) {
         savedCanvas?.let { saved ->
