@@ -40,6 +40,12 @@ import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
     SettingsGroup("car", R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.car_and_screen), carSelectionSummary(car, models, locale, none, other), initiallyExpanded = false,
         targeted = target == "car", error = !car.complete) {
         CarPicker(car, models, locale) { change(draft.copy(car = it)) }
+        if (trustedHttpsRecommended(car, view.publicName.hasTrustedNameConfiguration())) {
+            Hint(stringResource(R.string.car_zeekr_trusted_https_hint))
+            TextButton(onClick = openTrustedHttps, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.car_open_trusted_https))
+            }
+        }
     }
     if (car.brand == "tesla" || draft.teslaBrowser != TeslaBrowserMode.OFF)
         TeslaBrowserSettings(draft, view, wireless, openTrustedHttps, openOutput, change)
