@@ -61,3 +61,12 @@ it('retains the backend arrival, armed and frozen failure contracts for the star
   expect(failure.trail.some(line => line.startsWith('+2.000s '))).toBe(true);
   expect(linuxSettings.values.bootStart).toBe(true);
 });
+
+it('keeps paused, automatic and armed startup facts consistent in every Linux fixture', () => {
+  for (const status of Object.values(linuxStatusFixtures)) {
+    const startup = status.pathInput!.startup!;
+    expect(startup.paused).toBe(status.autoStartPaused);
+    if (startup.paused) { expect(startup.automatic).toBe(false); expect(status.pathInput!.iphone!.armed).toBe(false); }
+    if (status.running || status.pathInput!.iphone!.armed || startup.arrival.pending) expect(startup.paused).toBe(false);
+  }
+});

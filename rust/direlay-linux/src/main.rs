@@ -85,7 +85,10 @@ impl Options {
         while i < args.len() {
             let option = &args[i];
             i += 1;
-            if option == "--pairing" || option == "--reset-admin-password" {
+            if option == "--pairing"
+                || option == "--reset-admin-password"
+                || option == "--enable-admin"
+            {
                 if values.insert(option.clone(), "true".into()).is_some() {
                     return Err(invalid(format!("Missing or duplicate value for {option}")));
                 }
@@ -440,12 +443,20 @@ pub fn run() -> Result<()> {
         }
     };
     let state = Arc::new(PersistentState::open(&options.state_dir)?);
-    if options.overrides.contains_key("--reset-admin-password") {
+    if options.overrides.contains_key("--reset-admin-password")
+        || options.overrides.contains_key("--enable-admin")
+    {
         let mut auth = crate::admin::AdminAuth::new(Box::new(crate::admin::FileAuthStore(
             options.state_dir.join("admin-auth.json"),
         )))?;
-        auth.reset()?;
-        events.emit("admin-password-reset", &serde_json::json!({}));
+        if options.overrides.contains_key("--enable-admin") {
+            auth.set_access_enabled(true)?;
+            events.emit("admin-access-enabled", &serde_json::json!({}));
+        }
+        if options.overrides.contains_key("--reset-admin-password") {
+            auth.reset()?;
+            events.emit("admin-password-reset", &serde_json::json!({}));
+        }
         return Ok(());
     }
     let admin = Arc::new(crate::relay_admin::LinuxRelayAdmin::new(
@@ -534,4 +545,4 @@ pub fn run() -> Result<()> {
     }
     state.close()
 }
-pub const USAGE:&str="Usage: openxplay-relay [options]\n  --identity-dir DIR    Local identity.pk8 and certificate.p7b (default /var/lib/openxplay/mfi)\n  --state-dir DIR       Private state (default /var/lib/openxplay)\n  --host-profile PATH  Device profile (default /etc/openxplay/host.json)\n  --device-preset ID   Device preset: auto, msm8916, phicomm-n1, generic (default auto)\n  --network-mode MODE   device-hotspot or shared-wifi\n  --wifi-interface IF   Wi-Fi interface (profile default, otherwise wlan0)\n  --carlink-interface IF Carlink station interface (empty = Wi-Fi interface)\n  --wifi-channel N      AP channel (0 = automatic; 2.4 GHz fallback 6)\n  --wifi-ssid SSID      Shared Wi-Fi SSID\n  --wifi-password PASS  Shared Wi-Fi password\n  --iphone ADDR         Select bonded iPhone\n  --rfcomm-channel N    iAP2 RFCOMM channel override (1..30)\n  --pair SECONDS        Auto-accept pairing window (1..3600)\n  --stream-socket PATH  oxp-relay socket (default /tmp/oxp-relay.sock)\n  --oxp-relay PATH      Output binary\n  --web-root DIR        Receiver web assets\n  --plugins-root DIR   Installed plugins (default /opt/openxplay/share/plugins)\n  --admin-root DIR      Admin assets (default /opt/openxplay/share/admin)\n  --bluetooth-guard-status PATH Bluetooth guard state (default /run/openxplay/bluetooth-guard.json)\n  --receiver-port PORT  Receiver HTTPS port (default 8443)\n  --pairing             Require receiver pairing code\n  --output MODE        web, carlink or both\n  --record DIR          Record decrypted media\n  --test-input replay:PATH[,PATH]  Test mode: replay Annex B clips (files or directories; a <file>.jsonl timing index from --record is used when present) instead of an iPhone\n  --test-keyframe RULES Test-mode key-frame answers: immediate (default), delay:MS, ignore-first, ignore:N, ignore-all, stream-restart; comma-separated, an h264: or h265: prefix limits a rule to that codec\n  --test-context FILE   Test-mode context script (JSON) or demo; needs the plugins setting\n  --reset-admin-password Reset admin password and exit\n  --help                Show this help";
+pub const USAGE:&str="Usage: openxplay-relay [options]\n  --identity-dir DIR    Local identity.pk8 and certificate.p7b (default /var/lib/openxplay/mfi)\n  --state-dir DIR       Private state (default /var/lib/openxplay)\n  --host-profile PATH  Device profile (default /etc/openxplay/host.json)\n  --device-preset ID   Device preset: auto, msm8916, phicomm-n1, generic (default auto)\n  --network-mode MODE   device-hotspot or shared-wifi\n  --wifi-interface IF   Wi-Fi interface (profile default, otherwise wlan0)\n  --carlink-interface IF Carlink station interface (empty = Wi-Fi interface)\n  --wifi-channel N      AP channel (0 = automatic; 2.4 GHz fallback 6)\n  --wifi-ssid SSID      Shared Wi-Fi SSID\n  --wifi-password PASS  Shared Wi-Fi password\n  --iphone ADDR         Select bonded iPhone\n  --rfcomm-channel N    iAP2 RFCOMM channel override (1..30)\n  --pair SECONDS        Auto-accept pairing window (1..3600)\n  --stream-socket PATH  oxp-relay socket (default /tmp/oxp-relay.sock)\n  --oxp-relay PATH      Output binary\n  --web-root DIR        Receiver web assets\n  --plugins-root DIR   Installed plugins (default /opt/openxplay/share/plugins)\n  --admin-root DIR      Admin assets (default /opt/openxplay/share/admin)\n  --bluetooth-guard-status PATH Bluetooth guard state (default /run/openxplay/bluetooth-guard.json)\n  --receiver-port PORT  Receiver HTTPS port (default 8443)\n  --pairing             Require receiver pairing code\n  --output MODE        web, carlink or both\n  --record DIR          Record decrypted media\n  --test-input replay:PATH[,PATH]  Test mode: replay Annex B clips (files or directories; a <file>.jsonl timing index from --record is used when present) instead of an iPhone\n  --test-keyframe RULES Test-mode key-frame answers: immediate (default), delay:MS, ignore-first, ignore:N, ignore-all, stream-restart; comma-separated, an h264: or h265: prefix limits a rule to that codec\n  --test-context FILE   Test-mode context script (JSON) or demo; needs the plugins setting\n  --enable-admin        Enable head-unit admin access and exit (stop the service first)\n  --reset-admin-password Reset admin password and exit\n  --help                Show this help";

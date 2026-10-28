@@ -62,6 +62,9 @@ pub trait AccessPointBackend: Send + Sync {
     fn stop(&self) -> Result<()>;
 }
 pub trait AccessPointFactory: Send + Sync {
+    fn wifi_enabled(&self) -> Option<bool> {
+        None
+    }
     fn prepare(&self) -> Result<bool>;
     fn access_point(&self, config: AccessPointConfig) -> Arc<dyn WirelessHotspotManager>;
     fn stations(&self, interface: &str) -> Result<Vec<String>>;
@@ -162,6 +165,9 @@ pub trait BluetoothBackend: SecureConnectionsControl {
     fn session(&self) -> Arc<dyn BluetoothBackend>;
     /// Readiness only: never acquires a profile registration.
     fn check_radio(&self) -> Result<()>;
+    fn power_on(&self) -> Result<()> {
+        Err(std::io::Error::other("Bluetooth power control unavailable"))
+    }
     /// Controller-only profile lease; released when the session backend is dropped.
     fn register_profiles(&self) -> Result<()>;
     fn devices(&self) -> Result<Vec<BondedDevice>>;
@@ -241,6 +247,19 @@ pub(crate) fn station_with_cli(
     })
 }
 impl AccessPointFactory for NetworkManagerBackend {
+    fn wifi_enabled(&self) -> Option<bool> {
+        let value = platform::command(
+            self.runner.as_ref(),
+            &["nmcli", "radio", "wifi"],
+            Duration::from_secs(3),
+        )
+        .ok()?;
+        match value.trim() {
+            "enabled" => Some(true),
+            "disabled" => Some(false),
+            _ => None,
+        }
+    }
     fn prepare(&self) -> Result<bool> {
         linux_hotspot::remove_stale_hotspots(self.runner.as_ref())
     }
@@ -412,6 +431,9 @@ impl BluetoothBackend for BluezBackend {
     }
     fn check_radio(&self) -> Result<()> {
         self.bluetooth.check_radio()
+    }
+    fn power_on(&self) -> Result<()> {
+        self.bluetooth.power_on()
     }
     fn register_profiles(&self) -> Result<()> {
         self.bluetooth.register_profiles()

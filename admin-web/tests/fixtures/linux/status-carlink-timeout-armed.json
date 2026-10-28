@@ -78,6 +78,7 @@
         "trail": [],
         "trusted": false
       },
+      "displayMismatch": false,
       "dlna": {
         "code": null,
         "name": null,
@@ -193,6 +194,7 @@
     "builtIn": false,
     "connected": false,
     "detected": null,
+    "displayMismatch": false,
     "enabled": true,
     "preference": null,
     "records": [],

@@ -369,6 +369,14 @@ impl LinuxBluetooth {
     }
     /// Whether the adapter can reach the iPhone: present, addressed and powered. The controller
     /// waits for it with the access point already up; BlueZ changes end that wait early.
+    pub fn power_on(&self) -> Result<()> {
+        let c = Connection::system().map_err(err)?;
+        let path = self.selection.adapter(&c)?;
+        prop(&c, &path, "org.bluez.Adapter1")?
+            .set_property("Powered", true)
+            .map_err(err)?;
+        self.check_radio()
+    }
     pub fn check_radio(&self) -> Result<()> {
         let c = Connection::system().map_err(err)?;
         let path = self.selection.adapter(&c)?;

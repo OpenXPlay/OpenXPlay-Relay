@@ -107,6 +107,7 @@
         ],
         "trusted": false
       },
+      "displayMismatch": false,
       "dlna": {
         "code": null,
         "name": null,
@@ -190,7 +191,7 @@
         "pending": false,
         "remainingMillis": null
       },
-      "automatic": true,
+      "automatic": false,
       "bootStart": true,
       "paused": true
     },
@@ -211,6 +212,7 @@
     "builtIn": false,
     "connected": false,
     "detected": null,
+    "displayMismatch": false,
     "enabled": true,
     "preference": null,
     "records": [],

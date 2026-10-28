@@ -4,6 +4,7 @@
     {
       "fields": [
         {
+          "hintKey": "hint.resolution",
           "key": "resolution",
           "labelKey": "field.linux.resolution",
           "options": [
@@ -55,6 +56,7 @@
           "type": "choice"
         },
         {
+          "hintKey": "hint.videoCodec",
           "key": "videoCodec",
           "labelKey": "field.linux.videoCodec",
           "options": [
@@ -74,6 +76,7 @@
           "type": "choice"
         },
         {
+          "hintKey": "hint.frameRate",
           "key": "frameRate",
           "labelKey": "field.linux.frameRate",
           "options": [
@@ -400,6 +403,7 @@
           "type": "bool"
         },
         {
+          "hintKey": "hint.field.bootStart",
           "key": "bootStart",
           "labelKey": "field.bootStart",
           "type": "bool"
@@ -425,6 +429,7 @@
           "type": "choice"
         },
         {
+          "hintKey": "hint.field.carPlayViewAreas",
           "key": "carPlayViewAreas",
           "labelKey": "field.carPlayViewAreas",
           "type": "bool"

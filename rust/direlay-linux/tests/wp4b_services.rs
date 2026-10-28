@@ -368,7 +368,7 @@ fn routing_auth_csrf_and_errors() {
     let token = login(&s);
     assert_eq!(
         value(s.route(&req("GET", "/api/v0/session", json!({}), &token), 2)),
-        json!({"state":"ready","defaultPassword":true})
+        json!({"state":"ready","defaultPassword":true,"adminEnabled":true,"adminAccessAllowed":true})
     );
     let mut pairing = req("POST", "/api/v0/actions/pair-iphone", json!({}), &token);
     pairing.headers.remove("x-openxplay-admin");
@@ -1165,7 +1165,7 @@ fn tls_certificate_validates_and_transports_http_in_memory() {
         .unwrap();
     assert_eq!(
         value(server.route(&request, 1)),
-        json!({"state":"login","defaultPassword":true})
+        json!({"state":"login","defaultPassword":true,"adminEnabled":true,"adminAccessAllowed":true})
     );
 }
 #[test]
@@ -1995,4 +1995,176 @@ fn trace_routes_auth_csrf_platform_validation_commands_and_streams() {
         );
         assert_eq!(dir.join(trace).exists(), running);
     }
+}
+
+#[test]
+fn admin_access_disable_persists_and_cli_recovery_keeps_password() {
+    let dir = Temp::new();
+    let s = server(&dir.0);
+    assert_eq!(
+        s.route(
+            &req(
+                "PUT",
+                "/api/v0/access",
+                json!({"enabled":false,"confirmed":true}),
+                ""
+            ),
+            1
+        )
+        .status,
+        401
+    );
+    let token = login(&s);
+    assert_eq!(
+        s.route(
+            &req("PUT", "/api/v0/access", json!({"enabled":false}), &token),
+            2
+        )
+        .status,
+        422
+    );
+    let mut no_csrf = req(
+        "PUT",
+        "/api/v0/access",
+        json!({"enabled":false,"confirmed":true}),
+        &token,
+    );
+    no_csrf.headers.remove("x-openxplay-admin");
+    assert_eq!(s.route(&no_csrf, 2).status, 403);
+    assert_eq!(
+        s.route(
+            &req(
+                "POST",
+                "/api/v0/password",
+                json!({"current":"openxplay","new":"updated password"}),
+                &token
+            ),
+            2
+        )
+        .status,
+        200
+    );
+    assert_eq!(
+        s.route(
+            &req(
+                "PUT",
+                "/api/v0/access",
+                json!({"enabled":false,"confirmed":true}),
+                &token
+            ),
+            3
+        )
+        .status,
+        200
+    );
+    assert_eq!(
+        s.route(&req("GET", "/api/v0/status", json!({}), &token), 4)
+            .status,
+        403
+    );
+    assert_eq!(
+        s.route(
+            &req(
+                "POST",
+                "/api/v0/login",
+                json!({"password":"updated password"}),
+                ""
+            ),
+            4
+        )
+        .status,
+        403
+    );
+    let session = value(s.route(&req("GET", "/api/v0/session", json!({}), &token), 4));
+    assert_eq!(session["adminAccessAllowed"], false);
+    let mut local = req("PUT", "/api/v0/access", json!({"enabled":true}), &token);
+    local.peer = "127.0.0.1".parse().unwrap();
+    assert_eq!(s.route(&local, 4).status, 200);
+    assert_eq!(
+        s.route(
+            &req(
+                "PUT",
+                "/api/v0/access",
+                json!({"enabled":false,"confirmed":true}),
+                &token
+            ),
+            5
+        )
+        .status,
+        200
+    );
+    drop(s);
+    assert!(!auth(&dir.0.join("auth")).access_enabled());
+    // The CLI uses this same persisted method while the service is stopped.
+    auth(&dir.0.join("auth")).set_access_enabled(true).unwrap();
+    let s = server(&dir.0);
+    assert!(
+        !value(s.route(&req("GET", "/api/v0/session", json!({}), ""), 6))["defaultPassword"]
+            .as_bool()
+            .unwrap()
+    );
+    assert_eq!(
+        s.route(
+            &req(
+                "POST",
+                "/api/v0/login",
+                json!({"password":"updated password"}),
+                ""
+            ),
+            6
+        )
+        .status,
+        200
+    );
+}
+#[test]
+fn admin_password_reset_requires_confirmation_revokes_sessions_and_retains_setup() {
+    let dir = Temp::new();
+    let s = server(&dir.0);
+    let token = login(&s);
+    assert_eq!(
+        s.route(&req("POST", "/api/v0/setup/complete", json!({}), &token), 2)
+            .status,
+        200
+    );
+    assert_eq!(
+        s.route(&req("POST", "/api/v0/password/reset", json!({}), &token), 2)
+            .status,
+        422
+    );
+    assert_eq!(
+        s.route(
+            &req(
+                "POST",
+                "/api/v0/password/reset",
+                json!({"confirmed":true}),
+                ""
+            ),
+            2
+        )
+        .status,
+        401
+    );
+    assert_eq!(
+        s.route(
+            &req(
+                "POST",
+                "/api/v0/password/reset",
+                json!({"confirmed":true}),
+                &token
+            ),
+            2
+        )
+        .status,
+        200
+    );
+    assert_eq!(
+        s.route(&req("GET", "/api/v0/status", json!({}), &token), 3)
+            .status,
+        401
+    );
+    assert!(auth(&dir.0.join("auth")).setup_completed());
+    assert!(auth(&dir.0.join("auth")).default_password());
+    assert!(auth(&dir.0.join("auth")).access_enabled());
+    assert!(!login(&s).is_empty());
 }

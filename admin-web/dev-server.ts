@@ -9,6 +9,7 @@ import { validateSharedNetworks } from './src/shared-networks';
 import type { SavedNetwork } from './src/schema';
 import { qrMatrix } from './src/qr';
 import { deflateSync } from 'node:zlib';
+import { normalizeInput } from './src/path/model';
 import { mockPathInput, mockNetwork, STAGE_STATES } from './dev-fixtures';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Plugin } from 'vite';
@@ -204,6 +205,12 @@ export function mockApi(linux = false): Plugin {
   const preview = process.env.DIRELAY_PREVIEW_STATES === '1';
   let outageUntil = 0;
   let networkChanged = false;
+  let stageOverride: string | null = null;
+  let bluetoothRepaired = false, wifiRepaired = false, pinCancelled = false, pinIncorrect = false;
+  let adminEnabled = true, setupCompleted = true, restartNeeded = false;
+  let pairingStarted = 0;
+  let confirmationApproved = false;
+  let seededPreview = '';
   let previewInitialized = false;
   let previewPathEpoch = Date.now();
   let pairingDeadline: number | null = null;
@@ -265,12 +272,25 @@ export function mockApi(linux = false): Plugin {
       const path = url.pathname.slice('/api/v0'.length);
       const previewUrl = new URL(req.headers.referer ?? '/', 'http://localhost');
       const previewState = previewUrl.searchParams.get('state') ?? 'live';
+      if (preview && seededPreview !== previewState) { previewInitialized = false; stageOverride = null; bluetoothRepaired = wifiRepaired = pinCancelled = pinIncorrect = confirmationApproved = false; seededPreview = previewState; }
       if (preview && (previewUrl.searchParams.get('platform') !== 'android') !== linux) { linux = previewUrl.searchParams.get('platform') !== 'android'; settings = demoSettings(linux); previewInitialized = false; }
       if (preview && !previewInitialized) {
         linux = previewUrl.searchParams.get('platform') !== 'android'; settings = demoSettings(linux);
         previewInitialized = true;
+        previewPathEpoch = Date.now();
+        const seed = linux ? linuxFixtureStatus(previewState, previewPathEpoch) : previewStatus({ platform: 'android' } as Status, previewState);
+        running = seed.running; paused = !!seed.pathInput?.startup?.paused; started = previewPathEpoch - (running ? 10000 : 0);
+        if (linux) { settings.values.output = seed.output; settings.values.networkMode = seed.pathInput?.setup?.network === 'SHARED_WIFI' ? 'shared-wifi' : 'device-hotspot'; }
+        if (previewState === 'multiple-iphones' && !phones.some(phone => phone.id === 'iphone-second')) phones.push({ id: 'iphone-second', name: 'Second iPhone', kind: 'phone', connected: false, likelyIphone: true, selected: false });
+        if (['fresh', 'pairing', 'no-iphone'].includes(previewState)) phones.splice(0);
+        if (previewState === 'unpaired-iphone') settings.values.iphone = 'unpaired-phone';
+        if (previewState === 'multiple-iphones') settings.values.iphone = 'auto';
+        setupCompleted = previewState !== 'fresh';
+        if (['carlink-pin', 'carlink-confirm', 'carlink-pin-rejected'].includes(previewState)) { pinDeadline = Date.now() / 1000 + 120; pinAccepted = false; pinIncorrect = previewState === 'carlink-pin-rejected'; }
+
         settings.values.carlinkTrace = 'on';
-        settings.values.networkMode = previewState === 'hotspot' ? 'device-hotspot' : 'shared-wifi';
+        if (linux && previewState === 'working') settings.values.networkMode = 'shared-wifi';
+        if (!linux) settings.values.networkMode = previewState === 'hotspot' ? 'phone-hotspot' : 'shared-wifi';
         wifiClient = previewState === 'fresh' || previewState === 'hotspot' ? { ssid: null, ip: null, signal: null, setupHotspot: previewState === 'fresh' } : { ssid: 'Car Wi-Fi', ip: '192.168.1.78', signal: 82, setupHotspot: false };
         if (previewState === 'fresh') { settings.values.sharedWifiNetworks = []; sharedPasswords.clear(); }
         else settings.values.sharedWifiNetworks = [{ ssid: 'Home Wi-Fi', hasPassword: true, current: false }, { ssid: 'Car Wi-Fi', hasPassword: false, current: previewState !== 'hotspot' }];
@@ -281,6 +301,7 @@ export function mockApi(linux = false): Plugin {
       };
       const token = /(?:^|;\s*)direlay=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
       const ready = preview || (!!token && sessions.has(token));
+      if (linux && !adminEnabled && path !== '/session' && !['127.0.0.1', '::1'].includes(req.socket.remoteAddress ?? '')) return send(403, { error: 'admin.disabled' });
       if (!['/session', '/login'].includes(path) && !ready) return send(401, { error: 'password' });
       if (method !== 'GET' && (req.headers['x-openxplay-admin'] !== '1' || !req.headers['content-type']?.startsWith('application/json'))) return send(403, { error: 'error.request' });
       let body: Record<string, unknown> = {};
@@ -298,7 +319,7 @@ export function mockApi(linux = false): Plugin {
         res.setHeader('Set-Cookie', `direlay=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`);
         send(200, { ok: true });
       };
-      if (path === '/session' && method === 'GET') { if (preview) { previewPathEpoch = Date.now(); if (previewState === 'carlink-pin') { pinDeadline = Date.now() / 1000 + 120; pinAccepted = false; } } return send(200, { state: ready ? 'ready' : 'login', defaultPassword }); }
+      if (path === '/session' && method === 'GET') return send(200, { state: ready ? 'ready' : 'login', defaultPassword, ...(linux ? { adminEnabled, adminAccessAllowed: adminEnabled || ['127.0.0.1', '::1'].includes(req.socket.remoteAddress ?? '') } : {}) });
       if (path === '/login' && method === 'POST') {
         const address = req.socket.remoteAddress ?? 'local'; const now = Date.now();
         let attempt = attempts.get(address);
@@ -307,6 +328,16 @@ export function mockApi(linux = false): Plugin {
         if (password !== body.password) { attempt.count++; return send(401, { error: 'password' }); }
         attempts.delete(address); return authenticate();
       }
+      if (linux && path === '/setup/complete' && method === 'POST') { setupCompleted = true; return send(200, { ok: true }); }
+      if (linux && path === '/access' && method === 'PUT') {
+        if (typeof body.enabled !== 'boolean' || !body.enabled && body.confirmed !== true) return send(422, { error: 'error.invalid' });
+        adminEnabled = body.enabled; return send(200, { ok: true });
+      }
+      if (linux && path === '/password/reset' && method === 'POST') {
+        if (body.confirmed !== true) return send(422, { error: 'error.invalid' });
+        password = 'openxplay'; defaultPassword = true; sessions.clear(); res.setHeader('Set-Cookie', 'direlay=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return send(200, { ok: true });
+      }
+      if (previewState === 'feature-error' && (path.startsWith('/logs') || path.startsWith('/config') || path === '/vehicle' || path.startsWith('/carlink-trace'))) return send(503, { error: 'error.request' });
       if (path === '/password' && method === 'POST') {
         if (body.current !== password) return send(403, { error: 'password' });
         if (typeof body.new !== 'string' || body.new.length < 8) return send(422, { error: 'error.passwordFormat' });
@@ -319,7 +350,7 @@ export function mockApi(linux = false): Plugin {
         const id = randomUUID(), createdMillis = Date.now();
         const data = mockZip({ 'relay.log': `OpenXPlay mock log, range ${body.range}\nBluetooth <redacted>\n`, 'info.txt': `platform=${linux ? 'linux' : 'android'}\nversion=0.2.1\n`, 'timeline.txt': 'Carlink scanning → Wi-Fi joined → first video received\n' });
         exports.set(id, { data, createdMillis });
-        return send(200, { id, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex'), createdMillis, firstMillis: createdMillis - 60000, lastMillis: createdMillis, empty: false, truncated: false });
+        return send(200, { id, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex'), createdMillis, firstMillis: createdMillis - 60000, lastMillis: createdMillis, empty: previewState === 'feature-empty', truncated: false });
       }
       if (path.startsWith('/logs/export/') && method === 'GET') {
         const file = exports.get(decodeURIComponent(path.slice('/logs/export/'.length)));
@@ -398,9 +429,13 @@ export function mockApi(linux = false): Plugin {
       if (linux && path === '/vehicle/sample' && method === 'POST') { if (typeof body.enabled !== 'boolean') return send(422, { error: 'error.invalid' }); sampleVehicle = body.enabled; return send(200, { ok: true }); }
       if (linux && path === '/actions/clear-vehicle-history' && method === 'POST') return send(200, { ok: true });
       if (linux && path === '/carlink/pairing' && method === 'POST') {
-        if (!['approve', 'pin', 'cancel'].includes(String(body.action)) || body.request !== 17 || pinAccepted || previewState !== 'carlink-pin') return send(409, { error: 'error.carlinkPinNotRequested' });
-        if (body.action === 'approve' || body.action === 'pin' && !/^\d{1,128}$/.test(String(body.pin))) return send(422, { error: 'error.carlinkPin' });
-        pinAccepted = true; return send(200, { ok: true });
+        const confirmation = previewState === 'carlink-confirm' && !confirmationApproved; const expected = confirmation ? 18 : 17;
+        if (!['approve', 'pin', 'cancel'].includes(String(body.action)) || body.request !== expected || pinAccepted || pinCancelled || !['carlink-pin', 'carlink-confirm', 'carlink-pin-rejected'].includes(previewState)) return send(409, { error: 'error.carlinkPinNotRequested' });
+        if (body.action === 'cancel') { pinCancelled = true; return send(200, { ok: true }); }
+        if (body.action === 'approve') { if (!confirmation) return send(422, { error: 'error.carlinkPin' }); confirmationApproved = true; return send(200, { ok: true, request: 17 }); }
+        if (!/^\d{1,128}$/.test(String(body.pin))) return send(422, { error: 'error.carlinkPin' });
+        if (body.pin === '0000') { pinIncorrect = true; return send(200, { ok: true }); }
+        pinIncorrect = false; pinAccepted = true; running = true; stageOverride = 'starting'; started = Date.now(); return send(200, { ok: true });
       }
       if (path === '/carlink/pin' && method === 'POST') { if (!/^\d{4,8}$/.test(String(body.pin))) return send(422, { error: 'error.carlinkPin' }); pinAccepted = true; return send(200, { ok: true }); }
       if (path === '/carlink/connect' && method === 'POST') return send(200, { ok: true });
@@ -409,7 +444,7 @@ export function mockApi(linux = false): Plugin {
         const enabled = settings.values.carlinkTrace === 'on';
         const traceRunning = enabled && (preview || running);
         const traceBody = traceLines.length ? traceLines.join('\n') + '\n' : '';
-        const files = [
+        const files = previewState === 'feature-empty' ? [] : [
           ...(traceLines.length ? [{ name: traceName, kind: 'trace', size: Buffer.byteLength(traceBody), modified: 1792695600 }] : []),
           ...(mediaAvailable ? [{ name: mediaName, kind: 'media', size: mediaBody.length, modified: 1792695600 }] : []),
         ];
@@ -420,7 +455,7 @@ export function mockApi(linux = false): Plugin {
           const type = url.searchParams.get('type');
           const limit = Number(url.searchParams.get('limit') ?? 5000);
           if (!Number.isInteger(limit) || limit < 0 || limit > 5000 || (type !== null && !['Rtsp', 'Frame', 'Socket', 'Negotiation', 'Media', 'Video', 'Input', 'Error', 'Link'].includes(type))) return send(422, { error: 'error.invalid' });
-          return send(200, { lines: traceLines.filter(line => !type || JSON.parse(line).type === type).slice().reverse().slice(0, limit) });
+          return send(200, { lines: (previewState === 'feature-empty' ? [] : traceLines).filter(line => !type || JSON.parse(line).type === type).slice().reverse().slice(0, limit) });
         }
         if (method === 'GET' && (path === '/carlink-trace/download' || path.startsWith('/carlink-trace/files/'))) {
           const bundle = path === '/carlink-trace/download';
@@ -516,8 +551,8 @@ export function mockApi(linux = false): Plugin {
         settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name, tokenSet: true } };
         return send(200, { ok: true, provider, name });
       }
-      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, privacyConfigAvailable: !!settings.values.publicNameProvider || Object.keys(privacyConfig).length > 0, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
-      if (path === '/phones' && method === 'GET') return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id })));
+      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, privacyConfigAvailable: previewState !== 'feature-empty' && !!settings.values.publicNameProvider || Object.keys(privacyConfig).length > 0, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
+      if (path === '/phones' && method === 'GET') { if (pairingStarted && Date.now() - pairingStarted >= 2000 && !phones.some(phone => phone.id === 'iphone-new')) phones.push({ id: 'iphone-new', name: 'New iPhone', kind: 'phone', connected: true, likelyIphone: true, selected: false }); return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id }))); }
       if (path === '/settings' && method === 'PUT') {
         const errors: Record<string, string> = {};
         for (const [key, value] of Object.entries(body)) {
@@ -583,6 +618,7 @@ export function mockApi(linux = false): Plugin {
         if (typeof body.publicNameToken === 'string') { if (body.publicNameToken !== '') settings.values.publicNameTokenSet = true; body.publicNameToken = ''; }
         if (typeof body.publicName === 'string') body.publicName = body.publicName.trim().toLowerCase();
         if ('carlinkPictureTry' in body) { pictureTrial = body.carlinkPictureTry as Value; delete body.carlinkPictureTry; started = Date.now(); }
+        if (running && Object.keys(body).some(key => ['iphone', 'resolution', 'screenWidth', 'videoCodec', 'frameRate', 'carBluetoothAudio', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity'].includes(key))) restartNeeded = true;
         Object.assign(settings.values, body);
         if (body.networkMode !== undefined) {
           networkChanged = true; outageUntil = Date.now() + 2000;
@@ -590,7 +626,7 @@ export function mockApi(linux = false): Plugin {
           wifiClient = shared ? { ssid: (settings.values.sharedWifiNetworks as SavedNetwork[])[0].ssid, ip: '192.168.1.78', signal: 82, setupHotspot: false } : { ssid: null, ip: null, signal: null, setupHotspot: false };
           redactNetworks();
         }
-        return send(200, { ok: true, applied: body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => key.startsWith('publicName') || key.startsWith('experimental') || ['plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
+        return send(200, { ok: true, applied: body.networkMode !== undefined || body.sharedWifiNetworks !== undefined || (linux && Object.keys(body).every(key => key.startsWith('publicName') || key.startsWith('experimental') || ['autoStart', 'bootStart', 'plugins', 'pluginsEnabled', 'output', 'requirePairingCode', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key))) ? 'now' : running ? 'next-start' : 'now' });
       }
       if (path === '/status' && method === 'GET') {
         if (Date.now() < outageUntil) return send(503, { error: 'error.network' });
@@ -607,47 +643,72 @@ export function mockApi(linux = false): Plugin {
           pairingAvailable: true, pairingCancelable: linux, pairedDevices: phones.map(phone => ({ name: phone.name, connected: phone.connected, iphone: phone.likelyIphone })),
           video: running ? { codec: 'H265', reason: 'all-main-screen-outputs-hardware-hevc', codecString: 'hvc1.1.6.L120.B0', width: 1920, height: 720 } : { codec: 'H264', reason: 'no-main-screen-output' },
           state: !running ? 'idle' : Date.now() - started < 3000 ? 'connecting' : 'active', running, autoStartPaused: paused,
-          iphone: { name: phone.name, reason: running ? 'connected' : settings.values.iphone === 'auto' ? 'onlyCandidate' : 'selected' },
+          iphone: { name: phone?.name ?? null, reason: !phone ? 'none' : running ? 'connected' : settings.values.iphone === 'auto' ? 'onlyCandidate' : 'selected' },
           network: { mode: String(settings.values.networkMode), wifi: currentSsid() },
           output: String(settings.values.output), carlink: { state: running ? 'connected' : 'idle', detail: '' }, notices,
           ...(linux ? { publicName: mockPublicName(settings.values), wireless: mockWireless(settings.values) } : {}),
         };
         if (status.publicName?.state === 'ready') status.receiverUrls = [`https://${status.publicName.name}:8443/`, ...status.receiverUrls];
         if (linux) status.adminUrls = [...(status.publicName?.trustedName ? [`https://${status.publicName.trustedName}:6975/`] : []), `https://${status.hostAddresses![0].ipv4}:6975/`, status.adminUrl];
-        const result = preview ? previewStatus(status, previewState) : status;
-        if (preview && networkChanged) {
-          result.network = status.network; result.hotspot = status.hotspot; result.wifiClient = wifiClient; result.hostAddresses = status.hostAddresses;
-        }
+        const now = Date.now();
+        let state = stageOverride ?? (preview ? previewState : running ? 'starting' : 'idle');
+        if (state === 'arrival' && !paused && settings.values.autoStart === true && now >= previewPathEpoch + 5000) { running = true; stageOverride = state = 'starting'; started = now; }
+        if (state === 'starting') state = now - started < 1000 ? 'startup-bluetooth' : now - started < 2000 ? 'startup-auth' : now - started < 3000 ? 'startup-wifi' : settings.values.output === 'carlink' ? 'live-carlink' : 'live-browser';
+        const result = linux ? status : preview ? previewStatus(status, state) : status;
+        const seed = linux ? linuxFixtureStatus(state, previewPathEpoch) : result;
+        const input = normalizeInput(linux ? seed.pathInput : mockPathInput(result, state, now, previewPathEpoch));
+        input.nowMillis = now;
+        input.setup.network = settings.values.networkMode === 'shared-wifi' ? 'SHARED_WIFI' : 'PHONE_HOTSPOT';
+        input.setup.outputs = settings.values.output === 'web' ? ['BROWSER'] : settings.values.output === 'carlink' ? ['CARLINK'] : ['BROWSER', 'CARLINK'];
+        if (input.setup.outputs.includes('BROWSER')) { if (input.car.web.phase === 'OFF') input.car.web.phase = 'LISTENING'; input.car.pageUrl = result.receiverUrls[0] ?? null; }
+        else { input.car.web.phase = 'OFF'; input.car.pageUrl = null; input.car.pages = 0; }
+        if (!input.setup.outputs.includes('CARLINK')) input.car.carlink.phase = 'OFF';
+        else if (input.car.carlink.phase === 'OFF') input.car.carlink.phase = running ? 'PLAYING' : 'SCANNING';
+        const chosen = phones.find(phone => phone.id === settings.values.iphone);
+        const candidates = phones.filter(phone => phone.likelyIphone);
+        input.iphone.pick = settings.values.iphone !== 'auto' ? chosen ? 'PICKED' : 'UNPAIRED' : candidates.length > 1 ? 'MULTIPLE' : candidates.length ? 'PICKED' : 'NONE';
+        if (settings.values.autoStart !== true || paused) input.iphone.armed = false;
+        input.iphone.name = chosen?.name ?? (input.iphone.pick === 'PICKED' ? candidates[0]?.name : null) ?? null;
+        if (!preview || stageOverride) { input.iphone.started = running; input.iphone.armed = !running && !paused && settings.values.autoStart === true; input.iphone.failure = null; }
+        input.relay.bluetoothOn = bluetoothRepaired || input.relay.bluetoothOn;
+        input.relay.wifiOn = wifiRepaired || input.relay.wifiOn;
+        input.relay.sharedWifiSsid = result.network.wifi; input.relay.wifiSsid = result.network.wifi;
+        input.relay.hotspotOn = !!result.hotspot?.active; input.relay.hotspotSsid = result.hotspot?.ssid ?? null;
+        input.car.address = result.hostAddresses?.[0]?.ipv4 ?? null;
+        input.startup = { automatic: settings.values.autoStart === true && !paused, bootStart: settings.values.bootStart === true, paused, arrival: { pending: state === 'arrival' && !paused && settings.values.autoStart === true, deadlineMillis: state === 'arrival' && !paused ? previewPathEpoch + 5000 : null, remainingMillis: state === 'arrival' && !paused ? Math.max(0, previewPathEpoch + 5000 - now) : null } };
+        result.pathInput = input;
+        result.running = running; result.state = input.live.pictureOnCar ? 'active' : running ? 'connecting' : 'idle';
+        result.autoStartPaused = paused; result.iphone = { name: input.iphone.name, reason: ({ PICKED: 'Selected', NONE: 'NoIphone', UNPAIRED: 'SelectedUnpaired', MULTIPLE: 'MultipleCandidates', NOT_IPHONE: 'OnlyBonded' })[input.iphone.pick] };
+        result.output = String(settings.values.output); result.notices = restartNeeded ? ['notice.nextStart'] : notices;
+        if (linux) { result.adminEnabled = adminEnabled; result.setupCompleted = setupCompleted; result.adminFeatures = ['logs', 'config-files', 'update-check']; result.screenData = seed.screenData; }
         if (linux) { const facts = mockNetwork(result.network.mode); const roles = settings.values.networkRoles as import('./src/schema').NetworkRolesSetting; if (roles?.mode === 'custom') { facts.plan!.source = 'custom'; if (roles.iphone) facts.plan!.iphone.link = roles.iphone.link; if (roles.adminHotspot) Object.assign(facts.plan!.adminHotspot, roles.adminHotspot); } if (facts.country) facts.country.configured = String(settings.values.wifiCountry || 'system'); result.network = { ...facts, ...result.network }; result.adminHotspot = { state: roles?.adminHotspot?.enabled ? 'up' : 'off', reason: null }; }
-        result.pathInput = linux ? linuxFixtureStatus(preview ? previewState : running ? 'live-browser' : 'idle').pathInput : mockPathInput(result, preview ? previewState : '', Date.now(), previewPathEpoch);
-        if (linux) result.adminFeatures = ['logs', 'config-files', 'update-check'];
-        if (previewState === 'pairing' && preview) pairingDeadline ??= Date.now() / 1000 + 600;
-        if (previewState === 'carlink-pin' && preview && !pinAccepted) { result.output = 'carlink'; result.carlink = { state: 'authenticating', detail: '', trusted: false, pinRequested: true, pinDeadline, pinRequest: 17, pinConfirmation: false, generation: 1 }; }
-        result.pairingDeadline = pairingDeadline && pairingDeadline > Date.now() / 1000 ? pairingDeadline : null;
-        result.pairingRemaining = result.pairingDeadline ? Math.ceil(result.pairingDeadline - Date.now() / 1000) : null;
+        if (state === 'pairing' && !pairingStarted) { pairingStarted = now; pairingDeadline = now / 1000 + 600; }
+        result.pairingDeadline = pairingDeadline && pairingDeadline > now / 1000 ? pairingDeadline : null;
+        result.pairingRemaining = result.pairingDeadline ? Math.ceil(result.pairingDeadline - now / 1000) : null;
         if (linux && result.carlink) {
-          result.carlink.vehicle = { enabled: settings.values.vehicleInformation === true, state: settings.values.vehicleInformation === true ? 'waiting' : 'off', sensorActive: false, storageFailed: false };
-          if (pictureTrial && typeof pictureTrial === 'object' && 'width' in pictureTrial && 'height' in pictureTrial && result.pathInput?.car?.carlink?.phase === 'PLAYING') result.carlink.appliedPicture = { width: Number(pictureTrial.width), height: Number(pictureTrial.height) };
+          result.carlink = { ...result.carlink, ...seed.carlink, vehicle: { enabled: settings.values.vehicleInformation === true, state: settings.values.vehicleInformation === true ? 'waiting' : 'off', sensorActive: false, storageFailed: false } };
+          if (['carlink-pin', 'carlink-confirm', 'carlink-pin-rejected'].includes(previewState)) {
+            Object.assign(result.carlink, { pinRequested: !pinAccepted && !pinCancelled, pinIncorrect, pinRequest: pinAccepted || pinCancelled ? null : previewState === 'carlink-confirm' && !confirmationApproved ? 18 : 17, pinConfirmation: previewState === 'carlink-confirm' && !confirmationApproved, pinDeadline, trusted: pinAccepted });
+            if (pinCancelled) { input.car.carlink.phase = 'ENDED'; input.car.carlink.pinPending = false; }
+            if (pinAccepted) { input.car.carlink.phase = 'PLAYING'; input.car.carlink.pinPending = false; input.car.carlink.trusted = true; }
+          }
+          if (pictureTrial && typeof pictureTrial === 'object' && 'width' in pictureTrial && 'height' in pictureTrial && input.car.carlink.phase === 'PLAYING') { result.carlink.appliedPicture = { width: Number(pictureTrial.width), height: Number(pictureTrial.height) }; input.car.carlink.picture = `${pictureTrial.width}×${pictureTrial.height} H.265`; }
         }
-        if (pictureTrial && typeof pictureTrial === 'object' && 'width' in pictureTrial && result.pathInput?.car?.carlink) result.pathInput.car.carlink.picture = `${pictureTrial.width}×${pictureTrial.height} H.265`;
-        if (pinAccepted && result.pathInput?.car?.carlink) { result.pathInput.car.carlink.phase = 'PLAYING'; result.pathInput.car.carlink.pinPending = false; result.pathInput.car.carlink.trusted = true; }
-        if (linux && result.video) {
-          const seconds = Date.now() / 1000, active = result.state === 'active';
-          Object.assign(result.video, { session: active ? '1' : null, active, frames: Math.floor(seconds * 60), bytes: Math.floor(seconds * 480000),
-            bytesMeasured: settings.values.videoStats !== 'off', appliedFps: 60, requestedFps: 60, hevcFailure: null });
-        }
+        if (linux && result.video) { const seconds = now / 1000, active = result.state === 'active'; Object.assign(result.video, { session: active ? '1' : null, active, frames: Math.floor(seconds * 60), bytes: Math.floor(seconds * 480000), bytesMeasured: settings.values.videoStats !== 'off', appliedFps: 60, requestedFps: 60, hevcFailure: null }); }
         if (url.searchParams.get('diagnostics') === '1') result.receivers = running || preview ? mockReceivers() : [];
         return send(200, result);
       }
       if (preview && path === '/carlink/connect' && method === 'POST') return send(200, { ok: true });
-      if (path === '/actions/pair-iphone' && method === 'POST') { if (!pairingDeadline || pairingDeadline <= Date.now() / 1000) pairingDeadline = Date.now() / 1000 + 600; return send(200, { ok: true }); }
+      if (path === '/actions/pair-iphone' && method === 'POST') { pairingStarted ||= Date.now(); if (!pairingDeadline || pairingDeadline <= Date.now() / 1000) pairingDeadline = Date.now() / 1000 + 600; return send(200, { ok: true }); }
       if (linux && path === '/actions/cancel-pairing' && method === 'POST') { pairingDeadline = null; return send(200, { ok: true }); }
       if (linux && path === '/actions/public-name-renew' && method === 'POST') return send(200, { ok: true });
       if (linux && path === '/actions/public-name-remove' && method === 'POST') { publicProviders.clear(); Object.assign(settings.values, PUBLIC_NAME_OFF); return send(200, { ok: true }); }
       if (path.startsWith('/actions/') && method === 'POST') {
         const name = path.split('/').pop();
-        if (!['start', 'stop', 'restart', 'regenerate-pairing-code'].includes(name!)) return send(404, { error: 'error.request' });
-        if (name !== 'regenerate-pairing-code') { running = name !== 'stop'; paused = !running; started = Date.now(); }
+        if (!['start', 'stop', 'restart', 'cancel-arrival', 'enable-bluetooth', 'enable-wifi', 'regenerate-pairing-code'].includes(name!)) return send(404, { error: 'error.request' });
+        if (name === 'enable-bluetooth') bluetoothRepaired = true;
+        else if (name === 'enable-wifi') wifiRepaired = true;
+        else if (name !== 'regenerate-pairing-code') { running = !['stop', 'cancel-arrival'].includes(name!); paused = !running; started = Date.now(); stageOverride = running ? 'starting' : 'ready'; restartNeeded = false; if (running) setupCompleted = true; }
         return send(200, { ok: true });
       }
       send(404, { error: 'error.request' });

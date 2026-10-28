@@ -20,16 +20,16 @@ export const pageKeys: Record<string, string[]> = {
   startup: ['autoStart', 'bootStart'],
   access: ['requirePairingCode', 'adminPort', 'webPort'],
   'access/public-name': ['publicNameEnabled', 'publicNameProvider', 'publicName', 'publicNameToken', 'publicNameAgreeTerms'],
-  'developer/carlink': ['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
+  'developer/carlink': ['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
   'developer/video': ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
-  'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
+  'developer/connection': [ 'carlinkModel', 'receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
   'developer/identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget'],
   developer: ['developerActive'],
   'experimental': ['experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
 };
 export function fieldEnabled(key: string, values: Settings['values']): boolean {
   if (key.startsWith('experimental') && key !== 'experimentalActive') return values.experimentalActive !== false;
-  return !['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
+  return !['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkModel', 'carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
 }
 export function fieldRoute(key: string): string {
   return 'settings/' + (Object.entries(pageKeys).find(([, keys]) => keys.includes(key))?.[0] ?? 'developer/other');
@@ -42,11 +42,11 @@ export const pages = [
   ['developer', 'menu.developer', 'code'], ['experimental', 'menu.experimental', 'settings'],
 ] as const;
 export const developerPages = ['diagnostics', 'carlink', 'video', 'connection', 'identity', 'other'] as const;
-export function routeTitle(route: string): string { return route === 'settings' ? 'ui.settings' : route.startsWith('settings/developer/') ? `menu.developer.${route.split('/').at(-1)}` : `menu.${route.slice(9)}`; }
+export function routeTitle(route: string): string { return route.startsWith('setup') ? 'setup.title' : route === 'settings' ? 'ui.settings' : route.startsWith('settings/developer/') ? `menu.developer.${route.split('/').at(-1)}` : `menu.${route.slice(9)}`; }
 export function parentRoute(route: string): string { return route.includes('/') ? route.slice(0, route.lastIndexOf('/')) : 'home'; }
 export function normalizeRoute(hash: string): string {
   const route = hash.replace(/^#\/?/, '') || 'home';
-  const valid = ['home', 'settings', ...pages.map(([p]) => `settings/${p}`), ...Object.keys(pageKeys).map(p => `settings/${p}`), ...developerPages.map(p => `settings/developer/${p}`), 'settings/access/admin'];
+  const valid = ['home', 'setup', ...['car', 'output', 'connection', 'network', 'prepare', 'start'].map(step => 'setup/' + step), 'settings', ...pages.map(([p]) => `settings/${p}`), ...Object.keys(pageKeys).map(p => `settings/${p}`), ...developerPages.map(p => `settings/developer/${p}`), 'settings/access/admin'];
   return valid.includes(route) ? route : 'settings';
 }
 export function settingsPlacement(settings: Settings) { return settings.schema.flatMap(s => s.fields).map(field => ({ field, route: fieldRoute(field.key) })); }
@@ -54,6 +54,7 @@ export function restartsPicture(key: string): boolean { return ['carplayResoluti
 
 export const developerIcons: Record<string, string> = { diagnostics: 'info', carlink: 'car', video: 'settings', connection: 'wifi', identity: 'file-key-2', other: 'sliders-horizontal' };
 export function pageAvailable(settings: Settings, status: Status, route: string): boolean {
+  if (route.startsWith('setup')) return true;
   if (route === 'settings/logs' || route === 'settings/config-files') return status.adminFeatures?.includes(route.slice(9) as 'logs' | 'config-files') ?? false;
   if (['settings', 'settings/about', 'settings/access', 'settings/access/admin', 'settings/connection', 'settings/connection/network', 'settings/developer', 'settings/developer/diagnostics', 'settings/developer/connection'].includes(route)) return true;
   if (route === 'settings/vehicle') return status.platform === 'linux';
@@ -83,7 +84,7 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
   if (route === 'settings/startup') return [all.some(f => f.key === 'autoStart') ? `${t('menu.whenReady')}: ${label('autoStart')}` : '', all.some(f => f.key === 'bootStart') ? `${t('menu.atBoot')}: ${label('bootStart')}` : ''].filter(Boolean).join(' · ');
   if (route === 'settings/connection') return t(v.transport === 'usb' ? 'option.transport.usb' : 'option.transport.wireless');
   if (route === 'settings/connection/network') return label('networkMode');
-  if (route === 'settings/access') return `${t('menu.admin')}: ${t('stage.on')} · ${t('publicName.title')}: ${t(v.publicNameEnabled ? 'stage.on' : 'stage.off')}`;
+  if (route === 'settings/access') return `${t('menu.admin')}: ${t(status.adminEnabled === false ? 'stage.off' : 'stage.on')} · ${t('publicName.title')}: ${t(v.publicNameEnabled ? 'stage.on' : 'stage.off')}`;
   if (route === 'settings/experimental') {
     if (!v.experimentalActive) return t('stage.off');
     const options = all.filter(f => f.key.startsWith('experimental') && f.key !== 'experimentalActive' && f.type === 'bool' && v[f.key]).length;

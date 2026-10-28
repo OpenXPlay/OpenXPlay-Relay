@@ -24,6 +24,10 @@ pub struct PasswordHash {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AuthState {
     pub password: Option<PasswordHash>,
+    #[serde(default)]
+    pub access_disabled: bool,
+    #[serde(default)]
+    pub setup_completed: bool,
     /// Earlier releases saved wall-clock expiries under `sessions`. Loading ignores that key, so
     /// those sessions end and the password stays.
     #[serde(default, rename = "bootSessions")]
@@ -159,6 +163,29 @@ impl AdminAuth {
             failures: BTreeMap::new(),
         })
     }
+    pub fn setup_completed(&self) -> bool {
+        self.state.setup_completed
+    }
+    pub fn complete_setup(&mut self) -> io::Result<()> {
+        if self.state.setup_completed {
+            return Ok(());
+        }
+        let mut next = self.state.clone();
+        next.setup_completed = true;
+        self.store.save(&next)?;
+        self.state = next;
+        Ok(())
+    }
+    pub fn access_enabled(&self) -> bool {
+        !self.state.access_disabled
+    }
+    pub fn set_access_enabled(&mut self, enabled: bool) -> io::Result<()> {
+        let mut next = self.state.clone();
+        next.access_disabled = !enabled;
+        self.store.save(&next)?;
+        self.state = next;
+        Ok(())
+    }
     pub fn default_password(&self) -> bool {
         self.state.password.is_none()
     }
@@ -238,6 +265,8 @@ impl AdminAuth {
     pub fn reset(&mut self) -> io::Result<()> {
         let next = AuthState {
             password: None,
+            access_disabled: self.state.access_disabled,
+            setup_completed: self.state.setup_completed,
             sessions: BootSessions {
                 boot: self.state.sessions.boot.clone(),
                 expiries: BTreeMap::new(),
