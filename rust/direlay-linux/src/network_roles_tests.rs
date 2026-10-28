@@ -826,7 +826,7 @@ fn admin_automatic_channels_follow_radio_band_and_eighty_mhz_spacing() {
         .any(|b| b.band == "2.4" && b.ap_channels.contains(&u16::from(p.admin_hotspot.channel))));
 }
 #[test]
-fn admin_password_busy_country_and_restart_checks_are_independent() {
+fn admin_default_password_busy_country_and_restart_checks_are_independent() {
     let mut inv = inventory(vec![n1(), usb()]);
     inv.country.configured = Some("CN".into());
     inv.country.global = Some("00".into());
@@ -834,9 +834,8 @@ fn admin_password_busy_country_and_restart_checks_are_independent() {
     settings.network_roles.admin_hotspot = Some(admin(Some("wlan1"), 165));
     let p = plan(&inv, &settings, &BTreeMap::new());
     let found = checks(&p, &inv);
-    assert!(found
-        .iter()
-        .any(|c| c.code == "admin-hotspot-password" && c.level == "error"));
+    assert!(!p.admin_hotspot.password_set);
+    assert!(!found.iter().any(|c| c.code == "admin-hotspot-password"));
     assert!(found
         .iter()
         .any(|c| c.code == "country-not-applied" && c.level == "warning"));

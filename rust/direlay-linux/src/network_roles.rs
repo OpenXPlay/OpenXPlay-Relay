@@ -741,14 +741,6 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
         }
     }
     if plan.admin_hotspot.enabled {
-        if !plan.admin_hotspot.password_set {
-            add(
-                "error",
-                "admin-hotspot-password",
-                &[("adminHotspot", &plan.admin_hotspot.role)],
-                json!({}),
-            );
-        }
         add(
             "info",
             "admin-hotspot-nat",
