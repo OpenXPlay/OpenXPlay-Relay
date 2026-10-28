@@ -128,6 +128,7 @@ pub struct Plan {
     pub report: ImportReport,
     pub values: Values,
     pub privacy: Option<crate::public_name::privacy::Import>,
+    pub mfi_remote_token: Option<String>,
 }
 fn protected(key: &str) -> bool {
     matches!(
@@ -310,6 +311,7 @@ pub fn plan_envelope(
         report: ImportReport::default(),
         values: Values::new(),
         privacy: None,
+        mfi_remote_token: None,
     };
     match object.get("format").and_then(Value::as_str) {
         Some(USER_FORMAT) => {
@@ -388,7 +390,15 @@ pub fn plan_envelope(
         Some(PRIVACY_FORMAT) => {
             let privacy = crate::public_name::privacy::decode(value, public, now)?;
             plan.report.applied = privacy.sections();
-            plan.privacy = Some(privacy);
+            plan.privacy = (!privacy.sections().is_empty()).then_some(privacy);
+            if let Some(value) = object.get("mfiRemoteToken") {
+                let token = value
+                    .as_str()
+                    .filter(|v| crate::mfi_sources::valid_token(v))
+                    .ok_or_else(|| error("mfiRemoteToken", "invalid"))?;
+                plan.mfi_remote_token = Some(token.into());
+                plan.report.applied.push("mfiRemoteToken".into());
+            }
             for key in object.keys() {
                 if ![
                     "format",
@@ -400,6 +410,7 @@ pub fn plan_envelope(
                     "providers",
                     "publicNameCertificate",
                     "publicNameAccount",
+                    "mfiRemoteToken",
                 ]
                 .contains(&key.as_str())
                 {
@@ -592,6 +603,10 @@ fn import_key(
         }
     }
     let valid = match target {
+        "mfiTarget" => value
+            .as_str()
+            .is_some_and(|v| ["local", "remote", "i2c", "usb-ch341"].contains(&v)),
+        "mfiI2cPath" | "mfiRemoteServer" => value.as_str().is_some_and(|v| !v.contains('\0')),
         "displayMode" => value
             .as_str()
             .is_some_and(|v| ["automatic", "fixed"].contains(&v)),
@@ -1053,8 +1068,9 @@ mod tests {
             serde_json::from_slice::<Value>(&p.privacy.unwrap().config.unwrap().to_json()).unwrap(),
             public
         );
-        assert_eq!(p.report.applied, ["publicName"]);
-        assert_eq!(p.report.ignored, ["importedCertificate", "mfiRemoteToken"]);
+        assert_eq!(p.report.applied, ["mfiRemoteToken", "publicName"]);
+        assert_eq!(p.mfi_remote_token.as_deref(), Some("ignored"));
+        assert_eq!(p.report.ignored, ["importedCertificate"]);
         assert!(!p.report.restart_needed);
     }
     #[test]

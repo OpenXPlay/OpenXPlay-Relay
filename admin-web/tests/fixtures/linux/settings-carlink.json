@@ -119,6 +119,62 @@
     {
       "fields": [
         {
+          "key": "mfiTarget",
+          "labelKey": "field.mfiTarget",
+          "options": [
+            {
+              "labelKey": "option.mfiTarget.local",
+              "value": "local"
+            },
+            {
+              "labelKey": "option.mfiTarget.remote",
+              "value": "remote"
+            },
+            {
+              "labelKey": "option.mfiTarget.usb-ch341",
+              "value": "usb-ch341"
+            },
+            {
+              "labelKey": "option.mfiTarget.i2c",
+              "value": "i2c"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "mfiI2cPath",
+          "labelKey": "field.mfiI2cPath",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "i2c"
+            ],
+            "key": "mfiTarget"
+          }
+        },
+        {
+          "key": "mfiRemoteServer",
+          "labelKey": "field.mfiRemoteServer",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "remote"
+            ],
+            "key": "mfiTarget"
+          }
+        },
+        {
+          "key": "mfiRemoteToken",
+          "labelKey": "field.mfiRemoteToken",
+          "type": "secret",
+          "visibleWhen": {
+            "equals": [
+              "remote"
+            ],
+            "key": "mfiTarget"
+          }
+        },
+        {
           "key": "networkMode",
           "labelKey": "field.networkMode",
           "options": [
@@ -1266,6 +1322,11 @@
     "hotspotChannel": 0,
     "hotspotSecurity": "wpa2",
     "iphone": "auto",
+    "mfiI2cPath": "/dev/i2c-1",
+    "mfiRemoteServer": "",
+    "mfiRemoteTokenSet": false,
+    "mfiSourceStatus": "missing",
+    "mfiTarget": "local",
     "networkMode": "device-hotspot",
     "networkRoles": {
       "mode": "auto"
@@ -1279,6 +1340,7 @@
     "publicName": "",
     "publicNameAgreeTerms": false,
     "publicNameEnabled": false,
+    "publicNamePrivacyAvailable": false,
     "publicNameProvider": "",
     "publicNameProviders": {
       "duckdns": {

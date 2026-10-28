@@ -230,7 +230,11 @@ impl WirelessPlatform for LinuxWirelessPlatform {
     }
     fn prepare_mfi(&self) -> Result<MfiResource> {
         Ok(MfiResource {
-            authenticator: Self::load_local_mfi(&self.options.identity_dir)?,
+            authenticator: crate::mfi_sources::load(
+                &self.options.settings,
+                &self.options.state_dir,
+                &self.options.identity_dir,
+            )?,
         })
     }
     fn create_hotspot(&self) -> Result<Arc<dyn WirelessHotspotManager>> {

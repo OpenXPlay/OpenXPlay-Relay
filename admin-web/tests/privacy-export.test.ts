@@ -64,3 +64,17 @@ it('disables privacy export and explains the empty state without retrieving secr
   expect(container.querySelector('#privacy-empty').hidden).toBe(false);
   expect(container.innerHTML).toContain('No private data to export.');
 });
+
+it('warns specifically about remote MFi tokens for a token-only privacy export', async () => {
+  const settings = mockSettings(true); Object.assign(settings.values, { privacyConfigAvailable: true, mfiRemoteTokenSet: true, publicNamePrivacyAvailable: false });
+  vi.spyOn(api, 'settings').mockResolvedValue(settings);
+  const dialogs: Host[] = [];
+  vi.stubGlobal('document', { body: { append: (node: Host) => dialogs.push(node) }, createElement: () => new Host() });
+  const container = new Host();
+  mountFeaturePage(container as unknown as HTMLElement, 'settings/config-files', {
+    t: key => translate('en', key), language: 'en', version: 'test', platform: 'linux', adminFeatures: ['config-files'], setLanguage: () => {}, error: () => 'error.request', reload: async () => {},
+  });
+  await vi.waitFor(() => expect(container.querySelector('#privacy-export').disabled).toBe(false));
+  container.querySelector('#privacy-export').click();
+  expect(dialogs[0].innerHTML).toContain('remote MFi token'); expect(dialogs[0].innerHTML).not.toContain('your domain token');
+});

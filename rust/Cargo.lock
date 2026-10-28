@@ -261,10 +261,13 @@ dependencies = [
 name = "carplay-iap2"
 version = "0.1.6-beta.1"
 dependencies = [
+ "base64ct",
  "cms",
  "der",
+ "libc",
  "p256",
  "rand_core",
+ "serde_json",
  "sha2",
  "x509-cert",
 ]

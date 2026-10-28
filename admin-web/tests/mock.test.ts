@@ -354,3 +354,17 @@ it('keeps saved hotspot passwords across rename and security changes', async () 
   expect((await call('/hotspot', 'PUT', { ssid: 'Rejected', password: '', security: 'unknown' })).status).toBe(422);
   expect((await call('/status')).data.hotspot.ssid).toBe('Secured');
 });
+
+it('keeps remote MFi tokens out of mock settings and user files and supports removal', async () => {
+  const call = relay(true);
+  await call('/login', 'POST', { password: 'openxplay' });
+  expect((await call('/settings', 'PUT', { mfiTarget: 'remote', mfiRemoteServer: 'https://mfi.example.org', mfiRemoteToken: 'mock-mfi-secret' })).data.applied).toBe('next-start');
+  const settings = (await call('/settings')).data;
+  expect(settings.values.mfiRemoteToken).toBeUndefined(); expect(settings.values.mfiRemoteTokenSet).toBe(true);
+  expect(JSON.stringify((await call('/config/user')).data)).not.toContain('mock-mfi-secret');
+  expect((await call('/config/privacy')).data.mfiRemoteToken).toBe('mock-mfi-secret');
+  expect((await call('/config/import?dryRun=1', 'POST', { format: 'openxplay-privacy-config', version: 1, mfiRemoteToken: 'new-token' })).data.nextStart).toEqual(['mfiRemoteToken']);
+  expect((await call('/config/privacy')).data.mfiRemoteToken).toBe('mock-mfi-secret');
+  expect((await call('/settings', 'PUT', { mfiRemoteToken: '' })).status).toBe(200);
+  expect((await call('/settings')).data.values.mfiRemoteTokenSet).toBe(false);
+});
