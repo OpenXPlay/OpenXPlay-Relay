@@ -15,6 +15,112 @@ pub const MAX_BYTES: usize = 64 * 1024;
 pub const USER_FORMAT: &str = "openxplay-user-config";
 pub const PRIVACY_FORMAT: &str = "openxplay-privacy-config";
 pub type Errors = BTreeMap<String, String>;
+// The only nested wire-key table. Targets absent from settings_values are reported as ignored.
+// W13 can expose a stored choice by adding its matching target to Settings; no codec branch is needed.
+const NESTED_KEYS: &[(&str, &str, &str)] = &[
+    ("car", "brand", "carBrand"),
+    ("car", "brandText", "carBrandText"),
+    ("car", "model", "carModel"),
+    ("car", "modelText", "carModelText"),
+    ("car", "year", "carYear"),
+    ("car", "yearText", "carYearText"),
+    ("developer", "active", "developerActive"),
+    ("developer", "carlinkTrace", "developerCarlinkTrace"),
+    (
+        "developer",
+        "carlinkHevcEnabled",
+        "developerCarlinkHevcEnabled",
+    ),
+    ("developer", "carlinkHevc", "developerCarlinkHevc"),
+    (
+        "developer",
+        "carlinkPictureSizeEnabled",
+        "developerCarlinkPictureSizeEnabled",
+    ),
+    (
+        "developer",
+        "carlinkPictureSize",
+        "developerCarlinkPictureSize",
+    ),
+    (
+        "developer",
+        "physicalWidthEnabled",
+        "developerPhysicalWidthEnabled",
+    ),
+    (
+        "developer",
+        "physicalWidthOverrideMm",
+        "developerPhysicalWidthOverrideMm",
+    ),
+    ("developer", "localPreview", "developerLocalPreview"),
+    ("developer", "playCarPlayAudio", "developerPlayCarPlayAudio"),
+    (
+        "developer",
+        "microphoneSourceEnabled",
+        "developerMicrophoneSourceEnabled",
+    ),
+    ("developer", "microphoneSource", "developerMicrophoneSource"),
+    ("developer", "webPortEnabled", "developerWebPortEnabled"),
+    ("developer", "webPort", "developerWebPort"),
+    (
+        "developer",
+        "carlinkDeviceModelEnabled",
+        "developerCarlinkDeviceModelEnabled",
+    ),
+    (
+        "developer",
+        "carlinkDeviceModel",
+        "developerCarlinkDeviceModel",
+    ),
+    ("experimental", "active", "experimentalActive"),
+    (
+        "experimental",
+        "remotePlaybackProof",
+        "experimentalRemotePlaybackProof",
+    ),
+    (
+        "experimental",
+        "cancelRecoveredRetries",
+        "experimentalCancelRecoveredRetries",
+    ),
+    ("experimental", "startupStatus", "experimentalStartupStatus"),
+    (
+        "experimental",
+        "startupDiagnostics",
+        "experimentalStartupDiagnostics",
+    ),
+    (
+        "experimental",
+        "networkObservationBackoff",
+        "experimentalNetworkObservationBackoff",
+    ),
+    (
+        "experimental",
+        "screenSessionIsolation",
+        "experimentalScreenSessionIsolation",
+    ),
+    (
+        "experimental",
+        "screenReconnectReset",
+        "experimentalScreenReconnectReset",
+    ),
+    (
+        "experimental",
+        "screenDeliverySerialization",
+        "experimentalScreenDeliverySerialization",
+    ),
+    (
+        "experimental",
+        "sendBluetoothAddress",
+        "experimentalSendBluetoothAddress",
+    ),
+    (
+        "experimental",
+        "bluetoothAddress",
+        "experimentalBluetoothAddress",
+    ),
+];
+
 fn error(key: &str, code: &str) -> Errors {
     BTreeMap::from([(key.into(), code.into())])
 }
@@ -24,6 +130,8 @@ pub struct ImportReport {
     pub applied: Vec<String>,
     pub ignored: Vec<String>,
     pub restart_needed: bool,
+    pub applied_now: Vec<String>,
+    pub next_start: Vec<String>,
 }
 pub struct Plan {
     pub report: ImportReport,
@@ -80,9 +188,12 @@ fn envelope(format: &str, now: u64) -> Value {
     json!({"format":format,"version":1,"platform":"linux","appVersion":env!("CARGO_PKG_VERSION"),"exportedAt":exported})
 }
 /// Linux names are retained for shared settings. Android aliases are accepted on import.
+#[cfg(test)]
 pub fn export_user(settings: &Settings, display: &Value, now: u64) -> Result<Value, Errors> {
+    export_user_values(settings_values(settings, display), now)
+}
+pub fn export_user_values(mut values: Values, now: u64) -> Result<Value, Errors> {
     let mut value = envelope(USER_FORMAT, now);
-    let mut values = settings_values(settings, display);
     for (linux, android) in [
         ("carlinkName", "carlinkDeviceName"),
         ("carlinkModel", "carlinkDeviceModel"),
@@ -98,43 +209,20 @@ pub fn export_user(settings: &Settings, display: &Value, now: u64) -> Result<Val
     if let Some(width) = values.get("screenWidth").and_then(Value::as_u64) {
         values.insert("carplayScreenWidth".into(), json!(format!("mm{width}")));
     }
-    let car: Values = [
-        ("carBrand", "brand"),
-        ("carBrandText", "brandText"),
-        ("carModel", "model"),
-        ("carModelText", "modelText"),
-        ("carYear", "year"),
-        ("carYearText", "yearText"),
-    ]
-    .into_iter()
-    .filter_map(|(linux, android)| values.get(linux).cloned().map(|v| (android.into(), v)))
-    .collect();
-    if !car.is_empty() {
-        values.insert("car".into(), Value::Object(car));
-    }
-    let mut experimental: Values = [
-        ("experimentalActive", "active"),
-        (
-            "experimentalScreenSessionIsolation",
-            "screenSessionIsolation",
-        ),
-        ("experimentalScreenReconnectReset", "screenReconnectReset"),
-        (
-            "experimentalScreenDeliverySerialization",
-            "screenDeliverySerialization",
-        ),
-        ("experimentalRemotePlaybackProof", "remotePlaybackProof"),
-        ("experimentalStartupStatus", "startupStatus"),
-        ("experimentalStartupDiagnostics", "startupDiagnostics"),
-        ("experimentalSendBluetoothAddress", "sendBluetoothAddress"),
-        ("experimentalBluetoothAddress", "bluetoothAddress"),
-    ]
-    .into_iter()
-    .filter_map(|(linux, android)| values.get(linux).cloned().map(|v| (android.into(), v)))
-    .collect();
-    if !experimental.is_empty() {
-        experimental.insert("version".into(), json!(2));
-        values.insert("experimental".into(), Value::Object(experimental));
+    for group in ["car", "developer", "experimental"] {
+        let mut nested: Values = NESTED_KEYS
+            .iter()
+            .filter(|(g, _, _)| *g == group)
+            .filter_map(|(_, leaf, target)| {
+                values.get(*target).cloned().map(|v| ((*leaf).into(), v))
+            })
+            .collect();
+        if !nested.is_empty() {
+            if group == "experimental" {
+                nested.insert("version".into(), json!(2));
+            }
+            values.insert(group.into(), Value::Object(nested));
+        }
     }
     // Shared enum keys use Android's published wire spelling; import maps back to settings.json.
     for (key, linux, android) in [
@@ -148,7 +236,9 @@ pub fn export_user(settings: &Settings, display: &Value, now: u64) -> Result<Val
             values.insert(key.into(), json!(android));
         }
     }
-    values.insert("carlinkTrace".into(), json!(settings.carlink_trace == "on"));
+    if let Some(trace) = values.get("carlinkTrace").and_then(Value::as_str) {
+        values.insert("carlinkTrace".into(), json!(trace == "on"));
+    }
     value["settings"] = Value::Object(values);
     bounded(value)
 }
@@ -175,17 +265,41 @@ pub fn plan(bytes: &[u8], current: &Values) -> Result<Plan, Errors> {
         crate::platform::wall_clock().as_secs(),
     )
 }
+#[cfg(test)]
 pub fn plan_with_privacy(
     bytes: &[u8],
     current: &Values,
     public: Option<&crate::public_name::config::Config>,
     now: u64,
 ) -> Result<Plan, Errors> {
+    let value = read_envelope(bytes)?;
+    plan_envelope(&value, current, public, now)
+}
+pub fn read_envelope(bytes: &[u8]) -> Result<Value, Errors> {
     if bytes.len() > MAX_BYTES {
         return Err(error("file", "too-large"));
     }
     let Strict(value) =
         serde_json::from_slice::<Strict>(bytes).map_err(|_| error("file", "not-json"))?;
+    if !value.is_object() || !valid_depth(&value, 0) {
+        return Err(error("file", "not-json"));
+    }
+    Ok(value)
+}
+fn valid_depth(value: &Value, depth: usize) -> bool {
+    depth < 64
+        && match value {
+            Value::Object(values) => values.values().all(|value| valid_depth(value, depth + 1)),
+            Value::Array(values) => values.iter().all(|value| valid_depth(value, depth + 1)),
+            _ => true,
+        }
+}
+pub fn plan_envelope(
+    value: &Value,
+    current: &Values,
+    public: Option<&crate::public_name::config::Config>,
+    now: u64,
+) -> Result<Plan, Errors> {
     let object = value.as_object().ok_or_else(|| error("file", "not-json"))?;
     if object.get("version").and_then(Value::as_f64) != Some(1.0) {
         return Err(error("version", "bad-version"));
@@ -201,12 +315,55 @@ pub fn plan_with_privacy(
                 .get("settings")
                 .and_then(Value::as_object)
                 .ok_or_else(|| error("settings", "invalid"))?;
-            let mut ignored = Vec::new();
+            let mut ignored: Vec<String> = object
+                .keys()
+                .filter(|key| {
+                    ![
+                        "format",
+                        "version",
+                        "platform",
+                        "appVersion",
+                        "exportedAt",
+                        "settings",
+                        "linux",
+                    ]
+                    .contains(&key.as_str())
+                })
+                .cloned()
+                .collect();
+            let mut errors = Errors::new();
             for (key, value) in settings {
                 if key == "output" && settings.contains_key("outputs") {
                     continue;
                 }
-                import_key(&mut plan.values, &mut ignored, current, key, value, key)?;
+                if let Err(error) =
+                    import_key(&mut plan.values, &mut ignored, current, key, value, key)
+                {
+                    errors.extend(error);
+                }
+            }
+            if !errors.is_empty() {
+                return Err(errors);
+            }
+            if let Some(developer) = settings.get("developer").and_then(Value::as_object) {
+                let fps = developer
+                    .get("fps")
+                    .and_then(Value::as_f64)
+                    .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 0.0)
+                    .map(|v| v as u64);
+                if !settings.contains_key("frameRate")
+                    && developer.get("fpsEnabled") == Some(&json!(true))
+                    && fps.is_some_and(|v| [30, 35, 40, 45, 50, 55, 60].contains(&v))
+                {
+                    plan.values
+                        .insert("frameRate".into(), json!(fps.unwrap().to_string()));
+                } else {
+                    for key in ["fpsEnabled", "fps"] {
+                        if developer.contains_key(key) {
+                            ignored.push(format!("developer.{key}"));
+                        }
+                    }
+                }
             }
             // Optional Linux-only settings do not collide with Android's catalogue.
             if let Some(linux) = object.get("linux") {
@@ -225,10 +382,9 @@ pub fn plan_with_privacy(
                 .retain(|key, value| current.get(key) != Some(value));
             plan.report.applied = plan.values.keys().cloned().collect();
             plan.report.ignored = ignored;
-            plan.report.restart_needed = plan.values.keys().any(|key| restart_key(key));
         }
         Some(PRIVACY_FORMAT) => {
-            let privacy = crate::public_name::privacy::decode(&value, public, now)?;
+            let privacy = crate::public_name::privacy::decode(value, public, now)?;
             plan.report.applied = privacy.sections();
             plan.privacy = Some(privacy);
             for key in object.keys() {
@@ -256,30 +412,37 @@ pub fn plan_with_privacy(
     plan.report.ignored.dedup();
     Ok(plan)
 }
-fn restart_key(key: &str) -> bool {
-    if key.starts_with("experimental") {
-        return false;
+/// Hotspot credentials live outside settings.json. Security becomes a normal setting when W13 provides it.
+pub fn take_hotspot(
+    values: &mut Values,
+    current: &Values,
+    native_security: bool,
+) -> Result<Option<(String, String)>, Errors> {
+    let ssid = values.remove("hotspotSsid");
+    let password = values.remove("hotspotPassphrase");
+    if !native_security
+        && values
+            .remove("hotspotSecurity")
+            .is_some_and(|security| security != "wpa2")
+    {
+        return Err(error("hotspotSecurity", "unsupported"));
     }
-    !matches!(
-        key,
-        "teslaBrowser"
-            | "teslaVirtualAddress"
-            | "teslaPublicAddress"
-            | "teslaMirrorAddress"
-            | "teslaAndroidAddress"
-            | "autoStart"
-            | "bootStart"
-            | "videoStats"
-            | "carBrand"
-            | "carBrandText"
-            | "carModel"
-            | "carModelText"
-            | "carYear"
-            | "carYearText"
-            | "experimentalActive"
-            | "experimentalBluetoothAddress"
-            | "experimentalSendBluetoothAddress"
-    )
+    if ssid.is_none() && password.is_none() {
+        return Ok(None);
+    }
+    let ssid = ssid
+        .as_ref()
+        .or_else(|| current.get("hotspotSsid"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("hotspotSsid", "invalid"))?;
+    let password = password
+        .as_ref()
+        .or_else(|| current.get("hotspotPassphrase"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("hotspotPassphrase", "invalid"))?;
+    crate::linux_hotspot::validate_hotspot_credentials(ssid, password)
+        .map_err(|code| error("hotspotPassphrase", code))?;
+    Ok(Some((ssid.into(), password.into())))
 }
 fn import_key(
     values: &mut Values,
@@ -322,44 +485,45 @@ fn import_key(
             };
             "output"
         }
-        "car" | "experimental" => {
+        "car" | "developer" | "experimental" => {
             let object = value.as_object().ok_or_else(|| error(source, "invalid"))?;
+            let mut errors = Errors::new();
             for (leaf, value) in object {
-                let target = match (key, leaf.as_str()) {
-                    ("car", "brand") => "carBrand",
-                    ("car", "brandText") => "carBrandText",
-                    ("car", "model") => "carModel",
-                    ("car", "modelText") => "carModelText",
-                    ("car", "year") => "carYear",
-                    ("car", "yearText") => "carYearText",
-                    ("experimental", "active") => "experimentalActive",
-                    ("experimental", "screenSessionIsolation") => {
-                        "experimentalScreenSessionIsolation"
+                if key == "experimental" && leaf == "version" {
+                    if value != 2 {
+                        return Err(error(&format!("{source}.{leaf}"), "invalid"));
                     }
-                    ("experimental", "screenReconnectReset") => "experimentalScreenReconnectReset",
-                    ("experimental", "screenDeliverySerialization") => {
-                        "experimentalScreenDeliverySerialization"
-                    }
-                    ("experimental", "remotePlaybackProof") => "experimentalRemotePlaybackProof",
-                    ("experimental", "startupStatus") => "experimentalStartupStatus",
-                    ("experimental", "startupDiagnostics") => "experimentalStartupDiagnostics",
-
-                    ("experimental", "bluetoothAddress") => "experimentalBluetoothAddress",
-                    ("experimental", "sendBluetoothAddress") => "experimentalSendBluetoothAddress",
-                    ("experimental", "version") if value == 2 => continue,
-                    _ => {
-                        ignored.push(format!("{source}.{leaf}"));
-                        continue;
-                    }
+                    continue;
+                }
+                if key == "developer" && matches!(leaf.as_str(), "fpsEnabled" | "fps") {
+                    continue;
+                }
+                let Some((_, _, target)) =
+                    NESTED_KEYS.iter().find(|(g, l, _)| *g == key && *l == leaf)
+                else {
+                    ignored.push(format!("{source}.{leaf}"));
+                    continue;
                 };
-                import_key(
+                if let Err(error) = import_key(
                     values,
                     ignored,
                     current,
                     target,
                     value,
                     &format!("{source}.{leaf}"),
-                )?;
+                ) {
+                    errors.extend(error);
+                }
+            }
+            if !errors.is_empty() {
+                return Err(errors);
+            }
+            // Android's unversioned experimental envelope predates the master switch.
+            if key == "experimental" && !object.contains_key("version") {
+                values.insert("experimentalActive".into(), json!(true));
+                if let Some(send) = values.get_mut("experimentalSendBluetoothAddress") {
+                    *send = json!(object.get("active") == Some(&json!(true)) && *send == true);
+                }
             }
             return Ok(());
         }
@@ -374,6 +538,20 @@ fn import_key(
             value = json!(if value == true { "on" } else { "off" })
         }
         "carlinkHevc" if value == "stream-only" => value = json!("auto"),
+        "hotspotChannel" => {
+            let channel = value
+                .as_f64()
+                .filter(|v| v.is_finite() && v.fract() == 0.0)
+                .ok_or_else(|| error(source, "invalid"))?;
+            if channel != 0.0
+                && !(1.0..=14.0).contains(&channel)
+                && !(32.0..=177.0).contains(&channel)
+            {
+                ignored.push(source.into());
+                return Ok(());
+            }
+            value = json!(channel as u8);
+        }
         "hotspotBand" => match value.as_str() {
             Some("ghz-2-4") => value = json!("2.4"),
             Some("ghz-5") => value = json!("5"),
@@ -396,6 +574,82 @@ fn import_key(
         // Android's null means its default port; Linux has an explicit port.
         "receiverPort" if value.is_null() => value = json!(8443),
         _ => {}
+    }
+    if let Some(prior) = current.get(target) {
+        let same_type = match prior {
+            Value::Bool(_) => value.is_boolean(),
+            Value::String(_) => value.is_string(),
+            Value::Number(_) => value.is_number(),
+            Value::Array(_) => value.is_array(),
+            Value::Object(_) => value.is_object(),
+            Value::Null => true,
+        };
+        if !same_type {
+            return Err(error(source, "invalid"));
+        }
+    }
+    let valid = match target {
+        "hotspotBand" => value
+            .as_str()
+            .is_some_and(|v| ["auto", "2.4", "5"].contains(&v)),
+        "videoStats" => value
+            .as_str()
+            .is_some_and(|v| ["off", "5", "15"].contains(&v)),
+        "output" => value
+            .as_str()
+            .is_some_and(|v| ["web", "carlink", "both"].contains(&v)),
+        "carlinkHevc" => value
+            .as_str()
+            .is_some_and(|v| ["off", "auto", "signal"].contains(&v)),
+        "carlinkPictureSize" => value
+            .as_str()
+            .is_some_and(|v| ["window", "mode"].contains(&v)),
+        "iphone" => {
+            value.is_null()
+                || value
+                    .as_str()
+                    .is_some_and(crate::linux_bluetooth::valid_mac)
+        }
+        "experimentalBluetoothAddress" => value
+            .as_str()
+            .is_some_and(|v| v.is_empty() || crate::carlink_policy::bluetooth_address(v).is_some()),
+        "carBrand" | "carBrandText" | "carModel" | "carModelText" | "carYear" | "carYearText" => {
+            value
+                .as_str()
+                .is_some_and(|v| v.chars().count() <= 128 && !v.chars().any(char::is_control))
+        }
+        "frameRate" => value
+            .as_str()
+            .and_then(crate::carplay_policy::frame_rate_setting)
+            .is_some(),
+        "videoCodec" => value
+            .as_str()
+            .is_some_and(|v| ["auto", "h264", "h265"].contains(&v)),
+        "resolution" => value
+            .as_str()
+            .is_some_and(|v| ["auto", "native", "1080p", "720p", "screen"].contains(&v)),
+        "receiverPort" => value
+            .as_u64()
+            .is_some_and(|v| (1..=65535).contains(&v) && v != 6975),
+        "networkMode" => value
+            .as_str()
+            .is_some_and(|v| ["device-hotspot", "shared-wifi"].contains(&v)),
+        "carlinkName" | "carlinkModel" => value.as_str().is_some_and(|v| {
+            !v.trim().is_empty() && v.len() <= 128 && !v.chars().any(char::is_control)
+        }),
+        "hotspotSsid" => value
+            .as_str()
+            .is_some_and(|v| !v.trim().is_empty() && v.len() <= 32 && !v.contains('\0')),
+        "hotspotPassphrase" => value.as_str().is_some_and(|v| {
+            (v.is_empty() || (8..=63).contains(&v.chars().count())) && !v.contains('\0')
+        }),
+        "hotspotSecurity" => value
+            .as_str()
+            .is_some_and(|v| ["open", "wpa2", "wpa3-transition", "wpa3"].contains(&v)),
+        _ => true,
+    };
+    if !valid {
+        return Err(error(source, "invalid"));
     }
     if values.get(target).is_some_and(|prior| prior != &value) {
         return Err(error(source, "conflict"));
@@ -457,6 +711,98 @@ impl<'de> Deserialize<'de> for Strict {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hotspot_custom_year_and_future_nested_keys_use_one_round_trip_table() {
+        let mut current = current();
+        for (key, value) in [
+            ("hotspotSsid", json!("Relay")),
+            ("hotspotPassphrase", json!("openxplay")),
+            ("hotspotSecurity", json!("wpa2")),
+            ("experimentalScreenSessionIsolation", json!(true)),
+            ("experimentalRemotePlaybackProof", json!(true)),
+            ("developerActive", json!(false)),
+            ("developerCarlinkHevc", json!("off")),
+        ] {
+            current.insert(key.into(), value);
+        }
+        let file = json!({"format":USER_FORMAT,"version":1,"settings":{
+            "hotspotSsid":"中继", "hotspotPassphrase":"password123", "hotspotSecurity":"wpa3", "car":{"yearText":"2027 custom"},
+            "experimental":{"version":2,"screenSessionIsolation":false,"remotePlaybackProof":false},
+            "developer":{"active":true,"carlinkHevc":"signal"}
+        }});
+        let p = plan(&serde_json::to_vec(&file).unwrap(), &current).unwrap();
+        assert!(p.report.ignored.is_empty());
+        current.extend(p.values);
+        let exported = export_user_values(current, 0).unwrap();
+        for key in ["hotspotSsid", "hotspotPassphrase", "hotspotSecurity"] {
+            assert_eq!(exported["settings"][key], file["settings"][key]);
+        }
+        assert_eq!(exported["settings"]["car"]["yearText"], "2027 custom");
+        assert_eq!(
+            exported["settings"]["experimental"]["screenSessionIsolation"],
+            false
+        );
+        assert_eq!(exported["settings"]["developer"]["carlinkHevc"], "signal");
+    }
+    #[test]
+    fn linux_https_port_and_android_integral_channels_keep_their_platform_rules() {
+        let file = json!({"format":USER_FORMAT,"version":1,"settings":{"receiverPort":443,"hotspotChannel":18}});
+        let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+        assert_eq!(p.values["receiverPort"], 443);
+        assert_eq!(p.report.ignored, ["hotspotChannel"]);
+        assert!(crate::relay_admin::update_settings(&Settings::default(), p.values).is_ok());
+    }
+    #[test]
+    fn legacy_fps_migrates_only_without_an_explicit_frame_rate() {
+        for (developer, frame, expected, ignored) in [
+            (json!({"fpsEnabled":true,"fps":35}), None, Some("35"), false),
+            (
+                json!({"fpsEnabled":true,"fps":35}),
+                Some("60"),
+                Some("60"),
+                true,
+            ),
+            (json!({"fpsEnabled":false,"fps":35}), None, None, true),
+            (json!({"fpsEnabled":true,"fps":36}), None, None, true),
+            (json!({"fpsEnabled":"true","fps":35}), None, None, true),
+        ] {
+            let mut file = json!({"format":USER_FORMAT,"version":1,"settings":{"developer":developer,"fps":55}});
+            if let Some(frame) = frame {
+                file["settings"]["frameRate"] = json!(frame);
+            }
+            let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+            assert_eq!(p.values.get("frameRate").and_then(Value::as_str), expected);
+            assert_eq!(p.report.ignored.contains(&"developer.fps".into()), ignored);
+            assert!(p.report.ignored.contains(&"fps".into()));
+        }
+    }
+    #[test]
+    fn bad_values_keep_their_keys_and_malformed_utf8_is_rejected() {
+        let file = json!({"format":USER_FORMAT,"version":1,"settings":{"frameRate":"31", "videoStats":false}});
+        assert_eq!(
+            plan(&serde_json::to_vec(&file).unwrap(), &current())
+                .err()
+                .unwrap(),
+            BTreeMap::from([
+                ("frameRate".into(), "invalid".into()),
+                ("videoStats".into(), "invalid".into())
+            ])
+        );
+        assert_eq!(
+            plan(b"{\"invalid\":\"\xff\"}", &current()).err().unwrap()["file"],
+            "not-json"
+        );
+    }
+    #[test]
+    fn android_depth_limit_and_escaped_duplicate_keys_are_strict() {
+        let mut nested = json!(0);
+        for _ in 0..62 {
+            nested = json!([nested]);
+        }
+        assert!(read_envelope(&serde_json::to_vec(&json!({"nested":nested})).unwrap()).is_ok());
+        assert!(read_envelope(&serde_json::to_vec(&json!({"nested":[nested]})).unwrap()).is_err());
+        assert!(read_envelope(br#"{"version":1,"ver\u0073ion":2}"#).is_err());
+    }
     #[test]
     fn startup_preferences_round_trip_independently_with_android_names() {
         let settings = Settings {
@@ -546,7 +892,7 @@ mod tests {
         assert_eq!(p.values["carlinkTrace"], "on");
         assert_eq!(p.values["screenWidth"], 125);
         assert_eq!(p.report.ignored, ["localPreview", "remoteToken"]);
-        assert!(p.report.restart_needed);
+        assert!(!p.report.restart_needed);
         let mut settings = p.values.clone();
         for key in ["resolution", "screenWidth", "videoCodec"] {
             settings.remove(key);

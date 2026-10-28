@@ -200,6 +200,9 @@ impl AdminServer {
             {
                 return Response::error(403, "error.request");
             }
+            if path == "/config/import" {
+                return self.file_route(request, path, &Values::new()).unwrap();
+            }
             match serde_json::from_slice::<Value>(if request.body.is_empty() {
                 b"{}"
             } else {

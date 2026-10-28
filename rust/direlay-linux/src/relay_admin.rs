@@ -45,7 +45,7 @@ enum Operation {
     /// Apply the complete receiver TLS set, coalescing certificate and address changes.
     ReceiverTls,
     Carlink,
-    Hotspot,
+    Hotspot(Option<Box<Operation>>),
     Roles(Vec<String>),
     Network {
         mode_changed: bool,
@@ -1143,13 +1143,16 @@ impl LinuxRelayAdmin {
                 self.input.clear_picture_trial();
                 self.stop_controller();
             }
-            Operation::Hotspot => {
+            Operation::Hotspot(after) => {
                 if self.effective_options()?.settings.network_mode == "device-hotspot"
                     && self.network_override.lock().unwrap().is_none()
                 {
                     self.stop_controller();
                 }
                 self.apply_pending.store(false, Ordering::Release);
+                if let Some(after) = after {
+                    self.operation(*after)?;
+                }
             }
             Operation::Outputs(network) => {
                 // Output processes can be replaced while the controller and AP keep running.
@@ -2194,6 +2197,17 @@ impl LinuxRelayAdmin {
         let _ = self.stream.close();
         let _ = self.sink.close();
     }
+    /// A config import can change both the hotspot and normal settings in one response.
+    fn defer_hotspot(&self) -> AdminResult {
+        let owner = std::thread::current().id();
+        let mut pending = self.pending.lock().unwrap();
+        if self.busy.load(Ordering::Acquire) || pending.keys().any(|key| *key != owner) {
+            return Err("error.busy".into());
+        }
+        let after = pending.remove(&owner).map(Box::new);
+        pending.insert(owner, Operation::Hotspot(after));
+        Ok(())
+    }
     fn defer(&self, op: Operation) -> AdminResult {
         let mut pending = self.pending.lock().unwrap();
         if self.busy.load(Ordering::Acquire) || !pending.is_empty() {
@@ -2876,6 +2890,35 @@ fn failure_secrets(settings: &Settings, state_dir: &std::path::Path) -> Vec<Stri
     secrets
 }
 
+/// This list drives both normal settings application and configuration import reports.
+fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    macro_rules! changed {
+        ($field:ident, $key:literal) => {
+            if next.$field != current.$field {
+                keys.push($key);
+            }
+        };
+    }
+    changed!(iphone, "iphone");
+    changed!(rfcomm_channel, "rfcommChannel");
+    changed!(wifi_interface, "wifiInterface");
+    changed!(hotspot_channel, "hotspotChannel");
+    changed!(hotspot_band, "hotspotBand");
+    changed!(hotspot_security, "hotspotSecurity");
+    changed!(device_preset, "devicePreset");
+    changed!(developer_active, "developerActive");
+    changed!(display_mode, "displayMode");
+    changed!(display_width, "displayWidth");
+    changed!(display_height, "displayHeight");
+    changed!(display_density, "displayDensity");
+    changed!(physical_width_enabled, "physicalWidthEnabled");
+    changed!(physical_width_override_mm, "physicalWidthOverrideMm");
+    changed!(car_bluetooth_audio, "carBluetoothAudio");
+    changed!(carlink_picture_default, "carlinkPictureDefault");
+    changed!(carlink_picture_size, "carlinkPictureSize");
+    keys
+}
 pub fn update_settings(
     current: &Settings,
     mut values: Values,
@@ -3028,6 +3071,21 @@ pub fn update_settings(
     }
 }
 impl LinuxRelayAdmin {
+    fn config_user_values(
+        &self,
+        settings: &Settings,
+        display: &serde_json::Value,
+    ) -> std::result::Result<Values, crate::config_files::Errors> {
+        let mut values = crate::config_files::settings_values(settings, display);
+        let (ssid, password) = crate::linux_hotspot::hotspot_credentials(&self.options.state_dir)
+            .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
+        values.insert("hotspotSsid".into(), serde_json::json!(ssid));
+        values.insert("hotspotPassphrase".into(), serde_json::json!(password));
+        values
+            .entry("hotspotSecurity")
+            .or_insert_with(|| serde_json::json!("wpa2"));
+        Ok(values)
+    }
     fn build_log_export(&self, range: &str) -> std::io::Result<crate::logs::Export> {
         let range = serde_json::from_value::<crate::logs::Range>(serde_json::json!(range))?;
         let status = self.status();
@@ -3171,9 +3229,18 @@ impl RelayAdmin for LinuxRelayAdmin {
             .map(|receipt| receipt.map(|receipt| serde_json::to_value(receipt).unwrap()))
     }
     fn update_check(&self, channel: &str) -> std::result::Result<serde_json::Value, &'static str> {
-        self.release_checks
-            .check(crate::update_check::Channel::parse(channel).ok_or("offline")?)
-            .map(|check| serde_json::to_value(check).unwrap())
+        self.update_check_fresh(channel, false)
+    }
+    fn update_check_fresh(
+        &self,
+        channel: &str,
+        fresh: bool,
+    ) -> std::result::Result<serde_json::Value, &'static str> {
+        let selected = crate::update_check::Channel::parse(channel).ok_or("invalid")?;
+        Ok(match self.release_checks.check(selected, fresh) {
+            Ok(check) => serde_json::to_value(check).unwrap(),
+            Err(failure) => serde_json::json!({"channel":channel,"failure":failure}),
+        })
     }
     fn config_export(
         &self,
@@ -3187,11 +3254,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
             crate::config_files::export_privacy(sections, now)
         } else {
-            crate::config_files::export_user(
-                &self.settings.lock().unwrap(),
-                &oxp_wire::display_settings(&self.input.display_settings()),
-                now,
-            )
+            let display = oxp_wire::display_settings(&self.input.display_settings());
+            let values = self.config_user_values(&self.settings.lock().unwrap(), &display)?;
+            crate::config_files::export_user_values(values, now)
         }
     }
     fn config_import(
@@ -3201,13 +3266,24 @@ impl RelayAdmin for LinuxRelayAdmin {
     ) -> std::result::Result<serde_json::Value, crate::config_files::Errors> {
         let current = self.settings.lock().unwrap().clone();
         let mut display = oxp_wire::display_settings(&self.input.display_settings());
-        let plan = crate::config_files::plan_with_privacy(
-            bytes,
-            &crate::config_files::settings_values(&current, &display),
+        let envelope = crate::config_files::read_envelope(bytes)?;
+        let mut current_values = crate::config_files::settings_values(&current, &display);
+        let native_hotspot_security = current_values.contains_key("hotspotSecurity");
+        if envelope["format"] == crate::config_files::USER_FORMAT {
+            current_values = self.config_user_values(&current, &display)?;
+        }
+        let mut plan = crate::config_files::plan_envelope(
+            &envelope,
+            &current_values,
             self.public_name.config().as_ref(),
             crate::platform::wall_clock().as_secs(),
         )?;
         let mut settings = plan.values.clone();
+        let hotspot = crate::config_files::take_hotspot(
+            &mut settings,
+            &current_values,
+            native_hotspot_security,
+        )?;
         for key in ["resolution", "screenWidth", "videoCodec"] {
             if let Some(value) = settings.remove(key) {
                 display[key] = value;
@@ -3231,16 +3307,44 @@ impl RelayAdmin for LinuxRelayAdmin {
                 )]));
             }
         }
+        let restart_keys = settings_restart_keys(&current, &next);
+        plan.report.next_start = plan
+            .report
+            .applied
+            .iter()
+            .filter(|key| restart_keys.contains(&key.as_str()))
+            .cloned()
+            .collect();
+        plan.report.applied_now = plan
+            .report
+            .applied
+            .iter()
+            .filter(|key| !restart_keys.contains(&key.as_str()))
+            .cloned()
+            .collect();
+        plan.report.restart_needed = !plan.report.next_start.is_empty();
         if !dry_run {
             if let Some(privacy) = plan.privacy {
                 self.public_name
                     .import_privacy(privacy)
                     .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
             }
-            if !plan.values.is_empty() {
-                if let AdminUpdate::Errors(errors) = self.update(plan.values) {
-                    return Err(errors);
+            let mut editor_values = plan.values;
+            editor_values.remove("hotspotSsid");
+            editor_values.remove("hotspotPassphrase");
+            if !native_hotspot_security {
+                editor_values.remove("hotspotSecurity");
+            }
+            if !editor_values.is_empty() {
+                match self.update(editor_values) {
+                    AdminUpdate::Errors(errors) => return Err(errors),
+                    AdminUpdate::NextStart => plan.report.restart_needed = true,
+                    AdminUpdate::AppliedNow => plan.report.restart_needed = false,
                 }
+            }
+            if let Some((ssid, password)) = hotspot {
+                self.hotspot_update(&ssid, &password, None, None)
+                    .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
             }
         }
         Ok(serde_json::to_value(plan.report).unwrap())
@@ -3787,21 +3891,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                         != current.experimental_send_bluetooth_address
                     || next.experimental_bluetooth_address
                         != current.experimental_bluetooth_address;
-                let controller_changed = next.iphone != current.iphone
-                    || effective_next.rfcomm_channel != effective_current.rfcomm_channel
-                    || next.wifi_interface != current.wifi_interface
-                    || next.hotspot_channel != current.hotspot_channel
-                    || next.hotspot_band != current.hotspot_band
-                    || next.hotspot_security != current.hotspot_security
-                    || effective_next.device_preset != effective_current.device_preset
-                    // Read when the controller builds the AirPlay receiver for the iPhone.
-                    || next.car_bluetooth_audio != current.car_bluetooth_audio
-                    || next.carlink_picture_default!=current.carlink_picture_default
-                    || effective_next.carlink_picture_size != effective_current.carlink_picture_size || next.developer_active != current.developer_active
-                    || next.display_mode != current.display_mode || next.display_width != current.display_width
-                    || next.display_height != current.display_height || next.display_density != current.display_density
-                    || next.physical_width_enabled != current.physical_width_enabled
-                    || next.physical_width_override_mm != current.physical_width_override_mm;
+                let controller_changed = !settings_restart_keys(&current, &next).is_empty();
                 let network = if network_update {
                     let ssid = self
                         .provision
@@ -4100,7 +4190,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         if band.is_some_and(|b| !["auto", "2.4", "5"].contains(&b)) {
             return Err("error.invalid".into());
         }
-        self.defer(Operation::Hotspot)?;
+        self.defer_hotspot()?;
         {
             let mut current = self.settings.lock().unwrap();
             let mut next = current.clone();
@@ -4195,7 +4285,7 @@ mod tests {
         let preview = admin.config_import(&bytes, true).unwrap();
         assert_eq!(
             preview,
-            serde_json::json!({"applied":["bootStart","output"],"ignored":["localPreview"],"restartNeeded":true})
+            serde_json::json!({"applied":["bootStart","output"],"ignored":["localPreview"],"restartNeeded":false,"appliedNow":["bootStart","output"],"nextStart":[]})
         );
         assert_eq!(std::fs::read(dir.join("settings.json")).unwrap(), before);
         assert!(admin.pending.lock().unwrap().is_empty());
@@ -4211,7 +4301,60 @@ mod tests {
         else {
             panic!("invalid port accepted")
         };
-        assert_eq!(preview_errors, editor_errors);
+        assert_eq!(preview_errors["receiverPort"], "invalid");
+        assert!(editor_errors["settings"].contains("receiverPort"));
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn config_hotspot_backup_partial_import_and_restart_report_follow_runtime() {
+        let (admin, dir) = fake();
+        crate::linux_hotspot::save_hotspot_credentials(&dir, "Original", "openxplay").unwrap();
+        let exported = admin.config_export(false).unwrap();
+        assert_eq!(exported["settings"]["hotspotSsid"], "Original");
+        assert_eq!(exported["settings"]["hotspotPassphrase"], "openxplay");
+        assert_eq!(exported["settings"]["hotspotSecurity"], "wpa2");
+        let file = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{
+            "hotspotSsid":"Imported", "car":{"brand":"other","model":"other","year":"other","yearText":"2027 custom"}, "hotspotBand":"ghz-5", "videoStats":"seconds-15", "experimental":{"version":2,"sendBluetoothAddress":false}
+        }})).unwrap();
+        let preview = admin.config_import(&file, true).unwrap();
+        assert_eq!(preview["nextStart"], serde_json::json!(["hotspotBand"]));
+        assert_eq!(preview["restartNeeded"], true);
+        assert_eq!(
+            preview["appliedNow"],
+            serde_json::json!([
+                "carBrand",
+                "carModel",
+                "carYear",
+                "carYearText",
+                "experimentalSendBluetoothAddress",
+                "hotspotSsid",
+                "videoStats"
+            ])
+        );
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap().0,
+            "Original"
+        );
+        assert_eq!(admin.config_import(&file, false).unwrap(), preview);
+        assert!(matches!(
+            admin.pending.lock().unwrap().values().next(),
+            Some(Operation::Hotspot(Some(_)))
+        ));
+        assert_eq!(
+            crate::linux_hotspot::hotspot_credentials(&dir).unwrap(),
+            ("Imported".into(), "openxplay".into())
+        );
+        assert_eq!(
+            admin.config_export(false).unwrap()["settings"]["car"]["yearText"],
+            "2027 custom"
+        );
+        admin.response_failed();
+        let unsupported = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"hotspotSecurity":"wpa3"}})).unwrap();
+        assert_eq!(
+            admin.config_import(&unsupported, true).unwrap_err()["hotspotSecurity"],
+            "error.hotspotSecurity"
+        );
         drop(admin);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -4223,6 +4366,11 @@ mod tests {
             serde_json::json!({"keep":true}),
         );
         let before = admin.settings.lock().unwrap().clone();
+        std::fs::write(
+            dir.join("hotspot.credentials"),
+            b"unrelated invalid hotspot data",
+        )
+        .unwrap();
         let public = serde_json::json!({"version":1,"enabled":false,"provider":"dynv6","name":"test.dynv6.net","token":"private-token","agreeLetsEncryptTerms":true});
         let bytes=serde_json::to_vec(&serde_json::json!({"format":"openxplay-privacy-config","version":1,"publicName":public})).unwrap();
         let preview = admin.config_import(&bytes, true).unwrap();
@@ -4233,6 +4381,7 @@ mod tests {
             serde_json::to_value(&*admin.settings.lock().unwrap()).unwrap(),
             serde_json::to_value(before).unwrap()
         );
+        std::fs::remove_file(dir.join("hotspot.credentials")).unwrap();
         assert!(!admin
             .config_export(false)
             .unwrap()
@@ -6661,7 +6810,7 @@ esac
         let lease = a.hotspot_lifetime.create(|| hotspot.clone()).unwrap();
         lease.start(Duration::from_secs(1)).unwrap();
         let op = rx.try_recv().unwrap();
-        assert!(matches!(op, Operation::Hotspot));
+        assert!(matches!(op, Operation::Hotspot(None)));
         a.operation(op).unwrap();
         assert_eq!(hotspot.closes.load(Ordering::SeqCst), 1);
         assert!(!a.apply_pending.load(Ordering::Acquire));

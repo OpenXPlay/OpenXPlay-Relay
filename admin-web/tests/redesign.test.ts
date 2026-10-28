@@ -85,7 +85,7 @@ it('matches Android custom picture sizes, presets, uniqueness and five-size cap'
 it('uses exact new APIs, never retries an upload or configuration import', async () => {
   const fetch = vi.fn().mockResolvedValue(new Response('{}')); vi.stubGlobal('fetch', fetch);
   await api.logExport('10m'); await api.logUpload('id'); await api.logReceipt(); await api.configImport({ format: 'openxplay-user-config' }, true); await api.configImport({ format: 'openxplay-privacy-config' }); await api.updateCheck('beta');
-  expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v0/logs/export', '/api/v0/logs/upload', '/api/v0/logs/receipt', '/api/v0/config/import?dryRun=1', '/api/v0/config/import', '/api/v0/update?channel=beta']);
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v0/logs/export', '/api/v0/logs/upload', '/api/v0/logs/receipt', '/api/v0/config/import?dryRun=1', '/api/v0/config/import', '/api/v0/update?channel=beta&fresh=1']);
   fetch.mockClear().mockRejectedValue(new TypeError('lost response')); await expect(api.logUpload('id')).rejects.toThrow(); expect(fetch).toHaveBeenCalledOnce();
 });
 it('handles an offline update response even when the transport returned 200', async () => {

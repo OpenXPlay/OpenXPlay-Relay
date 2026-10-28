@@ -346,19 +346,25 @@ export function mockApi(linux = false): Plugin {
           const allowed = ['publicName', 'publicNameCertificate', 'publicNameAccount', 'providers'];
           const applied = keys.filter(key => allowed.includes(key)), ignored = keys.filter(key => !allowed.includes(key));
           if (url.searchParams.get('dryRun') !== '1') privacyConfig = { ...privacyConfig, ...Object.fromEntries(applied.map(key => [key, body[key]])) };
-          return send(200, { applied, ignored, restartNeeded: false });
+          return send(200, { applied, ignored, restartNeeded: false, appliedNow: applied, nextStart: [] });
         }
         if (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings)) return send(422, { error: 'error.invalid' });
         const known = new Set(settings.schema.flatMap(s => s.fields).map(f => f.key).filter(key => key !== 'carlinkPictureTry'));
         const changes = Object.entries(body.settings as Record<string, Value>), applied = changes.filter(([key]) => known.has(key)).map(([key]) => key), ignored = changes.filter(([key]) => !known.has(key)).map(([key]) => key);
-        const restartNeeded = applied.some(key => ['frameRate', 'resolution', 'videoCodec', 'carlinkPictureDefault'].includes(key));
+        const nextStart = applied.filter(key => ['hotspotChannel', 'hotspotBand', 'carBluetoothAudio', 'carlinkPictureDefault', 'carlinkPictureSize'].includes(key));
+        const restartNeeded = nextStart.length > 0;
         if (url.searchParams.get('dryRun') !== '1') for (const [key, value] of changes) if (known.has(key)) settings.values[key] = value;
-        return send(200, { applied, ignored, restartNeeded });
+        return send(200, { applied, ignored, restartNeeded, appliedNow: applied.filter(key => !nextStart.includes(key)), nextStart });
       }
       if (path === '/update' && method === 'GET') {
         if (!['stable', 'beta'].includes(url.searchParams.get('channel') ?? '')) return send(422, { error: 'error.invalid' });
         if (previewUrl.searchParams.has('offline')) return send(503, { error: 'offline' });
-        const channel = url.searchParams.get('channel'); return send(200, { current: '0.2.1', latest: channel === 'beta' ? '0.2.2-beta.1' : '0.2.1', channel, url: 'https://github.com/OpenXPlay/OpenXPlay-Relay/releases', notes: channel === 'beta' ? 'Carlink connection improvements.' : '', checkedMillis: Date.now() });
+        const channel = url.searchParams.get('channel') as 'stable' | 'beta';
+        const candidates = {
+          stable: { latest: '0.2.1', outcome: 'up-to-date', url: 'https://github.com/OpenXPlay/OpenXPlay-Relay/releases', notes: '', publishedAt: '2026-10-25T12:00:00Z' },
+          beta: { latest: '0.2.2-beta.1', outcome: 'available', url: 'https://github.com/OpenXPlay/OpenXPlay-Relay/releases', notes: 'Connection improvements · 连接改进\n\n**Changes**\n- Carlink connection improvements.\n\n**更新**\n- Carlink 连接改进。', publishedAt: '2026-10-27T12:00:00Z' },
+        };
+        return send(200, { current: '0.2.1', ...candidates[channel], channel, candidates, checkedMillis: Date.now() });
       }
       if (linux && ['/network-roles', '/network-roles/preview'].includes(path)) {
         const network = mockNetwork(String(settings.values.networkMode));
