@@ -178,6 +178,38 @@ fn tesla_host_addresses_never_replace_the_ap_network() {
     std::fs::remove_dir_all(p).unwrap();
 }
 #[test]
+fn nmcli_pipe_separated_tesla_addresses_keep_the_ap_ready() {
+    for (ap, tesla) in [("10.79.0.1", "10.99.99.1"), ("10.77.0.1", "3.3.3.1")] {
+        let p = temp();
+        let runner = Arc::new(Fake::default());
+        *runner.addresses.lock().unwrap() = Some(format!("{tesla}/32 | {ap}/24"));
+        let h = manager(&p, runner.clone());
+        assert_eq!(
+            h.start(Duration::from_secs(60)).unwrap().host_address,
+            Some(ap.parse().unwrap())
+        );
+        for addresses in [
+            format!("{tesla}/32 | {ap}/24"),
+            format!("{ap}/24 | {tesla}/32"),
+            format!("{tesla}/32\n{ap}/24"),
+            format!("{ap}/24\n{tesla}/32"),
+            format!("{ap}/24"),
+        ] {
+            *runner.addresses.lock().unwrap() = Some(addresses);
+            h.validate_ready().unwrap();
+        }
+        for addresses in [format!("{tesla}/32 | {ap}/16"), format!("{tesla}/32")] {
+            *runner.addresses.lock().unwrap() = Some(addresses);
+            assert_eq!(
+                h.validate_ready().unwrap_err().to_string(),
+                "Hotspot address changed"
+            );
+        }
+        h.close().unwrap();
+        std::fs::remove_dir_all(p).unwrap();
+    }
+}
+#[test]
 fn the_activation_hook_sees_the_chosen_address_before_networkmanager_starts_the_ap() {
     let p = temp();
     let runner = Arc::new(Fake::default());

@@ -612,7 +612,7 @@ fn tesla_address_on_the_ap_does_not_retry_but_a_real_ap_change_does() {
             admin::auth::random_hex(8).unwrap()
         ));
         let runner = Arc::new(Runner::default());
-        *runner.addresses.lock().unwrap() = "10.42.0.1/24".into();
+        *runner.addresses.lock().unwrap() = "10.77.0.1/24".into();
         let hotspot = Arc::new(
             LinuxHotspot::new(dir.clone(), runner.clone(), "wlan0".into(), 36).with_runtime_dirs(
                 dir.join("keyfiles"),
@@ -628,7 +628,7 @@ fn tesla_address_on_the_ap_does_not_retry_but_a_real_ap_change_does() {
         let mut run = Run::new(f, Duration::from_secs(2));
         wait_for(|| run.controller.stage() == "WirelessActive");
         // This is the N1 ordering immediately after tesla-address READY.
-        *runner.addresses.lock().unwrap() = "3.3.3.1/32\n10.42.0.1/24".into();
+        *runner.addresses.lock().unwrap() = "3.3.3.1/32 | 10.77.0.1/24".into();
         let before = runner.reads.load(Ordering::SeqCst);
         let deadline = Instant::now() + Duration::from_secs(7);
         while runner.reads.load(Ordering::SeqCst) < before + 4 {
@@ -641,7 +641,7 @@ fn tesla_address_on_the_ap_does_not_retry_but_a_real_ap_change_does() {
         assert!(!run.has_event("retry"));
         assert_eq!(run.controller.stage(), "WirelessActive");
         assert_eq!(run.hotspot_ready().len(), 1);
-        *runner.addresses.lock().unwrap() = "3.3.3.1/32\n10.42.1.1/24".into();
+        *runner.addresses.lock().unwrap() = "3.3.3.1/32 | 10.77.1.1/24".into();
         let deadline = Instant::now() + Duration::from_secs(6);
         while !run.has_event("retry") {
             assert!(Instant::now() < deadline, "real AP changes must retry");

@@ -610,6 +610,7 @@ struct NmState {
     fail: Option<String>,
     scan_fails: bool,
     active_ssid: Option<String>,
+    addresses: Option<String>,
 }
 impl provision::NetworkManagerCli for FakeNm {
     fn run(&self, args: &[String], timeout: Duration) -> io::Result<String> {
@@ -659,7 +660,10 @@ impl provision::NetworkManagerCli for FakeNm {
             s.profiles.remove(&after("uuid").unwrap());
         }
         if position("IP4.ADDRESS").is_some() {
-            return Ok("192.168.1.78/24\n".into());
+            return Ok(s
+                .addresses
+                .clone()
+                .unwrap_or_else(|| "192.168.1.78/24\n".into()));
         }
         if position("SSID,SIGNAL,SECURITY,IN-USE").is_some() {
             if s.scan_fails {
@@ -676,6 +680,28 @@ fn provisioner(nm: FakeNm, path: &Path) -> provision::WifiProvisioner<FakeNm> {
         .with_local_dns(Some(
             openxplay_relay::public_name::local_dns::Paths::in_dir(path.join("dnsmasq-shared.d")),
         ))
+}
+#[test]
+fn provisioning_decodes_multivalue_addresses_on_join_and_autoconnect() {
+    let dir = Temp::new();
+    let nm = FakeNm::default();
+    nm.inner.lock().unwrap().addresses =
+        Some(r"bad\:10.99.99.1/32 | bad\|10.99.99.1/32 | 10.79.0.1/24 | 10.99.99.1/32".into());
+    let mut p = provisioner(nm.clone(), &dir.0);
+    p.join("Home", "password").unwrap();
+    assert_eq!(p.status().ip.as_deref(), Some("10.79.0.1"));
+    for addresses in [
+        "-- | 10.77.0.1/24 | 10.99.99.1/32",
+        "--\n10.77.0.1/24\n10.99.99.1/32",
+    ] {
+        let mut state = nm.inner.lock().unwrap();
+        state.active_ssid = Some("Car: Wi-Fi".into());
+        state.addresses = Some(addresses.into());
+        drop(state);
+        let status = p.status();
+        assert_eq!(status.ssid.as_deref(), Some("Car: Wi-Fi"));
+        assert_eq!(status.ip.as_deref(), Some("10.77.0.1"));
+    }
 }
 #[test]
 fn provisioning_without_config_creates_open_24ghz_ap() {

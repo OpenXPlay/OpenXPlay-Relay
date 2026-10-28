@@ -23,10 +23,21 @@ pub struct Radio {
 }
 pub struct WifiOutput;
 impl WifiOutput {
+    fn ipv4_values(text: &str) -> impl Iterator<Item = String> {
+        crate::provision::nmcli_values(text)
+            .into_iter()
+            .map(|value| {
+                value
+                    .strip_prefix("IP4.ADDRESS[")
+                    .and_then(|rest| rest.split_once("]:"))
+                    .map(|(_, address)| address.trim().to_owned())
+                    .unwrap_or(value)
+            })
+    }
     pub fn ipv4_networks(text: &str) -> Vec<(Ipv4Addr, u8)> {
-        text.lines()
-            .filter_map(|line| {
-                let (ip, prefix) = line.trim().rsplit(':').next()?.trim().split_once('/')?;
+        Self::ipv4_values(text)
+            .filter_map(|value| {
+                let (ip, prefix) = value.split_once('/')?;
                 let ip: Ipv4Addr = ip.parse().ok()?;
                 let prefix: u8 = prefix.parse().ok()?;
                 (!ip.is_unspecified() && !ip.is_loopback() && prefix <= 32).then_some((ip, prefix))
@@ -34,17 +45,8 @@ impl WifiOutput {
             .collect()
     }
     pub fn ipv4(text: &str) -> Option<Ipv4Addr> {
-        text.lines()
-            .filter_map(|s| {
-                s.trim()
-                    .rsplit(':')
-                    .next()?
-                    .trim()
-                    .split('/')
-                    .next()?
-                    .parse::<Ipv4Addr>()
-                    .ok()
-            })
+        Self::ipv4_values(text)
+            .filter_map(|value| value.split('/').next()?.parse::<Ipv4Addr>().ok())
             .find(|a| !a.is_unspecified() && !a.is_loopback())
     }
     pub fn unescape(text: &str) -> String {
