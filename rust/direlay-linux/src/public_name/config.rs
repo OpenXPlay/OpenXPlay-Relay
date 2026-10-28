@@ -356,7 +356,15 @@ pub fn apply_admin(
     next.errors.clear();
     let mut errors = BTreeMap::new();
     let invalid = |errors: &mut BTreeMap<String, String>, key: &str| {
-        errors.insert(key.to_string(), "error.invalid".to_string());
+        errors.insert(
+            key.to_string(),
+            match key {
+                "publicName" => "publicName.nameInvalid",
+                "publicNameToken" => "publicName.tokenInvalid",
+                _ => "error.invalid",
+            }
+            .to_string(),
+        );
     };
     // The provider first: the name and token rules depend on it.
     if let Some(v) = values.get("publicNameProvider") {
@@ -549,13 +557,13 @@ mod tests {
             ),
         )
         .unwrap_err();
-        for key in [
-            "publicName",
-            "publicNameToken",
-            "publicNameProvider",
-            "publicNameEnabled",
+        for (key, expected) in [
+            ("publicName", "publicName.nameInvalid"),
+            ("publicNameToken", "publicName.tokenInvalid"),
+            ("publicNameProvider", "error.invalid"),
+            ("publicNameEnabled", "error.invalid"),
         ] {
-            assert_eq!(errors[key], "error.invalid", "{key}");
+            assert_eq!(errors[key], expected, "{key}");
         }
         assert_eq!(errors["publicNameOther"], "error.setting");
         // A provider change keeps the other fields even where they no longer fit: the page saves

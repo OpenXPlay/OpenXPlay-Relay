@@ -164,7 +164,7 @@ pub fn check(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::public_name::jws::tests::PAD_KEY;
     /// Made with `openssl x509 -req` for the PAD key: serial 0x87654321 (so its DER content

@@ -10,7 +10,7 @@ use super::{
     config::{self, AcmeEnvironment, Config, Provider, Stamp},
     dns::{self, Propagation, WaitError},
     http::{Http, UreqHttp},
-    local_dns,
+    local_dns, privacy,
     providers::{self, Endpoints, ProviderClient, ProviderError},
     schedule,
     store::{self, ErrorRecord, Meta, Store},
@@ -114,6 +114,8 @@ pub struct Served {
     pub cert: PathBuf,
     pub key: PathBuf,
     pub not_after: u64,
+    /// Identifies the actual chain, including renewals with unchanged names and dates.
+    pub fingerprint: String,
 }
 
 /// Whether the head-unit page should be restarted now to serve `desired` instead of `current`:
@@ -125,7 +127,7 @@ pub fn should_restart(
     session: bool,
     now: Option<u64>,
 ) -> bool {
-    if current == desired {
+    if current.map(|s| (&s.name, &s.fingerprint)) == desired.map(|s| (&s.name, &s.fingerprint)) {
         return false;
     }
     let urgent = current
@@ -263,9 +265,95 @@ impl PublicNameService {
     pub fn served(&self) -> Option<Served> {
         self.inner.shared.lock().unwrap().served.clone()
     }
+    /// Freeze the pair under the worker's write gate; automatic child respawns keep this
+    /// material until the relay explicitly applies a newer certificate.
+    pub fn certificate_snapshot(&self, state_dir: &Path) -> std::io::Result<Option<Served>> {
+        let _files = self.inner.files.lock().unwrap();
+        self.inner.refresh_served(trusted_clock());
+        let mut served = self.served();
+        if let Some(material) = served.as_mut() {
+            let chain = std::fs::read(&material.cert)?;
+            let key = std::fs::read(&material.key)?;
+            let dir = state_dir.join("receiver-tls");
+            material.cert = dir.join("named-cert.pem");
+            material.key = dir.join("named-key.pem");
+            crate::admin::auth::private_file(&material.key, &key)?;
+            crate::admin::auth::private_file(&material.cert, &chain)?;
+        }
+        Ok(served)
+    }
     /// Changes whenever [`Self::served`] does.
     pub fn generation(&self) -> u64 {
         self.inner.generation.load(Ordering::Acquire)
+    }
+    /// A secret-bearing snapshot for configuration export only; never include it in status.
+    pub fn privacy_export(&self) -> std::io::Result<Value> {
+        let _files = self.inner.files.lock().unwrap();
+        self.inner.reload_locked(false);
+        let config = self.inner.shared.lock().unwrap().config.clone();
+        privacy::export(&self.inner.store, config.as_ref())
+    }
+    pub fn config(&self) -> Option<Config> {
+        let _files = self.inner.files.lock().unwrap();
+        self.inner.reload_locked(false);
+        self.inner.shared.lock().unwrap().config.clone()
+    }
+    /// Installs every validated privacy section before releasing the worker's write gate.
+    /// Bumping the version also fences an ACME order already in flight for the same name.
+    pub fn import_privacy(&self, import: privacy::Import) -> std::io::Result<()> {
+        let files = self.inner.files.lock().unwrap();
+        self.inner.reload_locked(false);
+        let config = import
+            .config
+            .as_ref()
+            .cloned()
+            .or_else(|| self.inner.shared.lock().unwrap().config.clone());
+        if import.certificate.as_ref().is_some_and(|material| {
+            config.as_ref().and_then(|c| c.name.as_deref()) != Some(material.name.as_str())
+        }) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "public-name configuration changed",
+            ));
+        }
+        self.inner.shared.lock().unwrap().version += 1;
+        if let Some(material) = import.certificate {
+            self.inner
+                .store
+                .save_certificate(material.chain.as_bytes(), &material.key)?;
+            let mut meta = self.inner.store.meta();
+            meta.name = Some(material.name);
+            meta.provider = config
+                .as_ref()
+                .and_then(|c| c.provider)
+                .map(|p| p.id().into());
+            meta.acme = config.as_ref().map(|c| c.acme.id().into());
+            meta.not_before = Some(material.leaf.not_before);
+            meta.not_after = Some(material.leaf.not_after);
+            meta.issued_at = Some(material.leaf.not_before);
+            meta.cert_id = material.leaf.cert_id;
+            meta.ari_window = None;
+            meta.renew_at = None;
+            meta.ari_next_poll = None;
+            self.inner.store.save_meta(&meta)?;
+        }
+        if let Some(account) = import.account {
+            self.inner.store.save_account(
+                &account.key,
+                &account.directory,
+                account.url.as_deref(),
+            )?;
+        }
+        if let Some(config) = import.config {
+            self.inner.save_config(&config)?;
+        }
+        if let Some(providers) = import.providers {
+            self.inner.store.save_providers(&providers)?;
+        }
+        self.inner.reload_locked(true);
+        drop(files);
+        self.inner.wake.notify_all();
+        Ok(())
     }
     /// The admin page's values; the token never leaves the relay.
     pub fn admin_values(&self) -> Map<String, Value> {
@@ -281,6 +369,18 @@ impl PublicNameService {
         values.insert(
             "publicNameProviders".into(),
             store::provider_values(&providers),
+        );
+        values.insert(
+            "privacyConfigAvailable".into(),
+            (active.is_some()
+                || !providers.is_empty()
+                || self.inner.store.certificate().is_some()
+                || self
+                    .inner
+                    .store
+                    .account(active.as_ref().map(|c| c.acme))
+                    .is_some())
+            .into(),
         );
         values
     }
@@ -369,6 +469,7 @@ impl PublicNameService {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
             _ => {}
         }
+        self.inner.store.remove_all()?;
         self.inner.reload_locked(false);
         drop(files);
         self.inner.wake.notify_all();
@@ -422,6 +523,7 @@ struct Runtime {
     republish: bool,
     last_address: Option<Ipv4Addr>,
     last_check: Option<Instant>,
+    check_at: Option<u64>,
     check_due: bool,
     settle_until: Option<Instant>,
 }
@@ -437,6 +539,7 @@ impl Runtime {
             republish: false,
             last_address: None,
             last_check: None,
+            check_at: None,
             check_due: true,
             settle_until: None,
         }
@@ -550,7 +653,7 @@ impl Inner {
             // Unreadable for now: keep what was read last.
             Err(_) => return,
         };
-        if loaded.is_none() && self.store.exists() {
+        if loaded.is_none() && self.shared.lock().unwrap().config.is_some() && self.store.exists() {
             let _ = self.store.remove_all();
         }
         if let Some((config, _)) = &loaded {
@@ -608,6 +711,10 @@ impl Inner {
                     cert: self.store.cert_path(),
                     key: self.store.key_path(),
                     not_after: leaf.not_after,
+                    fingerprint: {
+                        use sha2::{Digest, Sha256};
+                        super::jws::b64(&Sha256::digest(&chain))
+                    },
                 })
             });
         let mut shared = self.shared.lock().unwrap();
@@ -752,7 +859,13 @@ impl Inner {
             }
             rt.settle_until = None;
             self.step(host, &config, address, &mut rt, &mut provider_hold);
-            if !self.idle(self.network.tick) {
+            let wait = rt
+                .check_at
+                .zip(host.clock())
+                .filter(|(at, now)| at > now)
+                .map(|(at, now)| Duration::from_secs(at - now).min(self.network.tick))
+                .unwrap_or(self.network.tick);
+            if !self.idle(wait) {
                 return;
             }
         }
@@ -937,6 +1050,7 @@ impl Inner {
             rt.cert_hold = None;
         }
         let check = rt.check_due
+            || rt.check_at.is_some_and(|at| now >= at)
             || self.shared.lock().unwrap().served.is_none()
             || rt
                 .last_check
@@ -946,6 +1060,14 @@ impl Inner {
                 Check::Done => {
                     rt.check_due = false;
                     rt.last_check = Some(Instant::now());
+                    let meta = self.store.meta();
+                    rt.check_at = schedule::next_check(
+                        now,
+                        meta.not_before,
+                        meta.not_after,
+                        meta.renew_at,
+                        meta.ari_next_poll,
+                    );
                     rt.reset_backoff();
                 }
                 Check::Blocked(until, error) => {
@@ -1016,26 +1138,51 @@ impl Inner {
         let mut client = None;
         let mut due = false;
         if let Some(leaf) = &current {
-            // ARI first, when the CA offers it; without an answer the one-third rule decides.
-            if let (Some(id), Ok(c)) = (
-                leaf.cert_id.as_deref(),
-                acme::Client::connect(http, directory, &account, self.store.account_url(), now),
-            ) {
-                if let Ok(Some(window)) = c.renewal_window(id) {
-                    if meta.ari_window != Some(window) || meta.cert_id.as_deref() != Some(id) {
-                        use rand_core::RngCore;
-                        meta.ari_window = Some(window);
-                        meta.cert_id = Some(id.into());
-                        meta.renew_at = Some(schedule::ari_time(
-                            window.0,
-                            window.1,
-                            rand_core::OsRng.next_u64(),
-                        ));
-                        let saved = meta.clone();
-                        self.write(version, |store| store.save_meta(&saved));
+            // Keep the previous renewal plan until ARI's next poll; a failure never erases it.
+            if meta.cert_id != leaf.cert_id {
+                meta.cert_id = leaf.cert_id.clone();
+                meta.ari_window = None;
+                meta.renew_at = None;
+                meta.ari_next_poll = None;
+            }
+            if leaf.cert_id.is_some() && meta.ari_next_poll.is_none_or(|at| now >= at) {
+                let result = acme::Client::connect(
+                    http,
+                    directory,
+                    &account,
+                    self.store.account_url_for(directory),
+                    now,
+                );
+                let mut retry = None;
+                if let Ok(c) = result {
+                    match c.renewal_window(leaf.cert_id.as_deref().unwrap()) {
+                        Ok(Some(window)) => {
+                            retry = window.retry_after;
+                            let bounds = (window.start, window.end);
+                            if meta.ari_window != Some(bounds) || meta.renew_at.is_none() {
+                                use rand_core::RngCore;
+                                meta.ari_window = Some(bounds);
+                                meta.renew_at = Some(schedule::ari_time(
+                                    bounds.0,
+                                    bounds.1,
+                                    rand_core::OsRng.next_u64(),
+                                ));
+                            }
+                        }
+                        Ok(None) => {
+                            meta.ari_window = None;
+                            meta.renew_at = None;
+                        }
+                        Err(AcmeError::RateLimited(seconds)) => retry = seconds,
+                        Err(_) => {}
                     }
+                    client = Some(c);
+                } else if let Err(AcmeError::RateLimited(seconds)) = result {
+                    retry = seconds;
                 }
-                client = Some(c);
+                meta.ari_next_poll = Some(now + schedule::ari_poll_delay(retry));
+                let saved = meta.clone();
+                self.write(version, |store| store.save_meta(&saved));
             }
             let renew_at = meta
                 .renew_at
@@ -1067,7 +1214,7 @@ impl Inner {
                 http,
                 directory,
                 &account,
-                self.store.account_url(),
+                self.store.account_url_for(directory),
                 now,
             ) {
                 Ok(c) => c,
@@ -1100,8 +1247,11 @@ impl Inner {
             },
         );
         if let Some(kid) = client.kid() {
-            if self.store.account_url().as_deref() != Some(kid) {
-                self.write(version, |store| store.save_account_url(kid));
+            if self.store.account_url_for(directory).as_deref() != Some(kid) {
+                self.write(version, |store| {
+                    store.save_account_directory(directory)?;
+                    store.save_account_url(kid)
+                });
             }
         }
         let issued = match issued {
@@ -1120,6 +1270,7 @@ impl Inner {
             meta.cert_id = issued.leaf.cert_id.clone();
             meta.ari_window = None;
             meta.renew_at = None;
+            meta.ari_next_poll = None;
             meta.retry_after = None;
             meta.last_error = None;
             store.save_meta(&meta)
@@ -1295,6 +1446,164 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn privacy_import_installs_before_a_running_worker_and_preserves_all_providers() {
+        let world = World::new(FakeAcmeOptions::default());
+        world.configure();
+        let source = world.service();
+        wait_for("source certificate", || source.status().state == "ready");
+        source.stop();
+        let mut backup = source.privacy_export().unwrap();
+        // The test CA is HTTP; transferred accounts obey Android's HTTPS-only validation.
+        backup["publicNameAccount"]["directory"] = acme::PRODUCTION.into();
+        backup["publicNameAccount"]["url"] = "https://ca.example/account/1".into();
+        backup["providers"]["dynv6"] =
+            serde_json::json!({"name":"second.example.org","token":"second-token"});
+        let destination = TempDir::new("privacy-import");
+        let target = PublicNameService::new(&destination.0, world.network());
+        assert_eq!(target.admin_values()["privacyConfigAvailable"], false);
+        target.start(world.host.clone()).unwrap();
+        let import = privacy::decode(&backup, None, world.host.clock().unwrap())
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        target.import_privacy(import).unwrap();
+        wait_for("restored certificate", || target.status().state == "ready");
+        assert_eq!(world.new_orders(), 1, "import must not order a replacement");
+        let exported = target.privacy_export().unwrap();
+        for key in [
+            "publicName",
+            "publicNameCertificate",
+            "publicNameAccount",
+            "providers",
+        ] {
+            assert_eq!(exported[key], backup[key], "{key}");
+        }
+        let store = Store::new(&destination.0);
+        let meta = store.meta();
+        assert_eq!(meta.provider.as_deref(), Some("duckdns"));
+        assert_eq!(meta.acme.as_deref(), Some("production"));
+        let leaf = cert::leaf(
+            exported["publicNameCertificate"]["chainPem"]
+                .as_str()
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(meta.not_before, Some(leaf.not_before));
+        assert_eq!(meta.not_after, Some(leaf.not_after));
+        assert_eq!(meta.cert_id, leaf.cert_id);
+        assert_eq!(
+            store.account_url_for(acme::PRODUCTION).as_deref(),
+            Some("https://ca.example/account/1")
+        );
+        assert!(store.account_url_for(acme::STAGING).is_none());
+        assert!(!Value::Object(target.admin_values())
+            .to_string()
+            .contains("second-token"));
+        for file in [
+            "cert.pem",
+            "key.pem",
+            "meta.json",
+            "providers.json",
+            "account.key",
+            "account.directory",
+            "account.url",
+        ] {
+            assert_eq!(
+                std::fs::metadata(store.dir().join(file))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        target.stop();
+    }
+    #[test]
+    fn privacy_sections_without_active_config_survive_reload_and_remove() {
+        let state = TempDir::new("privacy-providers-only");
+        let service = PublicNameService::new(&state.0, Network::internet(None));
+        let value =
+            serde_json::json!({"providers":{"dynv6":{"name":"car.example.org","token":"secret"}}});
+        service
+            .import_privacy(
+                privacy::decode(&value, None, 1_795_000_000).unwrap_or_else(|e| panic!("{e:?}")),
+            )
+            .unwrap();
+        service.inner.reload(false);
+        assert_eq!(service.privacy_export().unwrap(), value);
+        assert_eq!(service.admin_values()["privacyConfigAvailable"], true);
+        service.remove().unwrap();
+        assert_eq!(service.privacy_export().unwrap(), serde_json::json!({}));
+    }
+    #[test]
+    fn ari_poll_is_cached_and_the_worker_renews_at_the_saved_time() {
+        let world = World::new(FakeAcmeOptions {
+            ari: Some(("2027-01-01T00:00:00Z".into(), "2027-01-02T00:00:00Z".into())),
+            ..Default::default()
+        });
+        world.configure();
+        let service = world.service();
+        wait_for("ready", || service.status().state == "ready");
+        service.renew();
+        let store = Store::new(&world.state.0);
+        wait_for("ARI poll", || store.meta().ari_next_poll.is_some());
+        let polls = || {
+            world
+                .acme
+                .log()
+                .iter()
+                .filter(|line| line.as_str() == "renewalInfo")
+                .count()
+        };
+        let meta = store.meta();
+        let now = world.host.clock().unwrap();
+        assert_eq!(meta.ari_next_poll, Some(now + 21_600));
+        let first_plan = meta.renew_at;
+        let first_polls = polls();
+        service.renew();
+        wait_for("republish", || world.published().len() >= 3);
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(store.meta().renew_at, first_plan);
+        assert_eq!(
+            polls(),
+            first_polls,
+            "Retry-After prevents another ARI request"
+        );
+        service.stop();
+        let mut meta = store.meta();
+        meta.renew_at = Some(now + 10);
+        store.save_meta(&meta).unwrap();
+        service.start(world.host.clone()).unwrap();
+        wait_for("settled", || service.status().state == "ready");
+        *world.host.clock.lock().unwrap() = Some(now + 10);
+        wait_for("renewal without a manual request or 12-hour wait", || {
+            world.new_orders() == 2
+        });
+        service.stop();
+    }
+    #[test]
+    fn a_frozen_child_pair_survives_a_new_certificate_or_removal() {
+        let world = World::new(FakeAcmeOptions::default());
+        world.configure();
+        let service = world.service();
+        wait_for("ready", || service.status().state == "ready");
+        service.stop();
+        let snapshot = service
+            .certificate_snapshot(&world.state.0)
+            .unwrap()
+            .unwrap();
+        let chain = std::fs::read(&snapshot.cert).unwrap();
+        service
+            .inner
+            .store
+            .save_certificate(b"replacement", "replacement-key")
+            .unwrap();
+        assert_eq!(std::fs::read(&snapshot.cert).unwrap(), chain);
+        service.remove().unwrap();
+        assert_eq!(std::fs::read(&snapshot.cert).unwrap(), chain);
     }
 
     #[test]
@@ -1687,6 +1996,7 @@ mod tests {
             cert: "c".into(),
             key: "k".into(),
             not_after,
+            fingerprint: not_after.to_string(),
         };
         let (old, new) = (served(now + 30 * DAY), served(now + 90 * DAY));
         assert!(!should_restart(Some(&old), Some(&old), false, Some(now)));

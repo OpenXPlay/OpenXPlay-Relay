@@ -24,10 +24,11 @@ export function privacyMarkup(t: Translate): string {
 }
 export function mountFeaturePage(container: HTMLElement, route: string, options: { t: Translate; version: string; platform?: 'linux' | 'android'; adminFeatures?: string[]; language: string; setLanguage: (language: string) => void; error: (error: unknown) => string; reload: () => Promise<void> }) {
   const t = options.t;
+  let privateDataAvailable = false;
   const feedback = (key: string) => { const node = container.querySelector('#feature-feedback'); if (node) node.textContent = t(key); };
   const fail = (e: unknown) => feedback(route === 'settings/about' && e instanceof ApiError && e.key === 'offline' ? 'files.updateOffline' : e instanceof ApiError && ['offline', 'too_large', 'rejected', 'timeout'].includes(e.key) ? `files.${e.key}` : e instanceof Error && e.message.startsWith('files.') ? e.message : options.error(e));
   const date = (millis: number) => new Date(millis).toLocaleString();
-  const busy = (value: boolean, key = '') => { container.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = value; }); container.querySelector('progress')?.toggleAttribute('hidden', !value); container.setAttribute('aria-busy', String(value)); if (key) feedback(key); };
+  const busy = (value: boolean, key = '') => { container.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = value || (button.id === 'privacy-export' && !privateDataAvailable); }); container.querySelector('progress')?.toggleAttribute('hidden', !value); container.setAttribute('aria-busy', String(value)); if (key) feedback(key); };
   if (['settings/logs', 'settings/config-files'].includes(route) && !options.adminFeatures?.includes(route.slice(9))) return;
   if (route === 'settings/logs') {
     container.innerHTML = `<div class="inset-group"><div class="chips" role="group" aria-label="${esc(t('logs_choose_period'))}">${['10m', '30m', '24h'].map((range, index) => `<button data-range="${range}" aria-pressed="${index === 0}">${esc(t(['logs_10_minutes', 'logs_30_minutes', 'logs_24_hours'][index]))}</button>`).join('')}</div><button class="pill full-width" id="logs-save">${esc(t('files.savePhone'))}</button><button class="primary pill" id="logs-upload">${esc(t('files.uploadQr'))}</button><progress hidden aria-label="${esc(t('ui.loading'))}"></progress><p id="feature-feedback" role="status"></p></div><div id="log-receipt"></div><div class="inset-group privacy"><button class="inset-row full-width" id="logs-privacy">${esc(t('logs_privacy_title'))}<span aria-hidden="true">›</span></button></div>`;
@@ -66,7 +67,25 @@ export function mountFeaturePage(container: HTMLElement, route: string, options:
       })(); });
     });
   } else if (route === 'settings/config-files') {
-    container.innerHTML = `<div class="inset-group">${['user', 'privacy'].map(kind => `<a class="inset-row" href="/api/v0/config/${kind}" download="openxplay-${kind}-config.json">${esc(t(`files.export.${kind}`))} ↓</a>`).join('')}<button class="pill full-width" id="choose-config">${esc(t('files.chooseFile'))}</button><input hidden id="config-file" aria-label="${esc(t('files.import'))}" type="file" accept="application/json,.json"><p class="muted">${esc(t('files.importHint'))}</p><progress hidden aria-label="${esc(t('ui.loading'))}"></progress><p id="feature-feedback" role="status"></p></div><div id="config-preview"></div>`;
+    container.innerHTML = `<div class="inset-group"><a class="inset-row" href="/api/v0/config/user" download="openxplay-user-config.json">${esc(t('files.export.user'))} ↓</a><button class="inset-row full-width" id="privacy-export" disabled>${esc(t('files.export.privacy'))} ↓</button><p id="privacy-empty" class="muted" hidden>${esc(t('files.privacyEmpty'))}</p><button class="pill full-width" id="choose-config">${esc(t('files.chooseFile'))}</button><input hidden id="config-file" aria-label="${esc(t('files.import'))}" type="file" accept="application/json,.json"><p class="muted">${esc(t('files.importHint'))}</p><progress hidden aria-label="${esc(t('ui.loading'))}"></progress><p id="feature-feedback" role="status"></p></div><div id="config-preview"></div>`;
+    const refreshPrivacy = async () => {
+      const settings = await api.settings();
+      if (!container.isConnected) return;
+      const available = privateDataAvailable = settings.values.privacyConfigAvailable === true;
+      container.querySelector<HTMLButtonElement>('#privacy-export')!.disabled = !available;
+      container.querySelector('#privacy-empty')!.toggleAttribute('hidden', available);
+    };
+    void refreshPrivacy().catch(fail);
+    on(container.querySelector('#privacy-export'), 'click', () => {
+      const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', t('files.export.privacy'));
+      dialog.innerHTML = `<h2>${esc(t('files.export.privacy'))}</h2><p>${esc(t('files.privacyWarning'))}</p><button data-export class="primary">${esc(t('files.exportConfirm'))}</button><button data-close>${esc(t('ui.cancel'))}</button>`;
+      document.body.append(dialog); dialog.showModal();
+      const close = () => { dialog.close(); dialog.remove(); container.querySelector<HTMLButtonElement>('#privacy-export')?.focus(); };
+      on(dialog.querySelector('[data-close]'), 'click', close); on(dialog, 'cancel', close);
+      on(dialog.querySelector('[data-export]'), 'click', () => {
+        close(); const link = document.createElement('a'); link.href = '/api/v0/config/privacy'; link.download = 'openxplay-privacy-config.json'; link.click();
+      });
+    });
     on(container.querySelector('#choose-config'), 'click', () => container.querySelector<HTMLInputElement>('#config-file')?.click());
     let envelope: unknown;
     on(container.querySelector<HTMLInputElement>('#config-file'), 'change', async event => {
@@ -80,7 +99,7 @@ export function mountFeaturePage(container: HTMLElement, route: string, options:
         patchMarkup(container.querySelector('#config-preview')!, `<div class="inset-group"><h2>${esc(t('files.preview'))}</h2><p>${esc(t('files.applied'))}: ${esc(preview.applied.join(', ') || '—')}</p><p>${esc(t('files.ignored'))}: ${esc(preview.ignored.join(', ') || '—')}</p>${preview.restartNeeded ? `<p class="notice">${esc(t('files.restart'))}</p>` : ''}<button class="primary" id="config-apply">${esc(t('files.apply'))}</button></div>`);
         on(container.querySelector('#config-apply'), 'click', async () => {
           if (envelope === undefined) return;
-          try { busy(true, 'ui.saving'); const result = await api.configImport(envelope); feedback((result as { restartNeeded: boolean }).restartNeeded ? 'files.restart' : 'ui.saved'); envelope = undefined; patchMarkup(container.querySelector('#config-preview')!, ''); await options.reload(); }
+          try { busy(true, 'ui.saving'); const result = await api.configImport(envelope); feedback((result as { restartNeeded: boolean }).restartNeeded ? 'files.restart' : 'ui.saved'); envelope = undefined; patchMarkup(container.querySelector('#config-preview')!, ''); await options.reload(); await refreshPrivacy(); }
           catch (e) { fail(e); } finally { busy(false); }
         });
       } catch (e) { fail(e); } finally { busy(false); }
