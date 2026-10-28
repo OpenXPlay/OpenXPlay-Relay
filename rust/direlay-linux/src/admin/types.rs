@@ -43,6 +43,9 @@ pub struct AdminStatus {
     /// Per-browser receiver diagnostics, only for `GET /status?diagnostics=1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receivers: Option<Vec<Value>>,
+    /// Bounded screen information and fullscreen exits retained after live clients expire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver_history: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bluetooth_guard: Option<AdminBluetoothGuard>,
     /// Bluetooth Secure Connections as the relay last switched it (off only while pairing);
@@ -553,6 +556,9 @@ pub trait RelayAdmin: Send + Sync + 'static {
     /// Latest receiver-info and recent stats per browser, as `[{client, idleSeconds, info, stats}]`.
     fn receivers(&self) -> Vec<Value> {
         Vec::new()
+    }
+    fn receiver_history(&self) -> Value {
+        serde_json::json!({"screens":[],"fullscreenExits":[]})
     }
     fn wifi_status(&self) -> WifiClient;
     fn wifi_networks(&self) -> Result<Vec<WifiNetwork>, String>;

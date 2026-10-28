@@ -12,7 +12,7 @@ import { mountStage, timer } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
 import type { StageAction } from './path/present-stage';
-import { fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons } from './settings-tree';
+import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons } from './settings-tree';
 import { mountPictureField } from './picture-sizes';
 import { COUNTRY_CODES } from './wifi-countries';
 import { mountFeaturePage } from './feature-pages';
@@ -46,7 +46,7 @@ let currentView = route === 'home' ? 'home' : 'settings';
 let stage: ReturnType<typeof mountStage> | null = null;
 let visibleTimer: ReturnType<typeof setInterval> | undefined;
 const drafts = new Map<string, string>();
-on(window, 'hashchange', () => { route = normalizeRoute(location.hash); currentView = route === 'home' ? 'home' : 'settings'; render(); });
+on(window, 'hashchange', () => { videoStats.reset(); route = normalizeRoute(location.hash); currentView = route === 'home' ? 'home' : 'settings'; render(); });
 function showSettings(target?: string) {
   const next = target?.startsWith('settings') ? target : target === 'current-password' ? 'settings/access/admin' : target?.startsWith('field-') ? fieldRoute(decodeURIComponent(target.slice(6))) : 'settings';
   location.hash = next;
@@ -106,7 +106,7 @@ function resetSession(next: SessionState) {
 }
 on(events, 'unauthorized', () => { if (session === 'ready' && !handoff) resetSession('login'); });
 // Anchor deadlines on this browser's clock; statistics are fetched only when displayed.
-async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(route === 'settings/developer/diagnostics' || route === 'settings/connection/network/interfaces' || videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
+async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(route === 'settings/developer/diagnostics' || route === 'settings/connection/network/interfaces' || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
 function errorKey(error: unknown): string { return error instanceof ApiError ? error.key : error instanceof NetworkError ? 'error.network' : 'error.request'; }
 function shell() {
   document.documentElement.lang = language;
@@ -174,6 +174,7 @@ function renderReady() {
   if (!pageAvailable(settings!, status!, route) && route !== 'home') { location.hash = parentRoute(route); return; }
   renderRestart();
   const main = document.getElementById('main')!;
+  if (currentView !== 'home') videoStats.reset();
   if (currentView === 'home') {
     patchMarkup(main, '<div id="dashboard"></div>');
     stage = mountStage(document.getElementById('dashboard')!, { t, action: action => void dispatchStage(action), copy: value => void copyStage(value),
@@ -255,9 +256,10 @@ function updateDashboard() {
   syncPinDialog(); syncVisibleTimer();
 }
 function syncVisibleTimer() {
-  const visible = !document.hidden && (!!document.querySelector('#pairing-remaining, #carlink-countdown') || !!stage?.timerVisible);
+  const visible = !document.hidden && (!!document.querySelector('#pairing-remaining, #carlink-countdown') || !!stage?.timerVisible || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0);
   if (visible && !visibleTimer) visibleTimer = setInterval(() => {
     stage?.tick(); syncPinDialog();
+    if (currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0) void tick();
     const seconds = Math.max(0, Math.ceil((status?.pairingDeadline ?? 0) - Date.now() / 1000));
     const panel = document.getElementById('pairing-remaining'); if (panel) panel.textContent = t('pairing.open', { time: formatRemaining(seconds) });
     if (!seconds && status?.pairingDeadline) { status.pairingDeadline = null; renderPairingPanel(); }
@@ -359,7 +361,7 @@ function confirmRemovePublicName() {
 }
 function renderDiagnostics() {
   const el = document.getElementById('diagnostics'); if (!el || !status) return;
-  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, status.platform === 'linux' ? status.network : null, language]);
+  const signature = JSON.stringify([status.carlink, status.video, status.receivers, status.receiverHistory, status.bluetoothGuard, status.hostProfile, status.hostCapabilities, status.wireless, status.platform === 'linux' ? status.network : null, language]);
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   const open = new Set([...el.querySelectorAll<HTMLDetailsElement>('details[data-details]')].filter(d => d.open).map(d => d.dataset.details));
@@ -522,7 +524,7 @@ function fieldMarkup(field: Field): string {
   else if (field.type === 'plugins') control = `<div ${attr}>${pluginList(settings!, language, t, true)}</div>`;
   else if (field.type === 'bool' || field.key === 'carlinkTrace') control = `<label class="switch-row" for="${id}"><span>${label}</span><input ${attr} type="checkbox" role="switch" ${value === true || value === 'on' ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span></label>`;
   else if (field.type === 'choice' || field.type === 'phone') {
-    const summary = field.type === 'phone' ? value === 'auto' ? t('ui.automatic') : phoneNames.get(String(value)) ?? value : optionLabel(field.options?.find(o => o.value === value), language, t);
+    const summary = field.key === 'frameRate' && value === 'auto' ? autoFrameRateSummary(status!, t) : field.type === 'phone' ? value === 'auto' ? t('ui.automatic') : phoneNames.get(String(value)) ?? value : optionLabel(field.options?.find(o => o.value === value), language, t);
     control = `<button ${attr} class="inset-row picker-button" aria-haspopup="dialog"><span class="row-copy"><span>${label}</span><small class="muted">${esc(summary)}</small></span><span aria-hidden="true">›</span></button>`;
   } else {
     const object = field.type === 'object' || typeof value === 'object' && value !== null;
@@ -922,7 +924,9 @@ async function tick() {
     } else if (!status || !settings) await loadReady();
     else {
       const current = epoch; const next = await fetchStatus();
-      if (current === epoch && session === 'ready') { status = next; renderRestart();
+      if (current === epoch && session === 'ready') { status = next;
+        if (currentView === 'home') videoStats.read(status, videoStatsInterval(settings, status.platform), performance.now());
+        renderRestart();
         if (switching && next.network.mode === switching.target && Date.now() - switching.started >= 2000) {
           const joinError = next.notices.find(n => n.startsWith('wifi.joinFailed.'));
           networkError = joinError ?? '';
@@ -937,7 +941,7 @@ async function tick() {
   finally { polling = false; }
 }
 on(window, 'scroll', () => { document.documentElement.style.setProperty('--collapse', String(Math.min(1, window.scrollY / 64))); });
-on(document, 'visibilitychange', () => { syncVisibleTimer(); if (!document.hidden) void tick(); });
+on(document, 'visibilitychange', () => { if (document.hidden) videoStats.reset(); syncVisibleTimer(); if (!document.hidden) void tick(); });
 on(document, 'keydown', event => {
   if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
   const target = event.target as HTMLElement;

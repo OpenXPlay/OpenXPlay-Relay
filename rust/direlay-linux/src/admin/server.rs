@@ -266,6 +266,7 @@ impl AdminServer {
                     .is_some_and(|(_, query)| query.split('&').any(|pair| pair == "diagnostics=1"))
                 {
                     status.receivers = Some(self.admin.receivers());
+                    status.receiver_history = Some(self.admin.receiver_history());
                 }
                 Response::json(200, json!(status))
             }

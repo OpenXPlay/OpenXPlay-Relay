@@ -17,7 +17,11 @@ export interface CarlinkStatus {
 }
 export interface HostAddress { interface: string; ipv4: string; developerOnly: boolean }
 export interface PairedDevice { name: string; connected: boolean; iphone: boolean }
-export interface VideoStatus { codec: string; reason: string; codecString?: string | null; width?: number | null; height?: number | null }
+export interface VideoStatus { codec: string; reason: string; codecString?: string | null; width?: number | null; height?: number | null;
+  // Linux input counters are scoped to this Stream session; rates use the admin page's monotonic clock.
+  session?: string | null; active?: boolean; frames?: number; bytes?: number; bytesMeasured?: boolean;
+  appliedFps?: number; requestedFps?: number; hevcFailure?: string | null;
+}
 // One browser on the car screen: its latest receiver-info and the most recent per-second stats, oldest first.
 // Linux device-support contract (UFI003 Bluetooth guard); absent where no guard runs.
 export interface HostProfile { model: string | null; profilePath: string; profileLoaded: boolean; profileError: string | null; bluetoothAdapter: { name: string; address: string } | null; wifiInterface: string; wifiPresent: boolean; secureConnections: 'pairing-off' | 'untouched' }
@@ -74,6 +78,8 @@ export interface Status {
   pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[];
   // Android 12+: the Nearby devices step of a pairing window, and whether the request waits in a notification.
   pairingNeedsPermission?: boolean; pairingPermissionDenied?: boolean; pairingNotified?: boolean;
+  receiverHistory?: { screens: { width: number; height: number; densityDpi: number; info: Record<string, unknown> }[];
+    fullscreenExits: { time: number; client: string; report: Record<string, unknown> }[] };
   video?: VideoStatus; receivers?: ReceiverReport[]; bluetoothGuard?: BluetoothGuard;
   hotspot?: { hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;

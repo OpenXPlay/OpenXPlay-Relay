@@ -468,6 +468,7 @@ fn receiver_diagnostics_are_opt_in_and_pairing_can_be_cancelled() {
     let get = |p| value(s.route(&req("GET", p, json!({}), &t), 2));
     let plain = get("/api/v0/status");
     assert!(plain.get("receivers").is_none());
+    assert!(plain.get("receiverHistory").is_none());
     assert!(plain.get("bluetoothGuard").is_none());
     assert_eq!(plain["pairedDevices"], json!([]));
     assert!(plain["pairingRemaining"].is_null());
@@ -475,6 +476,10 @@ fn receiver_diagnostics_are_opt_in_and_pairing_can_be_cancelled() {
         .get("receivers")
         .is_none());
     let diagnostics = get("/api/v0/status?lang=en&diagnostics=1");
+    assert_eq!(
+        diagnostics["receiverHistory"],
+        json!({"screens":[],"fullscreenExits":[]})
+    );
     assert_eq!(diagnostics["receivers"][0]["client"], "1");
     assert_eq!(diagnostics["receivers"][0]["stats"][0]["renderedFps"], 59.9);
     assert_eq!(

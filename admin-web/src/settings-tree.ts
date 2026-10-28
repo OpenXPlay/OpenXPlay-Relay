@@ -52,6 +52,10 @@ export function pageAvailable(settings: Settings, status: Status, route: string)
   if (route === 'settings/connection/network/interfaces') return status.platform === 'linux';
   return pageFields(settings, route).some(field => isVisible(field, settings.values));
 }
+export function autoFrameRateSummary(status: Status, t: (key: string) => string): string {
+  const fps = status.running ? status.video?.appliedFps : status.video?.requestedFps;
+  return [t('menu.rateAuto'), fps ? `${fps} fps` : ''].filter(Boolean).join(' · ');
+}
 export function menuSummary(settings: Settings, status: Status, route: string, language: Language, t: (key: string) => string): string {
   const all = settings.schema.flatMap(s => s.fields), v = settings.values;
   const label = (key: string) => {
@@ -60,7 +64,10 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
     return field.type === 'choice' ? optionLabel(field.options?.find(o => o.value === value), language, t) : field.type === 'bool' ? t(value ? 'stage.on' : 'stage.off') : typeof value === 'string' || typeof value === 'number' ? String(value) : '';
   };
   if (route === 'settings/car') return ['carBrand', 'carModel', 'carYear'].map(key => v[key] === 'other' && v[key + 'Text'] ? String(v[key + 'Text']) : label(key)).filter(Boolean).join(' · ');
-  if (route === 'settings/picture') return [label('resolution') || label('carplayResolution'), `${v.screenWidth ?? v.carplayScreenWidth ?? 200} mm`, label('videoCodec'), v.frameRate === 'auto' ? t('menu.rateAuto') : label('frameRate')].filter(Boolean).join(' · ');
+  if (route === 'settings/picture') {
+    const rate = v.frameRate === 'auto' ? autoFrameRateSummary(status, t) : label('frameRate');
+    return [label('resolution') || label('carplayResolution'), `${v.screenWidth ?? v.carplayScreenWidth ?? 200} mm`, label('videoCodec'), rate].filter(Boolean).join(' · ');
+  }
   if (route === 'settings/output') return label('output');
   if (route === 'settings/audio') return `${t('stage.carBluetooth')}: ${label('carBluetoothAudio')}`;
   if (route === 'settings/startup') return [all.some(f => f.key === 'autoStart') ? `${t('menu.whenReady')}: ${label('autoStart')}` : '', all.some(f => f.key === 'bootStart') ? `${t('menu.atBoot')}: ${label('bootStart')}` : ''].filter(Boolean).join(' · ');
