@@ -116,6 +116,23 @@ pub struct Iap2CarPlayMessages {
     _private: (),
 }
 impl Iap2CarPlayMessages {
+    /// Wired attributes only: nested IPv6 literals and no wireless group.
+    pub fn start_wired_session(
+        endpoint: &crate::transport::iap2_wired_control_client::Iap2WiredCarPlayEndpoint,
+    ) -> Result<Iap2Frame> {
+        endpoint.validate()?;
+        let mut b = Iap2BodyBuilder::of(&Iap2Endpoints::require(0x4301)?);
+        let mut wired = Iap2BodyBuilder::opaque(0);
+        for address in &endpoint.ipv6_addresses {
+            wired.string(0, address)?;
+        }
+        b.group(0, wired)?.u32(2, endpoint.air_play_port as u32)?;
+        b.optional_string(3, endpoint.device_identifier.as_deref())?
+            .string(4, &endpoint.public_key)?
+            .string(5, &endpoint.source_version)?;
+        b.build()
+    }
+
     pub fn start_session(endpoint: &Iap2WirelessCarPlayEndpoint) -> Result<Iap2Frame> {
         endpoint.validate()?;
         let mut b = Iap2BodyBuilder::of(&Iap2Endpoints::require(0x4301)?);

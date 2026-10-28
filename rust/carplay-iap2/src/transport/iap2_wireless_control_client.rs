@@ -566,7 +566,7 @@ impl WirelessControlDeadline {
         }
     }
 }
-fn monotonic_nanos() -> u64 {
+pub(crate) fn monotonic_nanos() -> u64 {
     static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     EPOCH
         .get_or_init(Instant::now)

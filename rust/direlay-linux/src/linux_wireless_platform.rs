@@ -462,6 +462,7 @@ fn identification(
     route_guidance: bool,
 ) -> Iap2IdentificationConfig {
     Iap2IdentificationConfig {
+        car_play_usb_interface_number: 3,
         route_guidance,
         name: crate::branding::DEVICE_NAME.into(),
         model_identifier: crate::branding::MODEL.into(),

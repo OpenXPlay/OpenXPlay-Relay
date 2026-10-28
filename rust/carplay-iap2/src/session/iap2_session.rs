@@ -12,6 +12,18 @@ pub struct Iap2Session {
     context: &'static str,
 }
 impl Iap2Session {
+    /// Opens an accessory-initiated, zero-acknowledgement link over the carkit stream.
+    pub fn open_wired(
+        stream: Arc<dyn DuplexStream>,
+        trace: Arc<dyn Fn(String) + Send + Sync>,
+    ) -> Result<Arc<Self>> {
+        Ok(Arc::new(Self {
+            channel: Iap2CsmChannel::open_wired(stream)?,
+            context: "wired",
+            trace,
+        }))
+    }
+
     pub fn open_wireless(
         stream: Arc<dyn DuplexStream>,
         trace: Arc<dyn Fn(String) + Send + Sync>,

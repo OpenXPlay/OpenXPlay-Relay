@@ -49,6 +49,9 @@ base64ct = { version = "=1.8.3", features = ["alloc"] }
 # Log export (2026-10-27): DEFLATE for the zip the admin page saves or uploads; pure Rust,
 # MIT OR Zlib OR Apache-2.0.
 miniz_oxide = "=0.9.1"
+# Wired CarPlay (2026-10-28): Lockdown pair records need RSA-2048 key generation (rsa, MIT OR
+# Apache-2.0; key generation and certificate signing only, TLS signatures go through rustls/ring).
+rsa = { version = "=0.9.10", default-features = false, features = ["std", "sha2", "pem"] }
 
 [profile.release]
 opt-level = "z"

@@ -92,3 +92,34 @@ pub use transport::iap2_identification_client::{
 pub mod context_decode;
 
 pub mod route_decode;
+
+pub mod orchestration;
+
+pub use orchestration::{
+    wired_configuration_action::WiredConfigurationAction, wired_session_memory::WiredSessionMemory,
+};
+pub use transport::iap2_usb_mux_host::{Iap2UsbMuxHost, Iap2UsbMuxTcpConnection, UsbMuxPipe};
+pub use transport::iap2_wired_control_client::{
+    Iap2WiredCarPlayEndpoint, Iap2WiredControlClient, Iap2WiredControlResult,
+    Iap2WiredControlStage, Iap2WiredControlTerminal, WiredControlEvents,
+};
+pub use transport::iphone_car_play_configuration::{
+    IphoneCarPlayConfiguration, UsbConfiguration, UsbDescriptors, UsbEndpoint, UsbInterface,
+};
+pub use transport::iphone_usb_host::{
+    CarPlayModeOutcome, Iap2UsbSession, IphoneUsbHost, UsbDeviceInfo, UsbError, UsbHostBus,
+    UsbHostDevice, UsbResult,
+};
+#[cfg(any(target_os = "linux", test))]
+pub use transport::linux_usb_host::LinuxUsbHostBus;
+pub use transport::lockdown_car_kit_client::{CarkitServiceStream, LockdownCarKitClient};
+pub use transport::lockdown_pair_record::LockdownPairRecord;
+pub use transport::lockdown_pairing_client::{
+    LockdownPairingClient, LockdownPairingError, PairingResult,
+};
+pub use transport::lockdown_tls_engine_factory::{RustlsConnector, TlsConnector};
+pub use transport::ncm_function_discovery::{NcmFunction, NcmFunctionDiscovery};
+pub use transport::ncm_usb_bridge::NcmUsbBridge;
+pub use transport::usb_configuration_selection::{
+    UsbConfigurationOutcome, UsbConfigurationSelection,
+};

@@ -22,6 +22,8 @@ pub enum Iap2WirelessLinkRole {
 /// `Iap2IdentificationConfig` protocol data.
 #[derive(Clone, Debug)]
 pub struct Iap2IdentificationConfig {
+    /// USBHostTransport interface number. Wired deployments normally use 3; ignored on wireless.
+    pub car_play_usb_interface_number: u8,
     /// Opt in to DiPlay route guidance identification and subscriptions.
     pub route_guidance: bool,
     pub name: String,
@@ -100,7 +102,7 @@ impl Iap2IdentificationClient {
         let mut received = vec![
             0xaa00, 0xaa02, 0xaa04, 0xaa05, 0xea00, 0xea01, 0x5001, 0xae01, 0x4158, 0x4155, 0x4300,
         ];
-        if config.route_guidance {
+        if config.route_guidance || config.wireless.is_none() {
             sent.splice(4..4, [0x5200, 0x5203]);
             received.splice(7..7, [0x5201, 0x5202]);
         }
@@ -161,11 +163,11 @@ impl Iap2IdentificationClient {
             usb.u16(0, 0)?
                 .string(1, "USBHostTransport")?
                 .void(2)?
-                .u8(3, 0)?
+                .u8(3, config.car_play_usb_interface_number)?
                 .void(4)?;
             b.group(16, usb)?;
         }
-        if config.route_guidance {
+        if config.route_guidance || config.wireless.is_none() {
             let mut route = Iap2BodyBuilder::opaque(0);
             route
                 .u16(0, 42)?
