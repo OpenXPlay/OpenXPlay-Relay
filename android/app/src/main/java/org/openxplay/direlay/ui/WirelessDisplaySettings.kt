@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -26,17 +25,14 @@ import org.openxplay.stream.cast.CastRenderer
     editor: SettingsEditorState, openCarScreen: () -> Unit, change: (RelaySettings) -> Unit) {
     if (!draft.dlnaOutput && !draft.miracastOutput) return
     val context = LocalContext.current
-    var picker by rememberSaveable { mutableStateOf(false) }
+    val openRendererPicker = LocalOpenRendererPicker.current
     val overlayAllowed = view.overlayAllowed
-    if (picker) DlnaReceiverPicker(draft.dlnaRenderer, searchRenderers, dismiss = { picker = false }) {
-        change(draft.copy(dlnaRenderer = DlnaRendererChoice(it.udn, it.friendlyName))); picker = false
-    }
     SettingsGroup("wireless-display", R.drawable.symbol_cast, IconHue.CAR, stringResource(R.string.wireless_display),
         wirelessDisplaySummary(draft), initiallyExpanded = true) {
         if (draft.dlnaOutput) {
             InsetGroup(footer = stringResource(R.string.dlna_network_hint)) {
                 InsetRow(R.drawable.symbol_cast, IconHue.CAR, stringResource(R.string.dlna_receiver),
-                    draft.dlnaRenderer?.name ?: stringResource(R.string.dlna_choose_receiver), onClick = { picker = true })
+                    draft.dlnaRenderer?.name ?: stringResource(R.string.dlna_choose_receiver), onClick = openRendererPicker)
             }
         }
         if (draft.miracastOutput) {
@@ -76,23 +72,24 @@ import org.openxplay.stream.cast.CastRenderer
         catch (_: Exception) { renderers = emptyList(); failed = true }
         finally { searching = false }
     }
-    AlertDialog(onDismissRequest = dismiss, title = { Text(stringResource(R.string.dlna_receiver)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Hint(stringResource(R.string.dlna_network_hint))
-                if (searching) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text(stringResource(R.string.dlna_searching))
-                } else if (failed || renderers.isEmpty()) Text(stringResource(if (failed) R.string.dlna_search_failed else R.string.dlna_no_receivers))
-                LazyColumn(Modifier.heightIn(max = 320.dp).selectableGroup()) {
-                    items(renderers, key = { it.udn }) { renderer ->
-                        SettingsRow(renderer.friendlyName,
-                            listOf(listOf(renderer.manufacturer, renderer.modelName).filter { it.isNotBlank() }.joinToString(" "),
-                                renderer.address).filter { it.isNotBlank() }.joinToString("\n"), R.drawable.symbol_car,
-                            action = { choose(renderer) }, trailing = { RadioButton(choice?.udn == renderer.udn, onClick = { choose(renderer) }) })
-                    }
+    RelaySheet(dismiss) {
+        Heading(stringResource(R.string.dlna_receiver))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Hint(stringResource(R.string.dlna_network_hint))
+            if (searching) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(stringResource(R.string.dlna_searching))
+            } else if (failed || renderers.isEmpty()) Text(stringResource(if (failed) R.string.dlna_search_failed else R.string.dlna_no_receivers))
+            LazyColumn(Modifier.heightIn(max = 320.dp).selectableGroup()) {
+                items(renderers, key = { it.udn }) { renderer ->
+                    SettingsRow(renderer.friendlyName,
+                        listOf(listOf(renderer.manufacturer, renderer.modelName).filter { it.isNotBlank() }.joinToString(" "),
+                            renderer.address).filter { it.isNotBlank() }.joinToString("\n"), R.drawable.symbol_car,
+                        action = { choose(renderer) }, trailing = { RadioButton(choice?.udn == renderer.udn, onClick = { choose(renderer) }) })
                 }
             }
-        }, confirmButton = { TextButton(onClick = { revision++ }, enabled = !searching) { Text(stringResource(R.string.dlna_search_again)) } },
-        dismissButton = { TextButton(onClick = dismiss) { Text(stringResource(android.R.string.cancel)) } })
+        }
+        TextButton(onClick = { revision++ }, enabled = !searching) { Text(stringResource(R.string.dlna_search_again)) }
+        TextButton(onClick = dismiss) { Text(stringResource(android.R.string.cancel)) }
+    }
 }

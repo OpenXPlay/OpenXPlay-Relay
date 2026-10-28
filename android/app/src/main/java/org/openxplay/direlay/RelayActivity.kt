@@ -46,6 +46,7 @@ import org.openxplay.direlay.publicname.ConfigProblem
 import org.openxplay.direlay.publicname.PublicNameFile
 import java.util.concurrent.Executors
 import android.content.Intent
+import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -56,6 +57,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val identityImport by lazy { androidx.lifecycle.ViewModelProvider(this)[IdentityImportState::class.java] }
     private var identityDialog: AlertDialog? = null
+    private var dialogVisible by androidx.compose.runtime.mutableStateOf(false)
+    private val dialogs = RelayDialogs { dialogVisible = it }
     private val imports = Executors.newSingleThreadExecutor()
     private val runtime get() = (application as DiRelayApplication).runtime
     private val settingsStore get() = runtime.settingsStore
@@ -108,6 +111,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         }
         bootAutoStart = savedInstanceState?.getBoolean("bootAutoStart")
             ?: intent.getBooleanExtra(EXTRA_AUTO_START, false)
+        homeDestination = savedInstanceState?.getString("homeDestination")
+        stepNavigation = savedInstanceState?.getString("stepNavigation")?.let { runCatching { StepAction.valueOf(it) }.getOrNull() }
         requestingPermissions = savedInstanceState?.getBoolean("requestingPermissions") ?: false
         pairingInFlight = savedInstanceState?.getBoolean("pairingInFlight") ?: false
         // A fresh open with a saved setup can offer the arrival countdown on Home.
@@ -168,6 +173,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     importPublicName = { openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose) },
                     openSetup = !bootAutoStart && !importOnly,
                     openLaunch = offerArrival && !bootAutoStart && !importOnly,
+                    surfaceBlocked = dialogVisible || requestingPermissions || pairingInFlight,
                     onLater = {
                         if (value.automatic) {
                             pausingArrival = true
@@ -183,23 +189,30 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 } }
             }
         }
-        handleStepIntent(intent)
-        if (savedInstanceState == null) {
-            when {
-                intent.getBooleanExtra(EXTRA_IMPORT_IDENTITY, false) -> {
-                    bootAutoStart = false
-                    openDocument(IDENTITY_KEY, R.string.direlay_choose_key)
-                }
-                intent.getBooleanExtra(EXTRA_IMPORT_TLS, false) -> {
-                    bootAutoStart = false
-                    openDocument(TLS_FILE, R.string.direlay_choose_tls)
-                }
-                intent.getBooleanExtra(EXTRA_IMPORT_PUBLIC_NAME, false) -> {
-                    bootAutoStart = false
-                    openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose)
-                }
+        handleStepIntent(intent, restoring = savedInstanceState != null)
+        if (savedInstanceState == null) handleImportIntent(intent)
+    }
+
+    private fun handleImportIntent(intent: Intent) {
+        when {
+            intent.getBooleanExtra(EXTRA_IMPORT_IDENTITY, false) -> {
+                bootAutoStart = false
+                openDocument(IDENTITY_KEY, R.string.direlay_choose_key)
+            }
+            intent.getBooleanExtra(EXTRA_IMPORT_TLS, false) -> {
+                bootAutoStart = false
+                openDocument(TLS_FILE, R.string.direlay_choose_tls)
+            }
+            intent.getBooleanExtra(EXTRA_IMPORT_PUBLIC_NAME, false) -> {
+                bootAutoStart = false
+                openDocument(PUBLIC_NAME_FILE, R.string.public_name_choose)
             }
         }
+    }
+
+    private fun showActivityDialog(builder: AlertDialog.Builder) {
+        dialogs.active = resumed && !requestingPermissions && !pairingInFlight
+        dialogs.show(builder.create())
     }
 
     // Finish the icon animation before fading the system splash.
@@ -256,7 +269,10 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         importOnly, materialChecked, identityReady, networkRefreshPending, cachedWifi, cachedDeviceName)
 
     private fun publishHostFlags() { presentation.hostFlags.value = hostFlags() }
-    private fun refreshPresentation() { if (!isDestroyed) { publishHostFlags(); presentation.refresh() } }
+    private fun refreshPresentation() { if (!isDestroyed) {
+        dialogs.active = resumed && !requestingPermissions && !pairingInFlight
+        publishHostFlags(); presentation.refresh()
+    } }
 
     private fun reconnectCarlink() {
         lifecycleScope.launch {
@@ -301,7 +317,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 refreshPresentation()
                 if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), PERMISSIONS)
                 else requestVpnConsent()
-            }.show()
+            }.let(::showActivityDialog)
     } }
 
     private fun requestVpnConsent() { lifecycleScope.launch {
@@ -352,7 +368,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     }
 
     private fun runPairingPrompt() {
-        if (!resumed || requestingPermissions || pairingInFlight || importOnly) return
+        if (!resumed || dialogs.busy || requestingPermissions || pairingInFlight || importOnly) return
         pendingPairingPrompt?.let { pendingPairingPrompt = null; showPairing(it); return }
         if (pairingCheckPending) return
         pairingCheckPending = true
@@ -361,7 +377,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             handler.post {
                 pairingCheckPending = false
                 pendingPairingPrompt = prompt
-                if (prompt != null && resumed && !requestingPermissions && !pairingInFlight && !importOnly) {
+                if (prompt != null && resumed && !dialogs.busy && !requestingPermissions && !pairingInFlight && !importOnly) {
                     pendingPairingPrompt = null
                     showPairing(prompt)
                 }
@@ -388,6 +404,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             }
             PairingWindow.Prompt.SETTINGS -> if (!openBluetoothSettings()) runtime.pairing.settingsFailed()
         }
+        dialogs.active = resumed && !requestingPermissions && !pairingInFlight
     }
 
     /** OEM-specific pages and denied intents always have a safe system-settings destination. */
@@ -432,21 +449,18 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    private fun handleStepIntent(intent: Intent) {
-        intent.getStringExtra(EXTRA_HOME_DESTINATION)?.let { destination ->
-            intent.removeExtra(EXTRA_HOME_DESTINATION)
-            if (destination == "setup" || destination == "settings:" || destination == "settings:car")
-                homeDestination = destination
-        }
-        val name = intent.getStringExtra(EXTRA_STEP_ACTION) ?: return
-        intent.removeExtra(EXTRA_STEP_ACTION)
-        runCatching { StepAction.valueOf(name) }.getOrNull()?.let { performStepAction(it, null) }
+    private fun handleStepIntent(intent: Intent, restoring: Boolean = false) {
+        val request = RelayLaunchRequest.take(intent, restoring)
+        request.destination?.let { homeDestination = it }
+        request.stepAction?.let { performStepAction(it, null) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_AUTO_START, false)) bootAutoStart = true
         handleStepIntent(intent)
+        handleImportIntent(intent)
     }
 
     private fun startCarPlay() {
@@ -526,7 +540,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     private fun showIdentityFollowUp() {
         val state = identityImport
-        if (state.busy || identityDialog != null || !resumed) return
+        if (state.busy || identityDialog != null || !resumed || requestingPermissions || pairingInFlight) return
         if (state.completed) {
             state.completed = false
             refreshMaterialStatus()
@@ -563,7 +577,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 .setNegativeButton(android.R.string.cancel) { _, _ -> cancel() }
                 .setOnCancelListener { cancel() }.create()
         }
-        identityDialog?.apply { setOnDismissListener { identityDialog = null }; show() }
+        identityDialog?.let { dialogs.show(it) { identityDialog = null } }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -606,7 +620,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                                 runtime.tlsStore.importFrom(bytes, secret)
                             } finally { secret.fill('\u0000'); bytes?.fill(0) }
                         }
-                    }.show()
+                    }.let(::showActivityDialog)
             }
         }
     }
@@ -635,7 +649,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             null -> builder.setTitle(R.string.direlay_import_error).setMessage(R.string.direlay_file_unreadable)
         }
         builder.setPositiveButton(android.R.string.ok) { _, _ -> if (importOnly) finish() }
-            .setOnCancelListener { if (importOnly) finish() }.show()
+            .setOnCancelListener { if (importOnly) finish() }.let(::showActivityDialog)
     }
 
     private fun work(finishAfter: Boolean = false, startingSession: Boolean = false, action: () -> Unit) {
@@ -649,7 +663,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     if (!isDestroyed) AlertDialog.Builder(this)
                         .setTitle(R.string.direlay_import_error)
                         .setMessage(getString(if (wasStarting) R.string.ui_start_failed else R.string.ui_material_failed))
-                        .setPositiveButton(android.R.string.ok, null).show()
+                        .setPositiveButton(android.R.string.ok, null).let(::showActivityDialog)
                 }
             }
             updateMaterialStatus()
@@ -679,15 +693,27 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         outState.putBoolean("bootAutoStart", bootAutoStart)
         outState.putBoolean("requestingPermissions", requestingPermissions)
         outState.putBoolean("pairingInFlight", pairingInFlight)
+        outState.putString("homeDestination", homeDestination)
+        outState.putString("stepNavigation", stepNavigation?.name)
         super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
+        dialogs.close()
         imports.shutdown()
         super.onDestroy()
     }
 
     companion object {
+        /** A separate singleton task keeps bringing up Relay from clearing the CarPlay host. */
+        fun intent(context: Context, destination: String? = null, stepAction: StepAction? = null): Intent =
+            Intent(context, RelayActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .apply {
+                    destination?.let { putExtra(EXTRA_HOME_DESTINATION, it) }
+                    stepAction?.let { putExtra(EXTRA_STEP_ACTION, it.name) }
+                }
+
         const val EXTRA_HOME_DESTINATION = "org.openxplay.relay.HOME_DESTINATION"
         const val EXTRA_STEP_ACTION = "org.openxplay.relay.STEP_ACTION"
         const val EXTRA_IMPORT_IDENTITY = "org.openxplay.relay.IMPORT_IDENTITY"
@@ -708,6 +734,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         super.onResume()
         presentation.action { runtime.keepAlive.uiVisible() }
         resumed = true
+        dialogs.active = !requestingPermissions && !pairingInFlight
         presentation.action { runtime.reloadSettings() }
         // Coming back from system Wi-Fi or Bluetooth settings: show the new network at once.
         lastNetworkRefresh = Long.MIN_VALUE / 2
@@ -720,6 +747,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     override fun onPause() {
         resumed = false
+        dialogs.active = false
         publishHostFlags()
         content = content?.copy(pending = null)
         handler.removeCallbacks(refreshStatus)

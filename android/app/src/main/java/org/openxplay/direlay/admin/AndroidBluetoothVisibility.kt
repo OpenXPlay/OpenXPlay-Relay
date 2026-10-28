@@ -11,7 +11,6 @@ import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import org.openxplay.direlay.R
@@ -47,7 +46,7 @@ class AndroidBluetoothVisibility(private val context: Context, private val showO
         manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.pairing_channel),
             NotificationManager.IMPORTANCE_HIGH))
         val open = PendingIntent.getActivity(context, NOTIFICATION_ID,
-            Intent(context, RelayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            RelayActivity.intent(context),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_diplay_notification)

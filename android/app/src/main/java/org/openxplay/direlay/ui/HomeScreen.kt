@@ -6,8 +6,6 @@ package org.openxplay.direlay.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -72,9 +70,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
                 })
             }
         }
-        ModalBottomSheet(onDismissRequest = { request.cancel(); machine.cancel() },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        RelaySheet({ request.cancel(); machine.cancel() }) {
+            Column(Modifier.fillMaxWidth().imePadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Heading(stringResource(if (request.confirmation) R.string.direlay_carlink_confirm else R.string.ui_pin_title))
                 if (request.incorrect) Text(stringResource(R.string.vehicle_wrong_code), color = MaterialTheme.colorScheme.error)
                 if (request.confirmation) Text(stringResource(R.string.direlay_carlink_confirm_hint, request.headUnitId))

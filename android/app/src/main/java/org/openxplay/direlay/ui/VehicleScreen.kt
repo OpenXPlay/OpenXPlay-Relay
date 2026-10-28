@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-15
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -114,7 +115,7 @@ fun snapshotTime(time: Long): String = DateFormat.getDateTimeInstance(DateFormat
             }
         }
     }
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text(stringResource(R.string.vehicle_clear_question)) },
+    if (confirm) RelayDecisionDialog(onDismissRequest = { confirm = false }, title = { Text(stringResource(R.string.vehicle_clear_question)) },
         text = { Text(stringResource(R.string.vehicle_clear_hint)) },
         confirmButton = { TextButton(onClick = { clear(); confirm = false }) { Text(stringResource(R.string.vehicle_clear)) } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text(stringResource(android.R.string.cancel)) } })

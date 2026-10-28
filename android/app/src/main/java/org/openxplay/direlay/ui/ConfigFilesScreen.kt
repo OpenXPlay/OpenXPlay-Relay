@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-22
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -62,11 +63,11 @@ import java.util.Locale
             }
         }
     }
-    if (confirmExport) AlertDialog(onDismissRequest = { confirmExport = false },
+    if (confirmExport) RelayDecisionDialog(onDismissRequest = { confirmExport = false },
         title = { Text(stringResource(R.string.config_privacy)) }, text = { Text(stringResource(R.string.config_privacy_warning)) },
         confirmButton = { TextButton(onClick = { confirmExport = false; export() }) { Text(stringResource(R.string.config_export_confirm)) } },
         dismissButton = { TextButton(onClick = { confirmExport = false }) { Text(stringResource(android.R.string.cancel)) } })
-    importUri?.let { uri -> AlertDialog(onDismissRequest = { importUri = null },
+    importUri?.let { uri -> RelayDecisionDialog(onDismissRequest = { importUri = null },
         title = { Text(stringResource(R.string.config_import)) }, text = { Text(stringResource(R.string.config_replace)) },
         confirmButton = { TextButton(onClick = {
             importUri = null
@@ -91,7 +92,7 @@ import java.util.Locale
             }
             context.getString(resource, key)
         }
-        AlertDialog(onDismissRequest = { result = null }, title = { Text(stringResource(R.string.config_title)) },
+        RelayInfoSheet(onDismissRequest = { result = null }, title = { Text(stringResource(R.string.config_title)) },
             text = { Text(message) }, confirmButton = { TextButton(onClick = { result = null }) { Text(stringResource(android.R.string.ok)) } })
     }
 }

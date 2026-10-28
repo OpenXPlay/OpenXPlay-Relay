@@ -88,6 +88,8 @@
 
         <activity
             android:name=".RelayActivity"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.relay"
             android:theme="@style/Theme.DiRelay"
             android:exported="true"
             android:label="@string/direlay_app_name">

@@ -6,7 +6,6 @@ package org.openxplay.direlay
 import android.app.Application
 import android.app.Activity
 import android.app.ActivityOptions
-import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -113,8 +112,7 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
         if (activity is RelayActivity || activity.isFinishing) return
         // The DiPlay host may be on a virtual display; pairing always belongs on the relay screen.
         runCatching {
-            activity.startActivity(Intent(activity, RelayActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            activity.startActivity(RelayActivity.intent(activity),
                 ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle())
         }
     }

@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -22,6 +23,7 @@ import org.openxplay.direlay.presentation.*
 import org.openxplay.direlay.path.StepAction
 import org.openxplay.direlay.path.PathStep
 import org.openxplay.direlay.settings.*
+import org.openxplay.direlay.ui.design.*
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable fun RelayApp(value: HomeContent, sources: ScreenSources, actions: ScreenActions, support: SupportActions,
@@ -32,18 +34,18 @@ import org.openxplay.direlay.settings.*
     stepNavigation: StepAction? = null, onStepNavigationHandled: () -> Unit = {},
     homeDestination: String? = null, onHomeDestinationHandled: () -> Unit = {},
     importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit, importPublicName: () -> Unit = {},
-    openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {},
+    openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {}, surfaceBlocked: Boolean = false,
     onGuideVisible: (Boolean) -> Unit = {}) {
     val running = value.presentation.running
     val context = LocalContext.current
     val motion by sources.motion.screenState()
-    var entries by rememberSaveable { mutableStateOf(when {
+    var entries by rememberSaveable(stateSaver = relayEntriesSaver) { mutableStateOf(when {
         openSetup && sources.settings.value?.setupCompleted == false -> listOf("home", "setup")
         else -> listOf("home")
     }) }
     val common by sources.settings.screenState()
     val settings = common ?: return
-    var setupCompleted by remember { mutableStateOf(settings.setupCompleted) }
+    var setupCompleted by rememberSaveable { mutableStateOf(settings.setupCompleted) }
     val initial = settings.settings
     val overrides = settings.overrides
     var countdown by rememberSaveable {
@@ -75,7 +77,8 @@ import org.openxplay.direlay.settings.*
     var retained by remember { mutableStateOf(entries) }
     LaunchedEffect(entries) {
         retained.forEachIndexed { index, route ->
-            if (index >= entries.size || entries[index] != route) savedStates.removeState("$index:$route")
+            val key = relayPageKey(route)
+            if (index >= entries.size || relayPageKey(entries[index]) != key) savedStates.removeState("$index:$key")
         }
         retained = entries
     }
@@ -93,10 +96,12 @@ import org.openxplay.direlay.settings.*
     } }
     BackHandler(entries.size > 1 && Build.VERSION.SDK_INT < 34) { back() }
     PredictiveBackHandler(entries.size > 1 && Build.VERSION.SDK_INT >= 34) { events ->
-        val previous = RelayBackStack(entries).back().entries
+        val origin = entries
+        val previous = RelayBackStack(origin).back().entries
         try {
             events.collect { if (motion) navigationState.seekTo(it.progress, previous) }
-            entries = previous
+            entries = commitRelayBack(origin, entries)
+            if (entries != previous) navigationState.animateTo(entries)
         } catch (_: CancellationException) {
             // Scrub back to the original screen; cancellation never changes the saved stack.
             withContext(NonCancellable) { navigationState.animateTo(entries) }
@@ -142,25 +147,25 @@ import org.openxplay.direlay.settings.*
         initialDeveloper = overrides, saveDeveloper = saveEditor)
     LaunchedEffect(settingsEditor.draft.value) { actions.draft(settingsEditor.draft.value) }
     LaunchedEffect(stepNavigation) {
-        val destination = when (stepNavigation) {
-            StepAction.FIX_SETTINGS -> firstSettingsErrorPage(settingsEditor.errorPages(wireless))
-            StepAction.CHOOSE_IPHONE -> "settings:iphone"
-            StepAction.CHOOSE_SHARED_WIFI -> "settings:sharedWifi"
-            StepAction.CHOOSE_RENDERER -> { rendererPicker = true; "settings:output" }
-            else -> null
-        }
-        if (destination != null) { open(destination); onStepNavigationHandled() }
+        if (stepNavigation == StepAction.CHOOSE_RENDERER) { endArrival(ArrivalEnd.STEP); rendererPicker = true }
+        val destination = stepNavigationDestination(stepNavigation, firstSettingsErrorPage(settingsEditor.errorPages(wireless)))
+        if (destination != null) open(destination)
+        if (stepNavigation != null) onStepNavigationHandled()
     }
     fun stepAction(action: StepAction, step: PathStep) {
         endArrival(ArrivalEnd.STEP)
         onStepAction(action, step)
         if (action == StepAction.COPY_PAGE_ADDRESS) scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_copied)) }
     }
-    CompositionLocalProvider(LocalRelayMotion provides motion, LocalUpdateChecker provides support.updates, LocalAppVersion provides settings.version,
+    val sheet = relayAppSheet(rendererPicker, value.pending != null)
+    val surfaceHost = remember { mutableStateOf(RelaySurfaceQueue()) }
+    CompositionLocalProvider(LocalRelaySurfaceHost provides surfaceHost, LocalRelaySurfaceActive provides !surfaceBlocked,
+        LocalOpenRendererPicker provides { rendererPicker = true },
+        LocalRelayMotion provides motion, LocalUpdateChecker provides support.updates, LocalAppVersion provides settings.version,
         LocalAppEnvironment provides settings.environment) {
         Box(Modifier.fillMaxSize()) {
             SharedTransitionLayout {
-                navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), contentKey = { "${it.lastIndex}:${it.last()}" }, transitionSpec = {
+                navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), contentKey = { "${it.lastIndex}:${relayPageKey(it.last())}" }, transitionSpec = {
                     relayPageTransition(targetState.size > initialState.size, motion)
                 }) { stack ->
                     val route = stack.last()
@@ -169,62 +174,69 @@ import org.openxplay.direlay.settings.*
                         exit = ExitTransition.None, boundsTransform = { _, _ -> tween(RelayPageDurationMillis, easing = RelayPageEasing) }) else Modifier
                     val sharedContent = if (motion) Modifier.animateEnterExit(
                         enter = fadeIn(tween(80, delayMillis = RelayPageDurationMillis - 80)), exit = fadeOut(tween(80))) else Modifier
-                    savedStates.SaveableStateProvider("${stack.lastIndex}:$route") {
-                        when {
-                            route == "home" -> HomeScreen(value, { open("settings:$it") }, {
-                                endArrival(ArrivalEnd.CONNECT)
-                                onStartStop()
-                            }, onAutomatic, copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
-                                setupCompleted, carRequired = homeCarRowVisible(initial.car), onGuide = { open("setup") },
-                                countdown = showCountdown, onCancelCountdown = ::endArrival,
-                                onCountdownComplete = {
-                                    if (arrivalCountdown(countdown, value.automatic, value.path, value.busy)) {
-                                        endArrival(ArrivalEnd.COMPLETE)
-                                        if (!value.path.running) onStartStop()
-                                    }
-                                })
-                            route.startsWith("setup") -> SetupScreen(initial, wireless, value,
-                                setupStep(route.substringAfter(':', "")), actions.readIphones, actions.useSharedWifi,
-                                { _, after -> actions.save(after) != null }, onSetup, back, carModels = settings.models, onStepAction = ::stepAction) { changed ->
-                                completeSetup()
-                                entries = listOf("home")
-                                if (!running) onStartStop() else if (changed) onRestart()
-                            }
-                            route.startsWith("settings") && route != "settings/about" && route != "settings/access/publicName" -> {
-                                SettingsScreen(settingsEditor, wireless, route, back, open, copy, importMaterial, removeMaterial,
-                                    value.currentWifi, actions.readIphones, actions.useSharedWifi, sources, actions, support,
-                                    running = running)
-                            }
-                            route == "settings/about" -> AboutScreen(back, support.updates)
-                            route == "settings/access/publicName" -> {
-                                val name by sources.name.screenState()
-                                PublicNameScreen(name.view, name.status, name.url, back,
-                                    actions.saveName, importPublicName, actions.renewName, actions.removeName)
-                            }
-                            route == "developer/design" -> org.openxplay.direlay.ui.design.DesignGalleryScreen(back)
-                            route == "experimental" -> ExperimentalScreen(settingsEditor, back, wireless)
-                            route.startsWith("developer") -> {
-                                val diagnostics = if (showsDeveloperDiagnostics(route)) sources.developer.screenState().value else DeveloperView()
-                                DeveloperScreen(settingsEditor, diagnostics, route, back, open, copy,
-                                onReconnect,
-                                settings.sampleVehicle, actions.sampleVehicle, { open("vehicle") }, wireless, sources, actions, shareTrace)
-                            }
-                            route == "vehicle" || route.startsWith("snapshot:") -> {
-                                val time = route.substringAfter(':', "").toLongOrNull()
-                                VehiclePage(value.vehicle, value.vehicle.history.firstOrNull { it.id == time },
-                                    route.startsWith("snapshot:"), back, { open("snapshot:$it") }, {
-                                        scope.launch { save(initial, initial.copy(vehicleInformation = true)) }
-                                    },
-                                    actions.clearVehicleHistory, if (route == "vehicle") shared else Modifier,
-                                    if (route == "vehicle") sharedContent else Modifier)
+                    savedStates.SaveableStateProvider("${stack.lastIndex}:${relayPageKey(route)}") {
+                        CompositionLocalProvider(LocalRelaySurfaceActive provides (!surfaceBlocked && stack == entries && sheet == null)) {
+                            when {
+                                route == "home" -> HomeScreen(value, { open("settings:$it") }, {
+                                    endArrival(ArrivalEnd.CONNECT)
+                                    onStartStop()
+                                }, onAutomatic, copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
+                                    setupCompleted, carRequired = homeCarRowVisible(initial.car), onGuide = { open("setup") },
+                                    countdown = showCountdown, onCancelCountdown = ::endArrival,
+                                    onCountdownComplete = {
+                                        if (arrivalCountdown(countdown, value.automatic, value.path, value.busy)) {
+                                            endArrival(ArrivalEnd.COMPLETE)
+                                            if (!value.path.running) onStartStop()
+                                        }
+                                    })
+                                route.startsWith("setup") -> SetupScreen(initial, wireless, value,
+                                    setupStep(route.substringAfter(':', "")), actions.readIphones, actions.useSharedWifi,
+                                    { _, after -> actions.save(after) != null }, onSetup, back, carModels = settings.models, onStepAction = ::stepAction,
+                                    onStepChanged = { step ->
+                                        if (relayPageKey(entries.last()) == "setup") entries = RelayBackStack(entries).open("setup:${step.key}").entries
+                                    }) { changed ->
+                                    completeSetup()
+                                    entries = RelayBackStack(entries).open("home").entries
+                                    if (!running) onStartStop() else if (changed) onRestart()
+                                }
+                                route.startsWith("settings") && route != "settings/about" && route != "settings/access/publicName" -> {
+                                    SettingsScreen(settingsEditor, wireless, route, back, open, copy, importMaterial, removeMaterial,
+                                        value.currentWifi, actions.readIphones, actions.useSharedWifi, sources, actions, support,
+                                        running = running)
+                                }
+                                route == "settings/about" -> AboutScreen(back, support.updates)
+                                route == "settings/access/publicName" -> {
+                                    val name by sources.name.screenState()
+                                    PublicNameScreen(name.view, name.status, name.url, back,
+                                        actions.saveName, importPublicName, actions.renewName, actions.removeName)
+                                }
+                                route == "developer/design" -> org.openxplay.direlay.ui.design.DesignGalleryScreen(back)
+                                route == "experimental" -> ExperimentalScreen(settingsEditor, back, wireless)
+                                route.startsWith("developer") -> {
+                                    val diagnostics = if (showsDeveloperDiagnostics(route)) sources.developer.screenState().value else DeveloperView()
+                                    DeveloperScreen(settingsEditor, diagnostics, route, back, open, copy,
+                                    onReconnect,
+                                    settings.sampleVehicle, actions.sampleVehicle, { open("vehicle") }, wireless, sources, actions, shareTrace)
+                                }
+                                route == "vehicle" || route.startsWith("snapshot:") -> {
+                                    val time = route.substringAfter(':', "").toLongOrNull()
+                                    VehiclePage(value.vehicle, value.vehicle.history.firstOrNull { it.id == time },
+                                        route.startsWith("snapshot:"), back, { open("snapshot:$it") }, {
+                                            scope.launch { save(initial, initial.copy(vehicleInformation = true)) }
+                                        },
+                                        actions.clearVehicleHistory, if (route == "vehicle") shared else Modifier,
+                                        if (route == "vehicle") sharedContent else Modifier)
+                                }
                             }
                         }
                     }
                 }
             }
-            if (rendererPicker) DlnaReceiverPicker(settingsEditor.draft.value.dlnaRenderer, actions.searchRenderers,
+            if (sheet == RelayAppSheet.RENDERER) DlnaReceiverPicker(settingsEditor.draft.value.dlnaRenderer, actions.searchRenderers,
                 dismiss = { rendererPicker = false }) {
-                settingsEditor.draft.value = settingsEditor.draft.value.copy(dlnaRenderer = DlnaRendererChoice(it.udn, it.friendlyName))
+                val editing = settingsSessionActive(entries)
+                val after = rendererSelection(initial, settingsEditor.draft.value, editing, DlnaRendererChoice(it.udn, it.friendlyName))
+                if (editing) settingsEditor.draft.value = after else scope.launch { feedback(actions.save(after)) }
                 rendererPicker = false
             }
             CarlinkCodeSheet(value)
@@ -235,3 +247,5 @@ import org.openxplay.direlay.settings.*
         }
     }
 }
+
+internal val relayEntriesSaver = listSaver<List<String>, String>(save = { it }, restore = { RelayBackStack(it).entries })

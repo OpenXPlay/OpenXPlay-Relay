@@ -47,6 +47,7 @@ class RelayKeepAliveServiceTest {
             assertEquals("OpenXPlay Relay", shadowOf(notification).contentTitle)
             assertEquals("Keeps Carlink and the head-unit page working with the screen off.", shadowOf(notification).contentText)
             assertEquals(ComponentName(context, RelayActivity::class.java), shadowOf(notification.contentIntent).savedIntent.component)
+            assertEquals(RelayActivity.intent(context).flags, shadowOf(notification.contentIntent).savedIntent.flags)
             assertTrue(notification.contentIntent.isImmutable)
             assertTrue(notification.actions.isNullOrEmpty())
             val channel = context.getSystemService(NotificationManager::class.java).getNotificationChannel(notification.channelId)

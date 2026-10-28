@@ -58,6 +58,13 @@ class SettingsEditorSaverTest {
         assertTrue(roundTrip(settingsInvalidNumbersSaver, mutableStateMapOf<String, Boolean>()).isEmpty())
     }
 
+    @Test fun restoredNavigationRepairsOldDuplicatePagesAndKeepsSetupSteps() {
+        val legacy = listOf("home", "settings", "home", "setup:car", "settings", "setup:network")
+        assertEquals(listOf("home", "setup:network"), roundTrip(relayEntriesSaver, legacy))
+        val current = RelayBackStack().open("setup:prepare").open("settings:iphone").entries
+        assertEquals(current, roundTrip(relayEntriesSaver, current))
+    }
+
     @Test fun numericEditingTextAndValidationFlagsSurviveBundleRoundTrip() {
         for (entries in listOf(mapOf("width" to ""), mapOf("width" to "", "port" to " 9443", "channel" to "未完成"))) {
             val numbers = mutableStateMapOf<String, String>().apply { putAll(entries) }
