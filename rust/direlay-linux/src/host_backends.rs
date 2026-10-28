@@ -160,7 +160,10 @@ impl SecureConnectionsControl for BtmgmtControl {
 pub trait BluetoothBackend: SecureConnectionsControl {
     /// A controller attempt owns its service registration independently of the admin shell.
     fn session(&self) -> Arc<dyn BluetoothBackend>;
+    /// Readiness only: never acquires a profile registration.
     fn check_radio(&self) -> Result<()>;
+    /// Controller-only profile lease; released when the session backend is dropped.
+    fn register_profiles(&self) -> Result<()>;
     fn devices(&self) -> Result<Vec<BondedDevice>>;
     fn select(&self, configured: Option<&str>) -> Result<BondedDevice>;
     fn local_address(&self) -> Result<String>;
@@ -409,6 +412,9 @@ impl BluetoothBackend for BluezBackend {
     }
     fn check_radio(&self) -> Result<()> {
         self.bluetooth.check_radio()
+    }
+    fn register_profiles(&self) -> Result<()> {
+        self.bluetooth.register_profiles()
     }
     fn devices(&self) -> Result<Vec<BondedDevice>> {
         self.bluetooth.devices()

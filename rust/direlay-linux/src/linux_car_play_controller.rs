@@ -283,6 +283,9 @@ struct ControllerState {
     awaited: Option<Awaited>,
     woken: Option<String>,
     terminal_failure: bool,
+    automatic: bool,
+    armed: bool,
+    selected_iphone: Option<String>,
 }
 type SharedState = Arc<(Mutex<ControllerState>, Condvar)>;
 pub struct LinuxCarPlayController {
@@ -328,6 +331,9 @@ impl LinuxCarPlayController {
                     awaited: None,
                     woken: None,
                     terminal_failure: false,
+                    automatic: false,
+                    armed: false,
+                    selected_iphone: None,
                 }),
                 Condvar::new(),
             )),
@@ -500,6 +506,7 @@ impl LinuxCarPlayController {
     ) -> Result<Arc<dyn BluetoothConnection>> {
         let device = self.platform.select_iphone()?;
         *selected = Some(device.address.clone());
+        self.state.0.lock().unwrap().selected_iphone = selected.clone();
         self.check()?;
         self.set_stage(
             "ConnectingBluetooth",
@@ -537,6 +544,74 @@ impl LinuxCarPlayController {
         self.events.emit(if retrying { "retry" } else { "startup-failed" },
             &serde_json::json!({"reason":reason,"retryMillis":if retrying {Some(delay.as_millis() as u64)} else {None}}));
         retrying
+    }
+    pub fn set_start_when_ready(&self, automatic: bool) {
+        self.state.0.lock().unwrap().automatic = automatic;
+        self.state.1.notify_all();
+    }
+    pub fn armed(&self) -> bool {
+        self.state.0.lock().unwrap().armed
+    }
+    /// Polling can observe the same restoration as BlueZ. Both use this attempt's wake latch.
+    pub fn readiness_restored(&self) {
+        let mut state = self.state.0.lock().unwrap();
+        if state.armed && state.woken.is_none() {
+            state.woken = Some("readiness-restored".into());
+            self.state.1.notify_all();
+        }
+    }
+    /// A headless relay gets a fresh bounded budget only after a relevant BlueZ edge. Timers
+    /// cannot rescue an exhausted budget; Stop closes this wait and still wins over a late edge.
+    fn await_recovery(&self, error: &std::io::Error) -> bool {
+        let code = crate::carplay_policy::classify_failure(&error.to_string());
+        if matches!(
+            code,
+            "carlink_not_ready"
+                | "hotspot_configuration"
+                | "hotspot_not_ready"
+                | "wifi_off"
+                | "wifi_reset_required"
+                | "usb_trust_denied"
+                | "iphone_locked"
+        ) {
+            return false;
+        }
+        {
+            let mut state = self.state.0.lock().unwrap();
+            if !state.automatic || state.closed {
+                return false;
+            }
+            state.armed = true;
+            state.stage = "Failed".into();
+            state.awaited = Some(if matches!(code, "bluetooth_off" | "bluetooth_unusable") {
+                Awaited::Adapter
+            } else {
+                Awaited::Iphone(state.selected_iphone.clone())
+            });
+            state.woken = None;
+        }
+        self.release_attempt(true);
+        self.events
+            .emit("stage", &serde_json::json!({"stage":"Failed"}));
+        let (mutex, changed) = &*self.state;
+        let mut state = changed
+            .wait_while(mutex.lock().unwrap(), |s| {
+                !s.closed && s.automatic && s.woken.is_none()
+            })
+            .unwrap();
+        state.armed = false;
+        state.awaited = None;
+        if state.closed || !state.automatic {
+            return false;
+        }
+        let reason = state.woken.take().unwrap();
+        state.terminal_failure = false;
+        drop(state);
+        *self.retry_budget.lock().unwrap() = Default::default();
+        self.events.facts.lock().unwrap().iphone.failure = None;
+        self.events
+            .log(&format!("carplay_radio_recover reason={reason}"));
+        true
     }
     pub fn running(&self) -> bool {
         self.state.0.lock().unwrap().running
@@ -610,6 +685,10 @@ impl LinuxCarPlayController {
                     None
                 };
                 if terminal || !self.retry_failure(&e, restart) {
+                    if self.await_recovery(&e) {
+                        restart = initial;
+                        continue;
+                    }
                     self.close()?;
                     let mut state = self.state.0.lock().unwrap();
                     state.stage = "Failed".into();
@@ -967,8 +1046,10 @@ impl LinuxCarPlayController {
             s.adapter_ready = false;
             s.airplay = false;
             s.tunnel = false;
-            s.awaited = None;
-            s.woken = None;
+            if !s.armed {
+                s.awaited = None;
+                s.woken = None;
+            }
             self.state.1.notify_all();
             std::mem::take(&mut s.resources)
         };
@@ -999,6 +1080,7 @@ impl LinuxCarPlayController {
                 return Ok(());
             }
             s.closed = true;
+            s.armed = false;
             s.running = false;
             s.stage = "Stopped".into();
             s.generation += 1;

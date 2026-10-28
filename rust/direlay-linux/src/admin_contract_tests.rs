@@ -148,6 +148,14 @@ fn admin_contract_status(state: &str) {
                 clock + Duration::from_secs(2),
             );
         }
+        "carlink-timeout-armed" => {
+            settings.output = "carlink".into();
+            facts.auto_start_paused = false;
+            status.auto_start_paused = false;
+            facts.iphone.armed = true;
+            facts.failure_at("Carlink output did not become ready before CarPlay startup",
+                false, now - 1_000, clock);
+        }
         "arrival" => {
             facts.arrival_until_millis = Some(now + 5_000);
             facts.arrival_remaining_millis = Some(5_000);
@@ -220,6 +228,7 @@ contract_states! {
     admin_contract_shared_wifi => "shared-wifi",
     admin_contract_tesla_ready => "tesla-ready", admin_contract_tesla_failed => "tesla-failed",
     admin_contract_arrival => "arrival", admin_contract_armed => "armed",
+    admin_contract_carlink_timeout => "carlink-timeout-armed",
 }
 
 #[test]

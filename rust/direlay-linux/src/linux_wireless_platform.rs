@@ -220,7 +220,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
         self.start_gate.as_ref().map_or(Ok(true), |g| g())
     }
     fn check_bluetooth_radio(&self) -> Result<()> {
-        self.backends.bluetooth.check_radio()?;
+        self.backends.bluetooth.register_profiles()?;
         // A bonded iPhone reconnects only with Secure Connections on: a switch the policy is
         // making for this adapter, e.g. at startup or after BlueZ reset it, completes first.
         if let Some(policy) = &self.secure_connections {

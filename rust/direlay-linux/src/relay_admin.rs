@@ -1021,8 +1021,7 @@ impl LinuxRelayAdmin {
                 let _provisioning = early.then(|| self.provisioning.hold());
                 if early {
                     if let Err(e) = self.ensure_controller() {
-                        self.events
-                            .emit("error", &serde_json::json!({"message":e.to_string()}));
+                        self.fail_start(&e);
                     }
                 }
                 self.operation(Operation::Initialize)?;
@@ -1288,13 +1287,12 @@ impl LinuxRelayAdmin {
             .arrival_remaining_millis
             .map(|ms| wall.saturating_add(ms));
         facts.iphone.armed = self.desired.load(Ordering::Acquire)
-            && self.controller.lock().unwrap().is_none()
+            && !facts.auto_start_paused
             && !self.start_policy.lock().unwrap().waiting()
-            && facts
-                .iphone
-                .failure
-                .as_ref()
-                .is_none_or(|failure| failure.retrying);
+            && self.controller.lock().unwrap().as_ref().map_or(
+                settings.auto_start || facts.iphone.failure.as_ref().is_none_or(|f| f.retrying),
+                |controller| controller.armed(),
+            );
         drop(settings);
         facts.iphone.car_wait_until_millis =
             self.start_policy.lock().unwrap().deadline().map(|d| {
@@ -1345,6 +1343,41 @@ impl LinuxRelayAdmin {
         *self.tick_wake.0.lock().unwrap() = true;
         self.tick_wake.1.notify_all();
     }
+    fn active_hotspot(&self) -> Option<(String, std::net::Ipv4Addr)> {
+        let options = self.carplay_options().ok()?;
+        if options.settings.network_mode != "device-hotspot" {
+            return None;
+        }
+        if let Some(info) = self.hotspot_lifetime.ready_info() {
+            if let Some(address) = info.host_address {
+                return Some((
+                    info.interface_name.unwrap_or(options.wifi_interface),
+                    address,
+                ));
+            }
+        }
+        // Also covers an active NetworkManager AP inherited at daemon startup. Require our
+        // profile and AP mode, so a station address or the separate admin AP cannot qualify.
+        let inventory = self.inventory.get();
+        let interface =
+            inventory.interfaces.iter().find(|interface| {
+                interface.name == options.wifi_interface
+                    && interface.activity.mode.as_deref() == Some("AP")
+                    && interface.activity.profile.as_deref().is_some_and(|p| {
+                        p.starts_with(crate::linux_hotspot::HOTSPOT_CONNECTION_PREFIX)
+                    })
+            })?;
+        (self.runtime.addresses)()
+            .ok()?
+            .into_iter()
+            .find(|(name, address, prefix)| {
+                name == &interface.name
+                    && *prefix != 32
+                    && !address.is_loopback()
+                    && !address.is_unspecified()
+            })
+            .map(|(name, address, _)| (name, address))
+    }
     /// The head-unit-facing IPv4 address: the CarPlay hotspot's (or, in shared-Wi-Fi mode, the
     /// relay's address on that network as the controller uses it), else the Wi-Fi interface's
     /// address in shared-Wi-Fi mode.
@@ -1358,6 +1391,7 @@ impl LinuxRelayAdmin {
             .clone()
             .and_then(|c| c.hotspot_info())
             .and_then(|info| info.host_address)
+            .or_else(|| self.active_hotspot().map(|(_, address)| address))
             .or_else(|| {
                 (options.settings.network_mode == "shared-wifi")
                     .then(|| {
@@ -1413,18 +1447,17 @@ impl LinuxRelayAdmin {
         Ok(())
     }
     fn refresh_tesla_address(&self) {
-        let settings = self.settings.lock().unwrap().clone();
-        let (running, ready) = {
-            let controller = self.controller.lock().unwrap();
-            (
-                controller.is_some(),
-                controller
-                    .as_ref()
-                    .and_then(|c| c.hotspot_info())
-                    .and_then(|h| h.host_address)
-                    .is_some(),
-            )
-        };
+        let mut settings = self
+            .effective_options()
+            .map(|o| o.settings)
+            .unwrap_or_else(|_| self.settings.lock().unwrap().clone());
+        let active = self.active_hotspot();
+        if let Some((interface, _)) = &active {
+            settings.wifi_interface = interface.clone();
+        }
+        let running =
+            self.desired.load(Ordering::Acquire) || self.controller.lock().unwrap().is_some();
+        let ready = active.is_some();
         let mut tesla = self.tesla.lock().unwrap();
         tesla.tick(
             running,
@@ -1624,6 +1657,24 @@ impl LinuxRelayAdmin {
         }
     }
     pub fn tick(&self) -> Result<()> {
+        if let Err(error) = self.tick_inner() {
+            // Startup/network failures belong to this start, not the daemon's main loop.
+            let _lifecycle = self.lifecycle.lock().unwrap();
+            self.fail_start(&error);
+        }
+        Ok(())
+    }
+    fn fail_start(&self, error: &std::io::Error) {
+        self.events.facts.lock().unwrap().failure(
+            &error.to_string(),
+            false,
+            crate::platform::wall_clock().as_millis() as u64,
+        );
+        self.events
+            .emit("stage", &serde_json::json!({"stage":"Failed"}));
+        self.stop_controller_for_restart(true);
+    }
+    fn tick_inner(&self) -> Result<()> {
         if self.runtime.inventory_refresh == InventoryRefresh::Automatic {
             self.inventory.refresh();
         }
@@ -1676,6 +1727,16 @@ impl LinuxRelayAdmin {
         {
             return Ok(());
         }
+        if self
+            .events
+            .runtime_path_facts()
+            .iphone
+            .failure
+            .as_ref()
+            .is_some_and(|f| !f.retrying)
+        {
+            return Ok(());
+        }
         if !self.wifi_present(&self.effective_options()?.wifi_interface) {
             self.stop_controller();
             return Ok(());
@@ -1715,21 +1776,46 @@ impl LinuxRelayAdmin {
             .map(|i| i.activity.mode.as_deref() == Some("AP"));
         let paused = self.auto_start_gate.lock().unwrap().paused();
         let failure = self.events.runtime_path_facts().iphone.failure;
+        if let Some(controller) = self.controller.lock().unwrap().as_ref() {
+            controller.set_start_when_ready(options.settings.auto_start);
+        }
+        let devices = self.backends.bluetooth.devices().ok();
+        let iphone = devices.as_ref().map(|devices| {
+            crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), devices)
+                .device()
+                .is_some_and(|device| device.connected)
+        });
         let restored = self.recovery.lock().unwrap().observe(
             failure.as_ref(),
             crate::start_policy::RadioReadings {
                 bluetooth,
                 wifi,
                 hotspot,
+                carlink: Some(
+                    options.settings.output == "web"
+                        || self.carlink.lock().unwrap().state == "playing",
+                ),
+                iphone,
             },
             paused,
+            options.settings.auto_start,
         );
         if restored {
-            self.stop_controller();
-            self.start_policy.lock().unwrap().cancel();
-            self.events.facts.lock().unwrap().iphone.failure = None;
-            self.desired.store(true, Ordering::Release);
-            self.events.log("carplay_radio_recover");
+            let controller = self
+                .controller
+                .lock()
+                .unwrap()
+                .clone()
+                .filter(|c| c.running());
+            if let Some(controller) = controller {
+                controller.readiness_restored();
+            } else {
+                self.stop_controller_for_restart(true);
+                self.start_policy.lock().unwrap().cancel();
+                self.events.facts.lock().unwrap().iphone.failure = None;
+                self.desired.store(true, Ordering::Release);
+                self.events.log("carplay_radio_recover");
+            }
         }
         if self.desired.load(Ordering::Acquire)
             || paused
@@ -1887,7 +1973,6 @@ impl LinuxRelayAdmin {
                     input.screen_reported() || reported,
                 );
                 if let Err(e) = &result {
-                    desired.store(false, Ordering::Release);
                     policy.lock().unwrap().fail();
                     events.facts.lock().unwrap().failure(
                         &e.to_string(),
@@ -1901,8 +1986,10 @@ impl LinuxRelayAdmin {
         };
         // A concurrent/browser path prepares its AP before waiting for a screen report.
         // On one radio, Carlink must own that radio before the controller prepares a network.
-        if !start_gate()? && options.shared_carlink_radio() {
-            return Ok(());
+        match start_gate() {
+            Err(_) => return Ok(()), // The failed request is published; the daemon keeps serving.
+            Ok(false) if options.shared_carlink_radio() => return Ok(()),
+            _ => {}
         }
         if self
             .pairing
@@ -1918,6 +2005,7 @@ impl LinuxRelayAdmin {
             &options.settings,
             crate::platform::wall_clock().as_millis() as u64,
         );
+        let start_when_ready = options.settings.auto_start;
         let platform = Arc::new(
             LinuxWirelessPlatform::new(
                 options,
@@ -1971,6 +2059,7 @@ impl LinuxRelayAdmin {
             self.events.clone(),
             Duration::from_secs(45),
         ));
+        controller.set_start_when_ready(start_when_ready);
         *self.controller.lock().unwrap() = Some(controller.clone());
         let events = self.events.clone();
         *self.worker.lock().unwrap() = Some(crate::platform::spawn_worker(
@@ -3017,6 +3106,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
         let following_carlink = self.network_override.lock().unwrap().is_some();
         let head_unit = self.head_unit_address();
+        let active_hotspot = self.active_hotspot();
         let host_addresses = self.host_addresses().unwrap_or_default();
         let controller = self.controller.lock().unwrap();
         let stage = controller.as_ref().map(|c| c.stage()).unwrap_or_else(|| {
@@ -3077,12 +3167,13 @@ impl RelayAdmin for LinuxRelayAdmin {
             .map(|(ssid, password)| {
                 let ip = if !following_carlink
                     && options.settings.network_mode == "device-hotspot"
-                    && controller.is_some()
+                    && self.desired.load(Ordering::Acquire)
                 {
                     controller
                         .as_ref()
                         .and_then(|c| c.hotspot_info())
                         .and_then(|info| info.host_address)
+                        .or_else(|| active_hotspot.as_ref().map(|(_, address)| *address))
                         .map(|a| a.to_string())
                 } else {
                     None
@@ -4482,6 +4573,114 @@ mod tests {
         assert_eq!(a.status().path_input["startup"]["paused"], false);
         assert_eq!(a.status().path_input["iphone"]["armed"], true);
         drop(a);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn carlink_timeout_keeps_tick_alive_and_rearms_when_playing_unless_stopped() {
+        for interface in ["wlan0", "wlan1"] {
+            let (a, dir) = fake();
+            {
+                let mut settings = a.settings.lock().unwrap();
+                settings.output = "carlink".into();
+                settings.carlink_interface = interface.into();
+                settings.auto_start = true;
+            }
+            a.start_policy.lock().unwrap().request(
+                std::time::Instant::now() - Duration::from_secs(61),
+                true,
+                true,
+            );
+            a.tick().unwrap();
+            assert!(a.controller.lock().unwrap().is_none());
+            let path = a.status().path_input;
+            assert_eq!(path["iphone"]["failure"]["code"], "carlink_not_ready");
+            assert_eq!(path["iphone"]["failure"]["retrying"], false);
+            assert_eq!(path["iphone"]["armed"], true);
+            a.tick().unwrap();
+            assert!(
+                a.controller.lock().unwrap().is_none(),
+                "a timer must not retry the failed start"
+            );
+            a.carlink.lock().unwrap().state = "playing".into();
+            a.observe_automatic_start().unwrap();
+            assert!(a.events.runtime_path_facts().iphone.failure.is_none());
+            assert!(!a.start_policy.lock().unwrap().requested());
+            assert!(a.desired.load(Ordering::Acquire));
+            // Stop persists, including when the same readiness edge arrives again.
+            a.operation(Operation::Stop).unwrap();
+            a.carlink.lock().unwrap().state = "scanning".into();
+            a.observe_automatic_start().unwrap();
+            a.carlink.lock().unwrap().state = "playing".into();
+            a.observe_automatic_start().unwrap();
+            assert!(!a.desired.load(Ordering::Acquire));
+            assert!(!a.runtime_path_facts().iphone.armed);
+            a.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
+    fn tesla_address_uses_the_active_ap_before_controller_hotspot_publication() {
+        let (mut a, dir) = fake();
+        Arc::get_mut(&mut a).unwrap().runtime.addresses = Arc::new(|| {
+            Ok(vec![
+                ("wlan0".into(), "10.77.0.1".parse().unwrap(), 24),
+                ("wlan1".into(), "10.78.0.1".parse().unwrap(), 24),
+            ])
+        });
+        a.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::TeslaAndroid;
+        assert!(a.controller.lock().unwrap().is_none());
+        a.inventory.set(crate::net_inventory::Inventory {
+            interfaces: vec![crate::net_inventory::Interface {
+                name: "wlan0".into(),
+                activity: crate::net_inventory::Activity {
+                    mode: Some("AP".into()),
+                    profile: Some("oxp-carplay-n1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        a.refresh_tesla_address();
+        assert_eq!(
+            a.tesla
+                .lock()
+                .unwrap()
+                .active
+                .as_ref()
+                .unwrap()
+                .address
+                .to_string(),
+            "3.3.3.1"
+        );
+        assert_eq!(a.head_unit_address(), Some("10.77.0.1".parse().unwrap()));
+        a.operation(Operation::Stop).unwrap();
+        a.refresh_tesla_address();
+        assert!(a.tesla.lock().unwrap().active.is_none());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tesla_uses_the_started_hotspot_lease_while_controller_snapshot_is_absent() {
+        let (a, dir) = fake();
+        a.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::TeslaAndroid;
+        let hotspot = a
+            .hotspot_lifetime
+            .create(|| Arc::new(crate::hotspot_lifetime::tests::Fake::default()))
+            .unwrap();
+        hotspot.start(Duration::from_secs(1)).unwrap();
+        assert!(a.controller.lock().unwrap().is_none());
+        assert!(a.inventory.get().interfaces.is_empty());
+        a.refresh_tesla_address();
+        assert!(a.tesla.lock().unwrap().active.is_some());
+        assert_eq!(
+            a.active_hotspot(),
+            Some(("wlan0".into(), "10.42.0.1".parse().unwrap()))
+        );
+        a.operation(Operation::Stop).unwrap();
+        assert!(a.hotspot_lifetime.ready_info().is_none());
+        assert!(a.tesla.lock().unwrap().active.is_none());
+        a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

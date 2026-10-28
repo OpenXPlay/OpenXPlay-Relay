@@ -24,6 +24,7 @@ impl RetryBudget {
                 | "wifi_reset_required"
                 | "usb_trust_denied"
                 | "iphone_locked"
+                | "carlink_not_ready"
         ) {
             return false;
         }
@@ -37,6 +38,8 @@ pub struct RadioReadings {
     pub bluetooth: Option<bool>,
     pub wifi: Option<bool>,
     pub hotspot: Option<bool>,
+    pub carlink: Option<bool>,
+    pub iphone: Option<bool>,
 }
 #[derive(Default)]
 pub struct RecoverOnce {
@@ -52,9 +55,11 @@ impl RecoverOnce {
         failure: Option<&crate::path_facts::LinkFailure>,
         readings: RadioReadings,
         user_stopped: bool,
+        automatic: bool,
     ) -> bool {
         let before = std::mem::replace(&mut self.previous, readings);
-        let Some(failure) = failure.filter(|f| !f.retrying && !user_stopped && !self.recovered)
+        let Some(failure) =
+            failure.filter(|f| !f.retrying && !user_stopped && (automatic || !self.recovered))
         else {
             return false;
         };
@@ -66,6 +71,12 @@ impl RecoverOnce {
                 before.bluetooth == Some(false) && readings.bluetooth == Some(true)
             }
             "wifi_off" => before.wifi == Some(false) && readings.wifi == Some(true),
+            "unknown" | "rfcomm_timeout" | "iphone_unpaired" | "first_tcp_timeout" if automatic => {
+                before.iphone == Some(false) && readings.iphone == Some(true)
+            }
+            "carlink_not_ready" if automatic => {
+                before.carlink != Some(true) && readings.carlink == Some(true)
+            }
             _ => false,
         };
         self.recovered |= restored;
@@ -150,10 +161,12 @@ pub struct StartPolicy {
     screen: Option<Instant>,
     requested: bool,
     failed: bool,
+    blocked: bool,
 }
 impl StartPolicy {
     pub fn request(&mut self, now: Instant, carlink: bool, screen_known: bool) {
         self.failed = false;
+        self.blocked = false;
         self.requested = true;
         self.carlink = carlink.then_some(now + Duration::from_secs(60));
         self.screen = (!screen_known).then_some(now + Duration::from_secs(20));
@@ -166,6 +179,7 @@ impl StartPolicy {
     }
     pub fn skip(&mut self) {
         self.failed = false;
+        self.blocked = false;
         self.requested = true;
         self.carlink = None;
         self.screen = None;
@@ -173,6 +187,7 @@ impl StartPolicy {
     pub fn fail(&mut self) {
         self.skip();
         self.failed = true;
+        self.blocked = true;
     }
     pub fn take_failure(&mut self) -> bool {
         std::mem::take(&mut self.failed)
@@ -190,6 +205,11 @@ impl StartPolicy {
         carlink_ready: bool,
         screen_reported: bool,
     ) -> crate::Result<bool> {
+        if self.blocked {
+            return Err(std::io::Error::other(
+                "Carlink output did not become ready before CarPlay startup",
+            ));
+        }
         if let Some(until) = self.carlink {
             if !carlink_enabled {
                 return Err(std::io::Error::other(
@@ -317,20 +337,76 @@ mod runtime_tests {
             bluetooth: Some(true),
             ..Default::default()
         };
-        assert!(!recovery.observe(Some(&failure), on, false));
-        assert!(!recovery.observe(Some(&failure), off, false));
+        assert!(!recovery.observe(Some(&failure), on, false, false));
+        assert!(!recovery.observe(Some(&failure), off, false, false));
         failure.retrying = true;
-        assert!(!recovery.observe(Some(&failure), on, false));
+        assert!(!recovery.observe(Some(&failure), on, false, false));
         failure.retrying = false;
-        recovery.observe(Some(&failure), off, false);
-        assert!(!recovery.observe(Some(&failure), on, true));
-        recovery.observe(Some(&failure), off, false);
-        assert!(recovery.observe(Some(&failure), on, false));
-        recovery.observe(Some(&failure), off, false);
-        assert!(!recovery.observe(Some(&failure), on, false));
+        recovery.observe(Some(&failure), off, false, false);
+        assert!(!recovery.observe(Some(&failure), on, true, false));
+        recovery.observe(Some(&failure), off, false, false);
+        assert!(recovery.observe(Some(&failure), on, false, false));
+        recovery.observe(Some(&failure), off, false, false);
+        assert!(!recovery.observe(Some(&failure), on, false, false));
         recovery.reset();
-        recovery.observe(Some(&failure), off, false);
-        assert!(recovery.observe(Some(&failure), on, false));
+        recovery.observe(Some(&failure), off, false, false);
+        assert!(recovery.observe(Some(&failure), on, false, false));
+    }
+    #[test]
+    fn automatic_carlink_rescue_requires_readiness_and_can_repeat_but_stop_wins() {
+        let mut recovery = RecoverOnce::default();
+        let failure = LinkFailure {
+            code: "carlink_not_ready".into(),
+            ..Default::default()
+        };
+        let off = RadioReadings {
+            carlink: Some(false),
+            ..Default::default()
+        };
+        let on = RadioReadings {
+            carlink: Some(true),
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            assert!(!recovery.observe(Some(&failure), off, false, true));
+            assert!(recovery.observe(Some(&failure), on, false, true));
+            assert!(!recovery.observe(Some(&failure), on, false, true));
+        }
+        recovery.observe(Some(&failure), off, false, true);
+        assert!(!recovery.observe(Some(&failure), on, true, true));
+        recovery.reset();
+        recovery.observe(Some(&failure), off, false, false);
+        assert!(!recovery.observe(Some(&failure), on, false, false));
+    }
+    #[test]
+    fn automatic_iphone_rescue_uses_a_real_connected_edge() {
+        let mut recovery = RecoverOnce::default();
+        let failure = LinkFailure {
+            code: "rfcomm_timeout".into(),
+            ..Default::default()
+        };
+        let off = RadioReadings {
+            iphone: Some(false),
+            ..Default::default()
+        };
+        let on = RadioReadings {
+            iphone: Some(true),
+            ..Default::default()
+        };
+        assert!(!recovery.observe(Some(&failure), on, false, true));
+        recovery.observe(Some(&failure), off, false, true);
+        assert!(recovery.observe(Some(&failure), on, false, true));
+        assert!(!recovery.observe(Some(&failure), on, false, true));
+    }
+    #[test]
+    fn failed_gate_stays_closed_after_the_failure_notification_is_consumed() {
+        let mut policy = StartPolicy::default();
+        policy.fail();
+        assert!(policy.take_failure());
+        assert!(!policy.take_failure());
+        assert!(policy.ready(Instant::now(), true, true, true).is_err());
+        policy.request(Instant::now(), true, true);
+        assert!(policy.ready(Instant::now(), true, true, true).unwrap());
     }
     #[test]
     fn arrival_is_five_seconds_cancellable_and_restarts_after_lost_readiness() {

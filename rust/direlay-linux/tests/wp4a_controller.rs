@@ -53,6 +53,7 @@ struct Shared {
     network_started: AtomicBool,
     gate_enabled: AtomicBool,
     gate_ready: AtomicBool,
+    gate_failure: AtomicBool,
     connecting: AtomicBool,
     connected: AtomicBool,
     establish: AtomicBool,
@@ -105,6 +106,7 @@ impl Default for Shared {
             network_started: AtomicBool::new(false),
             gate_enabled: AtomicBool::new(false),
             gate_ready: AtomicBool::new(false),
+            gate_failure: AtomicBool::new(false),
             connecting: AtomicBool::new(false),
             connected: AtomicBool::new(false),
             establish: AtomicBool::new(true),
@@ -287,6 +289,11 @@ impl CloseResource for Pairing {
 }
 impl WirelessPlatform for Platform {
     fn car_ready(&self) -> openxplay_relay::Result<bool> {
+        if self.0.gate_failure.load(Ordering::SeqCst) {
+            return Err(std::io::Error::other(
+                "Carlink output did not become ready before CarPlay startup",
+            ));
+        }
         Ok(!self.0.gate_enabled.load(Ordering::SeqCst) || self.0.gate_ready.load(Ordering::SeqCst))
     }
     fn check_bluetooth_radio(&self) -> openxplay_relay::Result<()> {
@@ -1369,5 +1376,131 @@ fn startup_stops_after_five_retries_including_bluetooth_waits() {
     let failure = run.json.runtime_path_facts().iphone.failure.unwrap();
     assert!(!failure.retrying);
     assert!(!failure.trail.is_empty());
+    run.stop();
+}
+
+#[test]
+fn exhausted_budget_waits_for_matching_iphone_edges_and_stop_wins() {
+    let wake = Arc::new(BluetoothWake::default());
+    let f = Arc::new(Shared {
+        wake: Some(wake.clone()),
+        lifetime: Some(Arc::new(HotspotLifetime::default())),
+        ..Default::default()
+    });
+    f.bluetooth_error.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    assert!(run.controller.running());
+    assert!(
+        !run.json
+            .runtime_path_facts()
+            .iphone
+            .failure
+            .unwrap()
+            .retrying
+    );
+    let attempts = f.connects.load(Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(30));
+    assert_eq!(
+        f.connects.load(Ordering::SeqCst),
+        attempts,
+        "timers cannot reset the budget"
+    );
+    wake.publish(&BluetoothChange::DeviceConnected(
+        "AA:BB:CC:DD:EE:02".into(),
+    ));
+    assert!(run.controller.armed());
+    // A real edge earns another bounded budget, including after the first rescue.
+    for _ in 0..2 {
+        let before = run.matching(|v| v["event"] == "startup-failed").len();
+        wake.publish(&BluetoothChange::DeviceConnected(
+            "AA:BB:CC:DD:EE:01".into(),
+        ));
+        wait_for(|| {
+            run.controller.armed()
+                && run.matching(|v| v["event"] == "startup-failed").len() > before
+        });
+    }
+    f.bluetooth_error.store(false, Ordering::Release);
+    wake.publish(&BluetoothChange::DeviceConnected(
+        "AA:BB:CC:DD:EE:01".into(),
+    ));
+    wait_for(|| run.controller.stage() == "WirelessActive");
+    assert!(run.json.runtime_path_facts().iphone.failure.is_none());
+    assert_eq!(
+        f.hotspot_starts.load(Ordering::SeqCst),
+        1,
+        "armed recovery retains the AP"
+    );
+    run.stop();
+    let attempts = f.connects.load(Ordering::SeqCst);
+    wake.publish(&BluetoothChange::AdapterReady);
+    assert_eq!(f.connects.load(Ordering::SeqCst), attempts);
+    assert!(!run.controller.armed());
+}
+#[test]
+fn exhausted_adapter_budget_recovers_on_adapter_return_and_stop_cancels_armed_wait() {
+    let wake = Arc::new(BluetoothWake::default());
+    let f = Arc::new(Shared {
+        wake: Some(wake.clone()),
+        ..Default::default()
+    });
+    f.radio_down.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    f.radio_down.store(false, Ordering::Release);
+    wake.publish(&BluetoothChange::AdapterReady);
+    wait_for(|| run.controller.stage() == "WirelessActive");
+    run.stop();
+    let f = Arc::new(Shared::default());
+    f.radio_down.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    f.radio_down.store(false, Ordering::Release);
+    run.controller.readiness_restored();
+    run.controller.readiness_restored();
+    wait_for(|| run.controller.stage() == "WirelessActive");
+    run.stop();
+    // A different armed run can still be closed promptly without any restoration.
+    f.radio_down.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(f, Duration::from_millis(1), Duration::from_millis(2));
+    run.controller.set_start_when_ready(true);
+    wait_for(|| run.controller.armed());
+    run.stop();
+    assert!(!run.controller.running());
+    assert!(!run.controller.armed());
+}
+#[test]
+fn carlink_gate_failure_on_network_worker_fails_only_the_start() {
+    let f = Arc::new(Shared::default());
+    f.gate_failure.store(true, Ordering::SeqCst);
+    let mut run = Run::with_retry(
+        f.clone(),
+        Duration::from_secs(1),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    wait_for(|| run.controller.stage() == "Failed");
+    assert!(!run.controller.running());
+    assert!(!f.network_started.load(Ordering::SeqCst));
+    let failure = run.json.runtime_path_facts().iphone.failure.unwrap();
+    assert_eq!(failure.code, "carlink_not_ready");
+    assert!(!failure.retrying);
+    assert!(run.matching(|v| v["event"] == "retry").is_empty());
     run.stop();
 }

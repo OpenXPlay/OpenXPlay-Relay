@@ -200,9 +200,11 @@ impl RuntimePathFacts {
     ) {
         let code = carplay_policy::classify_failure(message);
         let step = match code {
-            "hotspot_not_ready" | "hotspot_configuration" | "wifi_off" | "wifi_reset_required" => {
-                "STARTING"
-            }
+            "hotspot_not_ready"
+            | "hotspot_configuration"
+            | "wifi_off"
+            | "wifi_reset_required"
+            | "carlink_not_ready" => "STARTING",
             "bluetooth_off" | "bluetooth_unusable" | "iphone_unpaired" | "rfcomm_timeout" => {
                 "BLUETOOTH"
             }

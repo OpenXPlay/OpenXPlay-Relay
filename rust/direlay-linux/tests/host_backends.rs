@@ -90,6 +90,10 @@ impl BluetoothBackend for Backend {
         self.0.record("radio".into());
         Ok(())
     }
+    fn register_profiles(&self) -> Result<()> {
+        self.0.record("profiles".into());
+        self.check_radio()
+    }
     fn devices(&self) -> Result<Vec<BondedDevice>> {
         Ok(vec![])
     }
@@ -180,9 +184,10 @@ fn platform_uses_semantic_backends_and_current_phone_overrides() {
     manager.close().unwrap();
     let calls = host.0.lock().unwrap();
     assert_eq!(
-        &calls[..6],
+        &calls[..7],
         [
             "session",
+            "profiles",
             "radio",
             "iphone:AA:BB:CC:DD:EE:01",
             "channel:AA:BB:CC:DD:EE:01:12",

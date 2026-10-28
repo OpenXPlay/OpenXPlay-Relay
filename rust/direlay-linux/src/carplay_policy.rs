@@ -56,7 +56,11 @@ pub fn media_button(key: u16) -> Option<u8> {
 }
 pub fn classify_failure(message: &str) -> &'static str {
     let m = message.to_ascii_lowercase();
-    if m.contains("wifi_reset_required") {
+    if m.contains("carlink output did not become ready")
+        || m.contains("carlink output was disabled while waiting")
+    {
+        "carlink_not_ready"
+    } else if m.contains("wifi_reset_required") {
         "wifi_reset_required"
     } else if m.contains("first_tcp_timeout") {
         "first_tcp_timeout"
