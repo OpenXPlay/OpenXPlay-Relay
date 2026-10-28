@@ -99,6 +99,7 @@ pub mod runtime_paths;
 pub mod secure_connections;
 pub mod settings;
 pub mod supervisor;
+pub mod tesla_address;
 
 pub mod config_files;
 pub mod context;

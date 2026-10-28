@@ -120,6 +120,15 @@ fn admin_contract_status(state: &str) {
                 facts.carlink_event(&serde_json::json!({"type":"media-stats","liveFrames":10,"width":1920,"height":720,"codec":"H265"}), now);
             }
         }
+        "tesla-ready" | "tesla-failed" => {
+            settings.tesla_browser = crate::tesla_address::Mode::PublicAddress;
+            facts.tesla.since_millis = Some(now - 1_000);
+            facts.tesla.activation = Some(crate::tesla_address::Activation::Ready);
+            if state == "tesla-ready" {
+                facts.tesla.url = Some("https://169.254.88.1:8443/".into());
+                status.receiver_urls.insert(0, facts.tesla.url.clone().unwrap());
+            } else { facts.tesla.failure = Some("NetworkManager could not add the address".into()); }
+        }
         "iphone-failure" => {
             status.running = true;
             facts.observe(
@@ -158,6 +167,11 @@ fn admin_contract_status(state: &str) {
     status.output = settings.output.clone();
     crate::path_input::update(&facts, &settings, &mut status, now, true, true);
     let p = &status.path_input;
+    if state.starts_with("tesla-") {
+        assert!(p["setup"]["outputs"].as_array().unwrap().contains(&serde_json::json!("TESLA")));
+        assert_eq!(p["car"]["tesla"]["phase"], if state == "tesla-ready" {"READY"} else {"FAILED"});
+        assert_eq!(p["car"]["tesla"]["activation"], "READY");
+    }
     assert_eq!(p["platform"], "linux");
     assert_eq!(p["relay"]["keepAlive"], "NOT_NEEDED");
     assert_eq!(p["iphone"]["usb"], "UNKNOWN");
@@ -186,6 +200,7 @@ contract_states! {
     admin_contract_failure => "iphone-failure", admin_contract_wait => "car-first-wait",
     admin_contract_live_browser => "live-browser", admin_contract_live_carlink => "live-carlink",
     admin_contract_shared_wifi => "shared-wifi",
+    admin_contract_tesla_ready => "tesla-ready", admin_contract_tesla_failed => "tesla-failed",
 }
 
 #[test]

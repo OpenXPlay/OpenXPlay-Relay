@@ -776,6 +776,87 @@
     {
       "fields": [
         {
+          "key": "teslaBrowser",
+          "labelKey": "tesla.mode",
+          "options": [
+            {
+              "hintKey": "tesla.nameHint",
+              "labelKey": "tesla.mode.teslamirror",
+              "value": "teslamirror"
+            },
+            {
+              "hintKey": "tesla.nameHint",
+              "labelKey": "tesla.mode.virtual-name",
+              "value": "virtual-name"
+            },
+            {
+              "hintKey": "tesla.directHint",
+              "labelKey": "tesla.mode.public-address",
+              "value": "public-address"
+            },
+            {
+              "hintKey": "tesla.directHint",
+              "labelKey": "tesla.mode.tesla-android",
+              "value": "tesla-android"
+            },
+            {
+              "labelKey": "tesla.mode.off",
+              "value": "off"
+            }
+          ],
+          "type": "choice"
+        },
+        {
+          "key": "teslaVirtualAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "virtual-name"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaPublicAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "public-address"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaMirrorAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "teslamirror"
+            ],
+            "key": "teslaBrowser"
+          }
+        },
+        {
+          "key": "teslaAndroidAddress",
+          "labelKey": "tesla.address",
+          "type": "text",
+          "visibleWhen": {
+            "equals": [
+              "tesla-android"
+            ],
+            "key": "teslaBrowser"
+          }
+        }
+      ],
+      "id": "tesla",
+      "titleKey": "tesla.title"
+    },
+    {
+      "fields": [
+        {
           "hintKey": "publicName.summary",
           "key": "publicNameEnabled",
           "labelKey": "publicName.enabled",
@@ -932,6 +1013,11 @@
     "rfcommChannel": null,
     "screenWidth": 200,
     "sharedWifiNetworks": [],
+    "teslaAndroidAddress": "3.3.3.1",
+    "teslaBrowser": "off",
+    "teslaMirrorAddress": "100.88.0.1",
+    "teslaPublicAddress": "169.254.88.1",
+    "teslaVirtualAddress": "169.254.88.1",
     "videoCodec": "auto",
     "videoStats": "off",
     "wifiCountry": "system",

@@ -17,6 +17,9 @@ pub fn supervisor_settings(
     ble_adapter: Option<String>,
     station_5ghz: bool,
 ) -> SupervisorSettings {
+    if let Some(address) = crate::tesla_address::tls_address(&o.settings) {
+        addresses.push(address);
+    }
     addresses.push(Ipv4Addr::new(10, 78, 0, 1));
     if let Ok(a) = HotspotAddressPolicy::select_subnet(occupied) {
         addresses.push(a);
@@ -97,6 +100,34 @@ pub fn supervisor_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tesla_direct_sans_are_prepared_before_the_address_is_established() {
+        use crate::tesla_address::Mode;
+        let dir = std::env::temp_dir().join(format!(
+            "tesla-sans-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let mut o =
+            Options::parse(&["--state-dir".into(), dir.to_string_lossy().into_owned()]).unwrap();
+        for mode in [
+            Mode::Off,
+            Mode::VirtualName,
+            Mode::PublicAddress,
+            Mode::Teslamirror,
+            Mode::TeslaAndroid,
+        ] {
+            o.settings.tesla_browser = mode;
+            let settings = supervisor_settings(&o, vec![], &[], String::new(), None, false);
+            let args = settings.arguments();
+            let address = o.settings.tesla_address().unwrap_or("169.254.88.1");
+            assert_eq!(
+                args.windows(2)
+                    .any(|a| a[0] == "--tls-san" && a[1] == address),
+                mode != Mode::Off && !mode.uses_name()
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn runtime_flags_use_root_state_and_only_an_enabled_valid_bluetooth_override() {
         let root = std::env::temp_dir().join(format!(

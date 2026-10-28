@@ -34,6 +34,7 @@ impl Paths {
 struct Names {
     hotspots: BTreeMap<String, Ipv4Addr>,
     public: Option<(String, Option<Ipv4Addr>)>,
+    address_override: Option<Ipv4Addr>,
 }
 static NAMES: LazyLock<Mutex<BTreeMap<PathBuf, Names>>> = LazyLock::new(Mutex::default);
 pub fn path(dir: &Path) -> PathBuf {
@@ -50,13 +51,21 @@ fn hosts_text(names: &Names) -> String {
             row.push("openxplay-linux.local");
         }
         if let Some((name, _)) = &names.public {
+            if names.address_override.is_some() {
+                continue;
+            }
             if !row.contains(&name.as_str()) {
                 row.push(name);
             }
         }
     }
+    if let Some((name, _)) = &names.public {
+        if let Some(ip) = names.address_override {
+            rows.entry(ip).or_default().push(name);
+        }
+    }
     // Preserve the selected browser address when there is no AP yet (also shared-Wi-Fi mode).
-    if names.hotspots.is_empty() {
+    if names.hotspots.is_empty() && names.address_override.is_none() {
         if let Some((name, Some(ip))) = &names.public {
             rows.entry(*ip).or_default().push(name);
         }
@@ -97,6 +106,7 @@ fn sync(paths: &Paths, names: &Names) -> io::Result<()> {
     // Install hosts first: a new dnsmasq must never see a missing addn-hosts file.
     let changed = atomic_write(hosts, &hosts_text(names))?;
     if names.hotspots.is_empty()
+        && names.address_override.is_none()
         && names
             .public
             .as_ref()
@@ -163,15 +173,26 @@ pub fn write(paths: &Paths, name: &str, address: Ipv4Addr) -> io::Result<()> {
     public_name(paths, name, Some(address))
 }
 pub fn public_name(paths: &Paths, name: &str, address: Option<Ipv4Addr>) -> io::Result<()> {
+    public_name_override(paths, name, address, None)
+}
+/// Tesla name modes answer only with the established /32, regardless of the querying AP.
+pub fn public_name_override(
+    paths: &Paths,
+    name: &str,
+    address: Option<Ipv4Addr>,
+    address_override: Option<Ipv4Addr>,
+) -> io::Result<()> {
     let mut all = NAMES.lock().unwrap();
     let names = all.entry(paths.dir.clone()).or_default();
     names.public = Some((name.into(), address));
+    names.address_override = address_override;
     sync(paths, names)
 }
 pub fn remove(paths: &Paths) -> io::Result<()> {
     let mut all = NAMES.lock().unwrap();
     let names = all.entry(paths.dir.clone()).or_default();
     names.public = None;
+    names.address_override = None;
     sync(paths, names)
 }
 
@@ -179,6 +200,35 @@ pub fn remove(paths: &Paths) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::public_name::testing::TempDir;
+    #[test]
+    fn tesla_override_answers_only_with_the_established_address_on_every_hotspot() {
+        let root = TempDir::new("tesla-dns");
+        let dns = Paths::in_dir(root.0.join("dns"));
+        hotspot(&dns, "wlan0", Some("10.77.0.1".parse().unwrap())).unwrap();
+        hotspot(&dns, "wlan1", Some("10.79.0.1".parse().unwrap())).unwrap();
+        for address in ["169.254.88.1", "100.88.0.1"] {
+            public_name_override(
+                &dns,
+                "tesla.example.org",
+                Some("10.77.0.1".parse().unwrap()),
+                Some(address.parse().unwrap()),
+            )
+            .unwrap();
+            let text = std::fs::read_to_string(&dns.hosts).unwrap();
+            assert!(text.contains(&format!("{address} tesla.example.org\n")));
+            assert_eq!(text.matches("tesla.example.org").count(), 1);
+            assert!(text.contains("10.77.0.1 openxplay-linux.local\n"));
+            assert!(text.contains("10.79.0.1 openxplay-linux.local\n"));
+        }
+        public_name_override(
+            &dns,
+            "tesla.example.org",
+            Some("10.77.0.1".parse().unwrap()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&dns.hosts).unwrap(), "10.77.0.1 openxplay-linux.local tesla.example.org\n10.79.0.1 openxplay-linux.local tesla.example.org\n");
+    }
     #[test]
     fn writes_one_address_line_and_removes_it() {
         let root = TempDir::new("local-dns");

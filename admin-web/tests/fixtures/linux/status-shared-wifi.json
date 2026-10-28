@@ -84,6 +84,7 @@
       "savedScreen": "1920×720",
       "screen": "1920×720",
       "tesla": {
+        "activation": null,
         "code": null,
         "name": null,
         "phase": "OFF",

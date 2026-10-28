@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
+import { teslaHint, teslaNotes } from './tesla';
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
 import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
@@ -192,9 +193,10 @@ function renderReady() {
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
     mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {
+    if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
     const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry'].includes(f.key)).map(editorField);
-    patchMarkup(container, `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
+    container.insertAdjacentHTML('beforeend', `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
     list.forEach(bindField);
     if (route === 'settings/connection') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/connection/network', 'menu.connection/network', pageSummary('settings/connection/network'), 'wifi')}</div><div id="pairing-panel"></div>`);
     if (route === 'settings/connection/network') container.insertAdjacentHTML('beforeend', `<div id="network-panel" class="inset-group"></div>${status!.platform === 'linux' ? `<div class="inset-group">${menuRow('settings/connection/network/interfaces', 'menu.connection/network/interfaces', '', 'router')}</div>` : ''}`);
@@ -202,6 +204,7 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', connectionsView(status!, t) || `<div class="inset-group">${fields().filter(f => special.has(f.key) && f.key !== 'sharedWifiNetworks').map(fieldMarkup).join('')}</div>`);
       fields().filter(f => special.has(f.key) && f.key !== 'sharedWifiNetworks').forEach(f => { if (document.getElementById(fieldId(f.key))) bindField(f); }); bindConnections();
     }
+    if (route === 'settings/tesla') { container.insertAdjacentHTML('beforeend', '<div id="tesla-notes"></div>'); renderTesla(); }
     if (route === 'settings/access/public-name') container.insertAdjacentHTML('beforeend', '<div id="public-name-panel" class="inset-group"></div>');
     if (route === 'settings/access') {
       container.insertAdjacentHTML('beforeend', addressesView(status!, true, t) + `<div class="inset-group">${fields().some(f => f.key === 'publicNameEnabled') ? menuRow('settings/access/public-name', 'publicName.title', status!.publicName ? t(`publicName.state.${status!.publicName.state}`) : '', 'lock') : ''}${menuRow('settings/access/admin', 'menu.access/admin', defaultPassword ? t('home.passwordNote') : '', 'lock')}</div>`); bindCopies(container);
@@ -512,6 +515,13 @@ function topology(mode: Illustration): string {
   const labelTwo = t(phoneHotspot ? 'ui.hotspot' : 'ui.wifi');
   return `<figure class="topology"><svg viewBox="0 0 310 ${shared ? 136 : 94}" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="${links}" stroke-dasharray="4 4"/></g>${shared ? node('router', 155, 16) : ''}${node('smartphone', 45, y)}${node('router', 155, y)}${node('car', 265, y)}<g fill="currentColor" font-size="11" text-anchor="middle">${shared ? `<text x="211" y="23">${t('ui.wifi')}</text>` : `<text x="100" y="29">${labelOne}</text><text x="210" y="29">${labelTwo}</text>`}<text x="45" y="${y + 32}">${t('ui.iphone')}</text><text x="155" y="${y + 32}">${t('ui.relay')}</text><text x="265" y="${y + 32}">${t('ui.screen')}</text></g></svg><figcaption>${t(`ui.topology.${mode}`)}</figcaption></figure>`;
 }
+function renderTesla() {
+  if (!settings || !status) return;
+  const panel = document.getElementById('tesla-notes');
+  if (panel) patchMarkup(panel, teslaNotes(settings.values, status, t));
+  const hint = document.getElementById(fieldId('teslaBrowser') + '-hint');
+  if (hint) hint.textContent = teslaHint(settings.values, String(settings.values.teslaBrowser), t);
+}
 function fieldMarkup(field: Field): string {
   field = editorField(field);
   const id = fieldId(field.key), value = settings!.values[field.key], draft = drafts.get(field.key);
@@ -529,7 +539,7 @@ function fieldMarkup(field: Field): string {
     const string = draft ?? (object ? JSON.stringify(value, null, 2) : String(value ?? ''));
     control = `<label for="${id}">${label}</label><div class="input-row">${object ? `<textarea ${attr} rows="4">${esc(string)}</textarea>` : `<input ${attr} type="${field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'}" value="${esc(string)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1" inputmode="numeric"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''}>`}${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}">${icon('eye')}</button>` : ''}</div><div class="field-edit-actions" ${draft === undefined ? 'hidden' : ''}><button type="button" data-save="${esc(field.key)}">${t('net.save')}</button><button type="button" data-cancel="${esc(field.key)}">${t('ui.cancel')}</button></div>`;
   }
-  const hint = field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
+  const hint = field.key === 'teslaBrowser' ? esc(teslaHint(settings!.values, String(value), t)) : field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
   return `<div class="field" data-field="${esc(field.key)}">${control}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result" role="status">${esc(t(feedback.get(field.key) ?? ''))}</p></div>`;
 }
 function bindField(field: Field) {
@@ -540,7 +550,7 @@ function bindField(field: Field) {
   else if (field.type === 'bool' || field.key === 'carlinkTrace') on(el, 'change', () => queueSave(field, field.key === 'carlinkTrace' ? (el as HTMLInputElement).checked ? 'on' : 'off' : (el as HTMLInputElement).checked));
   else if (field.type === 'phone') on(el, 'click', () => void pickPhone(field));
   else if (field.type === 'choice') on(el, 'click', () => {
-    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
+    const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${option.hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(option.hintKey))}</small>` : ''}</button>`).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
     dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', async () => {
       const option = field.options![Number(button.dataset.option)];
       if (restartsPicture(field.key) && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
@@ -758,7 +768,7 @@ function updateVisibility() {
     if (el) el.hidden = !isVisible(field, settings!.values) && !['networkRoles', 'wifiInterface', 'carlinkInterface', 'wifiCountry', 'adminHotspotPassword'].includes(field.key);
   }
   document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = ![...section.children].some(child => !(child as HTMLElement).hidden); });
-  renderPublicName();
+  renderPublicName(); renderTesla();
 }
 async function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
@@ -931,7 +941,7 @@ async function tick() {
           for (const [key, item] of pending) settings.values[key] = item.value;
           if (pending.has('publicNameProvider')) publicNameDrafts.select(String(settings.values.publicNameProvider), settings.values);
           switching = null; render(); document.getElementById('network-switch')?.focus();
-        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderConnections(); } }
+        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderTesla(); renderConnections(); } }
     }
   } catch (error) { if (!(error instanceof NetworkError)) { pageError = errorKey(error); if (!status) render(); } }
   finally { polling = false; }

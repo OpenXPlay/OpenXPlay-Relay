@@ -8,6 +8,7 @@ import type { Language } from './i18n';
 export const pageKeys: Record<string, string[]> = {
   output: ['output', 'wirelessDisplay', 'carlinkName', 'vehicleInformation', 'carlinkAutoReconnect', 'carlinkReconnectOnResize', 'carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'],
   'output/plugins': ['plugins', 'pluginsEnabled'],
+  tesla: ['teslaBrowser', 'teslaVirtualAddress', 'teslaPublicAddress', 'teslaMirrorAddress', 'teslaAndroidAddress'],
   car: ['carBrand', 'carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText', 'savedHeadUnit', 'savedScreen'],
   picture: ['carplayResolution', 'resolution', 'carplayScreenWidth', 'screenWidth', 'frameRate', 'videoCodec', 'videoStats', 'carPlayViewAreas', 'viewAreas'],
   audio: ['carBluetoothAudio', 'microphone', 'microphoneSource'],
@@ -28,7 +29,7 @@ export function fieldRoute(key: string): string {
 }
 export function pageFields(settings: Settings, route: string): Field[] { return settings.schema.flatMap(s => s.fields).filter(f => fieldRoute(f.key) === route); }
 export const pages = [
-  ['output', 'menu.output', 'car'], ['car', 'menu.car', 'car'], ['picture', 'menu.picture', 'monitor'], ['audio', 'menu.audio', 'bluetooth'],
+  ['output', 'menu.output', 'car'], ['car', 'menu.car', 'car'], ['tesla', 'menu.tesla', 'car'], ['picture', 'menu.picture', 'monitor'], ['audio', 'menu.audio', 'bluetooth'],
   ['connection', 'menu.connection', 'smartphone'], ['startup', 'menu.startup', 'play'], ['access', 'menu.access', 'lock'],
   ['config-files', 'menu.config-files', 'code'], ['logs', 'menu.logs', 'file-text'], ['about', 'menu.about', 'info'],
   ['developer', 'menu.developer', 'code'], ['experimental', 'menu.experimental', 'settings'],
@@ -61,6 +62,7 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
   };
   if (route === 'settings/car') return ['carBrand', 'carModel', 'carYear'].map(key => v[key] === 'other' && v[key + 'Text'] ? String(v[key + 'Text']) : label(key)).filter(Boolean).join(' · ');
   if (route === 'settings/picture') return [label('resolution') || label('carplayResolution'), `${v.screenWidth ?? v.carplayScreenWidth ?? 200} mm`, label('videoCodec'), v.frameRate === 'auto' ? t('menu.rateAuto') : label('frameRate')].filter(Boolean).join(' · ');
+  if (route === 'settings/tesla') return label('teslaBrowser');
   if (route === 'settings/output') return label('output');
   if (route === 'settings/audio') return `${t('stage.carBluetooth')}: ${label('carBluetoothAudio')}`;
   if (route === 'settings/startup') return [all.some(f => f.key === 'autoStart') ? `${t('menu.whenReady')}: ${label('autoStart')}` : '', all.some(f => f.key === 'bootStart') ? `${t('menu.atBoot')}: ${label('bootStart')}` : ''].filter(Boolean).join(' · ');

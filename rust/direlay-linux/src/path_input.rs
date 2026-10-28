@@ -39,10 +39,17 @@ pub fn build(
     let shared = settings.network_mode == "shared-wifi";
     let web = settings.output != "carlink";
     let carlink = settings.output != "web";
-    let outputs: Vec<_> = [(web, "BROWSER"), (carlink, "CARLINK")]
-        .into_iter()
-        .filter_map(|(enabled, name)| enabled.then_some(name))
-        .collect();
+    let outputs: Vec<_> = [
+        (web, "BROWSER"),
+        (carlink, "CARLINK"),
+        (
+            settings.tesla_browser != crate::tesla_address::Mode::Off,
+            "TESLA",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, name)| enabled.then_some(name))
+    .collect();
     let pick = match status.iphone.reason.as_str() {
         "Selected" | "Connected" | "OnlyCandidate" => "PICKED",
         "SelectedUnpaired" => "UNPAIRED",
@@ -74,6 +81,8 @@ pub fn build(
         .as_ref()
         .and_then(|p| p.trusted_name.as_deref());
     let waiting = phone.car_wait_until_millis.is_some_and(|t| t > now);
+    let tesla = &facts.tesla;
+    let tesla_enabled = settings.tesla_browser != crate::tesla_address::Mode::Off;
     let output_off = json!({"phase":"OFF", "name":null, "code":null, "sinceMillis":null});
     json!({
         "platform":"linux", "nowMillis":now, "version":status.version,
@@ -96,7 +105,11 @@ pub fn build(
                 "sinceMillis":clink.since_millis, "code":clink.code, "error":clink.error,
                 "retrying":clink.retrying, "carName":clink.car_name, "joinMethod":clink.join_method,
                 "trusted":clink.trusted, "pinPending":clink.pin_pending, "picture":clink.picture, "trail":clink.trail},
-            "dlna":output_off, "miracast":output_off, "tesla":output_off},
+            "dlna":output_off, "miracast":output_off, "tesla":{
+                "phase":if !tesla_enabled {"OFF"} else if tesla.failure.is_some() {"FAILED"} else if tesla.url.is_some() {"READY"} else {"STARTING"},
+                "name":tesla.url.as_ref().filter(|_| tesla_enabled), "code":tesla.failure.as_ref().filter(|_| tesla_enabled),
+                "sinceMillis":tesla.since_millis.filter(|_| tesla_enabled), "activation":tesla.activation
+            }},
         "iphone":{"pick":pick, "name":status.iphone.name, "usb":"UNKNOWN",
             "started":status.running || waiting, "armed":false, "carWaitUntilMillis":phone.car_wait_until_millis,
             "step":phone.step, "stepSinceMillis":phone.since_millis, "stepDetail":phone.detail, "failure":failure},

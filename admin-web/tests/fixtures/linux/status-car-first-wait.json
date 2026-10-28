@@ -90,6 +90,7 @@
       "savedScreen": null,
       "screen": null,
       "tesla": {
+        "activation": null,
         "code": null,
         "name": null,
         "phase": "OFF",

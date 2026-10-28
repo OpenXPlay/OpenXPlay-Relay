@@ -238,7 +238,12 @@ pub fn plan(bytes: &[u8], current: &Values) -> Result<Plan, Errors> {
 fn restart_key(key: &str) -> bool {
     !matches!(
         key,
-        "autoStart"
+        "teslaBrowser"
+            | "teslaVirtualAddress"
+            | "teslaPublicAddress"
+            | "teslaMirrorAddress"
+            | "teslaAndroidAddress"
+            | "autoStart"
             | "videoStats"
             | "carBrand"
             | "carBrandText"
@@ -425,6 +430,29 @@ mod tests {
             &Settings::default(),
             &json!({"resolution":"auto","screenWidth":250,"videoCodec":"auto"}),
         )
+    }
+    #[test]
+    fn tesla_android_keys_import_export_and_apply_without_a_restart() {
+        for mode in [
+            "off",
+            "virtual-name",
+            "public-address",
+            "teslamirror",
+            "tesla-android",
+        ] {
+            let input = json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{
+                "teslaBrowser":mode,"teslaVirtualAddress":"169.254.88.2","teslaPublicAddress":"169.254.88.3",
+                "teslaMirrorAddress":"100.88.0.2","teslaAndroidAddress":"3.3.3.2"}});
+            let plan = plan(&serde_json::to_vec(&input).unwrap(), &current()).unwrap();
+            assert!(!plan.report.restart_needed);
+            assert!(plan.report.ignored.is_empty());
+            let next =
+                crate::relay_admin::update_settings(&Settings::default(), plan.values).unwrap();
+            let output = export_user(&next, &json!({}), 0).unwrap();
+            for (key, value) in input["settings"].as_object().unwrap() {
+                assert_eq!(&output["settings"][key], value);
+            }
+        }
     }
     #[test]
     fn linux_round_trip_has_no_identity_or_remote_secrets() {

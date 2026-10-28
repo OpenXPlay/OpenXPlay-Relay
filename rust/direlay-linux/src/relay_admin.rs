@@ -183,6 +183,9 @@ pub struct LinuxRelayAdmin {
     /// The public-name generation the admin certificate follows.
     public_name_generation: std::sync::atomic::AtomicU64,
     receiver_tls_queued: AtomicBool,
+    tesla: Mutex<crate::tesla_address::Session>,
+    /// Selected direct Tesla SAN covered by the currently spawned receiver.
+    receiver_tesla_tls: Mutex<Option<std::net::Ipv4Addr>>,
 }
 /// The relay as the trusted-HTTPS worker sees it.
 struct RelayHost(std::sync::Weak<LinuxRelayAdmin>);
@@ -365,6 +368,8 @@ impl LinuxRelayAdmin {
             receiver_tls: Mutex::new(None),
             public_name_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             receiver_tls_queued: AtomicBool::new(false),
+            tesla: Mutex::new(crate::tesla_address::Session::new(runtime.runner.clone())),
+            receiver_tesla_tls: Mutex::new(None),
             pairing: Mutex::new(None),
             pairing_backend: backends.bluetooth.pairing(),
             backends,
@@ -742,6 +747,7 @@ impl LinuxRelayAdmin {
         if !self.wifi_present(o.carlink_interface()) {
             settings.carlink = None;
         }
+        *self.receiver_tesla_tls.lock().unwrap() = crate::tesla_address::tls_address(&o.settings);
         let served = self.public_name.served();
         settings.pem_tls = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
@@ -911,6 +917,11 @@ impl LinuxRelayAdmin {
         self.stop_controller_for_restart(false);
     }
     fn stop_controller_for_restart(&self, keep_hotspot: bool) {
+        self.tesla
+            .lock()
+            .unwrap()
+            .stop(crate::platform::wall_clock().as_millis() as u64);
+        self.public_name.published_address_override(None);
         if keep_hotspot {
             self.hotspot_lifetime.keep_for_restart();
         }
@@ -1049,6 +1060,13 @@ impl LinuxRelayAdmin {
             }
             Operation::ReceiverTls => {
                 self.receiver_tls_queued.store(false, Ordering::Release);
+                // A session may have begun since the SAN update was queued.
+                if self.input.session_active()
+                    && self.receiver_tls.lock().unwrap().as_ref()
+                        == Some(&self.public_name.served())
+                {
+                    return Ok(());
+                }
                 let running = self.supervisor.lock().unwrap().take();
                 // Nothing to compare until a supervisor runs again.
                 *self.receiver_tls.lock().unwrap() = None;
@@ -1233,6 +1251,14 @@ impl LinuxRelayAdmin {
                     as u64
             });
         facts.pages = self.receivers.page_count(now);
+        let settings = self.settings.lock().unwrap().clone();
+        let tesla = self.tesla.lock().unwrap();
+        facts.tesla.failure = tesla.failure.clone();
+        facts.tesla.since_millis = tesla.since_millis;
+        facts.tesla.activation =
+            Some(tesla.activation(&settings, self.public_name.has_configuration()));
+        drop(tesla);
+        facts.tesla.url = self.tesla_url();
         let carlink = self.carlink.lock().unwrap();
         facts.carlink.trusted = carlink.trusted;
         facts.carlink.pin_pending = carlink.pin_requested
@@ -1303,6 +1329,99 @@ impl LinuxRelayAdmin {
     pub fn admin_certificate(&self) -> crate::admin::server::NamedCertificate {
         self.admin_certificate.clone()
     }
+    fn validate_tesla_change(
+        &self,
+        current: &Settings,
+        next: &Settings,
+    ) -> std::result::Result<(), BTreeMap<String, String>> {
+        if next.tesla_address() == current.tesla_address() {
+            return Ok(());
+        }
+        let Some(address) = next.tesla_address() else {
+            return Ok(());
+        };
+        let owned = self
+            .tesla
+            .lock()
+            .unwrap()
+            .active
+            .as_ref()
+            .map(|a| a.address.to_string());
+        let collision = (self.runtime.addresses)().map(|rows| {
+            rows.iter()
+                .any(|(_, a, _)| a.to_string() == address && owned.as_deref() != Some(address))
+        });
+        if collision.unwrap_or(true) {
+            return Err(BTreeMap::from([(
+                crate::tesla_address::address_key(next.tesla_browser)
+                    .unwrap()
+                    .into(),
+                "error.teslaAddress".into(),
+            )]));
+        }
+        Ok(())
+    }
+    fn refresh_tesla_address(&self) {
+        let settings = self.settings.lock().unwrap().clone();
+        let (running, ready) = {
+            let controller = self.controller.lock().unwrap();
+            (
+                controller.is_some(),
+                controller
+                    .as_ref()
+                    .and_then(|c| c.hotspot_info())
+                    .and_then(|h| h.host_address)
+                    .is_some(),
+            )
+        };
+        let mut tesla = self.tesla.lock().unwrap();
+        tesla.tick(
+            running,
+            ready,
+            &settings,
+            self.public_name.has_configuration(),
+            || (self.runtime.addresses)().map(|rows| rows.into_iter().map(|(_, a, _)| a).collect()),
+            crate::platform::wall_clock().as_millis() as u64,
+        );
+        let published = tesla
+            .active
+            .as_ref()
+            .filter(|a| a.mode.uses_name())
+            .map(|a| a.address);
+        drop(tesla);
+        self.public_name.published_address_override(published);
+    }
+    /// Small TLS-update hook for W2: replace the deferred respawn with the Stream TLS control
+    /// message here once available. The live CarPlay session must keep running throughout.
+    fn tesla_tls_changed(&self) -> bool {
+        let desired = crate::tesla_address::tls_address(&self.settings.lock().unwrap());
+        desired != *self.receiver_tesla_tls.lock().unwrap() && !self.input.session_active()
+    }
+    fn tesla_url(&self) -> Option<String> {
+        let web = self.input.runtime_path_facts().web;
+        if web.phase != "LISTENING" {
+            return None;
+        }
+        let active = self.tesla.lock().unwrap().active.clone()?;
+        let host = if active.mode.uses_name() {
+            let status = self.public_name.status();
+            if status.address.as_deref() != Some(active.address.to_string().as_str()) {
+                return None;
+            }
+            let name = status.trusted_name?;
+            let served = self.receiver_tls.lock().unwrap().clone().flatten()?;
+            if served.name != name {
+                return None;
+            }
+            name
+        } else {
+            if *self.receiver_tesla_tls.lock().unwrap() != Some(active.address) {
+                return None;
+            }
+            active.address.to_string()
+        };
+        Some(format!("https://{host}:{}/", web.port))
+    }
     /// Follows the trusted-HTTPS certificate: the admin page swaps it at once, the head-unit
     /// page by restarting its child when the restart rule allows.
     fn apply_public_name(&self) {
@@ -1328,12 +1447,13 @@ impl LinuxRelayAdmin {
         if self.receiver_tls_queued.load(Ordering::Acquire) {
             return;
         }
-        if crate::public_name::service::should_restart(
+        if (crate::public_name::service::should_restart(
             current.as_ref(),
             served.as_ref(),
             self.input.session_active(),
             crate::public_name::service::trusted_clock(),
-        ) && self.operations.try_send(Operation::ReceiverTls).is_ok()
+        ) || self.tesla_tls_changed())
+            && self.operations.try_send(Operation::ReceiverTls).is_ok()
         {
             self.receiver_tls_queued.store(true, Ordering::Release);
             self.events
@@ -1402,6 +1522,8 @@ impl LinuxRelayAdmin {
         if !self.busy.load(Ordering::Acquire) && self.pending.lock().unwrap().is_empty() {
             self.reconcile_admin_hotspot();
         }
+        self.refresh_tesla_address();
+        self.apply_public_name();
         self.public_name.head_unit_address(self.head_unit_address());
         if self.start_policy.lock().unwrap().take_failure() {
             self.stop_controller();
@@ -1538,6 +1660,10 @@ impl LinuxRelayAdmin {
             options.pair_seconds = None;
         }
         self.events.follow_over("controller-start");
+        self.tesla.lock().unwrap().prepare(
+            &options.settings,
+            crate::platform::wall_clock().as_millis() as u64,
+        );
         let platform = Arc::new(
             LinuxWirelessPlatform::new(
                 options,
@@ -1746,6 +1872,62 @@ fn picture_section() -> Section {
         })
         .collect(),
     }
+}
+fn tesla_section() -> Section {
+    let mut section = runtime_section(
+        "tesla",
+        &[
+            ("teslaBrowser", "choice"),
+            ("teslaVirtualAddress", "text"),
+            ("teslaPublicAddress", "text"),
+            ("teslaMirrorAddress", "text"),
+            ("teslaAndroidAddress", "text"),
+        ],
+    );
+    section.title_key = "tesla.title".into();
+    for field in &mut section.fields {
+        if field.key == "teslaBrowser" {
+            field.label_key = "tesla.mode".into();
+            field.options = Some(
+                [
+                    "teslamirror",
+                    "virtual-name",
+                    "public-address",
+                    "tesla-android",
+                    "off",
+                ]
+                .into_iter()
+                .map(|mode| FieldOption {
+                    value: mode.into(),
+                    label_key: format!("tesla.mode.{mode}"),
+                    labels: None,
+                    hint_key: (mode != "off").then(|| {
+                        if ["teslamirror", "virtual-name"].contains(&mode) {
+                            "tesla.nameHint"
+                        } else {
+                            "tesla.directHint"
+                        }
+                        .into()
+                    }),
+                    illustration: None,
+                })
+                .collect(),
+            );
+        } else {
+            let mode = match field.key.as_str() {
+                "teslaVirtualAddress" => "virtual-name",
+                "teslaPublicAddress" => "public-address",
+                "teslaMirrorAddress" => "teslamirror",
+                _ => "tesla-android",
+            };
+            field.label_key = "tesla.address".into();
+            field.visible_when = Some(VisibleWhen {
+                key: "teslaBrowser".into(),
+                equals: vec![mode.into()],
+            });
+        }
+    }
+    section
 }
 /// Trusted HTTPS with a free domain name, stored in `public-name.json` (not `settings.json`).
 fn public_name_section() -> Section {
@@ -2098,6 +2280,7 @@ pub fn settings_schema() -> Vec<Section> {
                 ("experimentalBluetoothAddress", "text"),
             ],
         ),
+        tesla_section(),
         public_name_section(),
         Section {
             id: "audio".into(),
@@ -2204,6 +2387,23 @@ pub fn update_settings(
     }
     if !errors.is_empty() {
         return Err(errors);
+    }
+    if let Ok(mode) =
+        serde_json::from_value::<crate::tesla_address::Mode>(merged["teslaBrowser"].clone())
+    {
+        if let Some(key) = crate::tesla_address::address_key(mode) {
+            if !merged[key]
+                .as_str()
+                .is_some_and(crate::tesla_address::valid)
+            {
+                return Err(BTreeMap::from([(key.into(), "error.teslaAddress".into())]));
+            }
+        }
+    } else {
+        return Err(BTreeMap::from([(
+            "teslaBrowser".into(),
+            "error.invalid".into(),
+        )]));
     }
     match serde_json::from_value::<Settings>(merged)
         .map_err(std::io::Error::other)
@@ -2412,6 +2612,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         oxp_wire::decode_display_settings(&display)
             .map_err(|_| BTreeMap::from([("settings".into(), "error.linuxPicture".into())]))?;
         let next = update_settings(&current, settings)?;
+        self.validate_tesla_change(&current, &next)?;
         if plan.values.contains_key("pluginsEnabled") {
             let installed = crate::plugins::installed(&self.options.plugins_root);
             if next
@@ -2549,10 +2750,20 @@ impl RelayAdmin for LinuxRelayAdmin {
             .as_ref()
             .map(|s| s.receiver_urls("openxplay-linux.local"))
             .unwrap_or_default();
+        let selected_tesla = options.settings.tesla_address();
+        let served_tesla = *self.receiver_tesla_tls.lock().unwrap();
+        receiver_urls.retain(|u| {
+            !selected_tesla.is_some_and(|a| u.contains(&format!("://{a}:")))
+                && !served_tesla.is_some_and(|a| u.contains(&format!("://{a}:")))
+        });
         let public_name = self.public_name.status();
         if let Some(url) =
             public_name_url(&public_name, &receiver_urls, options.settings.receiver_port)
         {
+            receiver_urls.insert(0, url);
+        }
+        if let Some(url) = self.tesla_url() {
+            receiver_urls.retain(|u| u != &url);
             receiver_urls.insert(0, url);
         }
         let hotspot = crate::linux_hotspot::hotspot_credentials(&options.state_dir)
@@ -2895,6 +3106,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .into();
         match update_settings(&current, values) {
             Ok(next) => {
+                if let Err(errors) = self.validate_tesla_change(&current, &next) {
+                    return AdminUpdate::Errors(errors);
+                }
                 if validate_plugins {
                     let installed = crate::plugins::installed(&self.options.plugins_root);
                     if next
@@ -3485,6 +3699,121 @@ mod tests {
         std::fs::create_dir_all(admin.net_root.join("wlan0")).unwrap();
         std::fs::write(admin.net_root.join("wlan0/address"), "02:00:00:00:00:01").unwrap();
         (Arc::new(admin), dir)
+    }
+    #[test]
+    fn tesla_settings_apply_live_and_config_previews_share_collision_validation() {
+        use crate::tesla_address::Mode;
+        let (a, dir) = fake();
+        let values = serde_json::json!({"teslaBrowser":"public-address"});
+        assert!(matches!(
+            a.update(values.as_object().unwrap().clone()),
+            AdminUpdate::AppliedNow
+        ));
+        assert!(!a.restart_required.load(Ordering::Acquire));
+        assert!(a.pending.lock().unwrap().is_empty());
+        assert_eq!(
+            Settings::load(&dir).unwrap().tesla_browser,
+            Mode::PublicAddress
+        );
+        let current = a.settings.lock().unwrap().clone();
+        for mode in [
+            Mode::VirtualName,
+            Mode::PublicAddress,
+            Mode::Teslamirror,
+            Mode::TeslaAndroid,
+        ] {
+            let key = crate::tesla_address::address_key(mode).unwrap();
+            let mut values = Values::new();
+            values.insert("teslaBrowser".into(), serde_json::to_value(mode).unwrap());
+            values.insert(key.into(), "192.168.1.1".into());
+            assert_eq!(
+                update_settings(&current, values).unwrap_err()[key],
+                "error.teslaAddress"
+            );
+        }
+        // A different relay interface already owns an otherwise valid address.
+        let mut owned = Settings {
+            tesla_browser: Mode::TeslaAndroid,
+            ..current.clone()
+        };
+        owned.tesla_android_address = "3.3.3.1".into();
+        let mut admin = Arc::try_unwrap(a).ok().unwrap();
+        admin.runtime.addresses =
+            Arc::new(|| Ok(vec![("eth0".into(), "3.3.3.1".parse().unwrap(), 24)]));
+        assert_eq!(
+            admin.validate_tesla_change(&current, &owned).unwrap_err()["teslaAndroidAddress"],
+            "error.teslaAddress"
+        );
+        let bytes = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"teslaBrowser":"tesla-android"}})).unwrap();
+        for dry_run in [true, false] {
+            assert_eq!(
+                admin.config_import(&bytes, dry_run).unwrap_err()["teslaAndroidAddress"],
+                "error.teslaAddress"
+            );
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tesla_url_requires_a_listening_receiver_with_the_direct_san_and_comes_first() {
+        use crate::tesla_address::Mode;
+        let (a, dir) = fake();
+        let settings = Settings {
+            tesla_browser: Mode::PublicAddress,
+            ..Default::default()
+        };
+        *a.settings.lock().unwrap() = settings.clone();
+        a.tesla
+            .lock()
+            .unwrap()
+            .tick(true, true, &settings, true, || Ok(vec![]), 1);
+        assert_eq!(a.tesla_url(), None);
+        {
+            let mut facts = a.events.facts.lock().unwrap();
+            facts.web.phase = "LISTENING".into();
+            facts.web.port = 9443;
+        }
+        assert_eq!(
+            a.tesla_url(),
+            None,
+            "old certificate does not cover a live edit yet"
+        );
+        assert!(a.tesla_tls_changed());
+        struct Control;
+        impl carplay_airplay::SessionControl for Control {
+            fn send_touch(&self, _: &[carplay_airplay::AirPlayContact]) -> Result<bool> {
+                Ok(false)
+            }
+            fn send_media_button(&self, _: u8) -> Result<bool> {
+                Ok(false)
+            }
+        }
+        *a.receiver_tls.lock().unwrap() = Some(None);
+        let session = a.input.begin(Arc::new(Control)).unwrap();
+        assert!(
+            !a.tesla_tls_changed(),
+            "defer SAN changes while CarPlay runs"
+        );
+        a.perform_operation(Operation::ReceiverTls).unwrap();
+        assert!(
+            a.input.session_active(),
+            "queued SAN changes cannot stop a newly started session"
+        );
+        a.input.end(session).unwrap();
+        assert!(a.tesla_tls_changed());
+        *a.receiver_tesla_tls.lock().unwrap() = Some("169.254.88.1".parse().unwrap());
+        let url = "https://169.254.88.1:9443/";
+        assert_eq!(a.tesla_url().as_deref(), Some(url));
+        assert_eq!(
+            a.status().receiver_urls.first().map(String::as_str),
+            Some(url)
+        );
+        assert_eq!(a.status().path_input["car"]["tesla"]["phase"], "READY");
+        assert!(!a.tesla_tls_changed());
+        a.stop_controller();
+        assert_eq!(a.tesla_url(), None);
+        drop(a);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn runtime_waits_before_concurrent_carlink_and_start_now_skips_once() {

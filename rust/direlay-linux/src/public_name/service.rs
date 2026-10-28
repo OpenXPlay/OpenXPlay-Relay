@@ -180,6 +180,8 @@ struct Shared {
     served: Option<Served>,
     /// The CarPlay hotspot's address at its last activation.
     hotspot: Option<Ipv4Addr>,
+    /// Established Tesla address; only name modes set this override.
+    address_override: Option<Ipv4Addr>,
     renew: bool,
     stop: bool,
 }
@@ -216,6 +218,7 @@ impl PublicNameService {
                 status: PublicNameStatus::state("off"),
                 served: None,
                 hotspot: None,
+                address_override: None,
                 renew: false,
                 stop: false,
             }),
@@ -355,6 +358,27 @@ impl PublicNameService {
         drop(shared);
         self.inner.sync_local_dns();
         self.inner.wake.notify_all();
+    }
+    /// Established Tesla addresses override publishing and the local name answer together.
+    pub fn published_address_override(&self, address: Option<Ipv4Addr>) {
+        let _files = self.inner.files.lock().unwrap();
+        let mut shared = self.inner.shared.lock().unwrap();
+        if shared.address_override == address {
+            return;
+        }
+        shared.address_override = address;
+        drop(shared);
+        self.inner.sync_local_dns();
+        self.inner.wake.notify_all();
+    }
+    pub fn has_configuration(&self) -> bool {
+        self.inner
+            .shared
+            .lock()
+            .unwrap()
+            .config
+            .as_ref()
+            .is_some_and(|c| c.enabled && c.complete())
     }
     /// "Request certificate now": the backoff starts over and the address update and the
     /// certificate check run at once, still within the order guard and the CA's `Retry-After`.
@@ -579,17 +603,19 @@ impl Inner {
         let Some(dir) = &self.network.local_dns else {
             return;
         };
-        let (name, hotspot) = {
+        let (name, hotspot, address_override) = {
             let shared = self.shared.lock().unwrap();
             let name = shared
                 .config
                 .as_ref()
                 .filter(|c| c.enabled && c.complete())
                 .and_then(|c| c.name.clone());
-            (name, shared.hotspot)
+            (name, shared.hotspot, shared.address_override)
         };
         let _ = match (name, hotspot) {
-            (Some(name), address) => local_dns::public_name(dir, &name, address),
+            (Some(name), address) => {
+                local_dns::public_name_override(dir, &name, address, address_override)
+            }
             (None, _) => local_dns::remove(dir),
         };
     }
@@ -724,7 +750,8 @@ impl Inner {
                 }
                 continue;
             };
-            let address = host.address().filter(Ipv4Addr::is_private);
+            let address_override = self.shared.lock().unwrap().address_override;
+            let address = address_override.or_else(|| host.address().filter(Ipv4Addr::is_private));
             if address != rt.last_address {
                 // A new address starts the backoff over.
                 if rt.last_address.is_some() || address.is_some() {
@@ -1297,6 +1324,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tesla_published_override_follows_only_established_name_addresses() {
+        let world = World::new(FakeAcmeOptions::default());
+        world.configure();
+        let service = world.service();
+        wait_for("ready", || service.status().state == "ready");
+        for address in ["100.88.0.1", "169.254.88.1"] {
+            service.published_address_override(Some(address.parse().unwrap()));
+            wait_for("Tesla address", || {
+                service.status().address.as_deref() == Some(address)
+                    && service.status().state == "ready"
+            });
+            assert!(world.published().contains(&address.to_string()));
+            let hosts =
+                std::fs::read_to_string(world.state.0.join("dnsmasq-shared.d/hotspot-hosts"))
+                    .unwrap();
+            assert_eq!(hosts, format!("{address} {NAME}\n"));
+        }
+        service.published_address_override(None);
+        wait_for("normal address", || {
+            service.status().address.as_deref() == Some("10.77.0.1")
+                && service.status().state == "ready"
+        });
+        service.stop();
+    }
     #[test]
     fn publishes_issues_serves_renews_the_address_and_removes_everything() {
         let world = World::new(FakeAcmeOptions::default());

@@ -93,10 +93,18 @@ impl Default for WebFacts {
     }
 }
 #[derive(Clone, Debug, Default)]
+pub struct TeslaFacts {
+    pub url: Option<String>,
+    pub failure: Option<String>,
+    pub since_millis: Option<u64>,
+    pub activation: Option<crate::tesla_address::Activation>,
+}
+#[derive(Clone, Debug, Default)]
 pub struct RuntimePathFacts {
     pub iphone: IphoneFacts,
     pub carlink: CarlinkFacts,
     pub web: WebFacts,
+    pub tesla: TeslaFacts,
     pub pages: usize,
     pub screen: Option<Size>,
     pub saved_screen: Option<Size>,

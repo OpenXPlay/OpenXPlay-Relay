@@ -40,6 +40,11 @@ pub struct Settings {
     pub receiver_port: u16,
     pub require_pairing_code: bool,
     pub output: String,
+    pub tesla_browser: crate::tesla_address::Mode,
+    pub tesla_virtual_address: String,
+    pub tesla_public_address: String,
+    pub tesla_mirror_address: String,
+    pub tesla_android_address: String,
     pub carlink_name: String,
     pub carlink_model: String,
     pub carlink_auto_reconnect: bool,
@@ -96,6 +101,11 @@ impl Default for Settings {
             receiver_port: 8443,
             require_pairing_code: false,
             output: "web".into(),
+            tesla_browser: Default::default(),
+            tesla_virtual_address: "169.254.88.1".into(),
+            tesla_public_address: "169.254.88.1".into(),
+            tesla_mirror_address: "100.88.0.1".into(),
+            tesla_android_address: "3.3.3.1".into(),
             carlink_name: crate::branding::DEVICE_NAME.into(),
             carlink_model: crate::branding::MODEL.into(),
             carlink_auto_reconnect: true,
@@ -144,6 +154,16 @@ fn persist_loaded_settings(dir: &Path, bytes: &[u8]) {
     }
 }
 impl Settings {
+    pub fn tesla_address(&self) -> Option<&str> {
+        use crate::tesla_address::Mode;
+        match self.tesla_browser {
+            Mode::Off => None,
+            Mode::VirtualName => Some(&self.tesla_virtual_address),
+            Mode::PublicAddress => Some(&self.tesla_public_address),
+            Mode::Teslamirror => Some(&self.tesla_mirror_address),
+            Mode::TeslaAndroid => Some(&self.tesla_android_address),
+        }
+    }
     pub fn car(&self) -> crate::car_models::CarSelection {
         crate::car_models::CarSelection {
             brand: self.car_brand.clone(),
@@ -272,6 +292,12 @@ impl Settings {
             if text.chars().count() > 128 || text.chars().any(char::is_control) {
                 return Err(invalid("Invalid car selection"));
             }
+        }
+        if self
+            .tesla_address()
+            .is_some_and(|a| !crate::tesla_address::valid(a))
+        {
+            return Err(invalid("error.teslaAddress"));
         }
         self.network_roles.validate()?;
         if !crate::network_roles::valid_country(&self.wifi_country) {
