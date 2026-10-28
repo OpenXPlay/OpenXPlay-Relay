@@ -100,6 +100,8 @@ pub struct AdminWireless {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminHotspot {
+    pub security: String,
+    pub supported_security: Vec<String>,
     pub has_password: bool,
     pub ssid: String,
     pub password: String,
@@ -550,7 +552,14 @@ pub trait RelayAdmin: Send + Sync + 'static {
         Err("error.action".into())
     }
     fn phones(&self) -> Vec<AdminPhone>;
-    fn hotspot_update(&self, _ssid: &str, _password: &str, _band: Option<&str>) -> AdminResult {
+    /// An empty password retains the saved PSK; absent security retains the current mode.
+    fn hotspot_update(
+        &self,
+        _ssid: &str,
+        _password: &str,
+        _band: Option<&str>,
+        _security: Option<&str>,
+    ) -> AdminResult {
         Err("error.action".into())
     }
     /// Latest receiver-info and recent stats per browser, as `[{client, idleSeconds, info, stats}]`.

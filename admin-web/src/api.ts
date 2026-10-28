@@ -38,6 +38,7 @@ export interface HostCapabilities {
   tools: Record<string, { present: boolean | null; version: string | null }>;
 }
 export type HotspotBand = 'auto' | '2.4' | '5';
+export type HotspotSecurity = 'open' | 'wpa2' | 'wpa3-transition' | 'wpa3';
 export interface Wireless {
   preset: { id: string; label: string; source: string; detected: string };
   mode: 'concurrent' | 'single-radio' | 'unknown';
@@ -88,7 +89,7 @@ export interface Status {
   receiverHistory?: { screens: { width: number; height: number; densityDpi: number; info: Record<string, unknown> }[];
     fullscreenExits: { time: number; client: string; report: Record<string, unknown> }[] };
   video?: VideoStatus; receivers?: ReceiverReport[]; bluetoothGuard?: BluetoothGuard;
-  hotspot?: { hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
+  hotspot?: { security?: HotspotSecurity; supportedSecurity?: HotspotSecurity[]; hasPassword?: boolean; ssid: string; password: string; ip: string | null; active: boolean } | null; wifiControl?: boolean;
   wifiScanStale?: boolean; wifiProvisioning?: boolean; wifiClient?: WifiClient;
   platform: 'android' | 'linux'; name: string; version: string; host: string; hostProfile?: HostProfile; hostCapabilities?: HostCapabilities; adminUrl: string; adminUrls?: string[]; receiverUrls: string[];
   state: 'idle' | 'waiting' | 'connecting' | 'active' | 'reconnecting'; running: boolean; autoStartPaused: boolean;
@@ -140,7 +141,7 @@ export const api = {
   password: (current: string, next: string) => request('/password', 'POST', { current, new: next }, false),
   networks: () => request<WifiNetwork[]>('/wifi/networks'),
   wifi: (ssid: string, password?: string) => request('/wifi', 'PUT', { ssid, ...(password === undefined ? {} : { password }) }, false),
-  hotspot: (ssid: string, password: string, band?: HotspotBand) => request('/hotspot', 'PUT', { ssid, password, ...(band === undefined ? {} : { band }) }, false),
+  hotspot: (ssid: string, password: string, band?: HotspotBand, security?: HotspotSecurity) => request('/hotspot', 'PUT', { ssid, password, ...(band === undefined ? {} : { band }), ...(security === undefined ? {} : { security }) }, false),
   logout: () => request('/logout', 'POST'),
   // Receiver diagnostics are large and change every second; only the developer section asks for them.
   status: (diagnostics = false) => request<Status>(diagnostics ? '/status?diagnostics=1' : '/status'),

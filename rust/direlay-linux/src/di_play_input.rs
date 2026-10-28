@@ -56,6 +56,9 @@ struct CodecWrite {
     sequence: u64,
 }
 pub(crate) struct InputState {
+    pending_settings: crate::settings::Settings,
+    remote_playback_proof: bool,
+    startup_status: bool,
     pub generation: u64,
     pub current: Option<u64>,
     pub latest: Option<u64>,
@@ -162,6 +165,9 @@ impl DiPlayInput {
     }
     fn build(events: Arc<JsonEvents>, clock: Clock, plugins: bool) -> Self {
         let state = Arc::new(Mutex::new(InputState {
+            pending_settings: Default::default(),
+            remote_playback_proof: true,
+            startup_status: true,
             generation: 0,
             current: None,
             latest: None,
@@ -216,7 +222,7 @@ impl DiPlayInput {
         events.startup_listener(Arc::new(move |reason| {
             if let Some(state)=startup_state.upgrade() {
                 let mut s=state.lock().unwrap();
-                if s.active && !matches!(reason,"failed"|"disconnected") { return; }
+                if !s.startup_status || s.active && !matches!(reason,"failed"|"disconnected") { return; }
                 let id=s.current.unwrap_or(s.generation+1);
                 Self::publish_locked(&mut s,"0-session",Message::Json(serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":format!("startup/{reason}")}})));
             }
@@ -447,6 +453,7 @@ impl DiPlayInput {
             self.end(id)?;
         }
         let mut s = self.state.lock().unwrap();
+        Self::capture_experiments(&mut s, &self.events);
         s.generation += 1;
         let id = s.generation;
         s.current = Some(id);
@@ -464,11 +471,12 @@ impl DiPlayInput {
         s.playback = None;
         s.recovery.clear();
         s.declarations.retain(|key, _| key.starts_with("display-"));
+        let startup_status = s.startup_status;
         Self::publish_locked(
             &mut s,
             "0-session",
             Message::Json(
-                serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":"startup/waiting-media"}}),
+                serde_json::json!({"type":"session","session":{"id":id.to_string(),"phase":"CONNECTING","reason":if startup_status { Some("startup/waiting-media") } else { None }}}),
             ),
         );
         drop(s);
@@ -486,11 +494,12 @@ impl DiPlayInput {
             s.active = false;
             Self::reset_video_session(&mut s);
             s.declarations.retain(|key, _| key.starts_with("display-"));
+            let startup_status = s.startup_status;
             Self::publish_locked(
                 &mut s,
                 "0-session",
                 Message::Json(
-                    serde_json::json!({"type":"session","session":{"id":next.to_string(),"phase":"CONNECTING","reason":"startup/waiting-media"}}),
+                    serde_json::json!({"type":"session","session":{"id":next.to_string(),"phase":"CONNECTING","reason":if startup_status { Some("startup/waiting-media") } else { None }}}),
                 ),
             );
             drop(s);
@@ -933,7 +942,25 @@ impl DiPlayInput {
             );
         }
     }
+    pub fn connection_settings(&self) -> crate::settings::Settings {
+        self.state.lock().unwrap().pending_settings.clone()
+    }
+    fn capture_experiments(s: &mut InputState, events: &JsonEvents) {
+        let settings = &s.pending_settings;
+        s.remote_playback_proof =
+            settings.experimental_active && settings.experimental_remote_playback_proof;
+        s.startup_status = settings.experimental_active && settings.experimental_startup_status;
+        events.set_startup_diagnostics(
+            settings.experimental_active && settings.experimental_startup_diagnostics,
+        );
+    }
+    pub fn configure_connection_experiments(&self) {
+        Self::capture_experiments(&mut self.state.lock().unwrap(), &self.events);
+    }
     pub fn configure_runtime_settings(&self, settings: &crate::settings::Settings) -> Result<()> {
+        self.state.lock().unwrap().pending_settings = settings.clone();
+        let effective = settings.effective_developer();
+        let settings = &effective;
         self.state.lock().unwrap().count_video_bytes = settings.video_stats != "off";
         let mut d = self.display.lock().unwrap();
         if d.saved.select_car(settings.car().key()) {
@@ -1000,6 +1027,9 @@ impl DiPlayInput {
             let Some(id) = s.current else {
                 return false;
             };
+            if !s.remote_playback_proof {
+                return false;
+            }
             let proof = if event["type"] == "stats" {
                 let session = event["session"]
                     .as_u64()
@@ -1336,6 +1366,59 @@ impl InputEvents for DiPlayInput {
 #[cfg(test)]
 mod runtime_parity_tests {
     use super::*;
+    #[test]
+    fn startup_experiments_capture_status_and_diagnostics_without_disconnecting() {
+        for master in [true, false] {
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let out = lines.clone();
+            let events = Arc::new(JsonEvents::new(Arc::new(move |line| {
+                out.lock().unwrap().push(line)
+            })));
+            let input = DiPlayInput::new(events.clone());
+            let (tx, rx) = sync_channel(16);
+            input.state.lock().unwrap().output = Some(tx);
+            let control = || Arc::new(Control(Mutex::default()));
+            let old = input.begin(control()).unwrap();
+            rx.recv().unwrap();
+            let settings = crate::settings::Settings {
+                experimental_active: master,
+                experimental_startup_status: !master,
+                experimental_startup_diagnostics: !master,
+                ..Default::default()
+            };
+            input.configure_runtime_settings(&settings).unwrap();
+            events.emit("stage", &serde_json::json!({"stage":"ConnectingBluetooth"}));
+            assert!(
+                matches!(rx.recv().unwrap(), Message::Json(v) if v["session"]["reason"] == "startup/authenticating")
+            );
+            assert_eq!(input.state.lock().unwrap().current, Some(old));
+            let next = input.begin(control()).unwrap();
+            assert_ne!(old, next);
+            let messages = rx.try_iter().collect::<Vec<_>>();
+            assert!(messages.iter().any(|m| matches!(m, Message::Json(v) if v["session"]["phase"] == "CONNECTING" && v["session"]["reason"].is_null())));
+            events.emit("stage", &serde_json::json!({"stage":"ConnectingBluetooth"}));
+            assert!(rx.try_recv().is_err());
+            events.startup_milestone("first_video");
+            events.iap2_frame();
+            assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 0);
+            assert!(lines
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|line| !line.contains("airplay-milestone")));
+            input
+                .configure_runtime_settings(&Default::default())
+                .unwrap();
+            input.begin(control()).unwrap();
+            events.startup_milestone("first_video");
+            assert!(lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.contains("airplay-milestone")));
+        }
+    }
+
     struct Control(Mutex<Vec<u8>>);
     impl SessionControl for Control {
         fn send_touch(&self, _: &[AirPlayContact]) -> Result<bool> {

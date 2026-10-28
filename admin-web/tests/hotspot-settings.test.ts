@@ -132,3 +132,26 @@ it('adds Linux hotspot band, working mode and diagnostics, preserving Android ho
   expect(hotspotDetails({ ...android, wireless: wireless() }, t)).toBe(html);
   expect(diagnosticsView({ ...android, wireless: wireless() }, t)).toBe(diagnosticsView(android, t));
 });
+
+it('preserves the password for a rename and lists only supported hotspot security', () => {
+  expect(validateHotspot('Renamed', '', true)).toBe('');
+  expect(validateHotspot('Renamed', '', false)).toBe('error.hotspotPassword');
+  expect(validateHotspot('Renamed', 'short', true)).toBe('error.hotspotPassword');
+  for (const lang of ['en', 'zh-CN'] as const) {
+    const t = (key: string) => translate(lang, key);
+    const hotspot: NonNullable<Status['hotspot']> = { ssid: 'Relay', password: 'saved-secret', ip: null, active: false, security: 'wpa2', supportedSecurity: ['open', 'wpa2'] };
+    const html = hotspotForm('Renamed', t, undefined, hotspot);
+    expect(html).toContain('id="hotspot-security"');
+    expect(html).toContain(t('networks.keep'));
+    expect(html).not.toContain('saved-secret');
+    expect(html).not.toContain('value="wpa3"');
+    hotspot.security = 'wpa3';
+    expect(hotspotForm('Relay', t, undefined, hotspot)).toContain('value="wpa3" selected disabled');
+    hotspot.supportedSecurity = ['open', 'wpa2', 'wpa3-transition', 'wpa3'];
+    expect(hotspotForm('Relay', t, undefined, hotspot)).toContain(t('option.hotspotSecurity.wpa3'));
+    hotspot.security = 'open';
+    const status = { platform: 'linux', hotspot } as Status;
+    expect(hotspotDetails(status, t)).toContain(t('option.hotspotSecurity.open'));
+    expect(hotspotDetails(status, t)).not.toContain('saved-secret');
+  }
+});

@@ -12,8 +12,8 @@ mod mdns_host;
 #[path = "../src/provision.rs"]
 mod provision;
 use openxplay_relay::{
-    boot_timing, device_preset, host_capabilities, network_roles, platform, plugins, public_name,
-    runtime_paths, settings, wifi_capabilities,
+    boot_timing, carlink_policy, device_preset, host_capabilities, network_roles, platform,
+    plugins, public_name, runtime_paths, settings, wifi_capabilities,
 };
 #[path = "../src/supervisor.rs"]
 mod supervisor;
@@ -1215,6 +1215,7 @@ fn supervisor_ble_carlink_arguments_exclude_static_and_saved_pin() {
             id: "stable-id".into(),
             band: 0,
             phone_mac: None,
+            default_phone_mac: None,
         }),
         head_unit: "192.168.43.1".parse().unwrap(),
         local: "192.168.43.2".parse().unwrap(),
@@ -1424,6 +1425,7 @@ fn supervisor_trust_policy_and_single_user_attempt() {
             id: "relay".into(),
             band: 0,
             phone_mac: None,
+            default_phone_mac: None,
         }),
         head_unit: "192.168.43.1".parse().unwrap(),
         local: "192.168.43.2".parse().unwrap(),

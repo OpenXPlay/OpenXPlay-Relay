@@ -17,6 +17,9 @@ pub fn supervisor_settings(
     ble_adapter: Option<String>,
     station_5ghz: bool,
 ) -> SupervisorSettings {
+    let mut effective = o.clone();
+    effective.settings = o.settings.effective_developer();
+    let o = &effective;
     if let Some(address) = crate::tesla_address::tls_address(&o.settings) {
         addresses.push(address);
     }
@@ -48,6 +51,9 @@ pub fn supervisor_settings(
                     address: o.settings.carlink_address.clone(),
                     id: pairing_id,
                     band: station_5ghz as u8,
+                    default_phone_mac: crate::carlink_policy::bluetooth_address(
+                        &o.settings.experimental_bluetooth_address,
+                    ),
                     phone_mac: (o.settings.experimental_active
                         && o.settings.experimental_send_bluetooth_address)
                         .then(|| {
@@ -101,6 +107,39 @@ pub fn supervisor_settings(
 mod tests {
     use super::*;
     #[test]
+    fn carlink_reconnect_captures_latest_address_without_changing_the_running_arguments() {
+        let dir = std::env::temp_dir().join(format!(
+            "w13-mac-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let mut o =
+            Options::parse(&["--state-dir".into(), dir.to_string_lossy().into_owned()]).unwrap();
+        o.settings.output = "both".into();
+        o.settings.experimental_bluetooth_address = "02:12:34:56:78:9a".into();
+        o.settings.save(&dir).unwrap();
+        let supervisor = supervisor_settings(&o, vec![], &[], "id".into(), None, false);
+        let first = supervisor.arguments();
+        assert!(first
+            .windows(2)
+            .any(|a| a[0] == "--clink-phone-mac" && a[1] == "02:12:34:56:78:9a"));
+        o.settings.experimental_active = false;
+        o.settings.save(&dir).unwrap();
+        assert!(!supervisor
+            .arguments()
+            .iter()
+            .any(|a| a == "--clink-phone-mac"));
+        assert!(first.iter().any(|a| a == "--clink-phone-mac"));
+        o.settings.experimental_active = true;
+        o.settings.experimental_bluetooth_address = "02:ab:cd:ef:12:34".into();
+        o.settings.save(&dir).unwrap();
+        assert!(supervisor
+            .arguments()
+            .windows(2)
+            .any(|a| a[0] == "--clink-phone-mac" && a[1] == "02:ab:cd:ef:12:34"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn tesla_direct_sans_are_prepared_before_the_address_is_established() {
         use crate::tesla_address::Mode;
         let dir = std::env::temp_dir().join(format!(
@@ -146,6 +185,11 @@ mod tests {
             o.settings.experimental_active = active;
             o.settings.experimental_send_bluetooth_address = send;
             o.settings.experimental_bluetooth_address = address.into();
+            std::fs::write(
+                root.join("settings.json"),
+                serde_json::to_vec(&o.settings).unwrap(),
+            )
+            .unwrap();
             let args = supervisor_settings(&o, vec![], &[], String::new(), None, false).arguments();
             assert!(args.iter().any(|a| a == "--host-ui"));
             assert!(args

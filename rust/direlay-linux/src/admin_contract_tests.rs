@@ -64,6 +64,8 @@ fn admin_contract_status(state: &str) {
     status.network.planned = None;
     status.wireless = None;
     status.hotspot = Some(AdminHotspot {
+        security: "wpa2".into(),
+        supported_security: vec!["open".into(), "wpa2".into()],
         ssid: "OpenXPlay-1A2B".into(),
         password: "openxplay123".into(),
         has_password: true,

@@ -4,9 +4,18 @@
 
 use oxp_core::model::FrameRatePreference;
 
-pub fn screen_session_policy() -> carplay_airplay::ScreenSessionPolicy {
-    // Linux runs Android's default-on screen experiments as plain behaviour.
-    carplay_airplay::ScreenSessionPolicy::default()
+pub fn screen_session_policy(
+    settings: &crate::settings::Settings,
+) -> carplay_airplay::ScreenSessionPolicy {
+    // The receiver captures this policy when constructing each engine.
+    carplay_airplay::ScreenSessionPolicy {
+        isolate_sessions: settings.experimental_active
+            && settings.experimental_screen_session_isolation,
+        reset_on_reconnect: settings.experimental_active
+            && settings.experimental_screen_reconnect_reset,
+        serialize_delivery: settings.experimental_active
+            && settings.experimental_screen_delivery_serialization,
+    }
 }
 
 pub fn frame_rate_setting(value: &str) -> Option<FrameRatePreference> {
@@ -133,8 +142,29 @@ pub fn startup_stage(stage: &str) -> Option<(&'static str, &'static str)> {
 mod tests {
     use super::*;
     #[test]
+    fn screen_policy_captures_each_choice_and_master_without_erasing_choices() {
+        for bits in 0..16 {
+            let settings = crate::settings::Settings {
+                experimental_active: bits & 8 != 0,
+                experimental_screen_session_isolation: bits & 1 != 0,
+                experimental_screen_reconnect_reset: bits & 2 != 0,
+                experimental_screen_delivery_serialization: bits & 4 != 0,
+                ..Default::default()
+            };
+            let policy = screen_session_policy(&settings);
+            assert_eq!(policy.isolate_sessions, bits & 9 == 9);
+            assert_eq!(policy.reset_on_reconnect, bits & 10 == 10);
+            assert_eq!(policy.serialize_delivery, bits & 12 == 12);
+            let mut next = settings.clone();
+            next.experimental_active = !next.experimental_active;
+            let _ = screen_session_policy(&next);
+            assert_eq!(policy, screen_session_policy(&settings));
+        }
+    }
+
+    #[test]
     fn screen_session_defaults_enable_all_protections() {
-        let policy = screen_session_policy();
+        let policy = screen_session_policy(&crate::settings::Settings::default());
         assert!(policy.isolate_sessions);
         assert!(policy.reset_on_reconnect);
         assert!(policy.serialize_delivery);

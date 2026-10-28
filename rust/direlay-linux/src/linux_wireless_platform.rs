@@ -814,7 +814,13 @@ impl NetworkAttachment for LinuxNetwork {
             self.sink.clone(),
             transport.clone(),
             true,
-            crate::carplay_policy::screen_session_policy(),
+            crate::carplay_policy::screen_session_policy(
+                &self
+                    .input
+                    .as_ref()
+                    .map(|(input, _, _)| input.connection_settings())
+                    .unwrap_or_default(),
+            ),
         ));
         let endpoint = Arc::new(Mutex::new(None));
         let handler = Arc::new(TunnelHandler {
@@ -864,7 +870,7 @@ impl NetworkAttachment for LinuxNetwork {
                     bridge,
                     transport,
                     true,
-                    crate::carplay_policy::screen_session_policy(),
+                    crate::carplay_policy::screen_session_policy(&input.connection_settings()),
                 ));
                 let _ = engine.set_iap_tunnel_handler(Some(handler.clone()));
                 engine

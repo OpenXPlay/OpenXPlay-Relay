@@ -335,3 +335,16 @@ it('expires log exports after one hour', async () => {
     time.mockReturnValue(1793003600001); expect((await call('/logs/export/' + file.id)).status).toBe(404);
   } finally { time.mockRestore(); }
 });
+
+it('keeps saved hotspot passwords across rename and security changes', async () => {
+  const call = relay(true);
+  await call('/login', 'POST', { password: 'openxplay' });
+  await call('/hotspot', 'PUT', { ssid: 'First', password: 'retained-password', security: 'wpa2' });
+  expect((await call('/hotspot', 'PUT', { ssid: 'Renamed', password: '', security: 'open' })).status).toBe(200);
+  const open = (await call('/status')).data.hotspot;
+  expect(open).toMatchObject({ ssid: 'Renamed', password: 'retained-password', security: 'open', hasPassword: false });
+  expect((await call('/hotspot', 'PUT', { ssid: 'Secured', password: '', security: 'wpa3' })).status).toBe(200);
+  expect((await call('/status')).data.hotspot).toMatchObject({ ssid: 'Secured', password: 'retained-password', security: 'wpa3', hasPassword: true });
+  expect((await call('/hotspot', 'PUT', { ssid: 'Rejected', password: '', security: 'unknown' })).status).toBe(422);
+  expect((await call('/status')).data.hotspot.ssid).toBe('Secured');
+});

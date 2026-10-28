@@ -214,6 +214,29 @@
           }
         },
         {
+          "key": "hotspotSecurity",
+          "labelKey": "field.hotspotSecurity",
+          "options": [
+            {
+              "labelKey": "option.hotspotSecurity.open",
+              "value": "open"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa2",
+              "value": "wpa2"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa3-transition",
+              "value": "wpa3-transition"
+            },
+            {
+              "labelKey": "option.hotspotSecurity.wpa3",
+              "value": "wpa3"
+            }
+          ],
+          "type": "choice"
+        },
+        {
           "hintKey": "hint.field.hotspotChannel",
           "key": "hotspotChannel",
           "labelKey": "field.wifiChannel",
@@ -641,16 +664,55 @@
     {
       "fields": [
         {
+          "hintKey": "hint.field.experimentalActive",
           "key": "experimentalActive",
           "labelKey": "field.experimentalActive",
           "type": "bool"
         },
         {
+          "hintKey": "hint.field.experimentalScreenSessionIsolation",
+          "key": "experimentalScreenSessionIsolation",
+          "labelKey": "field.experimentalScreenSessionIsolation",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalScreenReconnectReset",
+          "key": "experimentalScreenReconnectReset",
+          "labelKey": "field.experimentalScreenReconnectReset",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalScreenDeliverySerialization",
+          "key": "experimentalScreenDeliverySerialization",
+          "labelKey": "field.experimentalScreenDeliverySerialization",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalRemotePlaybackProof",
+          "key": "experimentalRemotePlaybackProof",
+          "labelKey": "field.experimentalRemotePlaybackProof",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalStartupStatus",
+          "key": "experimentalStartupStatus",
+          "labelKey": "field.experimentalStartupStatus",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalStartupDiagnostics",
+          "key": "experimentalStartupDiagnostics",
+          "labelKey": "field.experimentalStartupDiagnostics",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalSendBluetoothAddress",
           "key": "experimentalSendBluetoothAddress",
           "labelKey": "field.experimentalSendBluetoothAddress",
           "type": "bool"
         },
         {
+          "hintKey": "hint.field.experimentalBluetoothAddress",
           "key": "experimentalBluetoothAddress",
           "labelKey": "field.experimentalBluetoothAddress",
           "type": "text"
@@ -658,6 +720,18 @@
       ],
       "id": "experimental",
       "titleKey": "section.experimental"
+    },
+    {
+      "fields": [
+        {
+          "hintKey": "hint.field.developerActive",
+          "key": "developerActive",
+          "labelKey": "field.developerActive",
+          "type": "bool"
+        }
+      ],
+      "id": "developer",
+      "titleKey": "section.developer"
     },
     {
       "fields": [
@@ -839,13 +913,21 @@
     "carlinkPictureTry": null,
     "carlinkReconnectOnResize": false,
     "carlinkTrace": "off",
+    "developerActive": true,
     "devicePreset": "auto",
     "experimentalActive": true,
     "experimentalBluetoothAddress": "",
-    "experimentalSendBluetoothAddress": false,
+    "experimentalRemotePlaybackProof": true,
+    "experimentalScreenDeliverySerialization": true,
+    "experimentalScreenReconnectReset": true,
+    "experimentalScreenSessionIsolation": true,
+    "experimentalSendBluetoothAddress": true,
+    "experimentalStartupDiagnostics": true,
+    "experimentalStartupStatus": true,
     "frameRate": "auto",
     "hotspotBand": "auto",
     "hotspotChannel": 0,
+    "hotspotSecurity": "wpa2",
     "iphone": "auto",
     "networkMode": "device-hotspot",
     "networkRoles": {

@@ -449,6 +449,34 @@ fn stats(id: u64) -> Value {
 }
 
 #[test]
+fn playback_experiment_is_captured_at_the_next_control_connection() {
+    for master in [true, false] {
+        let f = Fixture::new();
+        let (control, host) = playback_control();
+        let old = f.bridge(control);
+        old.on_screen_stream_active(110, true);
+        configure(&old);
+        frame(&old, 1);
+        let disabled = crate::settings::Settings {
+            experimental_active: master,
+            experimental_remote_playback_proof: !master,
+            ..Default::default()
+        };
+        f.input.configure_runtime_settings(&disabled).unwrap();
+        assert!(f.input.receiver_playback(&stats(f.current())));
+        f.picture(true);
+        assert_eq!(host.0.load(Ordering::SeqCst), 1);
+        let (control, host) = playback_control();
+        let next = f.bridge(control);
+        next.on_screen_stream_active(110, true);
+        configure(&next);
+        frame(&next, 2);
+        assert!(!f.input.receiver_playback(&stats(f.current())));
+        f.picture(false);
+        assert_eq!(host.0.load(Ordering::SeqCst), 0);
+    }
+}
+#[test]
 fn replacement_requires_its_own_playback_proof_and_resets_path_picture() {
     let f = Fixture::new();
     let (old_control, old_host) = playback_control();

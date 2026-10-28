@@ -35,6 +35,7 @@ pub struct Settings {
     pub carlink_interface: String,
     pub hotspot_channel: u8,
     pub hotspot_band: String,
+    pub hotspot_security: String,
     pub iphone: Option<String>,
     pub rfcomm_channel: Option<u8>,
     pub receiver_port: u16,
@@ -60,7 +61,15 @@ pub struct Settings {
     pub car_model: String,
     pub car_model_text: String,
     pub car_year: String,
+    pub developer_active: bool,
     pub experimental_active: bool,
+    pub experimental_screen_session_isolation: bool,
+    pub experimental_screen_reconnect_reset: bool,
+    pub experimental_screen_delivery_serialization: bool,
+    pub experimental_remote_playback_proof: bool,
+    pub experimental_startup_status: bool,
+    pub experimental_startup_diagnostics: bool,
+
     pub experimental_send_bluetooth_address: bool,
     pub experimental_bluetooth_address: String,
     #[serde(alias = "autoStartWhenReady")]
@@ -99,6 +108,7 @@ impl Default for Settings {
             carlink_interface: String::new(),
             hotspot_channel: 0,
             hotspot_band: "auto".into(),
+            hotspot_security: "wpa2".into(),
             iphone: None,
             rfcomm_channel: None,
             receiver_port: 8443,
@@ -124,8 +134,16 @@ impl Default for Settings {
             car_model: String::new(),
             car_model_text: String::new(),
             car_year: String::new(),
+            developer_active: true,
             experimental_active: true,
-            experimental_send_bluetooth_address: false,
+            experimental_screen_session_isolation: true,
+            experimental_screen_reconnect_reset: true,
+            experimental_screen_delivery_serialization: true,
+            experimental_remote_playback_proof: true,
+            experimental_startup_status: true,
+            experimental_startup_diagnostics: true,
+
+            experimental_send_bluetooth_address: true,
             experimental_bluetooth_address: String::new(),
             auto_start: true,
             boot_start: false,
@@ -158,6 +176,27 @@ fn persist_loaded_settings(dir: &Path, bytes: &[u8]) {
     }
 }
 impl Settings {
+    /// Resolve parked developer choices only on a runtime copy; never save this copy.
+    pub fn effective_developer(&self) -> Self {
+        let mut value = self.clone();
+        if !self.developer_active {
+            let defaults = Self::default();
+            value.carlink_trace = defaults.carlink_trace;
+            value.carlink_hevc = defaults.carlink_hevc;
+            value.carlink_picture_size = defaults.carlink_picture_size;
+            value.carlink_model = defaults.carlink_model;
+            value.receiver_port = defaults.receiver_port;
+            value.rfcomm_channel = defaults.rfcomm_channel;
+            value.device_preset = defaults.device_preset;
+            value.carlink_link = defaults.carlink_link;
+            value.carlink_address = defaults.carlink_address;
+            value.carlink_head_unit = defaults.carlink_head_unit;
+            value.carlink_local = defaults.carlink_local;
+            value.carlink_pin = defaults.carlink_pin;
+            value.carlink_ports = defaults.carlink_ports;
+        }
+        value
+    }
     pub fn tesla_address(&self) -> Option<&str> {
         use crate::tesla_address::Mode;
         match self.tesla_browser {
@@ -343,6 +382,9 @@ impl Settings {
         if !crate::device_preset::valid_selection(&self.device_preset) {
             return Err(invalid("Invalid devicePreset"));
         }
+        if !["open", "wpa2", "wpa3-transition", "wpa3"].contains(&self.hotspot_security.as_str()) {
+            return Err(invalid("Invalid hotspotSecurity"));
+        }
         if !["auto", "2.4", "5"].contains(&self.hotspot_band.as_str()) {
             return Err(invalid("Invalid hotspotBand"));
         }
@@ -434,6 +476,43 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn developer_master_parks_choices_and_round_trips_them() {
+        let parked = Settings {
+            developer_active: false,
+            carlink_trace: "on".into(),
+            carlink_hevc: "off".into(),
+            carlink_picture_size: "mode".into(),
+            carlink_model: "My relay".into(),
+            receiver_port: 9443,
+            rfcomm_channel: Some(7),
+            device_preset: "phicomm-n1".into(),
+            hotspot_security: "open".into(),
+            ..Default::default()
+        };
+        let saved: Settings =
+            serde_json::from_value(serde_json::to_value(&parked).unwrap()).unwrap();
+        assert_eq!(saved, parked);
+        let effective = saved.effective_developer();
+        let defaults = Settings::default();
+        assert_eq!(effective.carlink_trace, defaults.carlink_trace);
+        assert_eq!(effective.carlink_hevc, defaults.carlink_hevc);
+        assert_eq!(
+            effective.carlink_picture_size,
+            defaults.carlink_picture_size
+        );
+        assert_eq!(effective.carlink_model, defaults.carlink_model);
+        assert_eq!(effective.receiver_port, defaults.receiver_port);
+        assert_eq!(effective.rfcomm_channel, None);
+        assert_eq!(effective.device_preset, defaults.device_preset);
+        assert_eq!(effective.hotspot_security, "open");
+        let mut restored = saved;
+        restored.developer_active = true;
+        assert_eq!(restored.effective_developer(), restored);
+        assert_eq!(restored.carlink_model, "My relay");
+        assert_eq!(restored.receiver_port, 9443);
+    }
+
     #[test]
     fn legacy_auto_start_migrates_boot_preference_without_coupling_future_edits() {
         let dir = std::env::temp_dir().join(format!(

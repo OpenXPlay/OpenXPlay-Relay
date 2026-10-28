@@ -230,6 +230,12 @@ impl RuntimePathFacts {
         self.step(&step, now);
         self.iphone.detail = None;
     }
+    /// Playback state remains available when optional milestone diagnostics are disabled.
+    pub fn video_received(&mut self, now: u64, monotonic: Instant) {
+        self.video_since.get_or_insert(monotonic);
+        self.step("VIDEO", now);
+        self.iphone.failure = None;
+    }
     pub fn stable_video(&self, now: Instant) -> bool {
         self.video_since.is_some_and(|since| {
             now.saturating_duration_since(since) >= crate::start_policy::STABLE_SESSION
@@ -315,9 +321,7 @@ impl RuntimePathFacts {
                 .record(&format!("milestone={name}"), now, monotonic);
             self.timeline(format!("{now} phone {name}"));
             if name == "first_video_received" {
-                self.video_since.get_or_insert(monotonic);
-                self.step("VIDEO", now);
-                self.iphone.failure = None;
+                self.video_received(now, monotonic);
             }
         }
         if kind == "runtime-iap2" {
