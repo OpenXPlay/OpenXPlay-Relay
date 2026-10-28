@@ -29,7 +29,7 @@ export const pageKeys: Record<string, string[]> = {
 };
 export function fieldEnabled(key: string, values: Settings['values']): boolean {
   if (key.startsWith('experimental') && key !== 'experimentalActive') return values.experimentalActive !== false;
-  return !['carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
+  return !['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkTrace', 'carlinkHevc', 'carlinkPictureSize', 'carlinkModel', 'receiverPort', 'rfcommChannel', 'devicePreset', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal'].includes(key) || values.developerActive !== false;
 }
 export function fieldRoute(key: string): string {
   return 'settings/' + (Object.entries(pageKeys).find(([, keys]) => keys.includes(key))?.[0] ?? 'developer/other');

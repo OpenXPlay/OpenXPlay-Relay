@@ -16,7 +16,7 @@ pub const USER_FORMAT: &str = "openxplay-user-config";
 pub const PRIVACY_FORMAT: &str = "openxplay-privacy-config";
 pub type Errors = BTreeMap<String, String>;
 // The only nested wire-key table. Targets absent from settings_values are reported as ignored.
-// W13 can expose a stored choice by adding its matching target to Settings; no codec branch is needed.
+// Unsupported Android choices remain explicit ignored keys until the runtime implements them.
 const NESTED_KEYS: &[(&str, &str, &str)] = &[
     ("car", "brand", "carBrand"),
     ("car", "brandText", "carBrandText"),
@@ -24,33 +24,28 @@ const NESTED_KEYS: &[(&str, &str, &str)] = &[
     ("car", "modelText", "carModelText"),
     ("car", "year", "carYear"),
     ("car", "yearText", "carYearText"),
+    ("display", "width", "displayWidth"),
+    ("display", "height", "displayHeight"),
+    ("display", "density", "displayDensity"),
     ("developer", "active", "developerActive"),
-    ("developer", "carlinkTrace", "developerCarlinkTrace"),
+    ("developer", "carlinkTrace", "carlinkTrace"),
     (
         "developer",
         "carlinkHevcEnabled",
         "developerCarlinkHevcEnabled",
     ),
-    ("developer", "carlinkHevc", "developerCarlinkHevc"),
+    ("developer", "carlinkHevc", "carlinkHevc"),
     (
         "developer",
         "carlinkPictureSizeEnabled",
         "developerCarlinkPictureSizeEnabled",
     ),
-    (
-        "developer",
-        "carlinkPictureSize",
-        "developerCarlinkPictureSize",
-    ),
-    (
-        "developer",
-        "physicalWidthEnabled",
-        "developerPhysicalWidthEnabled",
-    ),
+    ("developer", "carlinkPictureSize", "carlinkPictureSize"),
+    ("developer", "physicalWidthEnabled", "physicalWidthEnabled"),
     (
         "developer",
         "physicalWidthOverrideMm",
-        "developerPhysicalWidthOverrideMm",
+        "physicalWidthOverrideMm",
     ),
     ("developer", "localPreview", "developerLocalPreview"),
     ("developer", "playCarPlayAudio", "developerPlayCarPlayAudio"),
@@ -61,17 +56,13 @@ const NESTED_KEYS: &[(&str, &str, &str)] = &[
     ),
     ("developer", "microphoneSource", "developerMicrophoneSource"),
     ("developer", "webPortEnabled", "developerWebPortEnabled"),
-    ("developer", "webPort", "developerWebPort"),
+    ("developer", "webPort", "receiverPort"),
     (
         "developer",
         "carlinkDeviceModelEnabled",
         "developerCarlinkDeviceModelEnabled",
     ),
-    (
-        "developer",
-        "carlinkDeviceModel",
-        "developerCarlinkDeviceModel",
-    ),
+    ("developer", "carlinkDeviceModel", "carlinkModel"),
     ("experimental", "active", "experimentalActive"),
     (
         "experimental",
@@ -209,12 +200,15 @@ pub fn export_user_values(mut values: Values, now: u64) -> Result<Value, Errors>
     if let Some(width) = values.get("screenWidth").and_then(Value::as_u64) {
         values.insert("carplayScreenWidth".into(), json!(format!("mm{width}")));
     }
-    for group in ["car", "developer", "experimental"] {
+    for group in ["car", "display", "developer", "experimental"] {
         let mut nested: Values = NESTED_KEYS
             .iter()
             .filter(|(g, _, _)| *g == group)
             .filter_map(|(_, leaf, target)| {
-                values.get(*target).cloned().map(|v| ((*leaf).into(), v))
+                values
+                    .get(*target)
+                    .cloned()
+                    .map(|v| ((*leaf).into(), nested_wire_value(target, v)))
             })
             .collect();
         if !nested.is_empty() {
@@ -241,6 +235,14 @@ pub fn export_user_values(mut values: Values, now: u64) -> Result<Value, Errors>
     }
     value["settings"] = Value::Object(values);
     bounded(value)
+}
+// The same target names drive flat aliases and Android nested values.
+fn nested_wire_value(target: &str, value: Value) -> Value {
+    match target {
+        "carlinkTrace" => json!(value == "on"),
+        "carlinkHevc" if value == "auto" => json!("stream-only"),
+        _ => value,
+    }
 }
 pub fn export_privacy(sections: Value, now: u64) -> Result<Value, Errors> {
     let mut value = envelope(PRIVACY_FORMAT, now);
@@ -485,7 +487,8 @@ fn import_key(
             };
             "output"
         }
-        "car" | "developer" | "experimental" => {
+        "display" if value.is_null() => return Ok(()),
+        "car" | "display" | "developer" | "experimental" => {
             let object = value.as_object().ok_or_else(|| error(source, "invalid"))?;
             let mut errors = Errors::new();
             for (leaf, value) in object {
@@ -589,6 +592,19 @@ fn import_key(
         }
     }
     let valid = match target {
+        "displayMode" => value
+            .as_str()
+            .is_some_and(|v| ["automatic", "fixed"].contains(&v)),
+        "displayWidth" => value
+            .as_u64()
+            .is_some_and(|v| (320..=3840).contains(&v) && v.is_multiple_of(2)),
+        "displayHeight" => value
+            .as_u64()
+            .is_some_and(|v| (240..=2160).contains(&v) && v.is_multiple_of(2)),
+        "displayDensity" => value.as_u64().is_some_and(|v| (120..=640).contains(&v)),
+        "physicalWidthOverrideMm" => value
+            .as_u64()
+            .is_some_and(|v| v == 0 || (100..=400).contains(&v) && v.is_multiple_of(25)),
         "hotspotBand" => value
             .as_str()
             .is_some_and(|v| ["auto", "2.4", "5"].contains(&v)),
@@ -721,7 +737,7 @@ mod tests {
             ("experimentalScreenSessionIsolation", json!(true)),
             ("experimentalRemotePlaybackProof", json!(true)),
             ("developerActive", json!(false)),
-            ("developerCarlinkHevc", json!("off")),
+            ("carlinkHevc", json!("off")),
         ] {
             current.insert(key.into(), value);
         }
@@ -817,6 +833,94 @@ mod tests {
         assert_eq!(imported.values["bootStart"], false);
         assert_eq!(imported.values["autoStart"], true);
         assert!(!imported.report.restart_needed);
+    }
+
+    #[test]
+    fn android_display_and_calibration_round_trip_use_runtime_keys() {
+        let file = json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{
+            "displayMode":"fixed", "display":{"width":1024,"height":600,"density":180},
+            "developer":{"active":false,"physicalWidthEnabled":true,"physicalWidthOverrideMm":325}
+        }});
+        let plan = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+        assert!(plan.report.ignored.is_empty());
+        let settings =
+            crate::relay_admin::update_settings(&Settings::default(), plan.values).unwrap();
+        assert_eq!(
+            (
+                settings.display_width,
+                settings.display_height,
+                settings.display_density
+            ),
+            (1024, 600, 180)
+        );
+        assert!(!settings.developer_active);
+        assert!(settings.physical_width_enabled);
+        assert_eq!(settings.physical_width_override_mm, 325);
+        let output = export_user(&settings, &json!({}), 0).unwrap();
+        assert_eq!(output["settings"]["display"], file["settings"]["display"]);
+        for key in ["active", "physicalWidthEnabled", "physicalWidthOverrideMm"] {
+            assert_eq!(
+                output["settings"]["developer"][key],
+                file["settings"]["developer"][key]
+            );
+        }
+        for (value, key) in [
+            (json!({"display":{"width":321}}), "display.width"),
+            (
+                json!({"developer":{"physicalWidthOverrideMm":333}}),
+                "developer.physicalWidthOverrideMm",
+            ),
+        ] {
+            let file = json!({"format":USER_FORMAT,"version":1,"settings":value});
+            assert_eq!(plan_error(&file)[key], "invalid");
+        }
+    }
+    fn plan_error(file: &Value) -> Errors {
+        plan(&serde_json::to_vec(file).unwrap(), &current())
+            .err()
+            .unwrap()
+    }
+    #[test]
+    fn developer_table_maps_implemented_choices_and_android_wire_values() {
+        let settings = Settings {
+            carlink_trace: "on".into(),
+            receiver_port: 9443,
+            carlink_model: "Linux relay".into(),
+            ..Default::default()
+        };
+        let output = export_user(&settings, &json!({}), 0).unwrap();
+        let developer = &output["settings"]["developer"];
+        assert_eq!(developer["carlinkTrace"], true);
+        assert_eq!(developer["carlinkHevc"], "stream-only");
+        assert_eq!(developer["webPort"], 9443);
+        assert_eq!(developer["carlinkDeviceModel"], "Linux relay");
+        let file = json!({"format":USER_FORMAT,"version":1,"settings":{"developer":{
+            "active":false,"carlinkTrace":true,"carlinkHevc":"signal","carlinkPictureSize":"mode",
+            "webPort":9443,"carlinkDeviceModel":"Linux relay"}}});
+        let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+        assert!(p.report.ignored.is_empty());
+        let saved = crate::relay_admin::update_settings(&Settings::default(), p.values).unwrap();
+        assert_eq!(saved.carlink_trace, "on");
+        assert_eq!(saved.carlink_hevc, "signal");
+        assert_eq!(saved.carlink_picture_size, "mode");
+        assert_eq!(saved.receiver_port, 9443);
+        assert_eq!(saved.effective_developer().receiver_port, 8443);
+        let file = json!({"format":USER_FORMAT,"version":1,"settings":{"experimental":{
+            "version":2,"cancelRecoveredRetries":false,"networkObservationBackoff":false}}});
+        let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+        assert_eq!(
+            p.report.ignored,
+            [
+                "experimental.cancelRecoveredRetries",
+                "experimental.networkObservationBackoff"
+            ]
+        );
+        assert_eq!(
+            plan_error(
+                &json!({"format":USER_FORMAT,"version":1,"settings":{"experimental":{"version":1}}})
+            )["experimental.version"],
+            "invalid"
+        );
     }
 
     fn current() -> Values {

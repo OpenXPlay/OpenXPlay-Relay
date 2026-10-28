@@ -1021,10 +1021,14 @@ impl LinuxRelayAdmin {
     }
     fn stop_controller_for_restart(&self, keep_hotspot: bool) {
         self.input.expect_stop();
-        self.tesla
-            .lock()
-            .unwrap()
-            .stop(crate::platform::wall_clock().as_millis() as u64);
+        let settings = self.settings.lock().unwrap().clone();
+        let mut tesla = self.tesla.lock().unwrap();
+        tesla.stop(crate::platform::wall_clock().as_millis() as u64);
+        let change = tesla.journal_change(&settings);
+        drop(tesla);
+        if let Some(change) = change {
+            self.events.emit("tesla-address", &change);
+        }
         self.public_name.published_address_override(None);
         if keep_hotspot {
             self.hotspot_lifetime.keep_for_restart();
@@ -1573,8 +1577,12 @@ impl LinuxRelayAdmin {
             .as_ref()
             .filter(|a| a.mode.uses_name())
             .map(|a| a.address);
+        let change = tesla.journal_change(&settings);
         drop(tesla);
         self.public_name.published_address_override(published);
+        if let Some(change) = change {
+            self.events.emit("tesla-address", &change);
+        }
     }
     /// Compare selected Tesla coverage with the last acknowledged receiver set.
     fn tesla_tls_changed(&self) -> bool {
@@ -1791,8 +1799,11 @@ impl LinuxRelayAdmin {
         self.events.log_observation("network-observed", &serde_json::json!({
             "interfaces":interfaces, "bluetooth":self.capabilities.get().and_then(|caps| caps.adapters)
         }));
+        // Address ownership and name/TLS refresh must progress during controller retries.
+        self.refresh_tesla_address();
         self.apply_public_name();
-        let playing = self.carlink.lock().unwrap().state == "playing";
+        self.public_name.head_unit_address(self.head_unit_address());
+        let playing = self.carlink.lock().unwrap().ready_for_carplay();
         if self.input.display.lock().unwrap().resize.reconnect(playing) {
             // The control channel replaces only Carlink, preserving the browser.
             if let Some(supervisor) = self.supervisor.lock().unwrap().as_ref() {
@@ -1827,9 +1838,6 @@ impl LinuxRelayAdmin {
         if !self.busy.load(Ordering::Acquire) && self.pending.lock().unwrap().is_empty() {
             self.reconcile_admin_hotspot();
         }
-        self.refresh_tesla_address();
-        self.apply_public_name();
-        self.public_name.head_unit_address(self.head_unit_address());
         if self.start_policy.lock().unwrap().take_failure() {
             self.stop_controller();
         }
@@ -1906,7 +1914,7 @@ impl LinuxRelayAdmin {
                 hotspot,
                 carlink: Some(
                     options.settings.output == "web"
-                        || self.carlink.lock().unwrap().state == "playing",
+                        || self.carlink.lock().unwrap().ready_for_carplay(),
                 ),
                 iphone,
             },
@@ -2075,7 +2083,7 @@ impl LinuxRelayAdmin {
                 let enabled = settings.lock().unwrap().output != "web";
                 let (ready, reported) = {
                     let c = carlink.lock().unwrap();
-                    (c.state == "playing", c.view_size.is_some())
+                    (c.ready_for_carplay(), c.view_size.is_some())
                 };
                 let result = policy.lock().unwrap().ready(
                     std::time::Instant::now(),
@@ -3888,12 +3896,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                     || next.carlink_name != current.carlink_name
                     || effective_next.carlink_model != effective_current.carlink_model
                     || effective_next.carlink_trace != effective_current.carlink_trace
-                    || next.carlink_auto_reconnect != current.carlink_auto_reconnect
-                    || next.experimental_active != current.experimental_active
-                    || next.experimental_send_bluetooth_address
-                        != current.experimental_send_bluetooth_address
-                    || next.experimental_bluetooth_address
-                        != current.experimental_bluetooth_address;
+                    || next.carlink_auto_reconnect != current.carlink_auto_reconnect;
                 let controller_changed = !settings_restart_keys(&current, &next).is_empty();
                 let network = if network_update {
                     let ssid = self
@@ -3971,6 +3974,13 @@ impl RelayAdmin for LinuxRelayAdmin {
                     .lock()
                     .unwrap()
                     .enable(next.vehicle_information);
+                if !next.developer_active {
+                    self.vehicle.lock().unwrap().sample(
+                        false,
+                        std::time::Instant::now(),
+                        crate::platform::wall_clock().as_millis() as u64,
+                    );
+                }
                 *current = next;
                 if outputs_changed {
                     self.apply_pending.store(true, Ordering::Release);
@@ -4074,6 +4084,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         })))
     }
     fn vehicle_sample(&self, enabled: bool) -> AdminResult {
+        let enabled = enabled && self.settings.lock().unwrap().developer_active;
         self.vehicle.lock().unwrap().sample(
             enabled,
             std::time::Instant::now(),
@@ -4342,7 +4353,7 @@ mod tests {
         assert_eq!(admin.config_import(&file, false).unwrap(), preview);
         assert!(matches!(
             admin.pending.lock().unwrap().values().next(),
-            Some(Operation::Hotspot(Some(_)))
+            Some(Operation::Hotspot(None))
         ));
         assert_eq!(
             crate::linux_hotspot::hotspot_credentials(&dir).unwrap(),
@@ -4399,6 +4410,56 @@ mod tests {
                 & 0o777,
             0o600
         );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn experimental_master_and_phone_address_park_until_next_connection() {
+        let (admin, dir) = fake();
+        let file = serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{
+            "experimental":{"version":2,"active":false,"sendBluetoothAddress":false,"bluetoothAddress":"02:11:22:33:44:55"}
+        }})).unwrap();
+        let preview = admin.config_import(&file, true).unwrap();
+        assert_eq!(preview["restartNeeded"], false);
+        assert_eq!(preview["nextStart"], serde_json::json!([]));
+        assert_eq!(admin.config_import(&file, false).unwrap(), preview);
+        assert!(admin.pending.lock().unwrap().is_empty());
+        assert_eq!(
+            admin
+                .input
+                .connection_settings()
+                .experimental_bluetooth_address,
+            "02:11:22:33:44:55"
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn one_developer_master_parks_calibration_and_resets_vehicle_sample() {
+        let (admin, dir) = fake();
+        assert_eq!(
+            settings_schema()
+                .iter()
+                .flat_map(|s| &s.fields)
+                .filter(|f| f.key == "developerActive")
+                .count(),
+            1
+        );
+        admin.vehicle_sample(true).unwrap();
+        assert_eq!(admin.vehicle()["sample"], true);
+        let values = serde_json::json!({"developerActive":false,"physicalWidthEnabled":true,"physicalWidthOverrideMm":325});
+        assert!(matches!(
+            admin.update(values.as_object().unwrap().clone()),
+            AdminUpdate::NextStart
+        ));
+        assert_eq!(admin.vehicle()["sample"], false);
+        admin.vehicle_sample(true).unwrap();
+        assert_eq!(admin.vehicle()["sample"], false);
+        let saved = Settings::load(&dir).unwrap();
+        assert!(!saved.developer_active);
+        assert!(saved.physical_width_enabled);
+        assert_eq!(saved.physical_width_override_mm, 325);
+        admin.response_failed();
         drop(admin);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -5213,6 +5274,81 @@ mod tests {
             a.shutdown();
             std::fs::remove_dir_all(dir).unwrap();
         }
+    }
+    #[test]
+    fn lifecycle_contention_never_starves_tesla_or_public_name_refresh() {
+        let (mut admin, dir) = fake();
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let output = lines.clone();
+        Arc::get_mut(&mut admin).unwrap().events =
+            Arc::new(JsonEvents::new(Arc::new(move |line| {
+                output.lock().unwrap().push(line)
+            })));
+        assert!(admin.public_name.import(r#"{"version":1,"enabled":true,"provider":"dynv6","name":"car.dynv6.net","token":"private-d2-token","agreeLetsEncryptTerms":true}"#).is_ok());
+        admin.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::Teslamirror;
+        let address = admin
+            .settings
+            .lock()
+            .unwrap()
+            .tesla_address()
+            .unwrap()
+            .to_owned();
+        let hotspot = admin
+            .hotspot_lifetime
+            .create(|| Arc::new(crate::hotspot_lifetime::tests::Fake::default()))
+            .unwrap();
+        hotspot.start(Duration::from_secs(1)).unwrap();
+        let lifecycle = admin.lifecycle.lock().unwrap();
+        admin.tick().unwrap();
+        admin.tick().unwrap();
+        assert_eq!(
+            admin
+                .tesla
+                .lock()
+                .unwrap()
+                .active
+                .as_ref()
+                .unwrap()
+                .address
+                .to_string(),
+            address
+        );
+        let hosts = std::fs::read_to_string(&admin.runtime.local_dns.hosts).unwrap();
+        assert!(
+            hosts.contains(&format!("{address} car.dynv6.net")),
+            "{hosts}"
+        );
+        // Removing the named mode also refreshes DNS while the controller lock stays held.
+        admin.settings.lock().unwrap().tesla_browser = crate::tesla_address::Mode::TeslaAndroid;
+        admin.tick().unwrap();
+        let hosts = std::fs::read_to_string(&admin.runtime.local_dns.hosts).unwrap();
+        assert!(hosts.contains("10.42.0.1 car.dynv6.net"), "{hosts}");
+        admin.settings.lock().unwrap().tesla_android_address = "3.3.3.2".into();
+        admin.tick().unwrap();
+        admin.tesla.lock().unwrap().failure = Some("nmcli private-d2-token command output".into());
+        admin.tick().unwrap();
+        admin.tick().unwrap();
+        let events: Vec<serde_json::Value> = lines
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|v: &serde_json::Value| v["event"] == "tesla-address")
+            .collect();
+        assert_eq!(events.len(), 4, "{events:?}");
+        assert_eq!(events[0]["mode"], "teslamirror");
+        assert_eq!(events[0]["phase"], "READY");
+        assert_eq!(events[1]["mode"], "tesla-android");
+        assert_eq!(events[2]["address"], "3.3.3.2");
+        assert_eq!(events[3]["phase"], "FAILED");
+        assert_eq!(events[3]["failureCode"], "tesla_address_failed");
+        assert!(!serde_json::to_string(&events)
+            .unwrap()
+            .contains("private-d2-token"));
+        assert!(admin.controller.lock().unwrap().is_none());
+        drop(lifecycle);
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn tesla_address_uses_the_active_ap_before_controller_hotspot_publication() {
@@ -7077,6 +7213,107 @@ esac
         assert!(a.carlink_pairing(17, 1, "cancel", None).is_err());
         assert!(!carlink_pin_path(&dir).exists());
         a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn timeout_rearms_only_after_current_generation_playing_and_stop_wins() {
+        let (admin, dir) = fake();
+        admin.settings.lock().unwrap().output = "carlink".into();
+        admin.settings.lock().unwrap().auto_start = true;
+        let event = |value| admin.carlink.lock().unwrap().apply_event(&value, 0);
+        event(serde_json::json!({"type":"state","generation":1,"state":"Playing"}));
+        event(serde_json::json!({"type":"carlink-starting"}));
+        event(serde_json::json!({"type":"clink-restart","generation":2}));
+        event(
+            serde_json::json!({"type":"clink-view-size","generation":2,"width":1920,"height":1080}),
+        );
+        admin.start_policy.lock().unwrap().request(
+            std::time::Instant::now() - Duration::from_secs(61),
+            true,
+            true,
+        );
+        admin.tick().unwrap();
+        assert_eq!(
+            admin
+                .events
+                .runtime_path_facts()
+                .iphone
+                .failure
+                .unwrap()
+                .code,
+            "carlink_not_ready"
+        );
+        event(serde_json::json!({"type":"state","generation":1,"state":"Playing"}));
+        admin.observe_automatic_start().unwrap();
+        assert!(admin.events.runtime_path_facts().iphone.failure.is_some());
+        event(serde_json::json!({"type":"carlink-starting"}));
+        event(serde_json::json!({"type":"state","generation":3,"state":"Playing"}));
+        admin.observe_automatic_start().unwrap();
+        assert!(
+            admin.events.runtime_path_facts().iphone.failure.is_some(),
+            "pending replacement must not rearm"
+        );
+        event(serde_json::json!({"type":"clink-restart","generation":3}));
+        admin.observe_automatic_start().unwrap();
+        assert!(admin.events.runtime_path_facts().iphone.failure.is_none());
+        assert!(admin.desired.load(Ordering::Acquire));
+        admin.operation(Operation::Stop).unwrap();
+        event(serde_json::json!({"type":"carlink-starting"}));
+        event(serde_json::json!({"type":"clink-restart","generation":4}));
+        event(serde_json::json!({"type":"state","generation":4,"state":"Playing"}));
+        admin.observe_automatic_start().unwrap();
+        assert!(!admin.desired.load(Ordering::Acquire));
+        assert!(!admin.runtime_path_facts().iphone.armed);
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn carlink_summary_fields_reach_status_journal_and_attempt_timeline() {
+        let (mut admin, dir) = fake();
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let output = lines.clone();
+        Arc::get_mut(&mut admin).unwrap().events =
+            Arc::new(JsonEvents::new(Arc::new(move |line| {
+                output.lock().unwrap().push(line)
+            })));
+        let sink = carlink_event_sink(
+            admin.carlink.clone(),
+            admin.armed_pin.clone(),
+            dir.clone(),
+            admin.events.clone(),
+            Arc::new(Mutex::new(None)),
+        );
+        admin.settings.lock().unwrap().output = "both".into();
+        let fields = serde_json::json!({"vendor":"Vendor","product":"Car","name":"Technical head unit","ssid":"CarWifi","frequency":"5180","mode":"window","view":"1920x1080","window":"1814x1200","stream":"1280x720","codec":"H264","hevc":"supported","audio":"true","uibc":"HIDC"});
+        sink(serde_json::json!({"type":"state","state":"Playing","generation":2}));
+        sink(
+            serde_json::json!({"type":"clink-summary","generation":2,"atMillis":1234,"fields":fields}),
+        );
+        let status = serde_json::to_value(admin.status()).unwrap();
+        assert_eq!(status["carlink"]["summary"], fields);
+        assert_eq!(
+            status["carlink"]["appliedPicture"],
+            serde_json::json!({"width":1280,"height":720})
+        );
+        let records: Vec<serde_json::Value> = lines
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let baseline = records
+            .iter()
+            .find(|v| v["event"] == "clink-summary")
+            .unwrap();
+        let timeline = records
+            .iter()
+            .find(|v| v["event"] == "timeline" && v["mark"] == "summary")
+            .unwrap();
+        assert_eq!(baseline["fields"], fields);
+        assert_eq!(timeline["detail"]["fields"], fields);
+        assert_eq!(timeline["detail"]["atMillis"], 1234);
+        drop(sink);
+        drop(admin);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

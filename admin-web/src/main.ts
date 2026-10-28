@@ -252,7 +252,7 @@ function renderReady() {
     if (route === 'settings/developer/carlink' && status!.platform === 'linux') {
       container.insertAdjacentHTML('beforeend', '<div id="view-areas"></div>'); renderCarScreen();
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="carlink-debug"><h2>${t('trace.title')}</h2><label for="trace-filter">${t('trace.filter')}</label><select id="trace-filter" data-trace-filter>${traceFilters.map((value, i) => `<option value="${value}">${t(['trace.all', 'trace.rtsp', 'trace.frames', 'trace.media', 'trace.link', 'trace.errors'][i])}</option>`).join('')}</select><p class="error" role="alert" data-trace-error></p><div data-trace-content></div></section>`);
-      disposeTrace = mountTrace(document.getElementById('carlink-debug')!, t, errorKey);
+      disposeTrace = mountTrace(document.getElementById('carlink-debug')!, t, errorKey, undefined, () => status?.carlink?.summary);
     }
     if (route === 'settings/output' && pageAvailable(settings!, status!, 'settings/output/plugins')) container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/output/plugins', 'section.plugins', '', 'code')}</div>`);
     renderNetworkPanel(); renderPairingPanel(); updateVisibility(); renderPublicName();

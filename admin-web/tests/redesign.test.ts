@@ -103,3 +103,13 @@ it('disables parked developer and experimental controls without changing saved c
   expect(values.carlinkTrace).toBe('on');
   expect(values.experimentalSendBluetoothAddress).toBe(true);
 });
+
+it('parks physical-width calibration under the shared developer master without parking fixed displays', () => {
+  const values = { developerActive: false, physicalWidthEnabled: true, physicalWidthOverrideMm: 325, displayMode: 'fixed' };
+  expect(fieldEnabled('physicalWidthEnabled', values)).toBe(false);
+  expect(fieldEnabled('physicalWidthOverrideMm', values)).toBe(false);
+  for (const key of ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity']) expect(fieldEnabled(key, values)).toBe(true);
+  expect(values.physicalWidthOverrideMm).toBe(325);
+  values.developerActive = true;
+  expect(fieldEnabled('physicalWidthOverrideMm', values)).toBe(true);
+});

@@ -67,6 +67,10 @@ impl Default for Timeline {
 }
 impl Timeline {
     pub fn observe(&mut self, event: &str, fields: &Value, at: Instant) -> Vec<Value> {
+        // Generations are scoped to a child; retired process readers are fenced upstream.
+        if event == "receiver-starting" {
+            self.carlink_generation = None;
+        }
         let carlink = matches!(event, "link" | "state" | "clink-summary");
         let mut new_generation = false;
         if let Some(generation) = fields["generation"].as_u64().filter(|_| carlink) {
@@ -322,6 +326,29 @@ impl Timeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn child_restart_resets_generation_fence_but_retained_replacements_reject_stale_summaries() {
+        let mut timeline = Timeline::default();
+        let now = Instant::now();
+        let summary =
+            json!({"generation":5,"atMillis":100,"fields":{"vendor":"Vendor","frequency":"5180"}});
+        assert!(!timeline.observe("clink-summary", &summary, now).is_empty());
+        assert!(timeline
+            .observe(
+                "clink-summary",
+                &json!({"generation":4,"fields":{"vendor":"retired"}}),
+                now
+            )
+            .is_empty());
+        timeline.observe("receiver-starting", &json!({}), now);
+        let records = timeline.observe(
+            "clink-summary",
+            &json!({"generation":1,"fields":{"vendor":"new child"}}),
+            now,
+        );
+        assert_eq!(records[0]["detail"]["fields"]["vendor"], "new child");
+    }
+
     use std::time::Duration;
     #[test]
     fn attempts_use_monotonic_deltas_summarize_played_time_and_restart_numbers() {

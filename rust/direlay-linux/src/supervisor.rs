@@ -172,16 +172,7 @@ impl SupervisorSettings {
             ]);
             if let Some(ble) = &c.ble {
                 args.extend(["--clink-scan".into(), "continuous".into()]);
-                // Reconnects reuse the supervisor, but must capture the latest parked choice.
-                let saved = std::fs::read(self.state_dir.join("settings.json"))
-                    .ok()
-                    .and_then(|bytes| {
-                        serde_json::from_slice::<crate::settings::Settings>(&bytes).ok()
-                    });
-                let phone_mac = saved
-                    .as_ref()
-                    .map(|settings| ble.phone_mac_for_connection(settings))
-                    .unwrap_or_else(|| ble.phone_mac.clone());
+                let phone_mac = self.phone_mac_for_connection();
                 if let Some(mac) = &phone_mac {
                     args.extend(["--clink-phone-mac".into(), mac.into()]);
                 }
@@ -241,6 +232,23 @@ impl SupervisorSettings {
             }
         }
         args
+    }
+    fn phone_mac_for_connection(&self) -> Option<String> {
+        let ble = self.carlink.as_ref()?.ble.as_ref()?;
+        let saved = std::fs::read(self.state_dir.join("settings.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<crate::settings::Settings>(&bytes).ok());
+        saved
+            .as_ref()
+            .map(|settings| ble.phone_mac_for_connection(settings))
+            .unwrap_or_else(|| ble.phone_mac.clone())
+    }
+    /// Each retained-child replacement captures the next connection's experiment snapshot.
+    /// The child must treat phoneMac:null as clearing the old override, never as omission.
+    fn connection_options(&self, value: &mut Value) {
+        if self.carlink.as_ref().is_some_and(|c| c.ble.is_some()) {
+            value["phoneMac"] = json!(self.phone_mac_for_connection());
+        }
     }
     pub fn receiver_urls(&self, host: &str) -> Vec<String> {
         if self.web_port == 0 {
@@ -741,7 +749,9 @@ impl RelaySupervisor {
         let request = lifecycle.replacement();
         *self.carlink_options.lock().unwrap() =
             json!({"picture":picture,"hevc":hevc,"vehicleData":vehicle});
-        let result = self.send_control(&json!({"type":"clink-restart","request":request,"picture":picture,"hevc":hevc,"vehicleData":vehicle}));
+        let mut value = json!({"type":"clink-restart","request":request,"picture":picture,"hevc":hevc,"vehicleData":vehicle});
+        self.settings.connection_options(&mut value);
+        let result = self.send_control(&value);
         if result.is_err() {
             lifecycle.control_failed(Instant::now());
         }
@@ -848,6 +858,7 @@ impl RelaySupervisor {
                                 let request = life.replacement();
                                 let mut value = carlink_options.lock().unwrap().clone();
                                 value["type"] = json!("clink-restart"); value["request"] = json!(request);
+                                settings.connection_options(&mut value);
                                 if hevc_disabled.load(Ordering::Acquire) { value["hevc"] = json!("off"); }
                                 let result = control.lock().unwrap().as_ref().ok_or(io::ErrorKind::NotConnected).and_then(|p| p.send_control(&value).map_err(|e| e.kind()));
                                 if result.is_err() { life.control_failed(Instant::now()); }
@@ -1086,6 +1097,52 @@ mod band_tests {
         json!({"type":"link","state":"lost","reason":"head_unit_band_unsupported:5180"})
     }
 
+    #[test]
+    fn retained_child_reconnects_capture_phone_mac_for_each_connection() {
+        let mut f = Fixture::new("phone-mac-snapshot", 8443);
+        f.settings.carlink.as_mut().unwrap().ble = Some(BleCarlinkSettings {
+            adapter: None,
+            interface: "wlan1".into(),
+            address: None,
+            id: "relay".into(),
+            band: 1,
+            phone_mac: Some("02:aa:bb:cc:dd:ee".into()),
+            default_phone_mac: Some("02:aa:bb:cc:dd:ee".into()),
+        });
+        let mut saved = crate::settings::Settings::default();
+        saved.save(&f.dir).unwrap();
+        let mut relay = f.supervisor(&CarlinkBackoff::default());
+        relay.start().unwrap();
+        let (args, sink) = f.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(args
+            .windows(2)
+            .any(|p| p[0] == "--clink-phone-mac" && p[1] == "02:aa:bb:cc:dd:ee"));
+        saved.experimental_active = false;
+        saved.save(&f.dir).unwrap();
+        relay.restart_carlink(None, "auto", false).unwrap();
+        let value = f.controls.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(value.as_object().unwrap().contains_key("phoneMac"));
+        assert_eq!(value["phoneMac"], Value::Null);
+        sink(json!({"type":"clink-restart","request":value["request"],"generation":2}));
+        saved.experimental_active = true;
+        saved.experimental_bluetooth_address = "02:11:22:33:44:55".into();
+        saved.save(&f.dir).unwrap();
+        // The retry worker must resolve the same saved snapshot as manual replacements.
+        relay.carlink_lifecycle.lock().unwrap().retry_now();
+        let value = f.controls.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(value["phoneMac"], "02:11:22:33:44:55");
+        sink(json!({"type":"clink-restart","request":value["request"],"generation":3}));
+        saved.experimental_bluetooth_address.clear();
+        saved.save(&f.dir).unwrap();
+        relay.restart_carlink(None, "auto", false).unwrap();
+        assert_eq!(
+            f.controls.recv_timeout(Duration::from_secs(2)).unwrap()["phoneMac"],
+            "02:aa:bb:cc:dd:ee"
+        );
+        assert!(f.spawns.try_recv().is_err());
+        assert!(f.stops.try_recv().is_err());
+        relay.stop();
+    }
     #[test]
     fn codec_mismatch_replaces_only_carlink_and_disables_hevc_once() {
         let f = Fixture::new("hevc-mismatch", 8443);

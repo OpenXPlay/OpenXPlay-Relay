@@ -184,6 +184,8 @@ pub struct AdminCarlink {
     pub trusted: bool,
     pub view_size: Option<CarlinkViewSize>,
     pub generation: Option<u64>,
+    #[serde(skip)]
+    pub restarting: bool,
     pub applied_picture: Option<CarlinkViewSize>,
     pub summary: BTreeMap<String, String>,
     pub pin_request: Option<u64>,
@@ -249,6 +251,10 @@ impl AdminCarlink {
         }
         self
     }
+    /// Supervisor fences generations; an outstanding replacement still parks startup.
+    pub fn ready_for_carplay(&self) -> bool {
+        self.state == "playing" && !self.restarting
+    }
     /// Applies a receiver event at `now`, in seconds on the monotonic clock.
     pub fn apply_event(&mut self, event: &Value, now: u64) {
         if let Some(generation) = event["generation"].as_u64() {
@@ -276,6 +282,7 @@ impl AdminCarlink {
         }
         match event["type"].as_str().unwrap_or("") {
             "receiver-starting" | "carlink-starting" => {
+                self.restarting = event["type"] == "carlink-starting";
                 if event["type"] == "receiver-starting" {
                     self.generation = None;
                 }
@@ -285,6 +292,9 @@ impl AdminCarlink {
                 self.applied_picture = None;
                 self.view_size = None;
                 self.stats = None;
+            }
+            "clink-restart" => {
+                self.restarting = event.get("error").is_some();
             }
             "clink-view-size" => {
                 if let Ok(size) = serde_json::from_value::<CarlinkViewSize>(event.clone()) {

@@ -94,6 +94,7 @@ pub struct Session {
     attempted: bool,
     requested: Option<(Mode, Option<String>)>,
     owned: Option<(String, Ipv4Addr)>,
+    journal_state: Option<serde_json::Value>,
 }
 impl Session {
     pub fn new(runner: Arc<dyn CommandRunner>) -> Self {
@@ -109,7 +110,31 @@ impl Session {
             attempted: false,
             requested: None,
             owned: None,
+            journal_state: None,
         }
+    }
+    /// A bounded, secret-free state record; command output never enters this event.
+    pub fn journal_change(&mut self, settings: &Settings) -> Option<serde_json::Value> {
+        let phase = if settings.tesla_browser == Mode::Off {
+            "OFF"
+        } else if self.failure.is_some() {
+            "FAILED"
+        } else if self.disabled || !self.running {
+            "STOPPED"
+        } else if self.active.is_some() {
+            "READY"
+        } else {
+            "STARTING"
+        };
+        let state = serde_json::json!({
+            "mode":settings.tesla_browser, "phase":phase, "address":settings.tesla_address(),
+            "failureCode":self.failure.as_ref().map(|_| "tesla_address_failed")
+        });
+        if self.journal_state.as_ref() == Some(&state) {
+            return None;
+        }
+        self.journal_state = Some(state.clone());
+        Some(state)
     }
     pub fn prepare(&mut self, settings: &Settings, now: u64) {
         self.stop(now);
