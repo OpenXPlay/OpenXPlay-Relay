@@ -432,6 +432,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             startupStatus = relay.getBoolean("experimental.startupStatus", true),
             startupDiagnostics = relay.getBoolean("experimental.startupDiagnostics", true),
             networkObservationBackoff = relay.getBoolean("experimental.networkObservationBackoff", true),
+            screenSessionIsolation = relay.getBoolean("experimental.screenSessionIsolation", true),
+            screenReconnectReset = relay.getBoolean("experimental.screenReconnectReset", true),
+            screenDeliverySerialization = relay.getBoolean("experimental.screenDeliverySerialization", true),
         )
         if (legacy) relay.edit().also { writeExperimentalOptions(it, value) }.apply()
         return value
@@ -447,6 +450,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("experimental.startupStatus", value.startupStatus)
             .putBoolean("experimental.startupDiagnostics", value.startupDiagnostics)
             .putBoolean("experimental.networkObservationBackoff", value.networkObservationBackoff)
+            .putBoolean("experimental.screenSessionIsolation", value.screenSessionIsolation)
+            .putBoolean("experimental.screenReconnectReset", value.screenReconnectReset)
+            .putBoolean("experimental.screenDeliverySerialization", value.screenDeliverySerialization)
             .remove("experimental.rememberSubscription")
             .remove("experimental.keepScanning")
             .remove("experimental.recordAdvertisements")

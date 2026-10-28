@@ -395,14 +395,15 @@ class UserConfigCodecTest {
             assertEquals("not-json", UserConfigCodec.decode(text, base).errors["file"])
     }
     @Test fun experimentalRoundTripPreservesEveryChoiceAndOldFilesImportDefaults() {
-        val options = ExperimentalOptions(active = true, remotePlaybackProof = false, startupDiagnostics = false, rememberSubscription = true, keepScanning = true,
+        val options = ExperimentalOptions(active = true, remotePlaybackProof = false, startupDiagnostics = false,
+            screenSessionIsolation = false, screenReconnectReset = false, screenDeliverySerialization = false, rememberSubscription = true, keepScanning = true,
             recordAdvertisements = true, sendBluetoothAddress = true,
             isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
         for (active in listOf(false, true)) {
             val chosen = base.copy(experimental = options.copy(active = active))
             val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
             val json = JSONObject(text).getJSONObject("settings").getJSONObject("experimental")
-            assertEquals(setOf("version", "active", "remotePlaybackProof", "cancelRecoveredRetries", "startupStatus", "startupDiagnostics", "networkObservationBackoff", "sendBluetoothAddress", "bluetoothAddress"),
+            assertEquals(setOf("version", "active", "remotePlaybackProof", "cancelRecoveredRetries", "startupStatus", "startupDiagnostics", "networkObservationBackoff", "screenSessionIsolation", "screenReconnectReset", "screenDeliverySerialization", "sendBluetoothAddress", "bluetoothAddress"),
                 json.keys().asSequence().toSet())
             val result = UserConfigCodec.decode(text, base.copy(experimental = ExperimentalOptions.OFF))
             assertTrue(result.errors.toString(), result.errors.isEmpty())
@@ -428,7 +429,7 @@ class UserConfigCodecTest {
             val result = decode(JSONObject().put("experimental", value))
             assertEquals(mapOf("experimental" to "invalid"), result.errors)
         }
-        for (key in listOf("remotePlaybackProof", "cancelRecoveredRetries", "startupStatus", "startupDiagnostics", "networkObservationBackoff", "active", "rememberSubscription", "keepScanning", "recordAdvertisements", "sendBluetoothAddress", "bluetoothAddress",
+        for (key in listOf("remotePlaybackProof", "cancelRecoveredRetries", "startupStatus", "startupDiagnostics", "networkObservationBackoff", "screenSessionIsolation", "screenReconnectReset", "screenDeliverySerialization", "active", "rememberSubscription", "keepScanning", "recordAdvertisements", "sendBluetoothAddress", "bluetoothAddress",
             "isolateCarlinkNetwork", "waitForCarlink", "recoverWirelessNetwork")) {
             val result = decode(JSONObject().put("experimental", JSONObject().put(key, 1)).put("autoStartOnBoot", true))
             assertEquals(mapOf("experimental.$key" to "invalid"), result.errors)
@@ -446,4 +447,19 @@ class UserConfigCodecTest {
         assertFalse(parked.settings.experimental.effective().sendBluetoothAddress)
     }
 
+
+    @Test fun existingVersionTwoFilesEnableMissingScreenOptionsAndPreserveExplicitChoices() {
+        val old = decode(JSONObject().put("experimental", JSONObject().put("version", 2).put("active", true)))
+        assertTrue(old.errors.isEmpty())
+        assertTrue(old.settings.experimental.screenSessionIsolation && old.settings.experimental.screenReconnectReset &&
+            old.settings.experimental.screenDeliverySerialization)
+        for (bits in 0..7) {
+            val options = ExperimentalOptions(screenSessionIsolation = bits and 1 != 0,
+                screenReconnectReset = bits and 2 != 0, screenDeliverySerialization = bits and 4 != 0)
+            val chosen = base.copy(experimental = options)
+            val result = UserConfigCodec.decode(UserConfigCodec.encode(chosen, DeveloperOverrides(), meta), base)
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            assertEquals(options, result.settings.experimental)
+        }
+    }
 }

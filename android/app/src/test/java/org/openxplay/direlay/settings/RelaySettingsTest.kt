@@ -774,7 +774,7 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { migrated ->
             val value = migrated.load()
             assertTrue(value.experimental.active)
-            assertEquals(5, value.experimental.optionCount)
+            assertEquals(8, value.experimental.optionCount)
             assertTrue(value.experimental.effective().keepScanning)
             assertFalse(value.experimental.sendBluetoothAddress)
             migrated.save(value.copy(experimental = value.experimental.copy(active = false, startupDiagnostics = false)))
@@ -785,4 +785,28 @@ class RelaySettingsTest {
         }
     }
 
+
+    @Test fun screenExperimentsDefaultOnForExistingVersionTwoAndPersistEachChoice() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        prefs.edit().putInt("experimental.version", 2).putBoolean("experimental.active", true).commit()
+        RelaySettingsStore(context).use { upgraded ->
+            val defaults = upgraded.load().experimental
+            assertTrue(defaults.screenSessionIsolation && defaults.screenReconnectReset && defaults.screenDeliverySerialization)
+            for (bits in 0..7) {
+                val choice = defaults.copy(screenSessionIsolation = bits and 1 != 0,
+                    screenReconnectReset = bits and 2 != 0, screenDeliverySerialization = bits and 4 != 0)
+                upgraded.save(upgraded.load().copy(experimental = choice))
+                RelaySettingsStore(context).use { restarted -> assertEquals(choice, restarted.load().experimental) }
+            }
+        }
+        prefs.edit().putBoolean("experimental.active", false)
+            .remove("experimental.screenSessionIsolation").remove("experimental.screenReconnectReset")
+            .remove("experimental.screenDeliverySerialization").commit()
+        RelaySettingsStore(context).use { restarted ->
+            val options = restarted.load().experimental
+            assertFalse(options.active)
+            assertTrue(options.screenSessionIsolation && options.screenReconnectReset && options.screenDeliverySerialization)
+            assertFalse(options.effective().screenSessionIsolation)
+        }
+    }
 }

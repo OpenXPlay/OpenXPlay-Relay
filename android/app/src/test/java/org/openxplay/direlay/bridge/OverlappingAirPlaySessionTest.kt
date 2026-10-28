@@ -221,4 +221,37 @@ class OverlappingAirPlaySessionTest {
             } finally { peer.close() }
         }
     }
+
+    @Test fun savedExperimentChoicesAndMasterControlTheActualBridgeLifecycle() {
+        for (active in listOf(false, true)) for (bits in 0..7) {
+            val choices = org.openxplay.direlay.settings.ExperimentalOptions(active = active,
+                screenSessionIsolation = bits and 1 != 0, screenReconnectReset = bits and 2 != 0,
+                screenDeliverySerialization = bits and 4 != 0)
+            DiPlayInput().use { input ->
+                val capture = CapturingInputSink()
+                input.start(configuration, capture)
+                val bridge = StreamBridgeSink(input, object : MediaSink {}, SessionControl { true })
+                val engine = CarPlayMediaEngine(bridge, screenSessionPolicy = choices.toScreenSessionPolicy())
+                val old = session(engine)
+                val fresh = session(engine)
+                try {
+                    val previous = screen(engine, old, 1L)
+                    previous.onCodec(VideoCodec.H264)
+                    previous.onConfig(avcConfig)
+                    val before = capture.states.last().id
+                    val current = screen(engine, fresh, 2L)
+                    current.onCodec(VideoCodec.H264)
+                    current.onConfig(avcConfig)
+                    assertEquals(choices.toString(), active && choices.screenReconnectReset,
+                        before != capture.states.last().id)
+                    old.close()
+                    val protected = active && (choices.screenSessionIsolation || choices.screenReconnectReset)
+                    assertEquals(choices.toString(), if (protected) SessionPhase.ACTIVE else SessionPhase.ENDED,
+                        capture.states.last().phase)
+                    current.onFrame(hex("00 00 01 65 88"))
+                    assertEquals(choices.toString(), if (protected) 1 else 0, capture.frames.size)
+                } finally { old.close(); fresh.close() }
+            }
+        }
+    }
 }

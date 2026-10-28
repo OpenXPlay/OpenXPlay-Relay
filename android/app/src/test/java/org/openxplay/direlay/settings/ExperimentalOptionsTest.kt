@@ -14,14 +14,15 @@ class ExperimentalOptionsTest {
     @Test fun newLaboratoryOptionsDefaultOnAndPromotedFeaturesSurviveMasterOff() {
         val defaults = ExperimentalOptions()
         assertTrue(defaults.active); assertFalse(defaults.sendBluetoothAddress)
-        assertEquals(5, defaults.optionCount)
+        assertEquals(8, defaults.optionCount)
         assertEquals(ExperimentalOptions.OFF, defaults.copy(active = false).effective())
         val disabled = selected.copy(active = false).effective()
         assertEquals(ExperimentalOptions.OFF, disabled)
         assertEquals(6, disabled.names().size)
         assertTrue(disabled.recoverWirelessNetwork && disabled.keepScanning && disabled.waitForCarlink)
         assertFalse(disabled.remotePlaybackProof || disabled.cancelRecoveredRetries || disabled.startupStatus ||
-            disabled.startupDiagnostics || disabled.networkObservationBackoff || disabled.sendBluetoothAddress)
+            disabled.startupDiagnostics || disabled.networkObservationBackoff || disabled.screenSessionIsolation ||
+            disabled.screenReconnectReset || disabled.screenDeliverySerialization || disabled.sendBluetoothAddress)
         assertEquals(selected.effective(), selected.copy(active = false).copy(active = true).effective())
     }
 
@@ -36,7 +37,7 @@ class ExperimentalOptionsTest {
         assertTrue(invalid.effective().recordAdvertisements)
         assertFalse(invalid.copy(active = false).invalidAddress)
         assertFalse(invalid.copy(sendBluetoothAddress = false).invalidAddress)
-        assertEquals(12, selected.effective().names().size)
+        assertEquals(15, selected.effective().names().size)
     }
 
     @Test fun addressRequiresSixHexUnicastOctetsAndRejectsHiddenAndZeroAddresses() {
@@ -55,5 +56,19 @@ class ExperimentalOptionsTest {
         assertTrue(enabled.rememberSubscription && enabled.keepScanning && enabled.recordAdvertisements &&
             enabled.isolateCarlinkNetwork && enabled.waitForCarlink && enabled.recoverWirelessNetwork)
         assertFalse(old.effective(carlinkTrace = false).recordAdvertisements)
+    }
+
+    @Test fun screenExperimentsRemainIndependentAndRespectTheMaster() {
+        for (bits in 0..7) {
+            val selected = ExperimentalOptions(screenSessionIsolation = bits and 1 != 0,
+                screenReconnectReset = bits and 2 != 0, screenDeliverySerialization = bits and 4 != 0)
+            val enabled = selected.effective()
+            assertEquals(selected.screenSessionIsolation, enabled.screenSessionIsolation)
+            assertEquals(selected.screenReconnectReset, enabled.screenReconnectReset)
+            assertEquals(selected.screenDeliverySerialization, enabled.screenDeliverySerialization)
+            val disabled = selected.copy(active = false).effective()
+            assertFalse(disabled.screenSessionIsolation || disabled.screenReconnectReset || disabled.screenDeliverySerialization)
+            assertEquals(enabled, selected.copy(active = false).copy(active = true).effective())
+        }
     }
 }

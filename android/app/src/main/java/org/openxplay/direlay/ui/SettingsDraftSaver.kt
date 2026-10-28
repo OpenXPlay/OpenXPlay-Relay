@@ -83,6 +83,9 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBoolean("experimental.startupStatus", value.experimental.startupStatus)
         putBoolean("experimental.startupDiagnostics", value.experimental.startupDiagnostics)
         putBoolean("experimental.networkObservationBackoff", value.experimental.networkObservationBackoff)
+        putBoolean("experimental.screenSessionIsolation", value.experimental.screenSessionIsolation)
+        putBoolean("experimental.screenReconnectReset", value.experimental.screenReconnectReset)
+        putBoolean("experimental.screenDeliverySerialization", value.experimental.screenDeliverySerialization)
         putBoolean("experimental.rememberSubscription", value.experimental.rememberSubscription)
         putBoolean("experimental.keepScanning", value.experimental.keepScanning)
         putBoolean("experimental.recordAdvertisements", value.experimental.recordAdvertisements)
@@ -123,6 +126,9 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         startupStatus = bundle.getBoolean("experimental.startupStatus", base.experimental.startupStatus),
         startupDiagnostics = bundle.getBoolean("experimental.startupDiagnostics", base.experimental.startupDiagnostics),
         networkObservationBackoff = bundle.getBoolean("experimental.networkObservationBackoff", base.experimental.networkObservationBackoff),
+        screenSessionIsolation = bundle.getBoolean("experimental.screenSessionIsolation", base.experimental.screenSessionIsolation),
+        screenReconnectReset = bundle.getBoolean("experimental.screenReconnectReset", base.experimental.screenReconnectReset),
+        screenDeliverySerialization = bundle.getBoolean("experimental.screenDeliverySerialization", base.experimental.screenDeliverySerialization),
         rememberSubscription = bundle.getBoolean("experimental.rememberSubscription", base.experimental.rememberSubscription),
         keepScanning = bundle.getBoolean("experimental.keepScanning", base.experimental.keepScanning),
         recordAdvertisements = bundle.getBoolean("experimental.recordAdvertisements", base.experimental.recordAdvertisements),

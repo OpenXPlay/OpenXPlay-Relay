@@ -51,7 +51,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  * - Legacy fps is ignored. Without frameRate, developer.fpsEnabled=true and a valid
  *   developer.fps migrate to frameRate; otherwise both developer keys are ignored.
  * - experimental: version=2; active, remotePlaybackProof, cancelRecoveredRetries, startupStatus,
- *   startupDiagnostics, networkObservationBackoff and sendBluetoothAddress are booleans;
+ *   startupDiagnostics, networkObservationBackoff, screenSessionIsolation, screenReconnectReset,
+ *   screenDeliverySerialization and sendBluetoothAddress are booleans;
  *   bluetoothAddress is a user-entered unicast Bluetooth address. Retired booleans are ignored.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
  * Android aliases: iphoneConnection, mfiI2cPath, mfiRemoteServer and hotspot*.
@@ -174,6 +175,9 @@ object UserConfigCodec {
         .put("startupStatus", e.startupStatus)
         .put("startupDiagnostics", e.startupDiagnostics)
         .put("networkObservationBackoff", e.networkObservationBackoff)
+        .put("screenSessionIsolation", e.screenSessionIsolation)
+        .put("screenReconnectReset", e.screenReconnectReset)
+        .put("screenDeliverySerialization", e.screenDeliverySerialization)
         .put("sendBluetoothAddress", e.sendBluetoothAddress)
         .put("bluetoothAddress", e.bluetoothAddress)
 
@@ -309,6 +313,9 @@ object UserConfigCodec {
                             "startupStatus" -> e.copy(startupStatus = objectValue.bool(field))
                             "startupDiagnostics" -> e.copy(startupDiagnostics = objectValue.bool(field))
                             "networkObservationBackoff" -> e.copy(networkObservationBackoff = objectValue.bool(field))
+                            "screenSessionIsolation" -> e.copy(screenSessionIsolation = objectValue.bool(field))
+                            "screenReconnectReset" -> e.copy(screenReconnectReset = objectValue.bool(field))
+                            "screenDeliverySerialization" -> e.copy(screenDeliverySerialization = objectValue.bool(field))
                             "rememberSubscription" -> { objectValue.bool(field); e }
                             "keepScanning" -> { objectValue.bool(field); e }
                             "recordAdvertisements" -> { objectValue.bool(field); e }
