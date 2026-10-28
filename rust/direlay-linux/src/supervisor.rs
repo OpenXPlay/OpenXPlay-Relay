@@ -86,6 +86,7 @@ pub struct SupervisorSettings {
     pub carlink: Option<CarlinkSettings>,
     /// Serve this certificate for its SNI name while both files exist.
     pub pem_tls: Option<PemTls>,
+    pub default_tls: Option<crate::identity::tls::DefaultTls>,
 }
 impl SupervisorSettings {
     pub fn arguments(&self) -> Vec<OsString> {
@@ -116,6 +117,14 @@ impl SupervisorSettings {
                     pem.key.as_os_str().into(),
                     "--tls-name".into(),
                     pem.name.clone().into(),
+                ]);
+            }
+            if let Some(base) = &self.default_tls {
+                args.extend([
+                    "--tls-default-cert".into(),
+                    base.cert.as_os_str().into(),
+                    "--tls-default-key".into(),
+                    base.key.as_os_str().into(),
                 ]);
             }
             args.extend([
@@ -694,11 +703,25 @@ impl RelaySupervisor {
         sans: Vec<Ipv4Addr>,
         timeout: Duration,
     ) -> io::Result<()> {
+        self.update_web_tls_with_default(pem, sans, self.web_tls.settings().default_tls, timeout)
+    }
+    pub fn update_web_tls_with_default(
+        &self,
+        pem: Option<PemTls>,
+        sans: Vec<Ipv4Addr>,
+        default_tls: Option<crate::identity::tls::DefaultTls>,
+        timeout: Duration,
+    ) -> io::Result<()> {
         let control = self.control.lock().unwrap();
         let pipe = control.as_ref().ok_or(io::ErrorKind::NotConnected)?;
-        let id = self
-            .web_tls
-            .send(pipe, receiver_tls_control::Settings { pem, sans })?;
+        let id = self.web_tls.send(
+            pipe,
+            receiver_tls_control::Settings {
+                pem,
+                sans,
+                default_tls,
+            },
+        )?;
         drop(control);
         self.web_tls.wait(&id, timeout)
     }
@@ -805,6 +828,7 @@ impl RelaySupervisor {
                 let (process_generation, tls) = web_tls.begin_child();
                 let mut launch = settings.clone();
                 launch.pem_tls = tls.pem;
+                launch.default_tls = tls.default_tls;
                 launch.addresses = tls.sans;
                 if let Some(c) = launch.carlink.as_mut() {
                     c.hevc=requested["hevc"].as_str().unwrap_or("off").into();
@@ -1025,6 +1049,7 @@ mod band_tests {
                 addresses: vec![],
                 pairing: false,
                 pem_tls: None,
+                default_tls: None,
                 carlink: Some(CarlinkSettings {
                     ble: None,
                     head_unit: Ipv4Addr::LOCALHOST,
@@ -1304,6 +1329,7 @@ mod tls_tests {
             pairing: false,
             carlink: None,
             pem_tls: None,
+            default_tls: None,
         }
     }
     fn strings(args: Vec<OsString>) -> Vec<String> {
@@ -1433,6 +1459,7 @@ mod tls_tests {
         };
         let with = SupervisorSettings {
             pem_tls: Some(pem.clone()),
+            default_tls: None,
             ..settings(&dir)
         };
         assert_eq!(strings(with.arguments()), legacy);

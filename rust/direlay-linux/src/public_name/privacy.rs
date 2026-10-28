@@ -26,6 +26,7 @@ pub struct Account {
 #[derive(Default)]
 pub struct Import {
     pub config: Option<Config>,
+    pub imported_certificate: Option<crate::identity::tls::Material>,
     pub certificate: Option<Certificate>,
     pub account: Option<Account>,
     pub providers: Option<ProviderSetups>,
@@ -33,6 +34,7 @@ pub struct Import {
 impl Import {
     pub fn sections(&self) -> Vec<String> {
         [
+            ("importedCertificate", self.imported_certificate.is_some()),
             ("publicName", self.config.is_some()),
             ("publicNameCertificate", self.certificate.is_some()),
             ("publicNameAccount", self.account.is_some()),
@@ -55,7 +57,7 @@ fn https(value: &str) -> bool {
     })
 }
 /// PEM decoders must not silently skip text or additional key blocks, as Android rejects those.
-fn strict_pem(value: &str, label: &str, single: bool) -> bool {
+pub(crate) fn strict_pem(value: &str, label: &str, single: bool) -> bool {
     let begin = format!("-----BEGIN {label}-----");
     let end = format!("-----END {label}-----");
     let mut rest = value.trim();
@@ -150,7 +152,7 @@ fn providers(value: &Value) -> Option<ProviderSetups> {
     }
     Some(setups)
 }
-/// Optional sections replace their stores; Android-only identity material is handled by W15.
+/// Optional sections replace their stores; MFi identity files are never included.
 pub fn decode(
     value: &Value,
     current: Option<&Config>,
@@ -187,6 +189,16 @@ pub fn decode(
         import.providers = providers(value);
         if import.providers.is_none() {
             errors.insert("providers".into(), "invalid".into());
+        }
+    }
+    if let Some(value) = value.get("importedCertificate") {
+        import.imported_certificate = value
+            .get("chainPem")
+            .and_then(Value::as_str)
+            .zip(value.get("keyPem").and_then(Value::as_str))
+            .and_then(|(chain, key)| crate::identity::tls::validate(chain, key, Some(now)).ok());
+        if import.imported_certificate.is_none() {
+            errors.insert("importedCertificate".into(), "invalid".into());
         }
     }
     if errors.is_empty() {
@@ -289,12 +301,12 @@ mod tests {
         }
     }
     #[test]
-    fn certificate_can_use_the_enclosed_config_and_identity_sections_are_left_for_w15() {
+    fn public_and_imported_certificates_validate_independently() {
         let mut value = material();
         value["publicName"] = serde_json::from_slice(&config().to_json()).unwrap();
-        value["importedCertificate"] = json!({"anything":"ignored"});
+        value["importedCertificate"] = json!({"chainPem":LEAF,"keyPem":PAD_KEY});
         value["mfiRemoteToken"] = json!("ignored-token");
         let decoded = decode(&value, None, NOW).unwrap_or_else(|e| panic!("{e:?}"));
-        assert_eq!(decoded.sections().len(), 4);
+        assert_eq!(decoded.sections().len(), 5);
     }
 }

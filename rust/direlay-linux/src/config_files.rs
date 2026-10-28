@@ -400,6 +400,7 @@ pub fn plan_envelope(
                     "providers",
                     "publicNameCertificate",
                     "publicNameAccount",
+                    "importedCertificate",
                 ]
                 .contains(&key.as_str())
                 {
@@ -1046,15 +1047,15 @@ mod tests {
     fn privacy_setup_round_trip_and_android_only_material_is_reported() {
         let public = json!({"version":1,"enabled":false,"provider":"dynv6","name":"test.dynv6.net","token":"secret-token","agreeLetsEncryptTerms":true});
         let mut file = export_privacy(json!({"publicName":public}), 1000).unwrap();
-        file["importedCertificate"] = json!({});
+        file["importedCertificate"] = json!({"chainPem":crate::public_name::cert::tests::LEAF,"keyPem":crate::public_name::jws::tests::PAD_KEY});
         file["mfiRemoteToken"] = json!("ignored");
         let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&p.privacy.unwrap().config.unwrap().to_json()).unwrap(),
             public
         );
-        assert_eq!(p.report.applied, ["publicName"]);
-        assert_eq!(p.report.ignored, ["importedCertificate", "mfiRemoteToken"]);
+        assert_eq!(p.report.applied, ["importedCertificate", "publicName"]);
+        assert_eq!(p.report.ignored, ["mfiRemoteToken"]);
         assert!(!p.report.restart_needed);
     }
     #[test]

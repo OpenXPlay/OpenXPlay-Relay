@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
+import { mountIdentity, IdentitySelection } from './identity';
 import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRecommended, displayPresets, displayPresetsView } from './car-screen';
 import { teslaHint, teslaNotes } from './tesla';
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
@@ -61,6 +62,7 @@ let handoff: { action: 'forget'; ssid: string; error?: string } | null = null;
 let networks: WifiNetwork[] = [];
 let switching: { target: string; consequences: ReturnType<typeof switchConsequences>; started: number } | null = null;
 let networkAnnouncement = '';
+const identitySelection = new IdentitySelection();
 let disposeFeature: (() => void) | undefined;
 let needsRestart = false;
 let networkError = '';
@@ -105,7 +107,7 @@ function resetSession(next: SessionState) {
   epoch++;
   for (const item of pending.values()) clearTimeout(item.timer);
   videoStats.reset();
-  needsRestart = false; drafts.clear(); pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null; publicNameBusy = false; publicNameMessage = '';
+  identitySelection.clear(); needsRestart = false; drafts.clear(); pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null; publicNameBusy = false; publicNameMessage = '';
   publicNameDrafts = new PublicNameDrafts(); publicNameWrite = null;
   document.querySelectorAll('dialog').forEach(dialog => { dialog.close(); dialog.remove(); });
   session = next; actionBusy = false; render();
@@ -201,6 +203,8 @@ function renderReady() {
     const master = pageFields(settings!, route);
     patchMarkup(container, `<div class="inset-group">${master.map(fieldMarkup).join('')}</div><div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
     master.forEach(bindField);
+  } else if (route === 'settings/identity' && status!.platform === 'linux') {
+    disposeFeature = mountIdentity(container, identitySelection, t, errorKey, async () => { status = await api.status(); });
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
     disposeFeature = mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {

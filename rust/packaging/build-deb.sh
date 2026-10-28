@@ -111,7 +111,7 @@ Version: $debversion
 Architecture: arm64
 Maintainer: OpenXPlay.org <support@openxplay.org>
 Installed-Size: $size
-Depends: bluez, network-manager, iw, dnsmasq-base, init-system-helpers (>= 1.54)
+Depends: bluez, network-manager, iw, dnsmasq-base, openssl, init-system-helpers (>= 1.54)
 Section: net
 Priority: optional
 Homepage: https://openxplay.org
@@ -138,7 +138,7 @@ cat > "$out/$name.manifest.json" <<EOF
   "writes": "files",
   "file": "$name.deb",
   "sha256": "$digest",
-  "requires": {"dpkgArchitecture": "arm64", "packages": ["bluez", "network-manager", "iw", "dnsmasq-base", "init-system-helpers"]},
+  "requires": {"dpkgArchitecture": "arm64", "packages": ["bluez", "network-manager", "iw", "dnsmasq-base", "openssl", "init-system-helpers"]},
   "deviceDir": "/var/cache/openxplay/relay",
   "firstInstall": "dpkg -i /var/cache/openxplay/relay/$name.deb",
   "install": "openxplay-relay-update --sha256 $digest /var/cache/openxplay/relay/$name.deb",

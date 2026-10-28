@@ -151,18 +151,17 @@ impl Options {
         let settings =
             Settings::load_with_defaults(&state, &host_profile.profile.settings_defaults())?;
         let mut options = Self {
-            state_dir: state,
+            state_dir: state.clone(),
             wifi_interface: settings.wifi_interface.clone(),
             wifi_channel: settings.hotspot_channel,
             iphone: settings.iphone.clone(),
             rfcomm_channel: settings.rfcomm_channel,
             pair_seconds: None,
-            identity_dir: path(
-                values
-                    .get("--identity-dir")
-                    .map(String::as_str)
-                    .unwrap_or("/var/lib/openxplay/mfi"),
-            )?,
+            identity_dir: values
+                .get("--identity-dir")
+                .map(|value| path(value))
+                .transpose()?
+                .unwrap_or_else(|| state.join("mfi")),
             stream_socket: path(
                 values
                     .get("--stream-socket")

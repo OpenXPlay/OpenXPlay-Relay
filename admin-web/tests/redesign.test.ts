@@ -48,7 +48,7 @@ describe('settings placement', () => {
   });
 });
 describe('stage action mapping', () => {
-  const unavailable: StepAction[] = ['IMPORT_IDENTITY', 'GRANT_PERMISSIONS', 'KEEP_ALIVE_SETTINGS', 'TURN_ON_BLUETOOTH', 'OPEN_WIFI', 'CHOOSE_RENDERER', 'OPEN_CAST'];
+  const unavailable: StepAction[] = ['GRANT_PERMISSIONS', 'KEEP_ALIVE_SETTINGS', 'TURN_ON_BLUETOOTH', 'OPEN_WIFI', 'CHOOSE_RENDERER', 'OPEN_CAST'];
   it.each(['android', 'linux'] as const)('maps every action, including unsupported browser actions (%s)', platform => {
     for (const action of actions) expect(stepCommand(action, platform) === null).toBe(unavailable.includes(action) || platform === 'android' && action === 'OPEN_HOTSPOT');
     for (const [action, endpoint] of [['START_NOW', 'actions/start'], ['RETRY', 'actions/restart'], ['PAIR_IPHONE', 'actions/pair-iphone'], ['RECONNECT_CARLINK', 'carlink/connect']] as const) expect(stepCommand(action, platform)).toEqual({ kind: 'api', endpoint });

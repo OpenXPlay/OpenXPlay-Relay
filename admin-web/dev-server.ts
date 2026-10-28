@@ -237,6 +237,7 @@ export function mockApi(linux = false): Plugin {
   const logJobs = new Map<string, { job: import('./src/logs-page').LogJob; started: number }>();
   let latestReceipt: import('./src/feature-pages').LogReceipt | null = null;
   let privacyConfig: Record<string, unknown> = {};
+  let identity = structuredClone(linuxFixtureStatus('idle').identity ?? { mfi: { state: 'MISSING', fingerprint: null }, tls: { state: 'MISSING', fingerprint: null, imported: false } });
   const exports = new Map<string, { data: Buffer; createdMillis: number }>();
   let traceLines = [...traceSamples];
   let capturing = false;
@@ -298,6 +299,16 @@ export function mockApi(linux = false): Plugin {
         res.setHeader('Set-Cookie', `direlay=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`);
         send(200, { ok: true });
       };
+      if (linux && path === '/identity' && method === 'GET') return send(200, identity);
+      if (linux && ['/identity', '/tls'].includes(path) && method === 'DELETE') {
+        if (body.confirm !== true) return send(422, { error: 'error.invalid' });
+        if (path === '/identity') identity.mfi = { state: 'MISSING', fingerprint: null };
+        else { identity.tls = { state: 'MISSING', fingerprint: null, imported: false }; delete privacyConfig.importedCertificate; }
+        return send(200, identity);
+      }
+      // Crypto validation belongs to the real relay; the mock exercises the rejection UI.
+      if (linux && path === '/identity/import' && method === 'POST') return body.cancel === true ? send(200, { ok: true }) : send(422, { error: 'identity_error_pair' });
+      if (linux && path === '/tls/import' && method === 'POST') return send(422, { error: 'identity_error_tls' });
       if (path === '/session' && method === 'GET') { if (preview) { previewPathEpoch = Date.now(); if (previewState === 'carlink-pin') { pinDeadline = Date.now() / 1000 + 120; pinAccepted = false; } } return send(200, { state: ready ? 'ready' : 'login', defaultPassword }); }
       if (path === '/login' && method === 'POST') {
         const address = req.socket.remoteAddress ?? 'local'; const now = Date.now();
@@ -620,7 +631,7 @@ export function mockApi(linux = false): Plugin {
         }
         if (linux) { const facts = mockNetwork(result.network.mode); const roles = settings.values.networkRoles as import('./src/schema').NetworkRolesSetting; if (roles?.mode === 'custom') { facts.plan!.source = 'custom'; if (roles.iphone) facts.plan!.iphone.link = roles.iphone.link; if (roles.adminHotspot) Object.assign(facts.plan!.adminHotspot, roles.adminHotspot); } if (facts.country) facts.country.configured = String(settings.values.wifiCountry || 'system'); result.network = { ...facts, ...result.network }; result.adminHotspot = { state: roles?.adminHotspot?.enabled ? 'up' : 'off', reason: null }; }
         result.pathInput = linux ? linuxFixtureStatus(preview ? previewState : running ? 'live-browser' : 'idle').pathInput : mockPathInput(result, preview ? previewState : '', Date.now(), previewPathEpoch);
-        if (linux) result.adminFeatures = ['logs', 'config-files', 'update-check'];
+        if (linux) { result.adminFeatures = ['logs', 'config-files', 'update-check', 'identity']; result.identity = structuredClone(identity); if (result.pathInput) { result.pathInput.relay!.identity = identity.mfi.state === 'READY' ? 'READY' : 'MISSING'; result.pathInput.relay!.identityLabel = identity.mfi.state; } }
         if (previewState === 'pairing' && preview) pairingDeadline ??= Date.now() / 1000 + 600;
         if (previewState === 'carlink-pin' && preview && !pinAccepted) { result.output = 'carlink'; result.carlink = { state: 'authenticating', detail: '', trusted: false, pinRequested: true, pinDeadline, pinRequest: 17, pinConfirmation: false, generation: 1 }; }
         result.pairingDeadline = pairingDeadline && pairingDeadline > Date.now() / 1000 ? pairingDeadline : null;

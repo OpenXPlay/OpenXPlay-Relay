@@ -14,6 +14,7 @@ use std::{
 #[derive(Clone)]
 pub(super) struct Settings {
     pub pem: Option<PemTls>,
+    pub default_tls: Option<crate::identity::tls::DefaultTls>,
     pub sans: Vec<Ipv4Addr>,
 }
 struct Pending {
@@ -41,6 +42,7 @@ impl WebTlsControl {
                 connected: false,
                 settings: Settings {
                     pem: settings.pem_tls.clone(),
+                    default_tls: settings.default_tls.clone(),
                     sans: settings.addresses.clone(),
                 },
                 pending: None,
@@ -101,7 +103,15 @@ impl WebTlsControl {
         let sans: Vec<_> = std::iter::once("openxplay-linux.local".to_owned())
             .chain(settings.sans.iter().map(ToString::to_string))
             .collect();
-        let request = json!({"type":"web-tls","id":id,"trusted":trusted,"sans":sans});
+        let mut request = json!({"type":"web-tls","id":id,"trusted":trusted,"sans":sans});
+        // W15: optional default material is separate from trusted SNI and generated SANs.
+        if settings.default_tls.is_some() || state.settings.default_tls.is_some() {
+            request["default"] = settings
+                .default_tls
+                .as_ref()
+                .map(|base| json!({"cert":base.cert,"key":base.key}))
+                .unwrap_or(Value::Null);
+        }
         state.pending = Some(Pending {
             id: id.clone(),
             settings,
@@ -130,7 +140,15 @@ impl WebTlsControl {
         let pending = state.pending.take().unwrap();
         let reply = pending.reply.ok_or(io::ErrorKind::TimedOut)?;
         let expected_name = json!(pending.settings.pem.as_ref().map(|pem| pem.name.as_str()));
-        if reply["applied"] != true
+        let default_matches = if let Some(base) = &pending.settings.default_tls {
+            reply["defaultFingerprint"].as_str() == Some(&base.fingerprint)
+        } else if state.settings.default_tls.is_some() {
+            reply.get("defaultFingerprint") == Some(&Value::Null)
+        } else {
+            true
+        };
+        if !default_matches
+            || reply["applied"] != true
             || reply.get("error").is_some()
             || reply.get("trustedName") != Some(&expected_name)
         {
