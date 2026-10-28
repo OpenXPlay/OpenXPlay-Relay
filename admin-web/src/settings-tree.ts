@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
+import { updateMenuVersion } from './update-check';
 import { isVisible, optionLabel, type Field, type Settings } from './schema';
 import type { Status } from './api';
 import type { Language } from './i18n';
@@ -81,7 +82,7 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
     const options = all.filter(f => f.key.startsWith('experimental') && f.key !== 'experimentalActive' && f.type === 'bool' && v[f.key]).length;
     return options ? `${t('stage.on')} · ${options} ${t('menu.options')}` : t('stage.on');
   }
-  if (route === 'settings/about') return status.version;
+  if (route === 'settings/about') return updateMenuVersion(status.version, t);
   if (route === 'settings/developer/carlink') return [label('carlinkHevc'), label('carlinkTrace')].filter(Boolean).join(' · ');
   if (route === 'settings/developer/connection') return [label('output'), t(v.transport === 'usb' ? 'option.transport.usb' : 'option.transport.wireless')].filter(Boolean).join(' · ');
   if (route === 'settings/developer/video') return v.displayMode === 'custom' ? `${v.displayWidth} × ${v.displayHeight} · ${v.displayDensity} dpi` : label('displayMode');

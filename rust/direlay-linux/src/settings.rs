@@ -60,6 +60,7 @@ pub struct Settings {
     pub car_model: String,
     pub car_model_text: String,
     pub car_year: String,
+    pub car_year_text: String,
     pub experimental_active: bool,
     pub experimental_send_bluetooth_address: bool,
     pub experimental_bluetooth_address: String,
@@ -124,6 +125,7 @@ impl Default for Settings {
             car_model: String::new(),
             car_model_text: String::new(),
             car_year: String::new(),
+            car_year_text: String::new(),
             experimental_active: true,
             experimental_send_bluetooth_address: false,
             experimental_bluetooth_address: String::new(),
@@ -300,6 +302,7 @@ impl Settings {
             &self.car_model,
             &self.car_model_text,
             &self.car_year,
+            &self.car_year_text,
         ] {
             if text.chars().count() > 128 || text.chars().any(char::is_control) {
                 return Err(invalid("Invalid car selection"));

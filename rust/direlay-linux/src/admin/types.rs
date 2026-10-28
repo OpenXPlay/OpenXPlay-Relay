@@ -509,6 +509,10 @@ pub trait RelayAdmin: Send + Sync + 'static {
     ) -> Result<Value, BTreeMap<String, String>> {
         Err(BTreeMap::from([("file".into(), "unsupported".into())]))
     }
+    /// Manual checks bypass the shared feed cache; channel changes may reuse it.
+    fn update_check_fresh(&self, channel: &str, _fresh: bool) -> Result<Value, &'static str> {
+        self.update_check(channel)
+    }
     fn update_check(&self, _channel: &str) -> Result<Value, &'static str> {
         Err("offline")
     }

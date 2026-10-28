@@ -17,6 +17,7 @@ import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, ro
 import { mountPictureField } from './picture-sizes';
 import { COUNTRY_CODES } from './wifi-countries';
 import { mountFeaturePage } from './feature-pages';
+import { updates } from './update-check';
 import { connectionsView, editConnections } from './connections';
 import type { NetworkRolesSetting } from './schema';
 import { mountTrace, traceFilters, traceVisible } from './carlink-trace';
@@ -57,6 +58,7 @@ let handoff: { action: 'forget'; ssid: string; error?: string } | null = null;
 let networks: WifiNetwork[] = [];
 let switching: { target: string; consequences: ReturnType<typeof switchConsequences>; started: number } | null = null;
 let networkAnnouncement = '';
+let disposeFeature: (() => void) | undefined;
 let needsRestart = false;
 let networkError = '';
 let status: Status | null = null;
@@ -117,6 +119,7 @@ function shell() {
 }
 function render() {
   stage?.destroy(); stage = null; clearInterval(visibleTimer); visibleTimer = undefined;
+  disposeFeature?.(); disposeFeature = undefined;
   disposeTrace?.(); disposeTrace = null;
   shell();
   if (switching) renderSwitching();
@@ -163,7 +166,7 @@ function renderConnections() {
 }
 function menuRow(target: string, title: string, summary = '', name = 'settings'): string {
   const error = fields().filter(f => fieldRoute(f.key) === target || fieldRoute(f.key).startsWith(target + '/')).some(f => { const message = feedback.get(f.key); return !!message && !message.startsWith('ui.'); });
-  return `<a class="inset-row menu-row" href="#${target}"><span class="icon-tile hue-${name}">${icon(name)}</span><span class="row-copy"><span>${esc(t(title))}</span>${summary ? `<small class="muted">${esc(summary)}</small>` : ''}</span>${error ? `<span class="error" aria-label="${t('error.invalid')}">!</span>` : ''}<span aria-hidden="true">›</span></a>`;
+  return `<a class="inset-row menu-row" href="#${target}"><span class="icon-tile hue-${name}">${icon(name)}</span><span class="row-copy"><span>${esc(t(title))}</span>${summary ? `<small class="${target === 'settings/about' && updates.result?.outcome === 'available' ? 'notice' : 'muted'}">${esc(summary)}</small>` : ''}</span>${error ? `<span class="error" aria-label="${t('error.invalid')}">!</span>` : ''}<span aria-hidden="true">›</span></a>`;
 }
 function pageSummary(target: string): string { return menuSummary(settings!, status!, target, language, t); }
 function editorField(field: Field): Field {
@@ -192,7 +195,7 @@ function renderReady() {
   } else if (route === 'settings/developer') {
     patchMarkup(container, `<div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
-    mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
+    disposeFeature = mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {
     if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
@@ -965,3 +968,5 @@ on(document, 'keydown', event => {
 });
 enhanceSheets(() => t('ui.close'));
 render(); void tick(); setInterval(() => void tick(), 2000);
+
+updates.subscribe(() => { if (session === 'ready' && route === 'settings') render(); });

@@ -103,13 +103,13 @@ export class ApiError extends Error {
 }
 export class NetworkError extends Error {}
 export const events = new EventTarget();
-export async function request<T>(path: string, method = 'GET', body?: unknown, retry = true, timeoutMillis = 8000): Promise<T> {
+export async function request<T>(path: string, method = 'GET', body?: unknown, retry = true, timeoutMillis = 8000, rawJson = false): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/api/v0${path}`, {
       method, credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(timeoutMillis),
       headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-OpenXPlay-Admin': '1' },
-      ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }),
+      ...(method === 'GET' ? {} : { body: rawJson ? String(body) : JSON.stringify(body ?? {}) }),
     });
   } catch {
     events.dispatchEvent(new Event('offline'));
@@ -131,8 +131,8 @@ export const api = {
   logExport: (range: '10m' | '30m' | '24h') => request<import('./feature-pages').LogExport>('/logs/export', 'POST', { range }, false, 60000),
   logUpload: (id: string) => request<import('./feature-pages').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
   logReceipt: () => request<import('./feature-pages').LogReceipt>('/logs/receipt', 'GET', undefined, false),
-  configImport: (envelope: unknown, dryRun = false) => request<import('./feature-pages').ConfigImport>('/config/import' + (dryRun ? '?dryRun=1' : ''), 'POST', envelope, false),
-  updateCheck: async (channel: 'stable' | 'beta') => { const result = await request<import('./feature-pages').UpdateCheck | { error: string }>('/update?channel=' + channel, 'GET', undefined, false, 15000); if ('error' in result) throw new ApiError(503, result.error); return result; },
+  configImport: (envelope: unknown, dryRun = false) => request<import('./feature-pages').ConfigImport>('/config/import' + (dryRun ? '?dryRun=1' : ''), 'POST', envelope, false, 8000, typeof envelope === 'string'),
+  updateCheck: async (channel: 'stable' | 'beta') => { const result = await request<import('./update-check').UpdateResponse | { error: string }>('/update?channel=' + channel + '&fresh=1', 'GET', undefined, false, 45000); if ('error' in result) throw new ApiError(503, result.error); return result; },
   previewRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles/preview', 'POST', { networkRoles, ...extra }, false),
   saveRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles, ...extra }, false),
   session: () => request<Session>('/session'),
