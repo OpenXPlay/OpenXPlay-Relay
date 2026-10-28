@@ -292,7 +292,13 @@ it.each([false, true])('exports valid log ZIPs, retains a receipt and previews b
   expect((await call('/logs/receipt')).status).toBe(404);
   const file = await call('/logs/export', 'POST', { range: '10m' }); expect(file.data).toMatchObject({ bytes: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   const zip = await call('/logs/export/' + file.data.id); expect(zip.headers['Content-Type']).toBe('application/zip'); expect(Buffer.from(zip.data).readUInt32LE()).toBe(0x04034b50); expect(Buffer.from(zip.data).toString()).toContain('timeline.txt');
-  const receipt = await call('/logs/upload', 'POST', { id: file.data.id }); expect(receipt.data).toMatchObject({ logId: expect.any(String), expiresMillis: expect.any(Number) }); expect((await call('/logs/receipt')).data).toEqual(receipt.data);
+  let receipt = await call('/logs/upload', 'POST', { id: file.data.id });
+  if (linux) {
+    expect(receipt.data).toMatchObject({ id: expect.any(String), phase: 'Connecting', state: 'running', receipt: null });
+    const time = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 4000);
+    try { receipt = { ...receipt, data: (await call('/logs/upload/' + receipt.data.id)).data.receipt }; } finally { time.mockRestore(); }
+  }
+  expect(receipt.data).toMatchObject({ logId: expect.any(String), expiresMillis: expect.any(Number) }); expect((await call('/logs/receipt')).data).toEqual(receipt.data);
   const png = await call('/logs/qr.png'); expect(Buffer.from(png.data).slice(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   const envelope = (await call('/config/user')).data; expect(envelope.format).toBe('openxplay-user-config');
   envelope.settings.autoStart = false; envelope.settings.futureSetting = true;

@@ -873,6 +873,7 @@ impl LinuxRelayAdmin {
                     timeline_events.log(&summary);
                 }
             }
+            timeline_events.log_observation(event["type"].as_str().unwrap_or(""), &event);
             if receiver_event(&receivers, &event) {
                 return;
             }
@@ -1627,6 +1628,14 @@ impl LinuxRelayAdmin {
         if self.runtime.inventory_refresh == InventoryRefresh::Automatic {
             self.inventory.refresh();
         }
+        let inventory = self.inventory.get();
+        let interfaces: Vec<_> = inventory.interfaces.iter().map(|interface| serde_json::json!({
+            "interface":interface.name, "address":interface.mac, "state":interface.operstate,
+            "ipv4":interface.ipv4, "activity":interface.activity
+        })).collect();
+        self.events.log_observation("network-observed", &serde_json::json!({
+            "interfaces":interfaces, "bluetooth":self.capabilities.get().and_then(|caps| caps.adapters)
+        }));
         self.apply_public_name();
         let playing = self.carlink.lock().unwrap().state == "playing";
         if self.input.display.lock().unwrap().resize.reconnect(playing) {
@@ -2716,11 +2725,9 @@ impl LinuxRelayAdmin {
         let settings = self.settings.lock().unwrap().clone();
         let mut known: Vec<(String, &str)> = Vec::new();
         for network in &settings.shared_wifi_networks {
-            known.push((network.ssid.clone(), "name"));
             known.push((network.password.clone(), "secret"));
         }
         if let Some(hotspot) = status.hotspot {
-            known.push((hotspot.ssid, "name"));
             known.push((hotspot.password, "secret"));
         }
         for device in status.paired_devices {
@@ -2746,7 +2753,6 @@ impl LinuxRelayAdmin {
                     Some((lines.next()?.into(), lines.next()?.into()))
                 });
             if let Some((ssid, password)) = credentials {
-                known.push((ssid, "name"));
                 known.push((password, "secret"));
             }
         }
@@ -2754,18 +2760,12 @@ impl LinuxRelayAdmin {
             if key.contains("password") || key.contains("token") {
                 known.push((value.clone(), "secret"));
             }
-            if key.contains("ssid") {
-                known.push((value.clone(), "name"));
-            }
         }
         if let Some((public, _)) =
             crate::public_name::config::load(&self.options.state_dir.join("public-name.json"))?
         {
             if let Some(token) = public.token {
                 known.push((token, "secret"));
-            }
-            if let Some(name) = public.name {
-                known.push((name, "name"));
             }
         }
         let providers = self.options.state_dir.join("public-name/providers.json");
@@ -2775,10 +2775,8 @@ impl LinuxRelayAdmin {
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                 if let Some(providers) = value["providers"].as_object() {
                     for provider in providers.values() {
-                        for (key, kind) in [("name", "name"), ("token", "secret")] {
-                            if let Some(value) = provider[key].as_str() {
-                                known.push((value.into(), kind));
-                            }
+                        if let Some(value) = provider["token"].as_str() {
+                            known.push((value.into(), "secret"));
                         }
                     }
                 }
@@ -2846,6 +2844,11 @@ impl RelayAdmin for LinuxRelayAdmin {
             .upload(id)
             .map(|receipt| serde_json::to_value(receipt).unwrap())
             .map_err(|error| error.code().into())
+    }
+    fn logs_upload_status(&self, id: &str, cancel: bool) -> Option<serde_json::Value> {
+        self.log_exports
+            .upload_status(id, cancel)
+            .map(|value| serde_json::to_value(value).unwrap())
     }
     fn logs_receipt(&self) -> std::io::Result<Option<serde_json::Value>> {
         self.log_exports

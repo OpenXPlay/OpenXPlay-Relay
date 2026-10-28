@@ -129,7 +129,9 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
 }
 export const api = {
   logExport: (range: '10m' | '30m' | '24h') => request<import('./feature-pages').LogExport>('/logs/export', 'POST', { range }, false, 60000),
-  logUpload: (id: string) => request<import('./feature-pages').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
+  logUpload: (id: string) => request<import('./logs-page').LogJob | import('./logs-page').LogReceipt>('/logs/upload', 'POST', { id }, false, 180000),
+  logUploadStatus: (id: string) => request<import('./logs-page').LogJob>('/logs/upload/' + encodeURIComponent(id), 'GET', undefined, false),
+  logUploadCancel: (id: string) => request<import('./logs-page').LogJob>('/logs/upload/' + encodeURIComponent(id), 'DELETE', {}, false),
   logReceipt: () => request<import('./feature-pages').LogReceipt>('/logs/receipt', 'GET', undefined, false),
   configImport: (envelope: unknown, dryRun = false) => request<import('./feature-pages').ConfigImport>('/config/import' + (dryRun ? '?dryRun=1' : ''), 'POST', envelope, false),
   updateCheck: async (channel: 'stable' | 'beta') => { const result = await request<import('./feature-pages').UpdateCheck | { error: string }>('/update?channel=' + channel, 'GET', undefined, false, 15000); if ('error' in result) throw new ApiError(503, result.error); return result; },

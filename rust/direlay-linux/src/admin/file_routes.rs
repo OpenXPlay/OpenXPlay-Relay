@@ -56,6 +56,15 @@ impl AdminServer {
                 },
                 None => Response::error(422, "error.invalid"),
             },
+            (method @ ("GET" | "DELETE"), path) if path.starts_with("/logs/upload/") => {
+                match self
+                    .admin
+                    .logs_upload_status(&path[13..], method == "DELETE")
+                {
+                    Some(status) => Response::json(200, status),
+                    None => Response::error(404, "error.request"),
+                }
+            }
             ("GET", "/logs/receipt") => match self.admin.logs_receipt() {
                 Ok(Some(receipt)) => Response::json(200, json!(receipt)),
                 Ok(None) => Response::error(404, "error.request"),
@@ -162,6 +171,9 @@ mod tests {
         fn logs_upload(&self, id: &str) -> Result<Value, String> {
             Err(id.into())
         }
+        fn logs_upload_status(&self, id: &str, cancel: bool) -> Option<Value> {
+            (id == "test").then(|| json!({"id":id,"phase":"Sending","sent":2,"total":3,"elapsedMillis":15000,"state":if cancel {"cancelled"} else {"running"}}))
+        }
         fn logs_export(&self, _: &str) -> Result<Value, String> {
             self.calls.lock().unwrap().push("export".into());
             Ok(json!({"id":"test","bytes":3,"sha256":"hash","createdMillis":1}))
@@ -241,6 +253,24 @@ mod tests {
             .into()
     }
     #[test]
+    fn upload_poll_and_cancel_are_local_json_routes() {
+        let (server, _) = server();
+        let cookie = login(&server);
+        for (method, state) in [("GET", "running"), ("DELETE", "cancelled")] {
+            let mut request = request(method, "/logs/upload/test", json!({}));
+            request.headers.insert("cookie".into(), cookie.clone());
+            request
+                .headers
+                .insert("x-openxplay-admin".into(), "1".into());
+            let response = server.route(&request, 1);
+            assert_eq!(response.status, 200);
+            assert_eq!(
+                serde_json::from_slice::<Value>(&response.body).unwrap()["state"],
+                state
+            );
+        }
+    }
+    #[test]
     fn sessions_and_write_headers_guard_every_new_route() {
         let (server, fake) = server();
         let cookie = login(&server);
@@ -249,6 +279,8 @@ mod tests {
             ("GET", "/logs/export/test", json!({})),
             ("POST", "/logs/upload", json!({"id":"test"})),
             ("GET", "/logs/receipt", json!({})),
+            ("GET", "/logs/upload/test", json!({})),
+            ("DELETE", "/logs/upload/test", json!({})),
             ("GET", "/config/user", json!({})),
             ("GET", "/config/privacy", json!({})),
             (

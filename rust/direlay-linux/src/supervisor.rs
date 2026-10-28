@@ -702,11 +702,7 @@ impl RelaySupervisor {
                             eprintln!("oxp-relay: H.265 codec mismatch; restarting with Carlink H.265 off until settings change or service restart");
                             restart.store(true, Ordering::Release);
                         }
-                        if message.starts_with("oxp-relay:") {
-                            eprintln!("{message}");
-                        } else {
-                            eprintln!("oxp-relay: {message}");
-                        }
+                        // The event sink below filters diagnostics before journald sees them.
                     }
                 }
                 if !auto_reconnect

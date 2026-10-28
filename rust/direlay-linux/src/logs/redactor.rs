@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
-//! OpenXPlay Android's value tokens and key classes, plus Linux SSID/address filtering.
+//! OpenXPlay Android's value tokens and key classes; technical network identifiers stay useful.
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub struct Redactor {
     key: [u8; 32],
+    journal: bool,
     known: Vec<(String, String, bool)>,
     pem_end: Option<String>,
     personal_frame: bool,
@@ -85,7 +85,7 @@ fn normalized(key: &str) -> String {
         .flat_map(char::to_lowercase)
         .collect()
 }
-fn kind(key: &str) -> Option<&'static str> {
+pub(super) fn kind(key: &str) -> Option<&'static str> {
     let mut boundaries = vec![0];
     let bytes = key.as_bytes();
     for i in 1..bytes.len() {
@@ -110,7 +110,7 @@ fn kind(key: &str) -> Option<&'static str> {
             | "ekey" | "eiv" | "pk" | "salt" | "proof" | "signature" | "certificate" | "srp"
             | "x25519" => "material",
             "latitude" | "longitude" | "lat" | "lon" | "lng" => "location",
-            "ssid" | "devicename" | "displayname" | "contactname" | "callername" | "iphonename"
+            "devicename" | "displayname" | "contactname" | "callername" | "iphonename"
             | "bluetoothname" => "name",
             "remoteid" | "phonenumber" => "phone",
             "email" => "email",
@@ -125,10 +125,16 @@ impl Redactor {
     pub fn new(key: [u8; 32]) -> Self {
         Self {
             key,
+            journal: false,
             known: Vec::new(),
             pem_end: None,
             personal_frame: false,
         }
+    }
+    pub fn for_journal() -> Self {
+        let mut value = Self::new([0; 32]);
+        value.journal = true;
+        value
     }
     pub fn reset_stream(&mut self) {
         self.pem_end = None;
@@ -137,6 +143,9 @@ impl Redactor {
     pub fn token(&self, value: &str, class: &str) -> String {
         if public(value) {
             return value.into();
+        }
+        if self.journal {
+            return "[secret]".into();
         }
         if class == "material" {
             return "[secret]".into();
@@ -181,6 +190,9 @@ impl Redactor {
             lower_percent(&encoded),
         ] {
             if !self.known.iter().any(|(v, _, _)| *v == form) {
+                if self.known.len() >= 4096 {
+                    self.known.remove(0);
+                }
                 self.known.push((form, replacement.clone(), bounded));
             }
         }
@@ -571,37 +583,6 @@ fn scan(
     out
 }
 fn address(part: &str) -> Option<(usize, &'static str)> {
-    let bytes = part.as_bytes();
-    if bytes.len() >= 17 {
-        let mac = &bytes[..17];
-        if mac.iter().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                *b == b':' || *b == b'-'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        }) && bytes.get(17).is_none_or(|b| !word(*b))
-        {
-            return Some((17, "name"));
-        }
-    }
-    let n = bytes
-        .iter()
-        .take_while(|b| b.is_ascii_hexdigit() || matches!(b, b':' | b'.'))
-        .count();
-    // Strip an IPv4 port, while IPv6 consumes its entire literal.
-    let candidate = part[..n].trim_end_matches('.');
-    if let Ok(ip) = candidate.parse::<Ipv6Addr>() {
-        if !ip.is_loopback() && !ip.is_unspecified() {
-            return Some((candidate.len(), "name"));
-        }
-    }
-    let v4 = candidate.split(':').next().unwrap_or("");
-    if let Ok(ip) = v4.parse::<Ipv4Addr>() {
-        if !ip.is_private() && !ip.is_loopback() && !ip.is_link_local() && !ip.is_unspecified() {
-            return Some((v4.len(), "name"));
-        }
-    }
     let n = part
         .bytes()
         .take_while(|b| b.is_ascii_alphanumeric() || b"._%+-@".contains(b))
@@ -796,21 +777,22 @@ mod tests {
         );
     }
     #[test]
-    fn linux_network_privacy_keeps_ports_private_addresses_and_codes() {
+    fn network_identifiers_match_android_privacy_list() {
         let mut r = redactor();
         let input = "ssid=\"Alice WiFi\" password=secret-pass deviceName=\"Alice iPhone\" mac=AA:BB:CC:DD:EE:FF public=8.8.8.8:7000 v6=2001:4860:4860::8888 private=192.168.1.3:7000 code=4301";
         let clean = r.redact(input);
+        for value in ["secret-pass", "Alice iPhone"] {
+            assert!(!clean.contains(value), "{clean}");
+        }
         for value in [
             "Alice WiFi",
-            "secret-pass",
-            "Alice iPhone",
             "AA:BB:CC:DD:EE:FF",
             "8.8.8.8",
             "2001:4860:4860::8888",
+            ":7000",
+            "192.168.1.3",
+            "code=4301",
         ] {
-            assert!(!clean.contains(value), "{clean}");
-        }
-        for value in [":7000", "192.168.1.3", "code=4301"] {
             assert!(clean.contains(value));
         }
         assert_eq!(r.redact(&clean), clean);
