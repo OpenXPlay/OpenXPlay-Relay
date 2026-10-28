@@ -1114,8 +1114,18 @@ mod band_tests {
         /// The next child: whether it links Carlink, and its event sink.
         fn spawned(&self) -> (bool, bool, EventSink) {
             let (args, sink) = self.spawns.recv_timeout(Duration::from_secs(2)).unwrap();
+            self.wait_for_control();
             let has = |flag: &str| args.iter().any(|arg| arg == flag);
             (has("--clink-head-unit"), has("--web-port"), sink)
+        }
+        fn wait_for_control(&self) {
+            // The supervisor emits receiver-started after installing the child's control pipe.
+            loop {
+                let event = self.events.recv_timeout(Duration::from_secs(2)).unwrap();
+                if event["type"] == "receiver-started" {
+                    break;
+                }
+            }
         }
         fn backoff_delays(&self) -> Vec<u64> {
             self.events
@@ -1154,6 +1164,7 @@ mod band_tests {
         assert!(args
             .windows(2)
             .any(|p| p[0] == "--clink-phone-mac" && p[1] == "02:aa:bb:cc:dd:ee"));
+        f.wait_for_control();
         saved.experimental_active = false;
         saved.save(&f.dir).unwrap();
         relay.restart_carlink(None, "auto", false).unwrap();
@@ -1206,10 +1217,6 @@ mod band_tests {
         relay.start().unwrap();
         let (carlink, web, sink) = f.spawned();
         assert!(carlink && web);
-        // Wait for the fake child's control port to be installed.
-        while !relay.running() {
-            thread::yield_now();
-        }
         for generation in [2, 3] {
             relay
                 .restart_carlink(
@@ -1248,9 +1255,6 @@ mod band_tests {
         let mut relay = f.supervisor(&CarlinkBackoff::default());
         relay.start().unwrap();
         let (_, _, old) = f.spawned();
-        while !relay.running() {
-            thread::yield_now();
-        }
         relay
             .restart_carlink(
                 Some(crate::display::Size {
@@ -1294,9 +1298,6 @@ mod band_tests {
         let mut relay = f.supervisor(&CarlinkBackoff::default());
         relay.start().unwrap();
         let (_, _, sink) = f.spawned();
-        while !relay.running() {
-            thread::yield_now();
-        }
         sink(json!({"type":"state","state":"Ended","generation":1}));
         assert!(f.controls.recv_timeout(Duration::from_millis(20)).is_err());
         relay.connect_carlink();
