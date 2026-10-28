@@ -282,6 +282,7 @@ struct ControllerState {
     /// The armed Bluetooth wait; a matching BlueZ change sets `woken` to its reason.
     awaited: Option<Awaited>,
     woken: Option<String>,
+    terminal_failure: bool,
 }
 type SharedState = Arc<(Mutex<ControllerState>, Condvar)>;
 pub struct LinuxCarPlayController {
@@ -291,6 +292,7 @@ pub struct LinuxCarPlayController {
     retry_delay: (Duration, Duration),
     bluetooth_retry: (Duration, Duration),
     state: SharedState,
+    retry_budget: Mutex<crate::start_policy::RetryBudget>,
 }
 impl LinuxCarPlayController {
     pub fn new(
@@ -325,13 +327,15 @@ impl LinuxCarPlayController {
                     pairing: None,
                     awaited: None,
                     woken: None,
+                    terminal_failure: false,
                 }),
                 Condvar::new(),
             )),
+            retry_budget: Mutex::default(),
         }
     }
     /// The first delay between failed attempts and its cap; the delay doubles per failure and
-    /// starts over after an attempt that reached WirelessActive.
+    /// starts over only after 60 seconds of video.
     pub fn with_retry_delay(mut self, initial: Duration, maximum: Duration) -> Self {
         self.retry_delay = (initial, maximum);
         self
@@ -449,9 +453,12 @@ impl LinuxCarPlayController {
                     return Ok(());
                 }
                 Err(e) => {
+                    if !self.retry_failure(&e, delay) {
+                        return Err(e);
+                    }
                     self.set_stage(
                         "WaitingForBluetooth",
-                        serde_json::json!({"reason":e.to_string(),"retryMillis":delay.as_millis() as u64}),
+                        serde_json::json!({"reason":crate::failure_text::error_text(&e),"retryMillis":delay.as_millis() as u64}),
                     );
                     delay = self.wait_armed(delay)?;
                 }
@@ -473,10 +480,13 @@ impl LinuxCarPlayController {
                 Err(e) => {
                     self.check()?;
                     // Armed only now: the failed attempt itself may have connected the iPhone.
+                    if !self.retry_failure(&e, delay) {
+                        return Err(e);
+                    }
                     self.arm(Awaited::Iphone(selected.clone()));
                     self.set_stage(
                         "WaitingForPairedIphone",
-                        serde_json::json!({"reason":e.to_string(),"retryMillis":delay.as_millis() as u64}),
+                        serde_json::json!({"reason":crate::failure_text::error_text(&e),"retryMillis":delay.as_millis() as u64}),
                     );
                     delay = self.wait_armed(delay)?;
                 }
@@ -513,6 +523,24 @@ impl LinuxCarPlayController {
         self.check()?;
         Ok(c)
     }
+    fn retry_failure(&self, error: &std::io::Error, delay: Duration) -> bool {
+        let reason = crate::failure_text::error_text(error);
+        let code = crate::carplay_policy::classify_failure(&reason);
+        let stable = self
+            .events
+            .facts
+            .lock()
+            .unwrap()
+            .stable_video(Instant::now());
+        let retrying = self.retry_budget.lock().unwrap().failed(code, stable);
+        self.state.0.lock().unwrap().terminal_failure = !retrying;
+        self.events.emit(if retrying { "retry" } else { "startup-failed" },
+            &serde_json::json!({"reason":reason,"retryMillis":if retrying {Some(delay.as_millis() as u64)} else {None}}));
+        retrying
+    }
+    pub fn running(&self) -> bool {
+        self.state.0.lock().unwrap().running
+    }
     pub fn run(&self) -> Result<()> {
         let mut s = self.state.0.lock().unwrap();
         if s.running || s.closed {
@@ -545,22 +573,29 @@ impl LinuxCarPlayController {
                 if let Err(e) = &result {
                     // Ends the attempt's other waits. The scope then waits for its network
                     // worker, so an AP that is still starting can be kept for the next attempt.
-                    abort(&self.state, generation, e.to_string());
+                    abort(&self.state, generation, crate::failure_text::error_text(e));
                 }
                 result
             });
             if let Err(e) = result {
-                let (active, no_tunnel) = {
+                let (stable, no_tunnel, terminal) = {
                     let s = self.state.0.lock().unwrap();
                     if s.closed {
                         break;
                     }
                     // StartSession went out, but neither AirPlay nor the tunnel reached the relay.
                     let no_tunnel = s.start_session && !s.airplay && !s.tunnel && !s.active;
-                    (s.active, no_tunnel)
+                    (
+                        self.events
+                            .facts
+                            .lock()
+                            .unwrap()
+                            .stable_video(Instant::now()),
+                        no_tunnel,
+                        s.terminal_failure,
+                    )
                 };
-                // A session that worked starts the backoff over.
-                if active {
+                if stable {
                     restart = initial;
                 }
                 let recreate = if no_tunnel {
@@ -574,10 +609,17 @@ impl LinuxCarPlayController {
                 } else {
                     None
                 };
-                self.events.emit(
-                    "retry",
-                    &serde_json::json!({"reason":e.to_string(),"retryMillis":restart.as_millis() as u64}),
-                );
+                if terminal || !self.retry_failure(&e, restart) {
+                    self.close()?;
+                    let mut state = self.state.0.lock().unwrap();
+                    state.stage = "Failed".into();
+                    state.running = false;
+                    drop(state);
+                    // Resource shutdown must not replace the frozen failure's step and timing.
+                    self.events
+                        .emit("stage", &serde_json::json!({"stage":"Failed"}));
+                    return Ok(());
+                }
                 // The head unit stays on the AP while the iPhone is retried, unless the iPhone
                 // never joined it: then the AP goes down for the gap, so the Wi-Fi driver and the
                 // iPhone drop their stale association before the next attempt brings it back.
@@ -632,7 +674,7 @@ impl LinuxCarPlayController {
                 .stack_size(crate::platform::WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
                     if let Err(e) = self.start_network(generation, hotspot.as_ref(), mfi) {
-                        abort(&self.state, generation, e.to_string());
+                        abort(&self.state, generation, crate::failure_text::error_text(&e));
                     }
                 })?;
         }
@@ -731,7 +773,7 @@ impl LinuxCarPlayController {
                         drop(s);
                         if let Some(e) = network.and_then(|n| n.poll_startup(Instant::now()).err())
                         {
-                            abort(&state, generation, e.to_string());
+                            abort(&state, generation, crate::failure_text::error_text(&e));
                             return;
                         }
                         if !uses_watchdog && Instant::now() >= deadline {
@@ -838,7 +880,9 @@ impl LinuxCarPlayController {
         let e = self.events.clone();
         let t = Arc::new(move || proof(&state, &e, generation, true));
         let state = self.state.clone();
-        let failure = Arc::new(move |e: std::io::Error| abort(&state, generation, e.to_string()));
+        let failure = Arc::new(move |e: std::io::Error| {
+            abort(&state, generation, crate::failure_text::error_text(&e))
+        });
         let network = self.platform.create_network(
             info,
             mfi,
@@ -945,7 +989,8 @@ impl LinuxCarPlayController {
         self.state.0.lock().unwrap().stage.clone()
     }
     pub fn failed(&self) -> bool {
-        self.state.0.lock().unwrap().failure.is_some()
+        let state = self.state.0.lock().unwrap();
+        state.failure.is_some() || state.terminal_failure
     }
     pub fn close(&self) -> Result<()> {
         let (pairing, bootstrap) = {
@@ -954,6 +999,7 @@ impl LinuxCarPlayController {
                 return Ok(());
             }
             s.closed = true;
+            s.running = false;
             s.stage = "Stopped".into();
             s.generation += 1;
             self.state.1.notify_all();

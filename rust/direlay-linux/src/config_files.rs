@@ -86,7 +86,8 @@ pub fn export_user(settings: &Settings, display: &Value, now: u64) -> Result<Val
     for (linux, android) in [
         ("carlinkName", "carlinkDeviceName"),
         ("carlinkModel", "carlinkDeviceModel"),
-        ("autoStart", "autoStartOnBoot"),
+        ("bootStart", "autoStartOnBoot"),
+        ("autoStart", "autoStartWhenReady"),
         ("carPlayViewAreas", "viewAreas"),
         ("resolution", "carplayResolution"),
     ] {
@@ -251,6 +252,7 @@ fn restart_key(key: &str) -> bool {
             | "teslaMirrorAddress"
             | "teslaAndroidAddress"
             | "autoStart"
+            | "bootStart"
             | "videoStats"
             | "carBrand"
             | "carBrandText"
@@ -274,7 +276,8 @@ fn import_key(
     let target = match key {
         "carlinkDeviceName" => "carlinkName",
         "carlinkDeviceModel" => "carlinkModel",
-        "autoStartOnBoot" => "autoStart",
+        "autoStartOnBoot" => "bootStart",
+        "autoStartWhenReady" => "autoStart",
         "viewAreas" => "carPlayViewAreas",
         "carplayResolution" => "resolution",
         "carplayScreenWidth" => "screenWidth",
@@ -432,6 +435,22 @@ impl<'de> Deserialize<'de> for Strict {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_preferences_round_trip_independently_with_android_names() {
+        let settings = Settings {
+            auto_start: false,
+            boot_start: true,
+            ..Default::default()
+        };
+        let envelope = export_user(&settings, &json!({}), 0).unwrap();
+        assert_eq!(envelope["settings"]["autoStartOnBoot"], true);
+        assert_eq!(envelope["settings"]["autoStartWhenReady"], false);
+        let imported = plan(&serde_json::to_vec(&json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{"autoStartOnBoot":false,"autoStartWhenReady":true}})).unwrap(), &settings_values(&settings, &json!({}))).unwrap();
+        assert_eq!(imported.values["bootStart"], false);
+        assert_eq!(imported.values["autoStart"], true);
+        assert!(!imported.report.restart_needed);
+    }
+
     fn current() -> Values {
         settings_values(
             &Settings::default(),
@@ -486,9 +505,11 @@ mod tests {
     #[test]
     fn android_file_aliases_and_unknowns_use_linux_validation() {
         let file = json!({"format":USER_FORMAT,"version":1,"platform":"android","settings":{"outputs":["web","carlink"],"output":"web","autoStartOnBoot":false,"carlinkDeviceName":"Car display","carlinkTrace":true,"carlinkHevc":"stream-only","hotspotBand":"ghz-5","videoStats":"seconds-15","carplayScreenWidth":"mm125","carplayResolution":"native","sharedWifiNetworks":[{"ssid":"MyWiFi","password":"password123"}],"localPreview":true,"remoteToken":"ignored"}});
-        let p = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+        let mut current = current();
+        current.insert("bootStart".into(), json!(true));
+        let p = plan(&serde_json::to_vec(&file).unwrap(), &current).unwrap();
         assert_eq!(p.values["output"], "both");
-        assert_eq!(p.values["autoStart"], false);
+        assert_eq!(p.values["bootStart"], false);
         assert_eq!(p.values["carlinkName"], "Car display");
         assert_eq!(p.values["carlinkTrace"], "on");
         assert_eq!(p.values["screenWidth"], 125);
@@ -520,7 +541,7 @@ mod tests {
             assert!(p.report.applied.is_empty());
             assert!(!p.report.restart_needed);
             assert!(p.values.is_empty());
-            assert!(p.public_name.is_none());
+            assert!(p.privacy.is_none());
             let mut after = current.clone();
             after.extend(p.values);
             assert_eq!(after, current);

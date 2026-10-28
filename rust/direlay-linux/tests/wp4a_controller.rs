@@ -769,7 +769,7 @@ fn hard_stop_during_retry_wait_closes_the_retained_ap() {
 }
 
 #[test]
-fn retry_delay_starts_over_after_an_active_session() {
+fn short_active_session_does_not_reset_retry_backoff() {
     let f = Arc::new(Shared::default());
     f.hotspot_failures.store(2, Ordering::SeqCst);
     let mut run = Run::with_retry(
@@ -787,7 +787,7 @@ fn retry_delay_starts_over_after_an_active_session() {
         .iter()
         .map(|v| v["retryMillis"].as_u64().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(delays, [10, 20, 10]);
+    assert_eq!(delays, [10, 20, 40]);
     run.stop();
 }
 
@@ -1350,4 +1350,24 @@ fn screen_wait_prepares_hotspot_before_airplay_and_is_cancelable() {
         run.stop();
         assert!(start.elapsed() < Duration::from_secs(1));
     }
+}
+
+#[test]
+fn startup_stops_after_five_retries_including_bluetooth_waits() {
+    let f = Arc::new(Shared::default());
+    f.phone_error.store(true, Ordering::Release);
+    let mut run = Run::with_bluetooth_retry(
+        f.clone(),
+        Duration::from_millis(1),
+        Duration::from_millis(2),
+    );
+    wait_for(|| run.controller.stage() == "Failed");
+    assert_eq!(run.matching(|v| v["event"] == "retry").len(), 5);
+    assert_eq!(run.matching(|v| v["event"] == "startup-failed").len(), 1);
+    assert!(!run.controller.running());
+    assert!(run.controller.hotspot_info().is_none());
+    let failure = run.json.runtime_path_facts().iphone.failure.unwrap();
+    assert!(!failure.retrying);
+    assert!(!failure.trail.is_empty());
+    run.stop();
 }

@@ -103,6 +103,8 @@ impl CommandRunner for ProcessCommandRunner {
 }
 type StartupListener = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct JsonEvents {
+    failure_secrets: Mutex<Vec<String>>,
+    startup_diagnostics: std::sync::atomic::AtomicBool,
     output: Arc<dyn Fn(String) + Send + Sync>,
     gate: Mutex<()>,
     follow_timeline: Mutex<Option<(Instant, Instant, bool)>>,
@@ -113,6 +115,8 @@ pub struct JsonEvents {
 impl JsonEvents {
     pub fn new(output: Arc<dyn Fn(String) + Send + Sync>) -> Self {
         Self {
+            failure_secrets: Mutex::default(),
+            startup_diagnostics: std::sync::atomic::AtomicBool::new(true),
             output,
             gate: Mutex::new(()),
             follow_timeline: Mutex::new(None),
@@ -169,7 +173,54 @@ impl JsonEvents {
     pub fn startup_milestone(&self, name: &str) {
         self.emit("airplay-milestone", &serde_json::json!({"name":name}));
     }
+    /// W13 can apply the effective startup-diagnostics experiment at the next connection.
+    pub fn set_startup_diagnostics(&self, enabled: bool) {
+        self.startup_diagnostics
+            .store(enabled, std::sync::atomic::Ordering::Release);
+    }
+    pub fn failure_secrets(&self, values: Vec<String>) {
+        *self.failure_secrets.lock().unwrap() =
+            values.into_iter().filter(|s| !s.is_empty()).collect();
+    }
+    pub fn iap2_frame(&self) {
+        if !self
+            .startup_diagnostics
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
+        let count = {
+            let mut facts = self.facts.lock().unwrap();
+            facts.iphone.runtime_iap2_frames = facts.iphone.runtime_iap2_frames.saturating_add(1);
+            facts.iphone.runtime_iap2_frames
+        };
+        if count.is_power_of_two() {
+            self.emit("runtime-iap2", &serde_json::json!({"frames":count}));
+        }
+    }
+    pub fn filtered(&self, fields: &serde_json::Value) -> serde_json::Value {
+        let mut fields = fields.clone();
+        let secrets = self.failure_secrets.lock().unwrap();
+        fn filter(value: &mut serde_json::Value, secrets: &[String]) {
+            match value {
+                serde_json::Value::String(text) => {
+                    *text = crate::failure_text::redact(text, secrets)
+                }
+                serde_json::Value::Array(values) => {
+                    values.iter_mut().for_each(|v| filter(v, secrets))
+                }
+                serde_json::Value::Object(values) => {
+                    values.values_mut().for_each(|v| filter(v, secrets))
+                }
+                _ => {}
+            }
+        }
+        filter(&mut fields, &secrets);
+        drop(secrets);
+        fields
+    }
     pub fn emit(&self, event: &str, fields: &serde_json::Value) {
+        let fields = self.filtered(fields);
         if event == "stage" && fields["stage"] == "WirelessActive" {
             self.follow_over("iphone-connected");
         }
@@ -177,7 +228,7 @@ impl JsonEvents {
             self.facts
                 .lock()
                 .unwrap()
-                .observe(event, fields, wall_clock().as_millis() as u64);
+                .observe(event, &fields, wall_clock().as_millis() as u64);
         if let Some(reason) = reason {
             let listener = self.startup.lock().unwrap().clone();
             if let Some(listener) = listener {
@@ -352,5 +403,54 @@ mod timestamp_tests {
             }
         }
         assert_eq!((year, month, day), (2401, 1, 1));
+    }
+}
+
+#[cfg(test)]
+mod runtime_diagnostic_tests {
+    use super::*;
+    #[test]
+    fn liveness_is_counted_and_logged_only_at_powers_of_two() {
+        let output = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let saved = output.clone();
+        let events = JsonEvents::new(Arc::new(move |line| {
+            saved
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(&line).unwrap())
+        }));
+        events.failure_secrets(vec!["unlabelled-secret".into()]);
+        events.emit("stage", &serde_json::json!({"stage":"DiscoveringMfi"}));
+        for _ in 0..10 {
+            events.iap2_frame();
+        }
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 10);
+        let counts: Vec<_> = output
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["event"] == "runtime-iap2")
+            .map(|e| e["frames"].as_u64().unwrap())
+            .collect();
+        assert_eq!(counts, [1, 2, 4, 8]);
+        events.emit(
+            "startup-failed",
+            &serde_json::json!({"reason":"error=17 unlabelled-secret password='secret phrase'"}),
+        );
+        let failure = events.runtime_path_facts().iphone.failure.unwrap();
+        assert!(failure.text.contains("error=17"));
+        assert!(!failure.text.contains("secret"));
+        assert!(failure
+            .trail
+            .iter()
+            .any(|line| line.contains("runtime_iap2 frames=8")));
+        assert!(!serde_json::to_string(&*output.lock().unwrap())
+            .unwrap()
+            .contains("secret"));
+        events.emit("stage", &serde_json::json!({"stage":"DiscoveringMfi"}));
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 0);
+        events.set_startup_diagnostics(false);
+        events.iap2_frame();
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 0);
     }
 }

@@ -4,6 +4,10 @@
 
 import type { Settings, Values, NetworkRolesSetting } from './schema';
 export type SessionState = 'login' | 'ready';
+export interface RuntimeStartup {
+  automatic: boolean; bootStart: boolean; paused: boolean;
+  arrival: { pending: boolean; deadlineMillis: number | null; remainingMillis: number | null };
+}
 export interface Session { state: SessionState; defaultPassword: boolean }
 export interface WifiNetwork { ssid: string; signal: number; secure: boolean; known: boolean }
 export interface WifiClient { ssid: string | null; ip: string | null; signal: number | null; setupHotspot?: boolean }
@@ -72,7 +76,10 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
   adminFeatures?: ('logs' | 'config-files' | 'update-check')[];
-  pathInput?: import('./path/model').PartialInput;
+  pathInput?: import('./path/model').PartialInput & {
+    startup?: RuntimeStartup;
+    iphone?: import('./path/model').PartialInput['iphone'] & { trail?: string[]; runtimeIap2Frames?: number };
+  };
   adminHotspot?: { state: 'up' | 'paused-carlink' | 'waiting-interface' | 'off' | 'failed'; reason: string | null };
   hostAddresses?: HostAddress[]; receiverPort?: number; adminPort?: number; pairingAvailable?: boolean; pairingDeadline?: number | null; screenConnected?: boolean;
   pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[];
@@ -143,6 +150,6 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
-  action: (name: 'start' | 'stop' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
+  action: (name: 'start' | 'stop' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
   phones: () => request<Phone[]>('/phones'),
 };

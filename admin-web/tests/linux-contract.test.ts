@@ -50,3 +50,13 @@ it('matches Android menu summaries and hides unavailable or empty pages', () => 
   for (const route of ['settings/logs', 'settings/config-files', 'settings/experimental']) expect(pageAvailable(mockSettings(), android, route)).toBe(false);
   expect(pageAvailable(linuxSettings, status, 'settings/developer/video')).toBe(false);
 });
+
+it('retains the backend arrival, armed and frozen failure contracts for the startup UI', () => {
+  const arrival = linuxStatusFixtures.arrival.pathInput!;
+  expect(arrival.startup?.arrival).toEqual({ pending: true, deadlineMillis: arrival.nowMillis! + 5000, remainingMillis: 5000 });
+  expect(linuxStatusFixtures.armed.pathInput!.iphone!.armed).toBe(true);
+  const failure = linuxStatusFixtures['iphone-failure'].pathInput!.iphone!.failure!;
+  expect(failure.text).toBe('rfcomm timeout');
+  expect(failure.trail.some(line => line.startsWith('+2.000s '))).toBe(true);
+  expect(linuxSettings.values.bootStart).toBe(true);
+});

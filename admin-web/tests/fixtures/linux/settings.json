@@ -368,6 +368,11 @@
           "type": "bool"
         },
         {
+          "key": "bootStart",
+          "labelKey": "field.bootStart",
+          "type": "bool"
+        },
+        {
           "hintKey": "hint.field.videoStats",
           "key": "videoStats",
           "labelKey": "field.videoStats",
@@ -811,6 +816,7 @@
   ],
   "values": {
     "autoStart": true,
+    "bootStart": true,
     "carBluetoothAudio": true,
     "carBrand": "",
     "carBrandText": "",
