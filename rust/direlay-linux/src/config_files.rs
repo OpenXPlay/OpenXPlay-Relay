@@ -344,14 +344,7 @@ fn import_key(
         "carlinkTrace" if value.is_boolean() => {
             value = json!(if value == true { "on" } else { "off" })
         }
-        "carlinkHevc" => match value.as_str() {
-            Some("stream-only") => value = json!("auto"),
-            Some("signal") => {
-                ignored.push(source.into());
-                return Ok(());
-            }
-            _ => {}
-        },
+        "carlinkHevc" if value == "stream-only" => value = json!("auto"),
         "hotspotBand" => match value.as_str() {
             Some("ghz-2-4") => value = json!("2.4"),
             Some("ghz-5") => value = json!("5"),

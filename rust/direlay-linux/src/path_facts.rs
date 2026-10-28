@@ -360,7 +360,7 @@ impl RuntimePathFacts {
         monotonic: Instant,
     ) -> Option<String> {
         let kind = event["type"].as_str().unwrap_or("");
-        if kind == "receiver-starting" {
+        if kind == "receiver-starting" || kind == "carlink-starting" {
             self.carlink_summarized = false;
             self.carlink.car_name = None;
             self.carlink.model_id = None;
@@ -374,7 +374,7 @@ impl RuntimePathFacts {
             self.carlink_started = Some(now);
         }
         let phase = match kind {
-            "link" => event["state"].as_str().map(|s| match s {
+            "link" if event["state"] != "failed" => event["state"].as_str().map(|s| match s {
                 "scanning" => "SCANNING",
                 "connecting" => "EXCHANGING",
                 "joined" => "AUTHENTICATING",
@@ -389,6 +389,7 @@ impl RuntimePathFacts {
                     "negotiating" => "NEGOTIATING",
                     _ => "AUTHENTICATING",
                 }),
+            "carlink-starting" => Some("SCANNING"),
             "pin-request" => Some("PIN"),
             "carlink-backoff" | "error" | "pin-timeout" => Some("ENDED"),
             "receiver-stopped" if self.carlink.phase != "OFF" => Some("ENDED"),
@@ -421,13 +422,100 @@ impl RuntimePathFacts {
         if kind == "pin-request" {
             self.carlink.pin_pending = true;
         }
-        if matches!(kind, "receiver-stopped" | "pin-timeout") || self.carlink.phase == "PLAYING" {
+        if matches!(kind, "receiver-stopped" | "pin-timeout" | "clink-pairing")
+            || self.carlink.phase == "PLAYING"
+        {
             self.carlink.pin_pending = false;
         }
         if kind == "clink-pin" && event["result"] == "incorrect" {
             self.carlink.code = Some("pin_incorrect".into());
         }
-        let retained_backoff = kind == "carlink-backoff" && self.carlink.failure.is_some();
+        if kind == "clink-summary" {
+            let mut parts = Vec::new();
+            for key in [
+                "vendor",
+                "product",
+                "name",
+                "ssid",
+                "frequency",
+                "mode",
+                "view",
+                "window",
+                "stream",
+                "codec",
+                "hevc",
+                "audio",
+                "uibc",
+            ] {
+                if let Some(value) = event["fields"][key].as_str() {
+                    let safe = crate::failure_text::redact(value, &[])
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .take(512)
+                        .collect::<String>();
+                    parts.push(format!("{key}={safe:?}"));
+                }
+            }
+            if self.carlink.phase == "PLAYING" {
+                if let Some(size) = event["fields"]["stream"]
+                    .as_str()
+                    .filter(|s| *s != "unknown")
+                {
+                    self.carlink.picture = Some(format!(
+                        "{} {}",
+                        size,
+                        event["fields"]["codec"].as_str().unwrap_or("")
+                    ));
+                }
+            }
+            let summary = format!("carlink summary {}", parts.join(" "));
+            for part in &parts {
+                self.carlink_trail.record(part, now, monotonic);
+            }
+            self.carlink.trail = self.carlink_trail.snapshot();
+            if let Some(failure) = self.carlink.failure.as_mut() {
+                failure.trail = self.carlink.trail.clone();
+            }
+            self.carlink_summary = Some(summary.clone());
+            self.carlink_summarized = true;
+            self.timeline(format!("{now} {summary}"));
+            return Some(summary);
+        }
+        if kind == "link" && event["state"] == "failed" {
+            let code = event["code"].as_str().unwrap_or("link_failed");
+            let mut detail = Vec::new();
+            for key in [
+                "stage",
+                "code",
+                "elapsedMs",
+                "totalElapsedMs",
+                "attempt",
+                "osCode",
+                "operation",
+                "status",
+            ] {
+                if !event[key].is_null() {
+                    detail.push(format!("{key}={}", event[key]));
+                }
+            }
+            let text = crate::failure_text::redact(&detail.join(" "), &[]);
+            self.carlink.code = Some(code.into());
+            self.carlink.error = Some(text.clone());
+            self.carlink_trail.record(&text, now, monotonic);
+            self.carlink.trail = self.carlink_trail.snapshot();
+            self.carlink.failure = Some(LinkFailure {
+                step: self.carlink.phase.clone(),
+                code: code.into(),
+                text,
+                at_millis: now,
+                retrying: true,
+                trail: self.carlink.trail.clone(),
+            });
+            self.carlink.retrying = true;
+        }
+        let retained_backoff = ((kind == "carlink-backoff")
+            || (kind == "link" && event["state"] == "lost"))
+            && self.carlink.failure.is_some();
         if retained_backoff {
             self.carlink.retrying = true;
             self.carlink.failure.as_mut().unwrap().retrying = true;
@@ -486,7 +574,7 @@ impl RuntimePathFacts {
                 .into(),
             );
         }
-        if kind == "clink-view-size" || kind == "media-stats" {
+        if kind == "media-stats" && self.carlink.phase == "PLAYING" {
             let size = event["width"]
                 .as_u64()
                 .zip(event["height"].as_u64())
@@ -545,6 +633,38 @@ impl RuntimePathFacts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn structured_link_failure_and_full_summary_survive_in_path_trails() {
+        let mut f = RuntimePathFacts::default();
+        f.carlink_event(&serde_json::json!({"type":"link","state":"connecting"}), 1);
+        f.carlink_event(&serde_json::json!({"type":"link","state":"failed","stage":"wifi_join","code":"system_tool_failed","elapsedMs":70,"totalElapsedMs":3000,"attempt":2,"operation":"nmcli","status":7}),2);
+        assert_eq!(f.carlink.phase, "EXCHANGING");
+        assert_eq!(f.carlink.code.as_deref(), Some("system_tool_failed"));
+        f.carlink_event(
+            &serde_json::json!({"type":"link","state":"lost","reason":"connection failed"}),
+            3,
+        );
+        assert_eq!(f.carlink.code.as_deref(), Some("system_tool_failed"));
+        let summary=f.carlink_event(&serde_json::json!({"type":"clink-summary","fields":{"vendor":"Vendor","product":"Car","frequency":"5180","hevc":"supported","audio":"true","uibc":"HIDC"}}),4).unwrap();
+        for value in [
+            "vendor=",
+            "product=",
+            "frequency=",
+            "hevc=",
+            "audio=",
+            "uibc=",
+        ] {
+            assert!(summary.contains(value));
+            assert!(f
+                .carlink
+                .failure
+                .as_ref()
+                .unwrap()
+                .trail
+                .iter()
+                .any(|s| s.contains(value)));
+        }
+    }
     #[test]
     fn trail_keeps_first_and_latest_monotonic_offsets_under_clock_changes() {
         let mut trail = StepTrail::default();

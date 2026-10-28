@@ -57,7 +57,8 @@ it('shows the wrong PIN message while allowing the next PIN request', () => {
   expect(carlinkPinError(status.carlink)).toBe('');
   const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
   expect(source).toContain("dialog.querySelector('#carlink-pin-error')!.textContent = t(carlinkPinError(status?.carlink))");
-  expect(source).toContain("api.carlinkPin(input.value)");
+  expect(source).toContain("await answer(confirmation ? 'approve' : 'pin', input?.value)");
+  expect(source).toContain("await answer('cancel')");
 });
 it('offers Connect for a trusted paused head unit and Start when Linux auto-start is paused', () => {
   const status = fixture(); status.output = 'carlink';

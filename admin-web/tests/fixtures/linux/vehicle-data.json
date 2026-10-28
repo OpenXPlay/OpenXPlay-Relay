@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "history": [
+    {
+      "id": 1793000060000,
+      "reports": [
+        {
+          "fields": {
+            "gear": "D",
+            "speed": 12
+          },
+          "kind": "Gear",
+          "receivedAt": 1793000000000
+        }
+      ],
+      "time": 1793000060000
+    }
+  ],
+  "malformedFrames": 1,
+  "reports": [
+    {
+      "fields": {
+        "gear": "D",
+        "speed": 12
+      },
+      "kind": "Gear",
+      "receivedAt": 1793000000000
+    }
+  ],
+  "sample": false,
+  "sensorActive": true,
+  "storageFailed": false
+}

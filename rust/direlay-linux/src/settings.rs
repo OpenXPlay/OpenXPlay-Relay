@@ -51,6 +51,7 @@ pub struct Settings {
     pub carlink_reconnect_on_resize: bool,
     pub carlink_hevc: String,
     pub carlink_trace: String,
+    pub vehicle_information: bool,
     pub frame_rate: String,
     pub carlink_picture_size: String,
     pub carlink_picture_sizes: Vec<crate::display::Size>,
@@ -115,6 +116,7 @@ impl Default for Settings {
             carlink_reconnect_on_resize: false,
             carlink_hevc: "auto".into(),
             carlink_trace: "off".into(),
+            vehicle_information: false,
             frame_rate: "auto".into(),
             carlink_picture_size: "window".into(),
             carlink_picture_sizes: vec![],
@@ -385,7 +387,7 @@ impl Settings {
                 return Err(invalid(key));
             }
         }
-        if !["auto", "off"].contains(&self.carlink_hevc.as_str()) {
+        if !["auto", "off", "signal"].contains(&self.carlink_hevc.as_str()) {
             return Err(invalid("Invalid carlinkHevc"));
         }
         if !["off", "on"].contains(&self.carlink_trace.as_str()) {
@@ -517,7 +519,7 @@ mod tests {
             assert!(serde_json::from_value::<Settings>(v).is_err());
         }
         for (key, values) in [
-            ("carlinkHevc", vec!["auto", "off"]),
+            ("carlinkHevc", vec!["auto", "off", "signal"]),
             ("carlinkTrace", vec!["off", "on"]),
             ("videoStats", vec!["off", "5", "15"]),
         ] {
@@ -525,7 +527,7 @@ mod tests {
                 let mut v = json.clone();
                 v[key] = value.into();
                 let valid = if key == "carlinkHevc" {
-                    ["auto", "off"].contains(&value)
+                    ["auto", "off", "signal"].contains(&value)
                 } else if key == "carlinkTrace" {
                     ["off", "on"].contains(&value)
                 } else {

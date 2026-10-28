@@ -107,21 +107,33 @@ fn admin_contract_status(state: &str) {
             status.iphone.reason = "NoIphone".into();
             status.iphone.name = None;
         }
-        "carlink-scanning" | "carlink-pin" | "live-carlink" => {
+        "carlink-scanning" | "carlink-pin" | "carlink-confirm" | "live-carlink" => {
             settings.output = "carlink".into();
             facts.web.phase = "OFF".into();
             facts.pages = 0;
             let event = match state {
                 "carlink-scanning" => serde_json::json!({"type":"link","state":"scanning"}),
-                "carlink-pin" => serde_json::json!({"type":"pin-request"}),
-                _ => serde_json::json!({"type":"state","state":"playing","headUnit":{"name":"G6"}}),
+                "carlink-pin" => {
+                    serde_json::json!({"type":"pin-request","generation":1,"request":17,"client":"car-unit","confirmation":false})
+                }
+                "carlink-confirm" => {
+                    serde_json::json!({"type":"pin-request","generation":2,"request":18,"client":"car-unit","confirmation":true})
+                }
+                _ => {
+                    serde_json::json!({"type":"state","state":"Playing","generation":1,"headUnit":{"name":"G6"}})
+                }
             };
             facts.carlink_event_at(&event, now - 1_000, clock);
             let mut clink = AdminCarlink::default();
             clink.apply_event(&event, 100);
             status.carlink = Some(clink.at(100, now / 1000));
             if state == "live-carlink" {
-                facts.carlink_event_at(&serde_json::json!({"type":"media-stats","liveFrames":10,"width":1920,"height":720,"codec":"H265"}), now, clock + Duration::from_secs(1));
+                let stats = serde_json::json!({"type":"media-stats","generation":1,"liveFrames":10,"width":1920,"height":720,"codec":"H265"});
+                facts.carlink_event_at(&stats, now, clock + Duration::from_secs(1));
+                status.carlink.as_mut().unwrap().apply_event(&stats, 101);
+                let summary = serde_json::json!({"type":"clink-summary","generation":1,"atMillis":now,"fields":{"vendor":"Example","product":"Head unit","name":"G6","ssid":"DIRECT-Car","frequency":"5180","mode":"1920x720","view":"1920x720","window":"1920x720","stream":"1920x720","codec":"H265","hevc":"supported","audio":"true","uibc":"HIDC"}});
+                facts.carlink_event_at(&summary, now, clock + Duration::from_secs(1));
+                status.carlink.as_mut().unwrap().apply_event(&summary, 101);
             }
         }
         "tesla-ready" | "tesla-failed" => {
@@ -130,8 +142,12 @@ fn admin_contract_status(state: &str) {
             facts.tesla.activation = Some(crate::tesla_address::Activation::Ready);
             if state == "tesla-ready" {
                 facts.tesla.url = Some("https://169.254.88.1:8443/".into());
-                status.receiver_urls.insert(0, facts.tesla.url.clone().unwrap());
-            } else { facts.tesla.failure = Some("NetworkManager could not add the address".into()); }
+                status
+                    .receiver_urls
+                    .insert(0, facts.tesla.url.clone().unwrap());
+            } else {
+                facts.tesla.failure = Some("NetworkManager could not add the address".into());
+            }
         }
         "iphone-failure" => {
             status.running = true;
@@ -186,8 +202,18 @@ fn admin_contract_status(state: &str) {
     crate::path_input::update(&facts, &settings, &mut status, now, true, true);
     let p = &status.path_input;
     if state.starts_with("tesla-") {
-        assert!(p["setup"]["outputs"].as_array().unwrap().contains(&serde_json::json!("TESLA")));
-        assert_eq!(p["car"]["tesla"]["phase"], if state == "tesla-ready" {"READY"} else {"FAILED"});
+        assert!(p["setup"]["outputs"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("TESLA")));
+        assert_eq!(
+            p["car"]["tesla"]["phase"],
+            if state == "tesla-ready" {
+                "READY"
+            } else {
+                "FAILED"
+            }
+        );
         assert_eq!(p["car"]["tesla"]["activation"], "READY");
     }
     assert_eq!(p["platform"], "linux");
@@ -215,6 +241,7 @@ macro_rules! contract_states {
 contract_states! {
     admin_contract_idle => "idle", admin_contract_ready => "ready", admin_contract_pairing => "pairing",
     admin_contract_scanning => "carlink-scanning", admin_contract_pin => "carlink-pin",
+    admin_contract_confirm => "carlink-confirm",
     admin_contract_failure => "iphone-failure", admin_contract_wait => "car-first-wait",
     admin_contract_live_browser => "live-browser", admin_contract_live_carlink => "live-carlink",
     admin_contract_shared_wifi => "shared-wifi",
@@ -264,5 +291,23 @@ fn admin_contract_timeline_export_uses_runtime_milestones_and_carlink_summary() 
     let timeline = admin.recent_connection_timeline_for_log_export();
     assert!(timeline.contains("1234 phone first_video_received"));
     assert!(timeline.contains("Carlink summary: codec=H265 liveFrames=10"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn admin_contract_vehicle() {
+    let (admin, dir) = fake();
+    contract_fixture("vehicle-off", &admin.vehicle());
+    let now = std::time::Instant::now();
+    let mut recorder = admin.vehicle.lock().unwrap();
+    recorder.enable(true);
+    recorder.observe(&serde_json::json!({"type":"clink-vehicle","atMillis":1793000000000_u64,"data":{"type":"Gear","gear":"D","speed":12}}),now);
+    recorder.observe(
+        &serde_json::json!({"type":"clink-vehicle-state","sensorActive":true,"malformedFrames":1}),
+        now,
+    );
+    recorder.tick(now + Duration::from_secs(60), 1793000060000);
+    contract_fixture("vehicle-data", &recorder.view());
+    drop(recorder);
     std::fs::remove_dir_all(dir).unwrap();
 }

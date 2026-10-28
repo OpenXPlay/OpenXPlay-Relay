@@ -7,6 +7,7 @@ import type { Status } from './api';
 import type { Language } from './i18n';
 export const pageKeys: Record<string, string[]> = {
   output: ['output', 'wirelessDisplay', 'carlinkName', 'vehicleInformation', 'carlinkAutoReconnect', 'carlinkReconnectOnResize', 'carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'],
+  vehicle: [],
   'output/plugins': ['plugins', 'pluginsEnabled'],
   tesla: ['teslaBrowser', 'teslaVirtualAddress', 'teslaPublicAddress', 'teslaMirrorAddress', 'teslaAndroidAddress'],
   car: ['carBrand', 'carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText', 'savedHeadUnit', 'savedScreen'],
@@ -49,6 +50,7 @@ export const developerIcons: Record<string, string> = { diagnostics: 'info', car
 export function pageAvailable(settings: Settings, status: Status, route: string): boolean {
   if (route === 'settings/logs' || route === 'settings/config-files') return status.adminFeatures?.includes(route.slice(9) as 'logs' | 'config-files') ?? false;
   if (['settings', 'settings/about', 'settings/access', 'settings/access/admin', 'settings/connection', 'settings/connection/network', 'settings/developer', 'settings/developer/diagnostics', 'settings/developer/connection'].includes(route)) return true;
+  if (route === 'settings/vehicle') return status.platform === 'linux';
   if (route === 'settings/car') return status.platform === 'linux' || pageFields(settings, route).length > 0;
   if (route === 'settings/connection/network/interfaces') return status.platform === 'linux';
   return pageFields(settings, route).some(field => isVisible(field, settings.values));

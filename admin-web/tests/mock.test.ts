@@ -262,7 +262,7 @@ it('serves all Linux trace types, downloads and mutable capture/clear preview st
     }
     expect((await call('/carlink-trace/tail?limit=0')).data.lines).toEqual([]);
     expect((await call('/carlink-trace/tail?limit=2')).data.lines).toEqual(lines.slice(0, 2));
-    for (const query of ['limit=501', 'type=Errors']) expect((await call('/carlink-trace/tail?' + query)).status).toBe(422);
+    for (const query of ['limit=5001', 'type=Errors']) expect((await call('/carlink-trace/tail?' + query)).status).toBe(422);
     const bundle = await call('/carlink-trace/download');
     expect(bundle.headers['Content-Type']).toBe('application/x-ndjson');
     expect(Number(bundle.headers['Content-Length'])).toBe(Buffer.byteLength(bundle.data));

@@ -161,7 +161,8 @@ pub fn clear(dir: &Path) -> io::Result<()> {
 }
 
 pub fn tail(dir: &Path, filter: Option<&str>, limit: usize) -> io::Result<Vec<String>> {
-    let mut budget = 1024 * 1024_u64;
+    let mut budget = 128 * 1024 * 1024_u64;
+    let limit = limit.min(5000);
     let mut lines = Vec::new();
     for entry in listing(dir)?
         .into_iter()
@@ -259,7 +260,7 @@ mod tests {
         );
     }
     #[test]
-    fn tail_orders_filters_limits_and_reads_only_one_mib() {
+    fn tail_orders_filters_limits_and_keeps_5000_across_segments() {
         let dir = temp();
         let old = "trace-00000001-9999999-00000001.jsonl";
         let new = "trace-00000002-0-00000001.jsonl";
@@ -274,7 +275,24 @@ mod tests {
         assert!(tail(&dir, None, 0).unwrap().is_empty());
         let end = "\n{\"type\":\"Media\"}\n";
         fs::write(dir.join(new), format!("{}{}", "x".repeat(1024 * 1024), end)).unwrap();
-        assert_eq!(tail(&dir, None, 500).unwrap(), ["{\"type\":\"Media\"}"]);
+        assert_eq!(
+            tail(&dir, None, 500).unwrap(),
+            ["{\"type\":\"Media\"}", "{\"type\":\"Error\",\"n\":0}"]
+        );
+        let records = (0..5001)
+            .map(|n| format!("{{\"type\":\"Link\",\"n\":{n}}}\n"))
+            .collect::<String>();
+        fs::write(dir.join(new), records).unwrap();
+        let records = tail(&dir, None, 6000).unwrap();
+        assert_eq!(records.len(), 5000);
+        assert_eq!(
+            serde_json::from_str::<Value>(&records[0]).unwrap()["n"],
+            5000
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&records[4999]).unwrap()["n"],
+            1
+        );
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]

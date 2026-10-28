@@ -29,6 +29,7 @@ pub(crate) struct FakeChildFactory {
     requests: mpsc::Sender<Request>,
     pub launches: Mutex<Vec<Vec<OsString>>>,
     pub stops: Arc<AtomicUsize>,
+    exited: Arc<AtomicBool>,
 }
 impl FakeChildFactory {
     pub fn new() -> (Arc<Self>, mpsc::Receiver<Request>) {
@@ -38,6 +39,7 @@ impl FakeChildFactory {
                 requests: tx,
                 launches: Mutex::default(),
                 stops: Arc::default(),
+                exited: Arc::default(),
             }),
             rx,
         )
@@ -54,13 +56,14 @@ struct FakeChild {
     pipe: Option<ControlPipe>,
     reader: Option<JoinHandle<()>>,
     stops: Arc<AtomicUsize>,
+    exited: Arc<AtomicBool>,
 }
 impl RelayChild for FakeChild {
     fn control(&self) -> Option<ControlPipe> {
         self.pipe.clone()
     }
     fn exited(&mut self) -> io::Result<bool> {
-        Ok(false)
+        Ok(self.exited.swap(false, Ordering::AcqRel))
     }
     fn stop(&mut self) -> io::Result<()> {
         self.pipe.take();
@@ -109,6 +112,7 @@ impl ChildFactory for FakeChildFactory {
             pipe: Some(pipe),
             reader: Some(reader),
             stops: self.stops.clone(),
+            exited: self.exited.clone(),
         }))
     }
 }
@@ -157,7 +161,7 @@ fn matching_success_updates_the_complete_set_and_automatic_retry_arguments() {
         update.join().unwrap().unwrap();
     });
     assert_eq!(supervisor.web_tls.settings().sans, sans);
-    supervisor.connect_carlink();
+    factory.exited.store(true, Ordering::Release);
     let deadline = Instant::now() + Duration::from_secs(3);
     while factory.launches.lock().unwrap().len() < 2 {
         assert!(Instant::now() < deadline);
@@ -227,7 +231,7 @@ fn replacing_the_child_wakes_the_waiter_and_rejects_old_generation_replies() {
             )
         });
         let old = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        supervisor.connect_carlink();
+        factory.exited.store(true, Ordering::Release);
         assert_eq!(
             update.join().unwrap().unwrap_err().kind(),
             io::ErrorKind::NotConnected
