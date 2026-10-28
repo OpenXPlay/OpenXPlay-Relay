@@ -192,8 +192,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             pendingManual = manual
             if (manual) main.post {
                 try {
-                    context.startActivity(Intent(context, org.openxplay.direlay.RelayActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                    context.startActivity(org.openxplay.direlay.RelayActivity.intent(context))
                 } catch (failure: RuntimeException) { startFailed(failure) }
             }
             return null

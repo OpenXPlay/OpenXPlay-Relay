@@ -59,7 +59,8 @@ import org.openxplay.direlay.ui.design.*
 @Composable fun SetupScreen(initial: RelaySettings, wireless: (RelaySettings) -> Boolean, home: HomeContent,
     startAt: SetupStep?, bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, useSharedWifi: (String) -> Unit,
     persist: suspend (RelaySettings, RelaySettings) -> Boolean, onSetup: (SetupAction) -> Unit,
-    close: () -> Unit, carModels: CarModels? = null, onStepAction: (StepAction, PathStep) -> Unit = { _, _ -> }, finish: (changed: Boolean) -> Unit) {
+    close: () -> Unit, carModels: CarModels? = null, onStepAction: (StepAction, PathStep) -> Unit = { _, _ -> },
+    onStepChanged: (SetupStep) -> Unit = {}, finish: (changed: Boolean) -> Unit) {
     val entry by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(setupDraft(initial, wireless(initial))) }
     var lastSaved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
@@ -82,9 +83,15 @@ import org.openxplay.direlay.ui.design.*
     val saving = draft != lastSaved && settingsSaveErrors(draft, isWireless).isEmpty()
     val steps = setupSteps(isWireless)
     var stepKey by rememberSaveable { mutableStateOf((startAt ?: SetupStep.CAR).key) }
+    var requestedStep by rememberSaveable { mutableStateOf(startAt?.key) }
+    LaunchedEffect(startAt) {
+        stepKey = relaySetupStep(stepKey, requestedStep, startAt?.key)
+        requestedStep = startAt?.key
+    }
     // The network page disappears with USB; land on the choice that removed it.
     val step = setupStep(stepKey)?.takeIf { it in steps } ?: SetupStep.CONNECTION
     val index = steps.indexOf(step)
+    val currentIndex by rememberUpdatedState(index)
     val motion = LocalRelayMotion.current
     val stepState = remember { SeekableTransitionState(index) }
     val stepTransition = rememberTransition(stepState, label = "setup step")
@@ -95,7 +102,7 @@ import org.openxplay.direlay.ui.design.*
     val errors = settingsErrors(draft, isWireless)
     val running = home.presentation.running
     val changed = settingsNotice(setupDraft(entry, wireless(entry)), draft, carlinkConnected = false) != SettingsNotice.SILENT
-    fun go(target: SetupStep) { stepKey = target.key }
+    fun go(target: SetupStep) { stepKey = target.key; onStepChanged(target) }
     fun previous() { if (index > 0) go(steps[index - 1]) else close() }
     fun next() {
         attempted = true; nextRequests++
@@ -107,12 +114,15 @@ import org.openxplay.direlay.ui.design.*
     }
     BackHandler(index > 0 && Build.VERSION.SDK_INT < 34) { previous() }
     PredictiveBackHandler(index > 0 && Build.VERSION.SDK_INT >= 34) { events ->
+        val origin = stepKey
         val previousIndex = index - 1
         try {
             events.collect { if (motion) stepState.seekTo(it.progress, previousIndex) }
-            previous()
+            val target = relaySetupBack(origin, stepKey, steps[previousIndex].key)
+            if (target != stepKey) setupStep(target)?.let(::go)
+            else if (motion) stepState.animateTo(currentIndex) else stepState.snapTo(currentIndex)
         } catch (_: CancellationException) {
-            withContext(NonCancellable) { if (motion) stepState.animateTo(index) else stepState.snapTo(index) }
+            withContext(NonCancellable) { if (motion) stepState.animateTo(currentIndex) else stepState.snapTo(currentIndex) }
         }
     }
     val ready = home.presentation.canStart || running

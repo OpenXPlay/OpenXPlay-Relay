@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
+import org.openxplay.direlay.ui.design.RelayDecisionDialog
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.res.stringResource
@@ -25,7 +26,7 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
     }, dismiss = { confirmUsb = false })
     confirmOutput?.let { (output, next) ->
         val miracast = output == RelayOutput.MIRACAST
-        AlertDialog(onDismissRequest = { confirmOutput = null },
+        RelayDecisionDialog(onDismissRequest = { confirmOutput = null },
             title = { Text(stringResource(if (miracast) R.string.wireless_miracast else R.string.ui_carlink)) },
             text = { Text(stringResource(if (miracast) R.string.miracast_wifi_direct_confirm else R.string.carlink_wifi_direct_confirm)) },
             confirmButton = { TextButton(onClick = { draft = next; confirmOutput = null }) { Text(stringResource(android.R.string.ok)) } },

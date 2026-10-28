@@ -73,9 +73,7 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
         }
     }
     fun openHome(destination: String) {
-        activity.startActivity(Intent(activity, RelayActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(RelayActivity.EXTRA_HOME_DESTINATION, destination))
+        activity.startActivity(RelayActivity.intent(activity, destination = destination))
     }
     fun stepAction(action: StepAction, step: PathStep) {
         when (action) {
@@ -85,9 +83,7 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
                 (text.raw ?: text.res?.let { activity.getString(it, *text.args.toTypedArray()) })?.let(::copy)
             }
             else -> runCatching {
-                activity.startActivity(Intent(activity, RelayActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(RelayActivity.EXTRA_STEP_ACTION, action.name))
+                activity.startActivity(RelayActivity.intent(activity, stepAction = action))
             }.onFailure { runCatching { activity.startActivity(Intent(Settings.ACTION_SETTINGS)) } }
         }
     }
