@@ -21,6 +21,10 @@ pub struct Iap2CsmChannel {
     failure: Mutex<Option<String>>,
 }
 impl Iap2CsmChannel {
+    pub fn open_wired(stream: Arc<dyn DuplexStream>) -> Result<Arc<Self>> {
+        Self::open(stream, true)
+    }
+
     pub fn open_wireless(stream: Arc<dyn DuplexStream>) -> Result<Arc<Self>> {
         Self::open(stream, false)
     }
