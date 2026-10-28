@@ -12,6 +12,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "stream_bridge_engine_tests.rs"]
+mod engine_tests;
+
 #[derive(Default)]
 struct Control {
     keys: Mutex<Vec<u8>>,

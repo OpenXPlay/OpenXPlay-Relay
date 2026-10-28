@@ -4,6 +4,11 @@
 
 use oxp_core::model::FrameRatePreference;
 
+pub fn screen_session_policy() -> carplay_airplay::ScreenSessionPolicy {
+    // Linux runs Android's default-on screen experiments as plain behaviour.
+    carplay_airplay::ScreenSessionPolicy::default()
+}
+
 pub fn frame_rate_setting(value: &str) -> Option<FrameRatePreference> {
     Some(match value {
         "auto" => FrameRatePreference::Auto,
@@ -121,6 +126,13 @@ pub fn startup_stage(stage: &str) -> Option<(&'static str, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn screen_session_defaults_enable_all_protections() {
+        let policy = screen_session_policy();
+        assert!(policy.isolate_sessions);
+        assert!(policy.reset_on_reconnect);
+        assert!(policy.serialize_delivery);
+    }
     #[test]
     fn resolver_uses_every_setting_and_finite_negotiation() {
         for n in (30..=60).step_by(5) {
