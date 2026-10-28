@@ -32,6 +32,8 @@ der.workspace = true
 ureq.workspace = true
 base64ct.workspace = true
 miniz_oxide.workspace = true
+cms.workspace = true
+zeroize = "=1.9.1"
 
 [[bin]]
 name = "openxplay-relay"

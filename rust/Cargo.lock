@@ -951,6 +951,7 @@ dependencies = [
  "base64ct",
  "carplay-airplay",
  "carplay-iap2",
+ "cms",
  "der",
  "hmac",
  "libc",
@@ -969,6 +970,7 @@ dependencies = [
  "ureq",
  "x509-cert",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]

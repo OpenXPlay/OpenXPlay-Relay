@@ -105,6 +105,7 @@ pub fn supervisor_settings(
         pairing: o.settings.require_pairing_code,
         carlink,
         pem_tls: None,
+        default_tls: None,
     }
 }
 

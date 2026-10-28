@@ -15,6 +15,7 @@ use openxplay_relay::{
     boot_timing, carlink_policy, device_preset, display, host_capabilities, network_roles,
     platform, plugins, public_name, runtime_paths, settings, wifi_capabilities,
 };
+use openxplay_relay::{config_files, identity};
 #[path = "../src/supervisor.rs"]
 mod supervisor;
 use admin::auth::*;
@@ -857,6 +858,7 @@ fn supervisor_settings() -> supervisor::SupervisorSettings {
         pairing: true,
         carlink: None,
         pem_tls: None,
+        default_tls: None,
     }
 }
 #[test]

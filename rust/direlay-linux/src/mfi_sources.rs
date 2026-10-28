@@ -121,19 +121,17 @@ fn hardware(_: &Settings) -> Result<Arc<dyn MfiAuthenticator>> {
 /// This never claims a USB interface, sends a remote request or races a live authentication.
 pub fn readiness(settings: &Settings, directory: &Path, identity: &Path) -> &'static str {
     let result = match settings.mfi_target.as_str() {
-        "local" => {
-            if ["identity.pk8", "certificate.p7b"]
-                .iter()
-                .all(|name| std::fs::metadata(identity.join(name)).is_ok_and(|m| m.len() > 0))
-            {
-                Ok(())
-            } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Missing local identity",
-                ))
-            }
-        }
+        "local" => match crate::identity::status(identity).state {
+            "READY" => Ok(()),
+            "MISSING" => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Missing local identity",
+            )),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid local identity",
+            )),
+        },
         "remote" => {
             if valid_server(&settings.mfi_remote_server) {
                 token(directory).map(|_| ())

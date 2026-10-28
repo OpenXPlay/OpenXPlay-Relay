@@ -80,8 +80,9 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 // trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
+  identity?: import('./identity').IdentityStatus;
   screenData?: import('./car-screen').ScreenData;
-  adminFeatures?: ('logs' | 'config-files' | 'update-check')[];
+  adminFeatures?: ('logs' | 'config-files' | 'update-check' | 'identity')[];
   pathInput?: import('./path/model').PartialInput & {
     startup?: RuntimeStartup;
     iphone?: import('./path/model').PartialInput['iphone'] & { trail?: string[]; runtimeIap2Frames?: number };

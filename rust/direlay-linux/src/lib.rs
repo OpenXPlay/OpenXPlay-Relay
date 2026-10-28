@@ -13,6 +13,7 @@ pub mod cli;
 pub mod di_play_input;
 pub mod display;
 pub mod hotspot_lifetime;
+pub mod identity;
 /// linux air play server protocol module.
 pub mod linux_air_play_server;
 /// linux audio protocol module.

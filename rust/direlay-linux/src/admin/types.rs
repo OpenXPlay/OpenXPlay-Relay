@@ -10,6 +10,8 @@ pub type Values = Map<String, Value>;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<Value>,
     #[serde(default)]
     pub path_input: Value,
     #[serde(default)]
@@ -570,6 +572,21 @@ pub enum AdminUpdate {
 pub type AdminResult = Result<(), String>;
 /// The shell implements this seam; the HTTP server never accesses receiver internals.
 pub trait RelayAdmin: Send + Sync + 'static {
+    fn identity_status(&self) -> Value {
+        Value::Null
+    }
+    fn identity_import(&self, _body: &Values) -> Result<Value, &'static str> {
+        Err("error.request")
+    }
+    fn identity_remove(&self) -> Result<(), &'static str> {
+        Err("error.request")
+    }
+    fn tls_import(&self, _body: &Values) -> Result<(), &'static str> {
+        Err("error.request")
+    }
+    fn tls_remove(&self) -> Result<(), &'static str> {
+        Err("error.request")
+    }
     fn logs_export(&self, _range: &str) -> Result<Value, String> {
         Err("error.request".into())
     }

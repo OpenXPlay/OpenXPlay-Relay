@@ -23,7 +23,7 @@ export const pageKeys: Record<string, string[]> = {
   'developer/carlink': ['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
   'developer/video': ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
   'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
-  'developer/identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'],
+  'identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'],
   developer: ['developerActive'],
   'experimental': ['experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
 };
@@ -38,14 +38,15 @@ export function pageFields(settings: Settings, route: string): Field[] { return 
 export const pages = [
   ['output', 'menu.output', 'car'], ['car', 'menu.car', 'car'], ['tesla', 'menu.tesla', 'car'], ['picture', 'menu.picture', 'monitor'], ['audio', 'menu.audio', 'bluetooth'],
   ['connection', 'menu.connection', 'smartphone'], ['startup', 'menu.startup', 'play'], ['access', 'menu.access', 'lock'],
-  ['config-files', 'menu.config-files', 'code'], ['logs', 'menu.logs', 'file-text'], ['about', 'menu.about', 'info'],
+  ['identity', 'menu.identity', 'file-key-2'], ['config-files', 'menu.config-files', 'code'], ['logs', 'menu.logs', 'file-text'], ['about', 'menu.about', 'info'],
   ['developer', 'menu.developer', 'code'], ['experimental', 'menu.experimental', 'settings'],
 ] as const;
-export const developerPages = ['diagnostics', 'carlink', 'video', 'connection', 'identity', 'other'] as const;
+export const developerPages = ['diagnostics', 'carlink', 'video', 'connection', 'other'] as const;
 export function routeTitle(route: string): string { return route === 'settings' ? 'ui.settings' : route.startsWith('settings/developer/') ? `menu.developer.${route.split('/').at(-1)}` : `menu.${route.slice(9)}`; }
 export function parentRoute(route: string): string { return route.includes('/') ? route.slice(0, route.lastIndexOf('/')) : 'home'; }
 export function normalizeRoute(hash: string): string {
-  const route = hash.replace(/^#\/?/, '') || 'home';
+  let route = hash.replace(/^#\/?/, '') || 'home';
+  if (['settings/developer/identity', 'developer/identity', 'settings:identity'].includes(route)) route = 'settings/identity';
   const valid = ['home', 'settings', ...pages.map(([p]) => `settings/${p}`), ...Object.keys(pageKeys).map(p => `settings/${p}`), ...developerPages.map(p => `settings/developer/${p}`), 'settings/access/admin'];
   return valid.includes(route) ? route : 'settings';
 }
@@ -56,6 +57,7 @@ export const developerIcons: Record<string, string> = { diagnostics: 'info', car
 export function pageAvailable(settings: Settings, status: Status, route: string): boolean {
   if (route === 'settings/logs' || route === 'settings/config-files') return status.adminFeatures?.includes(route.slice(9) as 'logs' | 'config-files') ?? false;
   if (['settings', 'settings/about', 'settings/access', 'settings/access/admin', 'settings/connection', 'settings/connection/network', 'settings/developer', 'settings/developer/diagnostics', 'settings/developer/connection'].includes(route)) return true;
+  if (route === 'settings/identity') return status.adminFeatures?.includes('identity') ?? pageFields(settings, route).length > 0;
   if (route === 'settings/vehicle') return status.platform === 'linux';
   if (route === 'settings/car') return status.platform === 'linux' || pageFields(settings, route).length > 0;
   if (route === 'settings/connection/network/interfaces') return status.platform === 'linux';
@@ -89,6 +91,7 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
     const options = all.filter(f => f.key.startsWith('experimental') && f.key !== 'experimentalActive' && f.type === 'bool' && v[f.key]).length;
     return options ? `${t('stage.on')} · ${options} ${t('menu.options')}` : t('stage.on');
   }
+  if (route === 'settings/identity') return t(status.identity?.mfi.state === 'READY' ? 'direlay_installed' : status.identity?.mfi.state === 'INVALID' ? 'dev_invalid_identity' : 'direlay_missing');
   if (route === 'settings/about') return updateMenuVersion(status.version, t);
   if (route === 'settings/developer/carlink') return [label('carlinkHevc'), label('carlinkTrace')].filter(Boolean).join(' · ');
   if (route === 'settings/developer/connection') return [label('output'), t(v.transport === 'usb' ? 'option.transport.usb' : 'option.transport.wireless')].filter(Boolean).join(' · ');

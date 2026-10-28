@@ -16,6 +16,29 @@ impl AdminServer {
         body: &Values,
     ) -> Option<Response> {
         let response = match (request.method.as_str(), path) {
+            ("GET", "/identity") => Response::json(200, self.admin.identity_status()),
+            ("POST", "/identity/import") => match self.admin.identity_import(body) {
+                Ok(result) => Response::json(200, result),
+                Err(code) => Response::error(422, code),
+            },
+            ("POST", "/tls/import") => match self.admin.tls_import(body) {
+                Ok(()) => Response::json(200, self.admin.identity_status()),
+                Err(code) => Response::error(422, code),
+            },
+            ("DELETE", path @ ("/identity" | "/tls")) => {
+                if body.get("confirm") != Some(&Value::Bool(true)) {
+                    Response::error(422, "error.invalid")
+                } else {
+                    match if path == "/identity" {
+                        self.admin.identity_remove()
+                    } else {
+                        self.admin.tls_remove()
+                    } {
+                        Ok(()) => Response::json(200, self.admin.identity_status()),
+                        Err(code) => Response::error(422, code),
+                    }
+                }
+            }
             ("POST", "/logs/export") => {
                 let range = body
                     .get("range")
@@ -291,6 +314,11 @@ mod tests {
         let (server, fake) = server();
         let cookie = login(&server);
         for (method, path, body) in [
+            ("GET", "/identity", json!({})),
+            ("POST", "/identity/import", json!({"files":[]})),
+            ("POST", "/tls/import", json!({"data":"","password":""})),
+            ("DELETE", "/identity", json!({"confirm":true})),
+            ("DELETE", "/tls", json!({"confirm":true})),
             ("POST", "/logs/export", json!({"range":"10m"})),
             ("GET", "/logs/export/test", json!({})),
             ("POST", "/logs/upload", json!({"id":"test"})),
@@ -309,7 +337,7 @@ mod tests {
             let mut request = request(method, path, body);
             assert_eq!(server.route(&request, 2).status, 401, "{path}");
             request.headers.insert("cookie".into(), cookie.clone());
-            if method == "POST" {
+            if method != "GET" {
                 request.headers.remove("x-openxplay-admin");
                 assert_eq!(server.route(&request, 2).status, 403);
             }

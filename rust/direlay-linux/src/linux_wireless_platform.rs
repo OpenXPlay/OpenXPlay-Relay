@@ -153,11 +153,7 @@ impl LinuxWirelessPlatform {
         hotspot
     }
     pub fn load_local_mfi(directory: &std::path::Path) -> Result<Arc<dyn MfiAuthenticator>> {
-        let key = std::fs::read(directory.join("identity.pk8"))?;
-        let cert = std::fs::read(directory.join("certificate.p7b"))?;
-        Ok(Arc::new(LocalMfiAuthenticationClient::from_identity(
-            &key, &cert,
-        )?))
+        Ok(Arc::new(crate::identity::load(directory)?))
     }
 }
 struct ProbedHotspot {

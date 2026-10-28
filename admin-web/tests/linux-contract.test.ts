@@ -30,7 +30,7 @@ it.each(['en', 'zh-CN'] as const)('resolves every production Linux field, sectio
   }
 });
 it.each(Object.entries(linuxStatusFixtures))('accepts the real Linux %s response in both presenters', (_state, status) => {
-  expect(status.adminFeatures).toEqual(['logs', 'config-files', 'update-check']);
+  expect(status.adminFeatures).toEqual(['logs', 'config-files', 'update-check', 'identity']);
   expect(status.pathInput?.platform).toBe('linux');
   const path = presentPath(status.pathInput!);
   expect(presentStage(path)).toBeDefined();

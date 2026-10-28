@@ -53,6 +53,10 @@ fn admin_contract_status(state: &str) {
     let (admin, dir) = fake();
     let now = 1_793_000_000_000;
     let mut settings = admin.settings.lock().unwrap().clone();
+    if state == "identity-invalid" {
+        std::fs::create_dir_all(&admin.options.identity_dir).unwrap();
+        for name in ["identity.pk8","certificate.p7b"] { std::fs::write(admin.options.identity_dir.join(name),b"nonempty-invalid").unwrap(); }
+    }
     let mut status = admin.status();
     // Pin host observations and clocks; every serialized field comes from the production response.
     status.host_addresses = vec![AdminHostAddress::new("wlan0".into(), "10.42.0.1".into())];
@@ -240,7 +244,7 @@ fn admin_contract_status(state: &str) {
         status.screen_data = Some(d.admin_status());
     }
     status.output = settings.output.clone();
-    crate::path_input::update(&facts, &settings, &mut status, now, true, true);
+    crate::path_input::update(&facts, &settings, &mut status, now, state != "identity-invalid", true);
     let p = &status.path_input;
     if state.starts_with("tesla-") {
         assert!(p["setup"]["outputs"]
@@ -285,6 +289,7 @@ macro_rules! contract_states {
     ($($name:ident => $state:literal),* $(,)?) => { $(#[test] fn $name() { admin_contract_status($state); })* };
 }
 contract_states! {
+    admin_contract_invalid_identity => "identity-invalid",
     admin_contract_idle => "idle", admin_contract_ready => "ready", admin_contract_pairing => "pairing",
     admin_contract_scanning => "carlink-scanning", admin_contract_pin => "carlink-pin",
     admin_contract_confirm => "carlink-confirm",

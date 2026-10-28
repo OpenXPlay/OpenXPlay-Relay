@@ -205,6 +205,9 @@ pub struct LinuxRelayAdmin {
     provisioning: Arc<crate::provision::ProvisioningGate>,
     /// Trusted HTTPS with a free domain name; off without `public-name.json`.
     public_name: Arc<crate::public_name::PublicNameService>,
+    identity_imports: Mutex<crate::identity::Imports>,
+    user_tls_lock: Mutex<()>,
+    receiver_default_tls: Arc<Mutex<Option<crate::identity::tls::DefaultTls>>>,
     /// The admin page's certificate for that name, chosen by SNI.
     admin_certificate: crate::admin::server::NamedCertificate,
     /// What the running head-unit page serves; `None` while there is no web output.
@@ -402,6 +405,9 @@ impl LinuxRelayAdmin {
             running_links: Mutex::new(None),
             browser_target: Arc::default(),
             public_name,
+            identity_imports: Mutex::default(),
+            user_tls_lock: Mutex::default(),
+            receiver_default_tls: Arc::default(),
             admin_certificate: Default::default(),
             receiver_tls: Mutex::new(None),
             receiver_tls_sans: Mutex::new(Vec::new()),
@@ -838,6 +844,8 @@ impl LinuxRelayAdmin {
         let served = self
             .public_name
             .certificate_snapshot(&self.options.state_dir)?;
+        settings.default_tls = crate::identity::tls::snapshot(&self.options.state_dir)?;
+        let default_tls = settings.default_tls.clone();
         settings.pem_tls = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
             cert: s.cert.clone(),
@@ -900,7 +908,24 @@ impl LinuxRelayAdmin {
         let hotspot = self.hotspot_lifetime.clone();
         let admin_hotspot = self.admin_hotspot.clone();
         let addresses = self.runtime.network_address_source();
+        let receiver_default_tls = self.receiver_default_tls.clone();
+        let launched_default_tls = default_tls.clone();
+        let tls_state = self.options.state_dir.clone();
+        *self.receiver_default_tls.lock().unwrap() = None;
         let event_sink: EventSink = Arc::new(move |mut event| {
+            if event["type"] == "tls-fingerprint" {
+                if let Some(base) = &launched_default_tls {
+                    if event["fingerprint"].as_str() == Some(&base.fingerprint)
+                        && crate::identity::tls::snapshot(&tls_state)
+                            .ok()
+                            .flatten()
+                            .as_ref()
+                            == Some(base)
+                    {
+                        *receiver_default_tls.lock().unwrap() = Some(base.clone());
+                    }
+                }
+            }
             if vehicle
                 .lock()
                 .unwrap()
@@ -1681,6 +1706,11 @@ impl LinuxRelayAdmin {
     }
     /// Single production queue for trusted material, network SANs and Tesla coverage.
     /// The action reads the latest desired set when it runs, coalescing waiting changes.
+    fn queue_user_tls(&self) {
+        if let Ok(sans) = self.receiver_sans() {
+            self.apply_receiver_tls(self.public_name.served(), sans);
+        }
+    }
     fn apply_receiver_tls(
         &self,
         served: Option<crate::public_name::Served>,
@@ -1695,7 +1725,11 @@ impl LinuxRelayAdmin {
             false,
             crate::public_name::service::trusted_clock(),
         ) || *self.receiver_tls_sans.lock().unwrap() != sans
-            || self.tesla_tls_changed();
+            || self.tesla_tls_changed()
+            || crate::identity::tls::snapshot(&self.options.state_dir)
+                .ok()
+                .flatten()
+                != *self.receiver_default_tls.lock().unwrap();
         if changed
             && !self.receiver_tls_queued.swap(true, Ordering::AcqRel)
             && self.operations.try_send(Operation::ReceiverTls).is_err()
@@ -1713,6 +1747,7 @@ impl LinuxRelayAdmin {
             .public_name
             .certificate_snapshot(&self.options.state_dir)?;
         let sans = self.receiver_sans()?;
+        let default_tls = crate::identity::tls::snapshot(&self.options.state_dir)?;
         let tesla = crate::tesla_address::tls_address(&self.settings.lock().unwrap());
         let pem = served.as_ref().map(|s| PemTls {
             name: s.name.clone(),
@@ -1725,10 +1760,19 @@ impl LinuxRelayAdmin {
             .unwrap()
             .as_ref()
             .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotConnected))
-            .and_then(|supervisor| supervisor.update_web_tls(pem, sans.clone(), timeout));
+            .and_then(|supervisor| {
+                supervisor.update_web_tls_with_default(
+                    pem,
+                    sans.clone(),
+                    default_tls.clone(),
+                    timeout,
+                )
+            });
         match swapped {
             Ok(()) => {
                 *self.receiver_tls.lock().unwrap() = Some(served);
+                *self.receiver_default_tls.lock().unwrap() = default_tls;
+                let _ = crate::identity::tls::prune(&self.options.state_dir);
                 *self.receiver_tls_sans.lock().unwrap() = sans.clone();
                 *self.receiver_tesla_tls.lock().unwrap() = tesla.filter(|a| sans.contains(a));
                 self.events.log("receiver TLS updated live");
@@ -1797,6 +1841,9 @@ impl LinuxRelayAdmin {
         self.stop_controller_for_restart(true);
     }
     fn tick_inner(&self) -> Result<()> {
+        if let Ok(mut imports) = self.identity_imports.try_lock() {
+            imports.expire();
+        }
         if self.runtime.inventory_refresh == InventoryRefresh::Automatic {
             self.inventory.refresh();
         }
@@ -3301,6 +3348,60 @@ impl RelayAdmin for LinuxRelayAdmin {
             Err(failure) => serde_json::json!({"channel":channel,"failure":failure}),
         })
     }
+    fn identity_status(&self) -> serde_json::Value {
+        let mut tls = crate::identity::tls::status(&self.options.state_dir);
+        tls["pending"] = serde_json::json!(
+            self.receiver_tls.lock().unwrap().is_some()
+                && crate::identity::tls::snapshot(&self.options.state_dir)
+                    .ok()
+                    .flatten()
+                    != *self.receiver_default_tls.lock().unwrap()
+        );
+        serde_json::json!({"mfi":crate::identity::status(&self.options.identity_dir),"tls":tls})
+    }
+    fn identity_import(
+        &self,
+        body: &Values,
+    ) -> std::result::Result<serde_json::Value, &'static str> {
+        let result = self
+            .identity_imports
+            .lock()
+            .unwrap()
+            .select(&self.options.identity_dir, body)?;
+        self.wake_tick();
+        Ok(result)
+    }
+    fn identity_remove(&self) -> std::result::Result<(), &'static str> {
+        let mut imports = self.identity_imports.lock().unwrap();
+        crate::identity::remove(&self.options.identity_dir).map_err(|_| "error.request")?;
+        imports.clear();
+        self.wake_tick();
+        Ok(())
+    }
+    fn tls_import(&self, body: &Values) -> std::result::Result<(), &'static str> {
+        use base64ct::{Base64, Encoding};
+        let _lock = self.user_tls_lock.lock().unwrap();
+        let encoded = body
+            .get("data")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| s.len() <= crate::identity::tls::MAX_FILE * 4 / 3 + 4)
+            .ok_or("identity_error_tls")?;
+        let bytes =
+            zeroize::Zeroizing::new(Base64::decode_vec(encoded).map_err(|_| "identity_error_tls")?);
+        let password = body
+            .get("password")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("identity_error_tls")?;
+        crate::identity::tls::import_pkcs12(&self.options.state_dir, &bytes, password)?;
+        self.queue_user_tls();
+        Ok(())
+    }
+    fn tls_remove(&self) -> std::result::Result<(), &'static str> {
+        let _lock = self.user_tls_lock.lock().unwrap();
+        crate::identity::tls::remove(&self.options.state_dir).map_err(|_| "error.request")?;
+        self.queue_user_tls();
+        Ok(())
+    }
     fn config_export(
         &self,
         privacy: bool,
@@ -3315,6 +3416,11 @@ impl RelayAdmin for LinuxRelayAdmin {
                 .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
             if !token.is_empty() {
                 sections["mfiRemoteToken"] = token.into();
+            }
+            if let Some(material) = crate::identity::tls::export(&self.options.state_dir)
+                .map_err(|_| BTreeMap::from([("importedCertificate".into(), "io".into())]))?
+            {
+                sections["importedCertificate"] = material;
             }
             crate::config_files::export_privacy(sections, now)
         } else {
@@ -3402,7 +3508,14 @@ impl RelayAdmin for LinuxRelayAdmin {
                 self.events
                     .failure_secrets(failure_secrets(&current, &self.options.state_dir));
             }
-            if let Some(privacy) = plan.privacy {
+            if let Some(mut privacy) = plan.privacy {
+                if let Some(material) = privacy.imported_certificate.take() {
+                    let _lock = self.user_tls_lock.lock().unwrap();
+                    crate::identity::tls::install(&self.options.state_dir, &material).map_err(
+                        |_| BTreeMap::from([("importedCertificate".into(), "io".into())]),
+                    )?;
+                    self.queue_user_tls();
+                }
                 self.public_name
                     .import_privacy(privacy)
                     .map_err(|_| BTreeMap::from([("file".into(), "io".into())]))?;
@@ -3601,8 +3714,9 @@ impl RelayAdmin for LinuxRelayAdmin {
                 }
             });
         let mut status = AdminStatus {
+            identity: Some(self.identity_status()),
             path_input: serde_json::Value::Null,
-            admin_features: ["logs", "config-files", "update-check"]
+            admin_features: ["logs", "config-files", "update-check", "identity"]
                 .map(str::to_owned)
                 .to_vec(),
             video: self.input.video_status(),
@@ -4417,6 +4531,7 @@ impl RelayAdmin for LinuxRelayAdmin {
 mod tests {
     use super::*;
     include!("admin_contract_tests.rs");
+    include!("identity_admin_tests.rs");
     #[test]
     fn mfi_sources_android_user_envelope_and_restart_contract() {
         let (admin, dir) = fake();

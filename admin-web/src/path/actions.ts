@@ -7,6 +7,7 @@ import type { StageAction } from './present-stage';
 export type Command = { kind: 'api'; endpoint: 'actions/start' | 'actions/stop' | 'actions/restart' | 'actions/pair-iphone' | 'carlink/connect' } | { kind: 'route'; route: string } | { kind: 'phone' | 'pin' | 'network' | 'hotspot' | 'copy' | 'cancel' };
 export function stepCommand(action: StepAction, platform: 'linux' | 'android'): Command | null {
   switch (action) {
+    case 'IMPORT_IDENTITY': return { kind: 'route', route: 'settings/identity' };
     case 'FIX_SETTINGS': return { kind: 'route', route: 'settings' };
     case 'START_NOW': return { kind: 'api', endpoint: 'actions/start' };
     case 'RETRY': return { kind: 'api', endpoint: 'actions/restart' };

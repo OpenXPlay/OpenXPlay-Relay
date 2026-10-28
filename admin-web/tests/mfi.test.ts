@@ -16,8 +16,8 @@ it.each(['remote', 'i2c', 'usb-ch341'])('places the production %s controls and r
   const fields = settings.schema.flatMap(section => section.fields);
   const target = fields.find(field => field.key === 'mfiTarget')!;
   expect(target.options?.map(option => option.value)).toEqual(['local', 'remote', 'usb-ch341', 'i2c']);
-  for (const key of ['mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken']) expect(fieldRoute(key)).toBe('settings/developer/identity');
-  expect(pageAvailable(settings, linuxStatusFixtures.ready, 'settings/developer/identity')).toBe(true);
+  for (const key of ['mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken']) expect(fieldRoute(key)).toBe('settings/identity');
+  expect(pageAvailable(settings, linuxStatusFixtures.ready, 'settings/identity')).toBe(true);
   expect(fields.find(field => field.key === 'mfiRemoteToken')!.type).toBe('secret');
   expect(settings.values.mfiRemoteToken).toBeUndefined();
   expect(settings.values.mfiRemoteTokenSet).toBe(true);

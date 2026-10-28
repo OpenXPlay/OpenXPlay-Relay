@@ -2,7 +2,8 @@
   "adminFeatures": [
     "logs",
     "config-files",
-    "update-check"
+    "update-check",
+    "identity"
   ],
   "adminHotspot": {
     "reason": null,
@@ -108,6 +109,18 @@
       "open",
       "wpa2"
     ]
+  },
+  "identity": {
+    "mfi": {
+      "fingerprint": null,
+      "state": "MISSING"
+    },
+    "tls": {
+      "fingerprint": null,
+      "imported": false,
+      "pending": false,
+      "state": "MISSING"
+    }
   },
   "iphone": {
     "name": "iPhone",
