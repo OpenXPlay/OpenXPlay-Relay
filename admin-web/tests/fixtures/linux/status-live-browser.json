@@ -14,7 +14,7 @@
   "adminUrls": [
     "https://10.42.0.1:6975/"
   ],
-  "autoStartPaused": true,
+  "autoStartPaused": false,
   "carlink": null,
   "host": "openxplay-linux.local",
   "hostAddresses": [
@@ -97,6 +97,7 @@
         "trail": [],
         "trusted": false
       },
+      "displayMismatch": false,
       "dlna": {
         "code": null,
         "name": null,
@@ -186,7 +187,7 @@
       },
       "automatic": true,
       "bootStart": true,
-      "paused": true
+      "paused": false
     },
     "version": "0.1.6-beta.1"
   },
@@ -224,6 +225,7 @@
       "height": 1201,
       "width": 2401
     },
+    "displayMismatch": false,
     "enabled": true,
     "preference": true,
     "records": [

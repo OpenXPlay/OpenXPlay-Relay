@@ -206,6 +206,10 @@ impl AdminServer {
             return Response::error(404, "error.request");
         };
         let method = request.method.as_str();
+        let enabled = self.auth.lock().unwrap().access_enabled();
+        if !enabled && path != "/session" && !request.peer.is_loopback() {
+            return Response::error(403, "admin.disabled");
+        }
         let ready = self.auth.lock().unwrap().ready(request.token(), now);
         if path != "/session" && path != "/login" && !ready {
             return Response::error(401, "password");
@@ -249,7 +253,7 @@ impl AdminServer {
         match (method, path) {
             ("GET", "/session") => Response::json(
                 200,
-                json!({"state": if ready {"ready"} else {"login"}, "defaultPassword": self.auth.lock().unwrap().default_password()}),
+                json!({"state": if ready {"ready"} else {"login"}, "defaultPassword": self.auth.lock().unwrap().default_password(), "adminEnabled": enabled, "adminAccessAllowed": enabled || request.peer.is_loopback()}),
             ),
             ("POST", "/login") => match self.auth.lock().unwrap().login(
                 request.peer,
@@ -267,6 +271,30 @@ impl AdminServer {
                 }
                 Err(LoginError::Storage(_)) => Response::error(500, "error.request"),
             },
+            ("POST", "/setup/complete") => match self.auth.lock().unwrap().complete_setup() {
+                Ok(()) => Response::json(200, json!({"ok":true})),
+                Err(_) => Response::error(500, "error.request"),
+            },
+            ("PUT", "/access") => match body.get("enabled").and_then(Value::as_bool) {
+                Some(value)
+                    if value || body.get("confirmed").and_then(Value::as_bool) == Some(true) =>
+                {
+                    match self.auth.lock().unwrap().set_access_enabled(value) {
+                        Ok(()) => Response::json(200, json!({"ok":true})),
+                        Err(_) => Response::error(500, "error.request"),
+                    }
+                }
+                _ => Response::error(422, "error.invalid"),
+            },
+            ("POST", "/password/reset") => {
+                if body.get("confirmed").and_then(Value::as_bool) != Some(true) {
+                    return Response::error(422, "error.invalid");
+                }
+                match self.auth.lock().unwrap().reset() {
+                    Ok(()) => Response::json(200, json!({"ok":true})).cookie("", 0),
+                    Err(_) => Response::error(500, "error.request"),
+                }
+            }
             ("POST", "/password") => match self
                 .auth
                 .lock()
@@ -296,7 +324,10 @@ impl AdminServer {
                     status.receivers = Some(self.admin.receivers());
                     status.receiver_history = Some(self.admin.receiver_history());
                 }
-                Response::json(200, json!(status))
+                let mut value = json!(status);
+                value["adminEnabled"] = json!(enabled);
+                value["setupCompleted"] = json!(self.auth.lock().unwrap().setup_completed());
+                Response::json(200, value)
             }
             ("POST", path @ ("/carlink/pin" | "/carlink/connect")) => {
                 let mut last = self.pin_attempt.lock().unwrap();
@@ -451,6 +482,8 @@ impl AdminServer {
                     "start",
                     "stop",
                     "cancel-arrival",
+                    "enable-bluetooth",
+                    "enable-wifi",
                     "restart",
                     "regenerate-pairing-code",
                     "clear-saved-head-unit",

@@ -200,3 +200,10 @@ dialog button.confirm { background: var(--ok); color: var(--primary-ink); }
 .privacy .inset-row { justify-content: space-between; }
 
 .config-feedback { white-space: pre-line; }
+
+.arrival-action { position: relative; width: 100%; }
+.arrival-action > button { width: 100%; }
+#arrival-ring { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+#arrival-ring rect { width: calc(100% - 8px); height: calc(100% - 8px); fill: none; stroke: rgb(255 255 255 / .7); stroke-width: 2; transition: stroke-dasharray 1s linear; }
+@media (prefers-reduced-motion: reduce) { #arrival-ring rect { transition: none; } }
+#arrival-countdown { margin: 0; text-align: center; }

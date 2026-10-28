@@ -74,3 +74,12 @@ it('presents an unreachable iPhone as waiting in English and Simplified Chinese'
   expect(translate('en', stage.headline.res!)).toBe('Waiting for iPhone');
   expect(translate('zh-CN', stage.headline.res!)).toBe('等待 iPhone');
 });
+
+it('keeps paused, automatic and armed startup facts consistent in every Linux fixture', () => {
+  for (const status of Object.values(linuxStatusFixtures)) {
+    const startup = status.pathInput!.startup!;
+    expect(startup.paused).toBe(status.autoStartPaused);
+    if (startup.paused) { expect(startup.automatic).toBe(false); expect(status.pathInput!.iphone!.armed).toBe(false); }
+    if (status.running || status.pathInput!.iphone!.armed || startup.arrival.pending) expect(startup.paused).toBe(false);
+  }
+});

@@ -8,7 +8,7 @@ export interface RuntimeStartup {
   automatic: boolean; bootStart: boolean; paused: boolean;
   arrival: { pending: boolean; deadlineMillis: number | null; remainingMillis: number | null };
 }
-export interface Session { state: SessionState; defaultPassword: boolean }
+export interface Session { state: SessionState; defaultPassword: boolean; adminEnabled?: boolean; adminAccessAllowed?: boolean }
 export interface WifiNetwork { ssid: string; signal: number; secure: boolean; known: boolean }
 export interface WifiClient { ssid: string | null; ip: string | null; signal: number | null; setupHotspot?: boolean }
 export interface CarlinkStatus {
@@ -82,6 +82,7 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
   identity?: import('./identity').IdentityStatus;
+  adminEnabled?: boolean; setupCompleted?: boolean;
   screenData?: import('./car-screen').ScreenData;
   adminFeatures?: ('logs' | 'config-files' | 'update-check' | 'identity')[];
   pathInput?: import('./path/model').PartialInput & {
@@ -133,6 +134,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, r
   events.dispatchEvent(new Event('online'));
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (data.error === 'admin.disabled') events.dispatchEvent(new Event('admin-disabled'));
     if (response.status === 401) events.dispatchEvent(new Event('unauthorized'));
     throw new ApiError(response.status, response.status === 429 ? 'error.rateLimit' : data.error ?? 'error.request', data.errors ?? {}, Number(response.headers.get('Retry-After')) || 60, data.checks || []);
   }
@@ -150,6 +152,9 @@ export const api = {
   saveRoles: (networkRoles: NetworkRolesSetting, extra: { wifiCountry?: string; adminHotspotPassword?: string } = {}) => request<NetworkProposal>('/network-roles', 'PUT', { networkRoles, ...extra }, false),
   session: () => request<Session>('/session'),
   login: (password: string) => request('/login', 'POST', { password }),
+  access: (enabled: boolean) => request('/access', 'PUT', { enabled, confirmed: !enabled }, false),
+  resetPassword: () => request('/password/reset', 'POST', { confirmed: true }, false),
+  completeSetup: () => request('/setup/complete', 'POST', {}, false),
   password: (current: string, next: string) => request('/password', 'POST', { current, new: next }, false),
   networks: () => request<WifiNetwork[]>('/wifi/networks'),
   wifi: (ssid: string, password?: string) => request('/wifi', 'PUT', { ssid, ...(password === undefined ? {} : { password }) }, false),
@@ -163,7 +168,7 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
-  action: (name: 'start' | 'stop' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'clear-window-records' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink', 'regenerate-pairing-code'].includes(name)),
+  action: (name: 'start' | 'stop' | 'enable-bluetooth' | 'enable-wifi' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'clear-window-records' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, false),
   showViewArea: (index: number) => request('/view-area', 'POST', { index }, false),
   phones: () => request<Phone[]>('/phones'),
 };

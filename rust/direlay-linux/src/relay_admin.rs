@@ -2447,7 +2447,15 @@ fn picture_section() -> Section {
             key: key.into(),
             field_type: "choice".into(),
             label_key: format!("field.linux.{key}"),
-            hint_key: (key == "screenWidth").then(|| "hint.linux.screenWidth".into()),
+            hint_key: Some(
+                match key {
+                    "screenWidth" => "hint.linux.screenWidth",
+                    "resolution" => "hint.resolution",
+                    "videoCodec" => "hint.videoCodec",
+                    _ => "hint.frameRate",
+                }
+                .into(),
+            ),
             options: Some(
                 choices
                     .into_iter()
@@ -2789,7 +2797,9 @@ pub fn settings_schema() -> Vec<Section> {
                 key
             }
         ),
-        hint_key: if key == "autoStart" {
+        hint_key: if key == "bootStart" {
+            Some("hint.field.bootStart".into())
+        } else if key == "autoStart" {
             Some("hint.field.linuxAutoStart".into())
         } else {
             matches!(
@@ -2799,6 +2809,7 @@ pub fn settings_schema() -> Vec<Section> {
                     | "carlinkReconnectOnResize"
                     | "carlinkHevc"
                     | "videoStats"
+                    | "carPlayViewAreas"
                     | "hotspotChannel"
                     | "carlinkLink"
                     | "carlinkInterface"
@@ -3946,6 +3957,9 @@ impl RelayAdmin for LinuxRelayAdmin {
             identity_ready,
             self.backends.bluetooth.check_radio().is_ok(),
         );
+        if let Some(enabled) = self.backends.access_point.wifi_enabled() {
+            status.path_input["relay"]["wifiOn"] = enabled.into();
+        }
         status
     }
     fn network_roles_update(&self, values: Values) -> Option<crate::network_roles::SaveResult> {
@@ -4342,6 +4356,18 @@ impl RelayAdmin for LinuxRelayAdmin {
                 }
                 Ok(())
             }
+            "enable-bluetooth" => self
+                .backends
+                .bluetooth
+                .power_on()
+                .map_err(|_| "error.radioBluetooth".into()),
+            "enable-wifi" => crate::platform::command(
+                self.runtime.runner.as_ref(),
+                &["nmcli", "radio", "wifi", "on"],
+                Duration::from_secs(3),
+            )
+            .map(|_| ())
+            .map_err(|_| "error.radioWifi".into()),
             "start" => self.defer(Operation::Start),
             "stop" | "cancel-arrival" => self.defer(Operation::Stop),
             "restart" => self.defer(Operation::Restart),

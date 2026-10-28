@@ -8,7 +8,7 @@ import type { Connect, ViteDevServer } from 'vite';
 import { expect, it, vi } from 'vitest';
 import { mockApi } from '../dev-server';
 
-function relay(linux = false, state?: string) {
+function relay(linux = false, state?: string, peer = '127.0.0.1') {
   let handler: Connect.NextHandleFunction;
   const plugin = mockApi(linux);
   const configure = plugin.configureServer as (server: ViteDevServer) => void;
@@ -18,7 +18,7 @@ function relay(linux = false, state?: string) {
     const req = Readable.from([JSON.stringify(body)]) as IncomingMessage;
     req.url = `/api/v0${path}`; req.method = method;
     req.headers = { cookie, ...(state ? { referer: `http://localhost/?state=${state}` } : {}), ...(guard ? { 'content-type': 'application/json', 'x-openxplay-admin': '1' } : {}) };
-    Object.defineProperty(req, 'socket', { value: { remoteAddress: '127.0.0.1' } });
+    Object.defineProperty(req, 'socket', { value: { remoteAddress: peer } });
     const headers: Record<string, string> = {};
     return new Promise<{ status: number; data: any; headers: Record<string, string> }>((resolve, reject) => {
       const res = { statusCode: 200, setHeader: (key: string, value: string) => { headers[key] = value; }, end: (raw: string | Buffer) => {
@@ -367,4 +367,95 @@ it('keeps remote MFi tokens out of mock settings and user files and supports rem
   expect((await call('/config/privacy')).data.mfiRemoteToken).toBe('mock-mfi-secret');
   expect((await call('/settings', 'PUT', { mfiRemoteToken: '' })).status).toBe(200);
   expect((await call('/settings')).data.values.mfiRemoteTokenSet).toBe(false);
+});
+
+it('keeps arrival deadlines stable through polls, cancellation and subsequent startup phases', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1'); const clock = vi.spyOn(Date, 'now'); let now = 100000; clock.mockImplementation(() => now);
+  try {
+    const call = relay(true, 'arrival');
+    const first = (await call('/status')).data.pathInput;
+    now += 2000; const second = (await call('/status')).data.pathInput;
+    expect(first.startup.arrival.deadlineMillis).toBe(second.startup.arrival.deadlineMillis);
+    expect(second.startup.arrival.remainingMillis).toBe(3000);
+    await call('/actions/cancel-arrival', 'POST'); now += 6000;
+    const stopped = (await call('/status')).data;
+    expect(stopped.running).toBe(false); expect(stopped.pathInput.startup.arrival.pending).toBe(false); expect(stopped.autoStartPaused).toBe(true);
+    await call('/actions/start', 'POST');
+    expect((await call('/status')).data.pathInput.iphone.step).toBe('BLUETOOTH');
+    now += 1100; expect((await call('/status')).data.pathInput.iphone.step).toBe('AUTH');
+    now += 1100; expect((await call('/status')).data.pathInput.iphone.step).toBe('JOINING');
+    now += 1100; expect((await call('/status')).data.pathInput.live.pictureOnCar).toBe(true);
+    await call('/actions/stop', 'POST'); expect((await call('/status')).data.pathInput.iphone.started).toBe(false);
+  } finally { clock.mockRestore(); vi.unstubAllEnvs(); }
+});
+it.each([['bluetooth-off', 'enable-bluetooth', 'bluetoothOn'], ['wifi-off', 'enable-wifi', 'wifiOn']])('repairs the %s preview using live radio facts', async (state, action, fact) => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try { const call = relay(true, state); expect((await call('/status')).data.pathInput.relay[fact]).toBe(false); await call('/actions/' + action, 'POST'); expect((await call('/status')).data.pathInput.relay[fact]).toBe(true); }
+  finally { vi.unstubAllEnvs(); }
+});
+it('refreshes several phones, selection and a new pairing without replacing the picker session', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1'); const time = vi.spyOn(Date, 'now'); let now = 100000; time.mockImplementation(() => now);
+  try {
+    const call = relay(true, 'multiple-iphones');
+    expect((await call('/status')).data.pathInput.iphone.pick).toBe('MULTIPLE');
+    await call('/settings', 'PUT', { iphone: 'iphone-second' });
+    expect((await call('/status')).data.pathInput.iphone).toMatchObject({ pick: 'PICKED', name: 'Second iPhone' });
+    await call('/actions/pair-iphone', 'POST'); now += 2100;
+    expect((await call('/phones')).data.some((phone: { id: string }) => phone.id === 'iphone-new')).toBe(true);
+  } finally { time.mockRestore(); vi.unstubAllEnvs(); }
+});
+it('models replacement approval, incorrect PIN, accepted PIN and real cancellation', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try {
+    const call = relay(true, 'carlink-confirm');
+    expect((await call('/status')).data.carlink).toMatchObject({ pinRequest: 18, pinConfirmation: true });
+    expect((await call('/carlink/pairing', 'POST', { action: 'pin', request: 17, pin: '1234' })).status).toBe(409);
+    await call('/carlink/pairing', 'POST', { action: 'approve', request: 18 });
+    expect((await call('/status')).data.carlink).toMatchObject({ pinRequest: 17, pinConfirmation: false });
+    await call('/carlink/pairing', 'POST', { action: 'pin', request: 17, pin: '0000' });
+    expect((await call('/status')).data.carlink.pinIncorrect).toBe(true);
+    await call('/carlink/pairing', 'POST', { action: 'pin', request: 17, pin: '1234' });
+    expect((await call('/status')).data.pathInput.car.carlink).toMatchObject({ pinPending: false, trusted: true });
+    const cancel = relay(true, 'carlink-pin'); await cancel('/status');
+    await cancel('/carlink/pairing', 'POST', { action: 'cancel', request: 17 });
+    expect((await cancel('/status')).data.carlink.pinRequested).toBe(false);
+    expect((await cancel('/status')).data.pathInput.car.carlink.phase).toBe('ENDED');
+  } finally { vi.unstubAllEnvs(); }
+});
+it('keeps output and network facts aligned after preview edits and clears the restart latch', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try {
+    const call = relay(true, 'live'); await call('/status');
+    await call('/settings', 'PUT', { output: 'carlink' });
+    let s = (await call('/status')).data; expect(s.pathInput.setup.outputs).toEqual(['CARLINK']); expect(s.pathInput.car.web.phase).toBe('OFF');
+    await call('/settings', 'PUT', { frameRate: '30' }); expect((await call('/status')).data.notices).toContain('notice.nextStart');
+    await call('/actions/restart', 'POST'); expect((await call('/status')).data.notices).not.toContain('notice.nextStart');
+    expect((await call('/settings', 'PUT', { autoStart: false, bootStart: true })).data.applied).toBe('now');
+    s = (await call('/status')).data; expect(s.pathInput.startup).toMatchObject({ automatic: false, bootStart: true });
+  } finally { vi.unstubAllEnvs(); }
+});
+it('models confirmed admin reset and disabled head-unit access', async () => {
+  const call = relay(true, undefined, '10.42.0.2'); await call('/login', 'POST', { password: 'openxplay' });
+  expect((await call('/password/reset', 'POST')).status).toBe(422);
+  await call('/setup/complete', 'POST'); await call('/password/reset', 'POST', { confirmed: true });
+  expect((await call('/status')).status).toBe(401);
+  await call('/login', 'POST', { password: 'openxplay' });
+  expect((await call('/status')).data.setupCompleted).toBe(true);
+  expect((await call('/access', 'PUT', { enabled: false })).status).toBe(422);
+  await call('/access', 'PUT', { enabled: false, confirmed: true });
+  expect((await call('/status')).status).toBe(403); expect((await call('/session')).data.adminAccessAllowed).toBe(false);
+});
+it('provides empty and error feature pages with matching response metadata', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try {
+    const empty = relay(true, 'feature-empty'); expect((await empty('/logs/export', 'POST', { range: '10m' })).data.empty).toBe(true);
+    expect((await empty('/carlink-trace')).data.files).toEqual([]); expect((await empty('/vehicle')).data.reports).toEqual([]);
+    const failed = relay(true, 'feature-error'); for (const path of ['/vehicle', '/carlink-trace', '/config/export?kind=user']) expect((await failed(path)).status).toBe(503);
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it.each(['pairing', 'fresh'])('reports %s with no paired phones without breaking the preview server', async state => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try { const call = relay(true, state); const status = (await call('/status')).data; expect(status.iphone.name).toBeNull(); expect(status.pathInput.iphone.pick).toBe('NONE'); expect((await call('/phones')).data).toEqual([]); }
+  finally { vi.unstubAllEnvs(); }
 });

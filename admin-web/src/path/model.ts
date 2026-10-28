@@ -148,9 +148,10 @@ export type LinkStep = 'IDLE' | 'STARTING' | 'WAITING_IPHONE' | 'BLUETOOTH' | 'A
 export interface LinkFailure { step: LinkStep; code: string; text: string; atMillis: number; retrying: boolean; trail: string[] }
 export interface PathInput {
   platform: 'android' | 'linux'; nowMillis: number; version: string;
+  startup?: import('../api').RuntimeStartup;
   setup: { network: 'WIFI_DIRECT' | 'PHONE_HOTSPOT' | 'SHARED_WIFI' | 'USB'; outputs: ('BROWSER' | 'CARLINK' | 'DLNA' | 'MIRACAST' | 'TESLA')[]; summary: string; valid: boolean };
   relay: { identity: 'READY' | 'MISSING' | 'CHECKING'; identityLabel: string | null; permissionsGranted: number; permissionsTotal: number; vpnConsentNeeded: boolean; keepAlive: 'NOT_NEEDED' | 'PENDING' | 'FOREGROUND' | 'REFUSED'; bluetoothOn: boolean | null; bluetoothName: string | null; wifiOn: boolean | null; wifiSsid: string | null; hotspotOn: boolean | null; hotspotSsid: string | null; hotspotBand: string | null; sharedWifiSsid: string | null; overlayNeeded: boolean };
-  car: { address: string | null; web: { phase: 'OFF' | 'STARTING' | 'LISTENING' | 'FAILED'; port: number | null; code: string | null; trustedName: string | null; sinceMillis: number | null }; pageUrl: string | null; pages: number; screen: string | null; savedScreen: string | null; carlink: CarlinkInput; dlna: OutputInput; miracast: OutputInput; tesla: OutputInput & { activation?: 'OFF' | 'NEEDS_BROWSER' | 'NEEDS_RELAY_HOTSPOT' | 'NEEDS_NAME' | 'READY' | null } };
+  car: { displayMismatch: boolean; address: string | null; web: { phase: 'OFF' | 'STARTING' | 'LISTENING' | 'FAILED'; port: number | null; code: string | null; trustedName: string | null; sinceMillis: number | null }; pageUrl: string | null; pages: number; screen: string | null; savedScreen: string | null; carlink: CarlinkInput; dlna: OutputInput; miracast: OutputInput; tesla: OutputInput & { activation?: 'OFF' | 'NEEDS_BROWSER' | 'NEEDS_RELAY_HOTSPOT' | 'NEEDS_NAME' | 'READY' | null } };
   iphone: { pick: 'NONE' | 'PICKED' | 'UNPAIRED' | 'MULTIPLE' | 'NOT_IPHONE'; name: string | null; usb: 'HOST' | 'DEVICE' | 'DISCONNECTED' | 'UNKNOWN'; started: boolean; armed: boolean; carWaitUntilMillis: number | null; step: LinkStep; stepSinceMillis: number | null; stepDetail: string | null; failure: LinkFailure | null };
   live: { pictureOnCar: boolean; sessionSinceMillis: number | null; chips: string[] };
 }
@@ -160,9 +161,10 @@ const output: OutputInput = { phase: 'OFF', name: null, code: null, sinceMillis:
 export function normalizeInput(input: PartialInput = {}): PathInput {
   return {
     platform: input.platform ?? 'android', nowMillis: input.nowMillis ?? 0, version: input.version ?? '',
+    startup: input.startup ? { automatic: false, bootStart: false, paused: false, ...input.startup, arrival: { pending: false, deadlineMillis: null, remainingMillis: null, ...input.startup.arrival } } : undefined,
     setup: { network: 'WIFI_DIRECT', outputs: ['BROWSER'], summary: '', valid: true, ...input.setup },
     relay: { identity: 'CHECKING', identityLabel: null, permissionsGranted: 0, permissionsTotal: 0, vpnConsentNeeded: false, keepAlive: 'NOT_NEEDED', bluetoothOn: null, bluetoothName: null, wifiOn: null, wifiSsid: null, hotspotOn: null, hotspotSsid: null, hotspotBand: null, sharedWifiSsid: null, overlayNeeded: false, ...input.relay },
-    car: { address: null, pageUrl: null, pages: 0, screen: null, savedScreen: null, ...input.car,
+    car: { displayMismatch: false, address: null, pageUrl: null, pages: 0, screen: null, savedScreen: null, ...input.car,
       web: { phase: 'OFF', port: null, code: null, trustedName: null, sinceMillis: null, ...input.car?.web },
       carlink: { phase: 'OFF', sinceMillis: null, code: null, error: null, retrying: false, carName: null, joinMethod: null, trusted: false, pinPending: false, picture: null, trail: [], ...input.car?.carlink },
       dlna: { ...output, ...input.car?.dlna }, miracast: { ...output, ...input.car?.miracast }, tesla: { ...output, ...input.car?.tesla } },
