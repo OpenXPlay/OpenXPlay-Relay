@@ -98,4 +98,16 @@ class RelayBackStackTest {
         }
     }
 
+    @Test fun teslaBackReturnsToSettingsAndRetainsTheOriginAcrossSiblings() {
+        val origin = RelayBackStack().open("setup")
+        for (entry in listOf("settings/tesla", "settings:tesla")) {
+            val stack = origin.open("settings:car").open(entry)
+            assertEquals(listOf("home", "setup", "settings", "settings/tesla"), stack.entries)
+            assertEquals("settings", stack.back().current)
+            assertEquals(origin, stack.back().back())
+            assertEquals(stack, stack.open(entry))
+            assertEquals(listOf("home", "setup", "settings", "settings/output#output"), stack.open("settings:output").entries)
+        }
+    }
+
 }

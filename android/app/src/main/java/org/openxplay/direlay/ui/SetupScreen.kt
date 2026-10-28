@@ -212,7 +212,11 @@ import org.openxplay.direlay.ui.design.*
                     SetupStep.START -> R.string.setup2_start_subtitle
                 }), illustration = { if (compact && current != SetupStep.CAR) SetupIllustration(draft, isWireless) }) {
                     when (current) {
-                        SetupStep.CAR -> CarPicker(draft.car, carModels, LocalConfiguration.current.locales[0]) { draft = draft.copy(car = it) }
+                        SetupStep.CAR -> {
+                            CarPicker(draft.car, carModels, LocalConfiguration.current.locales[0]) { draft = draft.copy(car = it) }
+                            if (trustedHttpsRecommended(draft.car, trustedConfigured = false))
+                                Hint(stringResource(R.string.car_zeekr_trusted_https_hint))
+                        }
                         SetupStep.OUTPUT -> OutputStep(draft) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
                         SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) {
                             val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB

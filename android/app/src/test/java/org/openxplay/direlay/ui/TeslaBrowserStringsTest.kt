@@ -31,7 +31,7 @@ class TeslaBrowserStringsTest {
         R.string.tesla_virtual_name_hint to ("Needs Trusted HTTPS. Your trusted name points to %1\$s on this phone, so the Tesla opens https://your-name:8443 without a certificate warning. The Tesla needs internet through this phone’s hotspot to look up the name." to "需要先设置可信 HTTPS。你的可信域名会指向这台手机上的 %1\$s，特斯拉打开 https://你的域名:8443 时不会出现证书警告。特斯拉要能通过这台手机的热点上网，才能查到这个域名。"),
         R.string.tesla_public_address to ("Direct link-local address" to "直接地址（链路本地）"),
         R.string.tesla_public_address_hint to ("No account needed. Open https://%1\$s:8443 in the Tesla and continue past the certificate warning. This works only if the Tesla browser lets you continue." to "不需要账号。在特斯拉中打开 https://%1\$s:8443，并在证书警告页选择继续访问。只有特斯拉浏览器允许继续访问时才能使用。"),
-        R.string.tesla_mirror to ("Trusted name, shared address (like TeslaMirror)" to "可信域名 + 共享网段地址（TeslaMirror 方式）"),
+        R.string.tesla_mirror to ("Trusted name + shared range address (TeslaMirror, recommended)" to "可信域名 + 共享网段地址（TeslaMirror 方式，推荐）"),
         R.string.tesla_android to ("Public-range address (like TeslaAndroid)" to "公网网段地址（TeslaAndroid 方式）"),
         R.string.tesla_address to ("Address on this phone" to "本机虚拟地址"),
         R.string.tesla_address_invalid to ("Enter an IPv4 address outside 10.x, 172.16–31.x, 192.168.x and the other reserved ranges." to "请输入不在 10.x、172.16–31.x、192.168.x 和其他保留网段内的 IPv4 地址。"),

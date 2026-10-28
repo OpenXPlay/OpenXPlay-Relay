@@ -173,6 +173,11 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             "settings/car" -> {
                 val view by sources.car.screenState()
                 CarScreenSettings(draft, view, wireless, actions.clearHeadUnit, target,
+                    openTrustedHttps = { open("settings/access/publicName") }) { draft = it }
+            }
+            "settings/tesla" -> {
+                val view by sources.car.screenState()
+                TeslaBrowserSettings(draft, view, wireless,
                     openTrustedHttps = { open("settings/access/publicName") },
                     openOutput = { open("settings/output") }) { draft = it }
             }

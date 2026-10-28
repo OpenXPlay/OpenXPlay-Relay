@@ -49,8 +49,20 @@ data class CarSelection(val brand: String = "", val brandText: String = "", val 
                 "model-y-l" to setOf("model-y-l-2025"),
                 "model-s" to setOf("model-s-2012", "model-s-2021"),
                 "model-x" to setOf("model-x-2015", "model-x-2021"),
-                "cybertruck" to setOf("cybertruck-2023"))
+                "cybertruck" to setOf("cybertruck-2023")),
+            "zeekr" to mapOf(
+                "001" to setOf("001-2021"),
+                "001-fr" to setOf("001-fr-2023"),
+                "007" to setOf("007-2023"),
+                "007-gt" to setOf("007-gt-2025"),
+                "009" to setOf("009-2022"),
+                "9x" to setOf("9x-2025"),
+                "7x" to setOf("7x-2024"),
+                "x" to setOf("x-2023"),
+                "mix" to setOf("mix-2024"))
         )
         fun cleanText(value: String) = value.filterNot { Character.isISOControl(it) }.take(40)
     }
 }
+
+fun trustedHttpsRecommended(car: CarSelection, trustedConfigured: Boolean) = car.normalized().brand == "zeekr" && !trustedConfigured

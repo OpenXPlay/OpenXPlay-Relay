@@ -512,6 +512,8 @@
     <string name="car_model_required">Choose a model.</string>
     <string name="setup_car_title">Your car</string>
     <string name="car_choose_hint">Settings and strategies differ by car.</string>
+    <string name="car_zeekr_trusted_https_hint">ZEEKR owners: set up Trusted HTTPS for the car\'s browser.</string>
+    <string name="car_open_trusted_https">Set up Trusted HTTPS</string>
     <string name="car_detected">Detected screen data</string>
     <string name="car_built_in">This model year includes built-in screen data.</string>
     <string name="car_no_screen">No head-unit screen recorded yet.</string>
@@ -671,7 +673,7 @@
     <string name="tesla_virtual_name_hint">Needs Trusted HTTPS. Your trusted name points to %1$s on this phone, so the Tesla opens https://your-name:8443 without a certificate warning. The Tesla needs internet through this phone’s hotspot to look up the name.</string>
     <string name="tesla_public_address">Direct link-local address</string>
     <string name="tesla_public_address_hint">No account needed. Open https://%1$s:8443 in the Tesla and continue past the certificate warning. This works only if the Tesla browser lets you continue.</string>
-    <string name="tesla_mirror">Trusted name, shared address (like TeslaMirror)</string>
+    <string name="tesla_mirror">Trusted name + shared range address (TeslaMirror, recommended)</string>
     <string name="tesla_android">Public-range address (like TeslaAndroid)</string>
     <string name="tesla_address">Address on this phone</string>
     <string name="tesla_address_invalid">Enter an IPv4 address outside 10.x, 172.16–31.x, 192.168.x and the other reserved ranges.</string>
