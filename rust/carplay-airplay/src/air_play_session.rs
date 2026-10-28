@@ -1087,7 +1087,7 @@ pub const MAIN_BUFFERED_FEATURE: &str = "mainBuffered";
 pub const READ_CHUNK_BYTES: u64 = 16384;
 
 #[cfg(test)]
-mod event_tests {
+pub(crate) mod event_tests {
     use super::*;
     use carplay_iap2::mfi::BaaCertificatePair;
     use std::collections::VecDeque;
@@ -1148,6 +1148,48 @@ mod event_tests {
         }
     }
     struct Media;
+    pub(crate) fn media_session(
+        media: Arc<dyn AirPlayMediaHandler>,
+        listener: Arc<dyn AirPlaySessionListener>,
+    ) -> Arc<AirPlaySession> {
+        let key = AirPlayCrypto::ed25519_generate().unwrap();
+        let session = AirPlaySession::new(
+            Arc::new(Socket::default()),
+            AirPlayConfig::linux_receiver("id".into(), "bt".into()),
+            Arc::new(AirPlayIdentity {
+                private_key: key.private_key,
+                public_key: key.public_key,
+                pairing_id: "accessory".into(),
+            }),
+            Arc::new(Store),
+            Arc::new(Auth),
+            media,
+            listener,
+        )
+        .unwrap();
+        let client = AirPlayCrypto::x25519_generate().unwrap();
+        let body = Tlv8Codec::encode(&[
+            Tlv8Item {
+                kind: 6,
+                value: vec![1],
+            },
+            Tlv8Item {
+                kind: 3,
+                value: client.public_key.to_vec(),
+            },
+        ])
+        .unwrap();
+        session
+            .pairing
+            .lock()
+            .unwrap()
+            .verify
+            .handle(&body)
+            .unwrap();
+        assert!(session.shared_secret().is_some());
+        *session.main_screen_token.lock().unwrap() = Some(1);
+        session
+    }
     impl AirPlayMediaHandler for Media {
         fn on_screen(&self, _: &AirPlaySession, _: u16, _: &V) -> Result<Option<u16>> {
             Ok(None)
