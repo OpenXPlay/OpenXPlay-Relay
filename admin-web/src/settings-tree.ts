@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
+import { mfiReadiness } from './mfi';
 import { updateMenuVersion } from './update-check';
 import { isVisible, optionLabel, type Field, type Settings } from './schema';
 import type { Status } from './api';
@@ -93,6 +94,7 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
     const options = all.filter(f => f.key.startsWith('experimental') && f.key !== 'experimentalActive' && f.type === 'bool' && v[f.key]).length;
     return options ? `${t('stage.on')} · ${options} ${t('menu.options')}` : t('stage.on');
   }
+  if (route === 'settings/identity' && v.mfiTarget && v.mfiTarget !== 'local') return mfiReadiness(v, t);
   if (route === 'settings/identity') return t(status.identity?.mfi.state === 'READY' ? 'direlay_installed' : status.identity?.mfi.state === 'INVALID' ? 'dev_invalid_identity' : 'direlay_missing');
   if (route === 'settings/about') return updateMenuVersion(status.version, t);
   if (route === 'settings/developer/carlink') return [label('carlinkHevc'), label('carlinkTrace')].filter(Boolean).join(' · ');

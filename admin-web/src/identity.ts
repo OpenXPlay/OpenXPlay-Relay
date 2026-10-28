@@ -15,6 +15,7 @@ export const identityApi = {
   select: (files: string[], followUp?: string) => request<ImportResult>('/identity/import', 'POST', { files, ...(followUp ? { followUp } : {}) }, false, 60000),
   cancel: (followUp: string) => request('/identity/import', 'POST', { followUp, cancel: true }, false),
   remove: (kind: 'identity' | 'tls') => request<IdentityStatus>('/' + kind, 'DELETE', { confirm: true }, false),
+  pem: (chainPem: string, keyPem: string) => request<IdentityStatus>('/tls/import', 'POST', { chainPem, keyPem }, false, 30000),
   tls: (data: string, password: string) => request<IdentityStatus>('/tls/import', 'POST', { data, password }, false, 30000),
 };
 export const materialKey = (state: string) => state === 'READY' ? 'direlay_installed' : state === 'INVALID' ? 'dev_invalid_identity' : 'direlay_missing';
@@ -31,6 +32,10 @@ export function identityMarkup(status: IdentityStatus | null, selection: Identit
     <label>${t('dev_import_tls')}<input id="tls-file" type="file" accept=".p12,.pfx,application/x-pkcs12" ${busy ? 'disabled' : ''}></label>
     <label>${t('direlay_tls_password')}<input id="tls-password" type="password" maxlength="4096" autocomplete="off" ${busy ? 'disabled' : ''}></label>
     <button id="tls-import" ${busy ? 'disabled' : ''}>${t('dev_import_tls')}</button>
+    <details><summary>${t('identity_import_pem')}</summary>
+    <label>${t('identity_pem_chain')}<input id="tls-pem-chain" type="file" accept=".pem,.crt,.cer" ${busy ? 'disabled' : ''}></label>
+    <label>${t('identity_pem_key')}<input id="tls-pem-key" type="file" accept=".pem,.key" ${busy ? 'disabled' : ''}></label>
+    <button id="tls-pem-import" ${busy ? 'disabled' : ''}>${t('identity_import_pem')}</button></details>
     <button id="tls-remove" ${busy || !status?.tls.imported ? 'disabled' : ''}>${t('dev_remove_tls')}</button><p class="muted">${t('dev_tls_hint')}</p></section>
     <details class="inset-group" ${selection.followUp ? 'open' : ''}><summary>${t('direlay_identity')} · ${status ? t(materialKey(status.mfi.state)) : ''}</summary>
     <p>${t('direlay_identity_hint')}</p><p>${t('dev_fingerprint')}</p>${fingerprint(status?.mfi.fingerprint)}
@@ -48,6 +53,13 @@ export async function fileBase64(file: File, max: number): Promise<string> {
     for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
     return btoa(binary);
   } finally { bytes.fill(0); }
+}
+export async function filePem(file: File, max: number): Promise<string> {
+  if (!file.size || file.size > max) throw new Error('identity_error_pem');
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw new Error('identity_error_pem'); }
+  finally { bytes.fill(0); }
 }
 export function mountIdentity(container: HTMLElement, selection: IdentitySelection, t: (key: string) => string, error: (e: unknown) => string, reload: () => Promise<void>): () => void {
   let status: IdentityStatus | null = null, busy = false, message = '', disposed = false;
@@ -70,6 +82,12 @@ export function mountIdentity(container: HTMLElement, selection: IdentitySelecti
       const password = field.value; field.value = '';
       if (!file) { message = 'identity_error_tls'; show(); return; }
       void run(async () => { status = await identityApi.tls(await fileBase64(file, 1024 * 1024), password); });
+    });
+    container.querySelector('#tls-pem-import')?.addEventListener('click', () => {
+      const chain = (container.querySelector('#tls-pem-chain') as HTMLInputElement).files?.[0];
+      const key = (container.querySelector('#tls-pem-key') as HTMLInputElement).files?.[0];
+      if (!chain || !key) { message = 'identity_error_pem'; show(); return; }
+      void run(async () => { status = await identityApi.pem(await filePem(chain, 2 * 1024 * 1024), await filePem(key, 1024 * 1024)); });
     });
     for (const kind of ['identity', 'tls'] as const) container.querySelector('#' + kind + '-remove')?.addEventListener('click', () => confirmRemove(kind));
   };

@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-27
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { IdentitySelection, identityApi, identityMarkup, materialKey, type IdentityStatus } from '../src/identity';
+import { IdentitySelection, identityApi, identityMarkup, filePem, materialKey, type IdentityStatus } from '../src/identity';
 import { normalizeRoute, parentRoute, pages, pageAvailable, menuSummary } from '../src/settings-tree';
 import { stepCommand } from '../src/path/actions';
 import { translate } from '../src/i18n';
@@ -43,13 +43,29 @@ describe('identity settings', () => {
     expect(markup).not.toContain('<img>'); expect(markup).toContain('&lt;img&gt;'); expect(markup).toContain(t('identity_tls_pending')); expect(markup).toContain(t('identity_error_pair'));
   });
   it('has Android wording in English and Chinese for every import outcome', () => {
-    for (const language of ['en', 'zh-CN'] as const) for (const key of ['identity_error_pair', 'identity_error_encrypted', 'identity_error_limit', 'identity_error_zip', 'identity_error_tls', 'direlay_identity_hint', 'dev_remove_identity_question', 'dev_remove_tls_question', 'menu.identity']) expect(translate(language, key)).not.toBe(key);
+    for (const language of ['en', 'zh-CN'] as const) for (const key of ['identity_error_pair', 'identity_error_encrypted', 'identity_error_limit', 'identity_error_zip', 'identity_error_tls', 'identity_error_pkcs12_unavailable', 'identity_error_pem', 'identity_import_pem', 'identity_pem_chain', 'identity_pem_key', 'direlay_identity_hint', 'dev_remove_identity_question', 'dev_remove_tls_question', 'menu.identity']) expect(translate(language, key)).not.toBe(key);
   });
   it('sends explicit confirmation and never retries a material mutation', async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }), headers: new Headers() }); vi.stubGlobal('fetch', fetch);
-    await identityApi.select(['base64'], 'follow'); await identityApi.remove('identity'); await identityApi.remove('tls'); await identityApi.tls('p12', 'private-password'); await identityApi.cancel('follow');
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v0/identity/import', '/api/v0/identity', '/api/v0/tls', '/api/v0/tls/import', '/api/v0/identity/import']);
+    await identityApi.select(['base64'], 'follow'); await identityApi.remove('identity'); await identityApi.remove('tls'); await identityApi.tls('p12', 'private-password'); await identityApi.cancel('follow'); await identityApi.pem('chain', 'key');
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v0/identity/import', '/api/v0/identity', '/api/v0/tls', '/api/v0/tls/import', '/api/v0/identity/import', '/api/v0/tls/import']);
+    expect(JSON.parse(fetch.mock.calls[5][1].body)).toEqual({ chainPem: 'chain', keyPem: 'key' });
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ confirm: true });
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ files: ['base64'], followUp: 'follow' });
   });
+});
+
+it.each(['en', 'zh-CN'] as const)('offers PEM when the optional PKCS12 decoder is absent (%s)', language => {
+  const t = (key: string) => translate(language, key);
+  const markup = identityMarkup(status, new IdentitySelection(), false, 'identity_error_pkcs12_unavailable', t);
+  for (const id of ['tls-pem-chain', 'tls-pem-key', 'tls-pem-import']) expect(markup).toContain(`id="${id}"`);
+  expect(t('identity_error_pkcs12_unavailable')).toContain('PEM');
+  expect(markup).toContain(t('identity_error_pkcs12_unavailable'));
+});
+it('bounds PEM files, rejects invalid UTF-8 and clears the loaded bytes', async () => {
+  const bytes = new TextEncoder().encode('certificate');
+  const file = { size: bytes.length, arrayBuffer: async () => bytes.buffer } as File;
+  expect(await filePem(file, 1024)).toBe('certificate'); expect([...bytes].every(byte => byte === 0)).toBe(true);
+  await expect(filePem({ size: 1025 } as File, 1024)).rejects.toThrow('identity_error_pem');
+  await expect(filePem({ size: 1, arrayBuffer: async () => new Uint8Array([255]).buffer } as File, 1024)).rejects.toThrow('identity_error_pem');
 });

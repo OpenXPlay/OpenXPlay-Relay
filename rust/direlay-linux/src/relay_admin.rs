@@ -934,7 +934,8 @@ impl LinuxRelayAdmin {
         let event_sink: EventSink = Arc::new(move |mut event| {
             if event["type"] == "tls-fingerprint" {
                 if let Some(base) = &launched_default_tls {
-                    if event["fingerprint"].as_str() == Some(&base.fingerprint)
+                    if event["defaultFingerprint"].as_str() == Some(&base.fingerprint)
+                        && event["fingerprint"].as_str() == Some(&base.fingerprint)
                         && crate::identity::tls::snapshot(&tls_state)
                             .ok()
                             .flatten()
@@ -3463,18 +3464,37 @@ impl RelayAdmin for LinuxRelayAdmin {
     fn tls_import(&self, body: &Values) -> std::result::Result<(), &'static str> {
         use base64ct::{Base64, Encoding};
         let _lock = self.user_tls_lock.lock().unwrap();
-        let encoded = body
-            .get("data")
-            .and_then(serde_json::Value::as_str)
-            .filter(|s| s.len() <= crate::identity::tls::MAX_FILE * 4 / 3 + 4)
-            .ok_or("identity_error_tls")?;
-        let bytes =
-            zeroize::Zeroizing::new(Base64::decode_vec(encoded).map_err(|_| "identity_error_tls")?);
-        let password = body
-            .get("password")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("identity_error_tls")?;
-        crate::identity::tls::import_pkcs12(&self.options.state_dir, &bytes, password)?;
+        if body.contains_key("chainPem") || body.contains_key("keyPem") {
+            if body.contains_key("data") || body.contains_key("password") {
+                return Err("identity_error_pem");
+            }
+            let chain = body
+                .get("chainPem")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("identity_error_pem")?;
+            let key = body
+                .get("keyPem")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("identity_error_pem")?;
+            let material = crate::identity::tls::validate(chain, key, None)
+                .map_err(|_| "identity_error_pem")?;
+            crate::identity::tls::install(&self.options.state_dir, &material)
+                .map_err(|_| "error.request")?;
+        } else {
+            let encoded = body
+                .get("data")
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| s.len() <= crate::identity::tls::MAX_FILE * 4 / 3 + 4)
+                .ok_or("identity_error_tls")?;
+            let bytes = zeroize::Zeroizing::new(
+                Base64::decode_vec(encoded).map_err(|_| "identity_error_tls")?,
+            );
+            let password = body
+                .get("password")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("identity_error_tls")?;
+            crate::identity::tls::import_pkcs12(&self.options.state_dir, &bytes, password)?;
+        }
         self.queue_user_tls();
         Ok(())
     }
@@ -4036,7 +4056,10 @@ impl RelayAdmin for LinuxRelayAdmin {
         let token_set =
             crate::mfi_sources::token(&self.options.state_dir).is_ok_and(|v| !v.is_empty());
         values.insert("mfiRemoteTokenSet".into(), token_set.into());
-        if token_set {
+        if token_set
+            || crate::identity::tls::snapshot(&self.options.state_dir)
+                .is_ok_and(|tls| tls.is_some())
+        {
             values.insert("privacyConfigAvailable".into(), true.into());
         }
         values.insert(

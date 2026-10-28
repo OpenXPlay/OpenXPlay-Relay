@@ -6,6 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { api } from '../src/api';
 import { arrivalCountdown, arrivalRemaining, restartPending } from '../src/startup';
 import { setupSteps, setupBlocked, preparationView } from '../src/setup-guide';
+import { presentStage } from '../src/path/present-stage';
 import { presentPath } from '../src/path/present-path';
 import { normalizeInput } from '../src/path/model';
 import { stepCommand } from '../src/path/actions';
@@ -77,4 +78,31 @@ it('uses confirmed authenticated access/reset routes and never retries a lost ar
     fetch.mockClear().mockRejectedValue(new TypeError('lost response'));
     await expect(api.action('cancel-arrival')).rejects.toThrow(); expect(fetch).toHaveBeenCalledOnce();
   } finally { vi.unstubAllGlobals(); }
+});
+
+it.each(['en', 'zh-CN'] as const)('keeps an absent iPhone waiting in stage, details and notices (%s)', language => {
+  const t = (key: string, args?: Record<string, string | number>) => relayTranslate(language, key, args);
+  const status = linuxStatusFixtures['iphone-waiting'];
+  const path = presentPath(status.pathInput!);
+  const view = presentStage(path, { setupCompleted: true, carIncomplete: false });
+  const step = path.sections.flatMap(section => section.steps).find(step => step.id === 'IPHONE_BLUETOOTH')!;
+  expect(step.state).toBe('WAITING'); expect(step.code).toBeNull(); expect(step.action).toBeNull();
+  expect(view.failure).toBeNull(); expect(view.notice).toBeNull(); expect(view.failureSinceMillis).toBeNull();
+  expect(view.secondary).toEqual({ type: 'Stop' }); expect(view.countdown).toBe(false);
+  expect(stepDetailsView(step, [], 'linux', t)).toContain(t('state.waiting'));
+  expect(stepDetailsView(step, [], 'linux', t)).not.toContain('data-action');
+  expect(status.notices).not.toContain('notice.failed');
+  expect(path.sections.flatMap(section => section.steps).some(step => step.state === 'FAILED')).toBe(false);
+});
+
+it.each(['en', 'zh-CN'] as const)('offers identity import in setup and stage while preserving the Identity destination (%s)', language => {
+  const t = (key: string, args?: Record<string, string | number>) => relayTranslate(language, key, args);
+  for (const state of ['identity-missing', 'identity-invalid']) {
+    const current = linuxStatusFixtures[state];
+    const path = presentPath(current.pathInput!);
+    const stage = presentStage(path);
+    expect(stage.primary).toMatchObject({ type: 'Step', action: 'IMPORT_IDENTITY', step: 'IDENTITY' });
+    expect(preparationView(current, t)).toContain('data-prepare-action="IDENTITY"');
+    expect(stepCommand('IMPORT_IDENTITY', 'linux')).toEqual({ kind: 'route', route: 'settings/identity' });
+  }
 });

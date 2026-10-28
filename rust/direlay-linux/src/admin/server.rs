@@ -36,7 +36,8 @@ fn body_limit(path: &str) -> usize {
     } else if path.split('?').next() == Some("/api/v0/identity/import") {
         crate::identity::MAX_ARCHIVE * 4 / 3 + 4096
     } else if path.split('?').next() == Some("/api/v0/tls/import") {
-        crate::identity::tls::MAX_FILE * 4 / 3 + 32768
+        // A PEM chain and key share this route with base64 PKCS#12; include JSON newlines.
+        crate::identity::tls::MAX_FILE * 4 + 32768
     } else if path.split('?').next() == Some("/api/v0/public-name/import") {
         MAX_IMPORT_BODY
     } else {

@@ -1,8 +1,8 @@
-// SPDX-FileCopyrightText: DiPlay and xcertplay contributors
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: GPL-3.0-only
-// Derived from DiPlay (https://github.com/shihabal3amri/DiPlay), based on xcertplay (https://github.com/shilapi/xcertplay). Modified by OpenXPlay.org on 2026-10-27.
 // Created by riko chen on 2026-10-27
+// SPDX-FileCopyrightText: DiPlay and xcertplay contributors
+// Derived from DiPlay (https://github.com/shihabal3amri/DiPlay), based on xcertplay (https://github.com/shilapi/xcertplay).
 
 //! Serialized coprocessor register protocol shared by native I2C and USB bridges.
 use super::{BaaCertificatePair, MfiAuthenticator};

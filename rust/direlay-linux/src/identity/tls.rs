@@ -40,7 +40,9 @@ pub fn validate(chain: &str, key: &str, now: Option<u64>) -> Result<Material, Er
     if chain.len() > MAX_FILE * 2
         || key.len() > MAX_FILE
         || !crate::public_name::privacy::strict_pem(chain, "CERTIFICATE", false)
-        || !crate::public_name::privacy::strict_pem(key, "PRIVATE KEY", true)
+        || !["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"]
+            .iter()
+            .any(|label| crate::public_name::privacy::strict_pem(key, label, true))
     {
         return Err(INVALID);
     }
@@ -170,6 +172,14 @@ impl Drop for Temporary {
 }
 /// OpenSSL is a bounded PKCS#12 decoder only. Passwords never enter arguments or diagnostics.
 pub fn import_pkcs12(state: &Path, bytes: &[u8], password: &str) -> Result<(), Error> {
+    import_pkcs12_with_program(state, bytes, password, Path::new("openssl"))
+}
+fn import_pkcs12_with_program(
+    state: &Path,
+    bytes: &[u8],
+    password: &str,
+    program: &Path,
+) -> Result<(), Error> {
     if bytes.is_empty()
         || bytes.len() > MAX_FILE
         || password.encode_utf16().count() > 4096
@@ -185,9 +195,20 @@ pub fn import_pkcs12(state: &Path, bytes: &[u8], password: &str) -> Result<(), E
         .map_err(|_| "error.request")?;
     let mut decoded = None;
     for legacy in [false, true] {
-        if let Ok(output) = decode_pkcs12(&scratch.0.join("input.p12"), password, legacy) {
-            decoded = Some(output);
-            break;
+        match decode_pkcs12(program, &scratch.0.join("input.p12"), password, legacy) {
+            Ok(output) => {
+                decoded = Some(output);
+                break;
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                return Err("identity_error_pkcs12_unavailable")
+            }
+            Err(_) => {}
         }
     }
     let output = decoded.ok_or(INVALID)?;
@@ -217,8 +238,13 @@ pub fn import_pkcs12(state: &Path, bytes: &[u8], password: &str) -> Result<(), E
     let material = validate(&chain, &key, None)?;
     install(state, &material).map_err(|_| "error.request")
 }
-fn decode_pkcs12(path: &Path, password: &str, legacy: bool) -> io::Result<Zeroizing<Vec<u8>>> {
-    let mut command = Command::new("openssl");
+fn decode_pkcs12(
+    program: &Path,
+    path: &Path,
+    password: &str,
+    legacy: bool,
+) -> io::Result<Zeroizing<Vec<u8>>> {
+    let mut command = Command::new(program);
     command
         .args(["pkcs12", "-nodes", "-in"])
         .arg(path)
@@ -285,4 +311,42 @@ pub fn prune(state: &Path) -> io::Result<()> {
         selected.file_name().and_then(|s| s.to_str())
     };
     super::cleanup(&directory, keep)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_openssl_preserves_tls_and_pem_install_remains_available() {
+        let root = std::env::temp_dir().join(format!(
+            "tls-no-openssl-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["relay.test".into()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        let material = validate(&cert.pem(), &key.serialize_pem(), None).unwrap();
+        install(&root, &material).unwrap();
+        let before = snapshot(&root).unwrap();
+        assert_eq!(
+            import_pkcs12_with_program(&root, b"pkcs12", "private", &root.join("missing-openssl")),
+            Err("identity_error_pkcs12_unavailable")
+        );
+        assert_eq!(snapshot(&root).unwrap(), before);
+        remove(&root).unwrap();
+        install(&root, &material).unwrap();
+        assert_eq!(
+            snapshot(&root).unwrap().unwrap().fingerprint,
+            material.fingerprint
+        );
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".tls-import-")));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

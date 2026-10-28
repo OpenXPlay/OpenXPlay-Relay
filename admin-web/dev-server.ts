@@ -282,6 +282,7 @@ export function mockApi(linux = false): Plugin {
         previewPathEpoch = Date.now();
         const seed = linux ? linuxFixtureStatus(previewState, previewPathEpoch) : previewStatus({ platform: 'android' } as Status, previewState);
         running = seed.running; paused = !!seed.pathInput?.startup?.paused; started = previewPathEpoch - (running ? 10000 : 0);
+        if (linux) { identity = structuredClone(seed.identity ?? identity); identity.mfi.state = seed.pathInput?.relay?.identity === 'READY' ? 'READY' : previewState === 'identity-invalid' ? 'INVALID' : 'MISSING'; }
         if (linux) { settings.values.output = seed.output; settings.values.networkMode = seed.pathInput?.setup?.network === 'SHARED_WIFI' ? 'shared-wifi' : 'device-hotspot'; }
         if (previewState === 'multiple-iphones' && !phones.some(phone => phone.id === 'iphone-second')) phones.push({ id: 'iphone-second', name: 'Second iPhone', kind: 'phone', connected: false, likelyIphone: true, selected: false });
         if (['fresh', 'pairing', 'no-iphone'].includes(previewState)) phones.splice(0);
@@ -564,7 +565,7 @@ export function mockApi(linux = false): Plugin {
         settings.values.publicNameProviders = { ...(settings.values.publicNameProviders as import('./src/schema').PublicNameProviders), [provider]: { name, tokenSet: true } };
         return send(200, { ok: true, provider, name });
       }
-      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, privacyConfigAvailable: previewState !== 'feature-empty' && !!settings.values.publicNameProvider || Object.entries(privacyConfig).some(([, value]) => !!value), publicNamePrivacyAvailable: !!settings.values.publicNameProvider || Object.keys(privacyConfig).some(key => key !== 'mfiRemoteToken'), mfiRemoteTokenSet: !!privacyConfig.mfiRemoteToken, mfiSourceStatus: settings.values.mfiTarget === 'remote' ? 'ready' : settings.values.mfiSourceStatus, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
+      if (path === '/settings' && method === 'GET') return send(200, linux ? { ...settings, values: { ...settings.values, privacyConfigAvailable: previewState !== 'feature-empty' && !!settings.values.publicNameProvider || Object.entries(privacyConfig).some(([, value]) => !!value), publicNamePrivacyAvailable: !!settings.values.publicNameProvider || Object.keys(privacyConfig).some(key => key.startsWith('publicName') || key === 'providers'), mfiRemoteTokenSet: !!privacyConfig.mfiRemoteToken, mfiSourceStatus: settings.values.mfiTarget === 'remote' ? 'ready' : settings.values.mfiSourceStatus, carlinkPictureTry: pictureTrial === undefined ? settings.values.carlinkPictureDefault : pictureTrial } } : settings);
       if (path === '/phones' && method === 'GET') { if (pairingStarted && Date.now() - pairingStarted >= 2000 && !phones.some(phone => phone.id === 'iphone-new')) phones.push({ id: 'iphone-new', name: 'New iPhone', kind: 'phone', connected: true, likelyIphone: true, selected: false }); return send(200, phones.map(phone => ({ ...phone, selected: settings.values.iphone === phone.id }))); }
       if (path === '/settings' && method === 'PUT') {
         const errors: Record<string, string> = {};
@@ -700,7 +701,7 @@ export function mockApi(linux = false): Plugin {
         result.output = String(settings.values.output); result.notices = restartNeeded ? ['notice.nextStart'] : notices;
         if (linux) { result.adminEnabled = adminEnabled; result.setupCompleted = setupCompleted; result.adminFeatures = ['logs', 'config-files', 'update-check']; result.screenData = seed.screenData; }
         if (linux) { const facts = mockNetwork(result.network.mode); const roles = settings.values.networkRoles as import('./src/schema').NetworkRolesSetting; if (roles?.mode === 'custom') { facts.plan!.source = 'custom'; if (roles.iphone) facts.plan!.iphone.link = roles.iphone.link; if (roles.adminHotspot) Object.assign(facts.plan!.adminHotspot, roles.adminHotspot); } if (facts.country) facts.country.configured = String(settings.values.wifiCountry || 'system'); result.network = { ...facts, ...result.network }; result.adminHotspot = { state: roles?.adminHotspot?.enabled ? 'up' : 'off', reason: null }; }
-        if (linux) { result.adminFeatures = ['logs', 'config-files', 'update-check', 'identity']; result.identity = structuredClone(identity); }
+        if (linux) { result.adminFeatures = ['logs', 'config-files', 'update-check', 'identity']; result.identity = structuredClone(identity); input.relay.identity = settings.values.mfiTarget !== 'local' ? 'READY' : identity.mfi.state === 'READY' ? 'READY' : 'MISSING'; input.relay.identityLabel = identity.mfi.state; }
         if (state === 'pairing' && !pairingStarted) { pairingStarted = now; pairingDeadline = now / 1000 + 600; }
         result.pairingDeadline = pairingDeadline && pairingDeadline > now / 1000 ? pairingDeadline : null;
         result.pairingRemaining = result.pairingDeadline ? Math.ceil(result.pairingDeadline - now / 1000) : null;

@@ -216,11 +216,17 @@ function renderReady() {
     patchMarkup(container, `<div class="inset-group">${master.map(fieldMarkup).join('')}</div><div class="inset-group">${developerPages.filter(page => pageAvailable(settings!, status!, 'settings/developer/' + page)).map(page => menuRow('settings/developer/' + page, 'menu.developer.' + page, pageSummary('settings/developer/' + page), developerIcons[page])).join('')}</div>`);
     master.forEach(bindField);
   } else if (route === 'settings/identity' && status!.platform === 'linux') {
-    container.innerHTML = '<div id="identity-materials"></div>';
-    disposeFeature = mountIdentity(container.querySelector<HTMLElement>('#identity-materials')!, identitySelection, t, errorKey, async () => { status = await api.status(); });
-    const sourceFields = pageFields(settings!, route).filter(f => f.key.startsWith('mfi')).map(editorField);
-    container.insertAdjacentHTML('beforeend', `<section class="inset-group">${sourceFields.map(fieldMarkup).join('')}</section>`);
-    sourceFields.forEach(bindField);
+    container.innerHTML = '<div id="identity-materials"></div><section id="identity-sources" class="inset-group"></section>';
+    const renderSources = () => {
+      if (route !== 'settings/identity' || !settings) return;
+      const sourceFields = pageFields(settings, route).filter(f => f.key.startsWith('mfi')).map(editorField);
+      const source = container.querySelector<HTMLElement>('#identity-sources');
+      if (source) { patchMarkup(source, sourceFields.map(fieldMarkup).join('')); sourceFields.forEach(bindField); }
+    };
+    disposeFeature = mountIdentity(container.querySelector<HTMLElement>('#identity-materials')!, identitySelection, t, errorKey, async () => {
+      [status, settings] = await Promise.all([api.status(), api.settings()]); renderSources();
+    });
+    renderSources();
   } else if (['settings/logs', 'settings/config-files', 'settings/about'].includes(route)) {
     disposeFeature = mountFeaturePage(container, route, { t, platform: status!.platform, adminFeatures: status!.adminFeatures, version: status!.version, language: languagePreference, setLanguage: preference => { languagePreference = preference; language = preference === 'auto' ? defaultLanguage(navigator.language) : preference as Language; try { localStorage.setItem('openxplay.language', preference); } catch {} render(); }, error: errorKey, reload: async () => { settings = await api.settings(); } });
   } else {

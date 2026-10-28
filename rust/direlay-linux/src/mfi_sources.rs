@@ -182,6 +182,31 @@ fn hardware_readiness(_: &Settings) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn local_readiness_validates_material_and_remote_never_requires_local_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "mfi-identity-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut settings = Settings::default();
+        assert_eq!(readiness(&settings, &dir, &dir), "missing");
+        for name in ["identity.pk8", "certificate.p7b"] {
+            std::fs::write(dir.join(name), b"nonempty-invalid").unwrap();
+        }
+        assert_eq!(readiness(&settings, &dir, &dir), "invalid");
+        let (key, certificate) = crate::identity::tests::pair();
+        std::fs::write(dir.join("identity.pk8"), key).unwrap();
+        std::fs::write(dir.join("certificate.p7b"), certificate).unwrap();
+        assert_eq!(readiness(&settings, &dir, &dir), "ready");
+        settings.mfi_target = "remote".into();
+        settings.mfi_remote_server = "https://mfi.example.org".into();
+        assert_eq!(
+            readiness(&settings, &dir, &dir.join("missing-local")),
+            "ready"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn readiness_depends_on_selected_source_and_validates_configuration_without_network() {
         let dir = std::env::temp_dir().join(format!(
             "mfi-ready-{}",

@@ -1,8 +1,8 @@
-// SPDX-FileCopyrightText: DiPlay and xcertplay contributors
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: GPL-3.0-only
-// Derived from DiPlay (https://github.com/shihabal3amri/DiPlay), based on xcertplay (https://github.com/shilapi/xcertplay). Modified by OpenXPlay.org on 2026-10-27.
 // Created by riko chen on 2026-10-27
+// SPDX-FileCopyrightText: DiPlay and xcertplay contributors
+// Derived from DiPlay (https://github.com/shihabal3amri/DiPlay), based on xcertplay (https://github.com/shilapi/xcertplay).
 
 //! Remote certificate and signing protocol. The host supplies a bounded, redirect-free HTTP client.
 use super::{BaaCertificatePair, MfiAuthenticator, MfiCertificateType};

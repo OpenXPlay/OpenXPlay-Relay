@@ -117,6 +117,11 @@ class PluginsTest(unittest.TestCase):
         self.assertFalse((installed / 'p/org.test.nc').exists())
         manifest = json.loads((output / 'openxplay-relay_1.0.0_arm64.manifest.json').read_text())
         self.assertEqual(manifest['requires']['dpkgArchitecture'], 'arm64')
+        required = {'bluez', 'network-manager', 'iw', 'dnsmasq-base', 'init-system-helpers'}
+        self.assertEqual(set(manifest['requires']['packages']), required)
+        depends = subprocess.check_output(['dpkg-deb', '-f', str(deb), 'Depends'], text=True)
+        self.assertEqual({item.strip().split()[0] for item in depends.split(',')}, required)
+
 
 
 if __name__ == '__main__':

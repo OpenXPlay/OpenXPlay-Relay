@@ -309,6 +309,18 @@ fn tls_privacy_validates_key_chain_dates_and_round_trips_without_mfi() {
     let other = rcgen::KeyPair::generate().unwrap();
     assert!(tls::validate(&cert.pem(), &other.serialize_pem(), None).is_err());
     assert!(tls::validate(&cert.pem(), &key.serialize_pem(), Some(0)).is_err());
+    // Traditional unencrypted SEC1 PEM works without converting through an external command.
+    use p256::pkcs8::DecodePrivateKey;
+    let secret = p256::SecretKey::from_pkcs8_der(&key.serialize_der()).unwrap();
+    let sec1 = secret.to_sec1_der().unwrap();
+    let pem = format!(
+        "-----BEGIN EC PRIVATE KEY-----\n{}\n-----END EC PRIVATE KEY-----\n",
+        Base64::encode_string(&sec1)
+    );
+    assert_eq!(
+        tls::validate(&cert.pem(), &pem, None).unwrap().fingerprint,
+        material.fingerprint
+    );
     let old = tls::snapshot(&root).unwrap().unwrap();
     tls::remove(&root).unwrap();
     assert!(old.key.exists());
