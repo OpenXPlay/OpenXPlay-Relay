@@ -23,6 +23,16 @@ pub struct Radio {
 }
 pub struct WifiOutput;
 impl WifiOutput {
+    pub fn ipv4_networks(text: &str) -> Vec<(Ipv4Addr, u8)> {
+        text.lines()
+            .filter_map(|line| {
+                let (ip, prefix) = line.trim().rsplit(':').next()?.trim().split_once('/')?;
+                let ip: Ipv4Addr = ip.parse().ok()?;
+                let prefix: u8 = prefix.parse().ok()?;
+                (!ip.is_unspecified() && !ip.is_loopback() && prefix <= 32).then_some((ip, prefix))
+            })
+            .collect()
+    }
     pub fn ipv4(text: &str) -> Option<Ipv4Addr> {
         text.lines()
             .filter_map(|s| {
@@ -399,6 +409,7 @@ struct HotspotState {
     profile_loaded: bool,
     profile_channel: u8,
     ready: Option<WirelessHotspotInfo>,
+    ready_prefix: u8,
 }
 pub struct LinuxHotspot {
     state_dir: PathBuf,
@@ -438,6 +449,7 @@ impl LinuxHotspot {
                 profile_loaded: false,
                 profile_channel: 0,
                 ready: None,
+                ready_prefix: 32,
             }),
             closed: AtomicBool::new(false),
             provisioning: None,
@@ -670,7 +682,7 @@ impl LinuxHotspot {
                 cmd(&["nmcli", "connection", "up", "id", &id])?;
                 self.state.lock().unwrap().profile_channel = 6;
             }
-            let address = loop {
+            let (address, prefix) = loop {
                 let output = cmd(&[
                     "nmcli",
                     "-g",
@@ -679,9 +691,13 @@ impl LinuxHotspot {
                     "show",
                     &self.interface,
                 ])?;
-                if let Some(a) = WifiOutput::ipv4(&output) {
+                // An auxiliary /32 must never become the AP's advertised gateway.
+                if let Some((a, prefix)) = WifiOutput::ipv4_networks(&output)
+                    .into_iter()
+                    .find(|(_, prefix)| *prefix != 32)
+                {
                     if self.admin.is_none() || a == Ipv4Addr::new(10, 79, 0, 1) {
-                        break a;
+                        break (a, prefix);
                     }
                 }
                 std::thread::sleep(Duration::from_millis(250));
@@ -714,7 +730,9 @@ impl LinuxHotspot {
                 actual.band = if info.channel > 14 { "5" } else { "2.4" }.into();
                 cache.record_hotspot(&self.interface, actual);
             }
-            self.state.lock().unwrap().ready = Some(info.clone());
+            let mut state = self.state.lock().unwrap();
+            state.ready = Some(info.clone());
+            state.ready_prefix = prefix;
             Ok(info)
         })();
         if result.is_err() {
@@ -818,13 +836,14 @@ impl LinuxHotspot {
         self.radio(&|args| command(self.runner.as_ref(), args, Duration::from_secs(5)))
     }
     pub fn validate_ready(&self) -> Result<()> {
-        let (expected, connection, profile_channel) = {
+        let (expected, prefix, connection, profile_channel) = {
             let state = self.state.lock().unwrap();
             (
                 state
                     .ready
                     .clone()
                     .ok_or_else(|| std::io::Error::other("Hotspot is not ready"))?,
+                state.ready_prefix,
                 state
                     .connection
                     .clone()
@@ -832,7 +851,7 @@ impl LinuxHotspot {
                 state.profile_channel,
             )
         };
-        let now = WifiOutput::ipv4(&command(
+        let now = WifiOutput::ipv4_networks(&command(
             self.runner.as_ref(),
             &[
                 "nmcli",
@@ -844,7 +863,12 @@ impl LinuxHotspot {
             ],
             Duration::from_secs(5),
         )?);
-        if now != expected.host_address {
+        // NetworkManager can report the live Tesla /32 first. Validate the AP's own
+        // address and prefix, independent of auxiliary addresses and their ordering.
+        if !now
+            .iter()
+            .any(|(ip, p)| Some(*ip) == expected.host_address && *p == prefix)
+        {
             return Err(std::io::Error::other("Hotspot address changed"));
         }
         let active = command(
@@ -946,6 +970,7 @@ pub struct ExistingWifiManager {
     pub interface: String,
     pub ssid: String,
     pub password: String,
+    addresses: crate::runtime_paths::InterfaceAddresses,
     ready: Mutex<Option<WirelessHotspotInfo>>,
     closed: AtomicBool,
 }
@@ -961,9 +986,14 @@ impl ExistingWifiManager {
             interface,
             ssid,
             password,
+            addresses: Arc::new(interface_addresses),
             ready: Mutex::new(None),
             closed: AtomicBool::new(false),
         }
+    }
+    pub fn with_addresses(mut self, addresses: crate::runtime_paths::InterfaceAddresses) -> Self {
+        self.addresses = addresses;
+        self
     }
 }
 impl ExistingWifiManager {
@@ -997,7 +1027,7 @@ impl ExistingWifiManager {
                 "Connected Wi-Fi does not match configured SSID",
             ));
         }
-        let addr = interface_addresses()?
+        let addr = (self.addresses)()?
             .into_iter()
             .find(|(i, a, _)| i == &self.interface && !a.is_loopback())
             .map(|(_, a, _)| a)

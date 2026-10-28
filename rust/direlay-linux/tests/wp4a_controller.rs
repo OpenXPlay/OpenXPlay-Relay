@@ -46,6 +46,8 @@ impl MfiAuthenticator for Mfi {
     }
 }
 struct Shared {
+    live_hotspot: Option<Arc<dyn WirelessHotspotManager>>,
+    network_watch: bool,
     lifetime: Option<Arc<openxplay_relay::hotspot_lifetime::HotspotLifetime>>,
     hotspot_starts: AtomicUsize,
     closed: Mutex<Vec<String>>,
@@ -99,6 +101,8 @@ struct Shared {
 impl Default for Shared {
     fn default() -> Self {
         Self {
+            live_hotspot: None,
+            network_watch: false,
             lifetime: None,
             hotspot_starts: AtomicUsize::new(0),
             closed: Mutex::new(Vec::new()),
@@ -174,6 +178,9 @@ fn info() -> WirelessHotspotInfo {
 }
 impl WirelessHotspotManager for Hotspot {
     fn start(&self, _: Duration) -> openxplay_relay::Result<WirelessHotspotInfo> {
+        if let Some(hotspot) = &self.0.live_hotspot {
+            return hotspot.start(Duration::from_secs(2));
+        }
         self.0.hotspot_starts.fetch_add(1, Ordering::SeqCst);
         self.0
             .hotspot_log
@@ -206,6 +213,9 @@ impl WirelessHotspotManager for Hotspot {
         }
     }
     fn validate_ready(&self) -> openxplay_relay::Result<()> {
+        if let Some(hotspot) = &self.0.live_hotspot {
+            return hotspot.validate_ready();
+        }
         if take_failure(&self.0.validate_failures) {
             Err(std::io::Error::other("hotspot address changed"))
         } else {
@@ -216,6 +226,9 @@ impl WirelessHotspotManager for Hotspot {
         Ok(())
     }
     fn close(&self) -> openxplay_relay::Result<()> {
+        if let Some(hotspot) = &self.0.live_hotspot {
+            hotspot.close()?;
+        }
         // Closing cancels a start in progress.
         self.0.ap_cancelled.store(true, Ordering::Release);
         self.0.hold_hotspot(false);
@@ -230,6 +243,12 @@ impl WirelessHotspotManager for Hotspot {
 }
 struct Network(Arc<Shared>);
 impl NetworkAttachment for Network {
+    fn validate_ready(&self) -> openxplay_relay::Result<()> {
+        self.0
+            .live_hotspot
+            .as_ref()
+            .map_or(Ok(()), |hotspot| hotspot.validate_ready())
+    }
     fn start(&self) -> openxplay_relay::Result<()> {
         self.0.network_started.store(true, Ordering::Release);
         Ok(())
@@ -288,6 +307,9 @@ impl CloseResource for Pairing {
     }
 }
 impl WirelessPlatform for Platform {
+    fn network_watch_enabled(&self) -> bool {
+        self.0.network_watch
+    }
     fn car_ready(&self) -> openxplay_relay::Result<bool> {
         if self.0.gate_failure.load(Ordering::SeqCst) {
             return Err(std::io::Error::other(
@@ -533,6 +555,104 @@ impl Drop for Run {
         if self.thread.is_some() {
             self.stop();
         }
+    }
+}
+#[test]
+fn tesla_address_on_the_ap_does_not_retry_but_a_real_ap_change_does() {
+    #[derive(Default)]
+    struct Runner {
+        profile: Mutex<String>,
+        addresses: Mutex<String>,
+        reads: AtomicUsize,
+    }
+    impl CommandRunner for Runner {
+        fn run(&self, args: &[String], _: Duration) -> openxplay_relay::Result<CommandResult> {
+            let output = if args.get(2).is_some_and(|s| s == "load") {
+                *self.profile.lock().unwrap() = std::fs::read_to_string(&args[3])?;
+                String::new()
+            } else if args.iter().any(|s| s == "IP4.ADDRESS") {
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                self.addresses.lock().unwrap().clone()
+            } else if args.iter().any(|s| s == "GENERAL.CONNECTION") {
+                self.profile
+                    .lock()
+                    .unwrap()
+                    .lines()
+                    .find_map(|s| s.strip_prefix("id="))
+                    .unwrap()
+                    .into()
+            } else if args.iter().any(|s| s.starts_with("802-11-wireless.ssid,")) {
+                let profile = self.profile.lock().unwrap();
+                let ssid = profile
+                    .lines()
+                    .find_map(|s| s.strip_prefix("ssid="))
+                    .unwrap();
+                let ssid = String::from_utf8(
+                    ssid.split(';')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.parse::<u8>().unwrap())
+                        .collect(),
+                )
+                .unwrap();
+                format!("{ssid}\n36\nwpa-psk")
+            } else if args[0] == "iw" {
+                "addr dc:a6:32:11:22:33\nchannel 36 (5180 MHz)".into()
+            } else {
+                String::new()
+            };
+            Ok(CommandResult {
+                exit_code: 0,
+                output,
+            })
+        }
+    }
+    for network_watch in [false, true] {
+        let dir = std::env::temp_dir().join(format!(
+            "tesla-ap-loop-{}",
+            admin::auth::random_hex(8).unwrap()
+        ));
+        let runner = Arc::new(Runner::default());
+        *runner.addresses.lock().unwrap() = "10.42.0.1/24".into();
+        let hotspot = Arc::new(
+            LinuxHotspot::new(dir.clone(), runner.clone(), "wlan0".into(), 36).with_runtime_dirs(
+                dir.join("keyfiles"),
+                public_name::local_dns::Paths::in_dir(dir.join("dns")),
+            ),
+        );
+        let f = Arc::new(Shared {
+            live_hotspot: Some(hotspot),
+            network_watch,
+            planned_ssid: Mutex::new(None),
+            ..Default::default()
+        });
+        let mut run = Run::new(f, Duration::from_secs(2));
+        wait_for(|| run.controller.stage() == "WirelessActive");
+        // This is the N1 ordering immediately after tesla-address READY.
+        *runner.addresses.lock().unwrap() = "3.3.3.1/32\n10.42.0.1/24".into();
+        let before = runner.reads.load(Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(7);
+        while runner.reads.load(Ordering::SeqCst) < before + 4 {
+            assert!(
+                Instant::now() < deadline,
+                "one-second polling must continue"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!run.has_event("retry"));
+        assert_eq!(run.controller.stage(), "WirelessActive");
+        assert_eq!(run.hotspot_ready().len(), 1);
+        *runner.addresses.lock().unwrap() = "3.3.3.1/32\n10.42.1.1/24".into();
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while !run.has_event("retry") {
+            assert!(Instant::now() < deadline, "real AP changes must retry");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            run.matching(|v| v["event"] == "retry")[0]["reason"],
+            "Hotspot address changed"
+        );
+        run.stop();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 #[test]

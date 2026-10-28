@@ -372,7 +372,7 @@ impl LinuxRelayAdmin {
         ));
         let inventory = Arc::new(
             crate::net_inventory::InventoryCache::new(runtime.runner.clone(), runtime.root.clone())
-                .with_addresses(runtime.addresses.clone())
+                .with_addresses(runtime.network_address_source())
                 .with_refresh(runtime.inventory_refresh != InventoryRefresh::Manual),
         );
         if runtime.inventory_refresh == InventoryRefresh::Automatic {
@@ -407,9 +407,10 @@ impl LinuxRelayAdmin {
             receiver_tls_sans: Mutex::new(Vec::new()),
             public_name_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             receiver_tls_queued: AtomicBool::new(false),
-            tesla: Mutex::new(crate::tesla_address::Session::new(Arc::new(
-                crate::tesla_address::KernelAddresses,
-            ))),
+            tesla: Mutex::new(
+                crate::tesla_address::Session::new(Arc::new(crate::tesla_address::KernelAddresses))
+                    .with_ownership(runtime.tesla_address.clone()),
+            ),
             receiver_tesla_tls: Mutex::new(None),
             pairing: Mutex::new(None),
             pairing_backend: backends.bluetooth.pairing(),
@@ -777,7 +778,9 @@ impl LinuxRelayAdmin {
         }
         self.input.set_plugins_enabled(o.settings.plugins);
         let addresses = self.receiver_sans()?;
-        let occupied = (self.runtime.addresses)()?
+        let occupied = self
+            .runtime
+            .network_addresses()?
             .iter()
             .map(|(_, a, p)| format!("{a}/{p}"))
             .collect::<Vec<_>>();
@@ -896,7 +899,7 @@ impl LinuxRelayAdmin {
         let trace_status = self.trace_status.clone();
         let hotspot = self.hotspot_lifetime.clone();
         let admin_hotspot = self.admin_hotspot.clone();
-        let addresses = self.runtime.addresses.clone();
+        let addresses = self.runtime.network_address_source();
         let event_sink: EventSink = Arc::new(move |mut event| {
             if vehicle
                 .lock()
@@ -1337,7 +1340,9 @@ impl LinuxRelayAdmin {
         let carplay_hotspot = !following_carlink
             && options.settings.network_mode == "device-hotspot"
             && self.controller.lock().unwrap().is_some();
-        let mut addresses = (self.runtime.addresses)()?
+        let mut addresses = self
+            .runtime
+            .network_addresses()?
             .into_iter()
             .filter(|(i, a, _)| {
                 !a.is_loopback() && (!carplay_hotspot || i != &options.wifi_interface)
@@ -1479,7 +1484,8 @@ impl LinuxRelayAdmin {
                         p.starts_with(crate::linux_hotspot::HOTSPOT_CONNECTION_PREFIX)
                     })
             })?;
-        (self.runtime.addresses)()
+        self.runtime
+            .network_addresses()
             .ok()?
             .into_iter()
             .find(|(name, address, prefix)| {
@@ -1495,7 +1501,7 @@ impl LinuxRelayAdmin {
     /// address in shared-Wi-Fi mode.
     fn head_unit_address(&self) -> Option<std::net::Ipv4Addr> {
         let (options, status) = self.effective_options_with_status().ok()?;
-        let addresses = (self.runtime.addresses)().unwrap_or_default();
+        let addresses = self.runtime.network_addresses().unwrap_or_default();
         let iphone = self
             .controller
             .lock()
@@ -1645,7 +1651,7 @@ impl LinuxRelayAdmin {
         }
     }
     fn receiver_sans(&self) -> Result<Vec<std::net::Ipv4Addr>> {
-        let rows = (self.runtime.addresses)()?;
+        let rows = self.runtime.network_addresses()?;
         let occupied: Vec<_> = rows
             .iter()
             .map(|(_, address, prefix)| format!("{address}/{prefix}"))
@@ -2154,7 +2160,7 @@ impl LinuxRelayAdmin {
                 let public_name = self.public_name.clone();
                 let target = self.browser_target.clone();
                 let iphone = self.effective_options()?.wifi_interface;
-                let addresses = self.runtime.addresses.clone();
+                let addresses = self.runtime.network_address_source();
                 Arc::new(move |address| {
                     let target = target.lock().unwrap();
                     let selected = if target.as_deref() == Some(&iphone) {
@@ -3548,7 +3554,9 @@ impl RelayAdmin for LinuxRelayAdmin {
             video: self.input.video_status(),
             hotspot,
             wifi_control: true,
-            host_addresses: (self.runtime.addresses)()
+            host_addresses: self
+                .runtime
+                .network_addresses()
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|(interface, a, _)| {
@@ -4822,9 +4830,12 @@ mod tests {
             runtime_paths(&dir),
         )
         .unwrap();
-        admin.tesla = Mutex::new(crate::tesla_address::Session::new(Arc::new(
-            crate::tesla_address::tests::FakeBackend::default(),
-        )));
+        admin.tesla = Mutex::new(
+            crate::tesla_address::Session::new(Arc::new(
+                crate::tesla_address::tests::FakeBackend::default(),
+            ))
+            .with_ownership(admin.runtime.tesla_address.clone()),
+        );
         // These legacy lifecycle tests bypass the new car waits; dedicated tests exercise them.
         admin.start_policy.lock().unwrap().skip();
         admin.start_policy.lock().unwrap().skip();
@@ -5359,6 +5370,83 @@ mod tests {
         drop(lifecycle);
         admin.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn owned_tesla_address_does_not_change_network_roles_name_or_receiver_sans() {
+        use crate::tesla_address::{tests::FakeBackend, Mode, Session};
+        for mode in [
+            Mode::TeslaAndroid,
+            Mode::PublicAddress,
+            Mode::Teslamirror,
+            Mode::VirtualName,
+        ] {
+            let (mut admin, dir) = fake();
+            let backend = Arc::new(FakeBackend::default());
+            backend
+                .rows
+                .lock()
+                .unwrap()
+                .push(("wlan0".into(), "10.42.0.1".parse().unwrap(), 24));
+            let inner = Arc::get_mut(&mut admin).unwrap();
+            let rows = backend.clone();
+            inner.runtime.addresses = Arc::new(move || Ok(rows.rows.lock().unwrap().clone()));
+            inner.tesla = Mutex::new(
+                Session::new(backend.clone()).with_ownership(inner.runtime.tesla_address.clone()),
+            );
+            admin.settings.lock().unwrap().tesla_browser = mode;
+            assert!(admin.public_name.import(r#"{"version":1,"enabled":true,"provider":"dynv6","name":"car.dynv6.net","token":"private-token","agreeLetsEncryptTerms":true}"#).is_ok());
+            let hotspot = admin
+                .hotspot_lifetime
+                .create(|| Arc::new(crate::hotspot_lifetime::tests::Fake::default()))
+                .unwrap();
+            hotspot.start(Duration::from_secs(1)).unwrap();
+            let mut inventory = crate::net_inventory::Inventory {
+                probed_at: Some(1),
+                interfaces: vec![crate::net_inventory::Interface {
+                    name: "wlan0".into(),
+                    kind: "wifi".into(),
+                    ipv4: vec!["10.42.0.1".into()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            admin.inventory.set(inventory.clone());
+            let (options, status) = admin.effective_options_with_status().unwrap();
+            let links = admin.links(&options, &status);
+            let address = admin.head_unit_address();
+            let sans = admin.receiver_sans().unwrap();
+            *admin.receiver_tls.lock().unwrap() = Some(None);
+            *admin.receiver_tls_sans.lock().unwrap() = sans.clone();
+            *admin.receiver_tesla_tls.lock().unwrap() =
+                crate::tesla_address::tls_address(&options.settings);
+            admin.refresh_tesla_address();
+            assert!(admin.tesla.lock().unwrap().active.is_some());
+            // Reproduce NetworkManager returning the auxiliary address before the AP address.
+            backend.rows.lock().unwrap().reverse();
+            let rows = admin.runtime.network_addresses().unwrap();
+            assert_eq!(
+                rows,
+                vec![("wlan0".into(), "10.42.0.1".parse().unwrap(), 24)]
+            );
+            crate::net_inventory::refresh_activity(
+                admin.runtime.runner.as_ref(),
+                &admin.runtime.root,
+                &mut inventory,
+                &rows,
+            );
+            assert_eq!(inventory.interfaces[0].ipv4, ["10.42.0.1"]);
+            admin.inventory.set(inventory);
+            let (options, status) = admin.effective_options_with_status().unwrap();
+            assert!(links.changes(&admin.links(&options, &status)).is_empty());
+            assert_eq!(admin.head_unit_address(), address);
+            assert_eq!(admin.receiver_sans().unwrap(), sans);
+            admin.apply_public_name();
+            assert!(!admin.receiver_tls_queued.load(Ordering::Acquire));
+            admin.tesla.lock().unwrap().stop(200);
+            assert_eq!(admin.receiver_sans().unwrap(), sans);
+            admin.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
     #[test]
     fn tesla_address_uses_the_active_ap_before_controller_hotspot_publication() {

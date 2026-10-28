@@ -5,7 +5,34 @@
 //! Tesla address policy and live, session-scoped kernel addresses.
 use crate::settings::Settings;
 use serde::{Deserialize, Serialize};
-use std::{net::Ipv4Addr, sync::Arc};
+use std::{
+    net::Ipv4Addr,
+    sync::{Arc, Mutex},
+};
+
+/// Session ownership, shared with network observers before a kernel add can become visible.
+/// Only this exact interface/address /32 is auxiliary; unrelated /32s remain network facts.
+#[derive(Clone, Default)]
+pub(crate) struct Ownership(Arc<Mutex<Option<(String, Ipv4Addr)>>>);
+impl Ownership {
+    fn get(&self) -> Option<(String, Ipv4Addr)> {
+        self.0.lock().unwrap().clone()
+    }
+    fn set(&self, address: Option<(String, Ipv4Addr)>) {
+        *self.0.lock().unwrap() = address;
+    }
+    pub(crate) fn network_addresses(
+        &self,
+        source: &crate::runtime_paths::InterfaceAddresses,
+    ) -> crate::Result<Vec<(String, Ipv4Addr, u8)>> {
+        let owned = self.0.lock().unwrap();
+        let mut rows = source()?;
+        if let Some((interface, address)) = owned.as_ref() {
+            rows.retain(|(name, ip, prefix)| name != interface || ip != address || *prefix != 32);
+        }
+        Ok(rows)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -115,7 +142,7 @@ pub struct Session {
     disabled: bool,
     attempted: bool,
     requested: Option<(Mode, Option<String>)>,
-    owned: Option<(String, Ipv4Addr)>,
+    owned: Ownership,
     journal_state: Option<serde_json::Value>,
     transitions: Vec<serde_json::Value>,
     startup: Option<(String, Vec<Ipv4Addr>)>,
@@ -133,11 +160,15 @@ impl Session {
             disabled: false,
             attempted: false,
             requested: None,
-            owned: None,
+            owned: Ownership::default(),
             journal_state: None,
             transitions: Vec::new(),
             startup: None,
         }
+    }
+    pub(crate) fn with_ownership(mut self, ownership: Ownership) -> Self {
+        self.owned = ownership;
+        self
     }
     /// A bounded, secret-free state record; command output never enters this event.
     pub fn journal_changes(&mut self, settings: &Settings) -> Vec<serde_json::Value> {
@@ -249,13 +280,13 @@ impl Session {
     }
     fn remove(&mut self) -> bool {
         self.active = None;
-        if let Some((interface, address)) = &self.owned {
-            if let Err(e) = self.change(interface, *address, false) {
+        if let Some((interface, address)) = self.owned.get() {
+            if let Err(e) = self.change(&interface, address, false) {
                 self.failure = Some(e.to_string());
                 return false;
             }
         }
-        self.owned = None;
+        self.owned.set(None);
         true
     }
     pub fn stop(&mut self, now: u64) {
@@ -299,7 +330,7 @@ impl Session {
             return;
         }
         if !running {
-            if self.running || self.owned.is_some() {
+            if self.running || self.owned.get().is_some() {
                 self.stop(0);
                 self.input = None;
             }
@@ -335,7 +366,7 @@ impl Session {
             != Activation::Ready
             || !hotspot_ready
         {
-            if self.owned.is_some() && self.remove() {
+            if self.owned.get().is_some() && self.remove() {
                 self.attempted = false;
             }
             return;
@@ -376,7 +407,7 @@ impl Session {
                 )));
             }
             // Keep ownership on an ambiguous timeout, so cleanup still removes an applied address.
-            self.owned = Some((input.interface.clone(), address));
+            self.owned.set(Some((input.interface.clone(), address)));
             self.change(&input.interface, address, true)?;
             if !self.present(&input.interface, address)? {
                 return Err(std::io::Error::other(format!(
@@ -635,7 +666,7 @@ pub(crate) mod tests {
 
     #[derive(Default)]
     pub(crate) struct FakeBackend {
-        rows: Mutex<Vec<(String, Ipv4Addr, u8)>>,
+        pub(crate) rows: Mutex<Vec<(String, Ipv4Addr, u8)>>,
         calls: Mutex<Vec<(String, Ipv4Addr, bool)>>,
         add_error: Mutex<Option<i32>>,
         delete_error: Mutex<Option<i32>>,
@@ -1014,7 +1045,7 @@ pub(crate) mod tests {
             backend.rows.lock().unwrap().clear();
             *backend.delete_error.lock().unwrap() = Some(code);
             session.stop(2);
-            assert!(session.owned.is_none());
+            assert!(session.owned.get().is_none());
             assert!(session.failure.is_none());
         }
     }
@@ -1026,13 +1057,36 @@ pub(crate) mod tests {
         tick(&mut session, &live);
         *backend.delete_error.lock().unwrap() = Some(libc::EPERM);
         session.stop(2);
-        assert!(session.owned.is_some());
+        assert!(session.owned.get().is_some());
         assert!(session.failure.is_some());
         *backend.delete_error.lock().unwrap() = None;
         session.tick(false, false, &live, true, || panic!("stopped"), 3);
-        assert!(session.owned.is_none());
+        assert!(session.owned.get().is_none());
         assert!(session.failure.is_none());
         assert!(backend.rows.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn network_observers_exclude_only_the_owned_interface_address_and_prefix() {
+        let backend = Arc::new(FakeBackend::default());
+        let mut paths = crate::runtime_paths::RuntimePaths::in_state_dir(
+            std::path::Path::new("/unused"),
+            Arc::new(crate::platform::ProcessCommandRunner::new()),
+        );
+        let rows = backend.clone();
+        paths.addresses = Arc::new(move || Ok(rows.rows.lock().unwrap().clone()));
+        let mut session = Session::new(backend.clone()).with_ownership(paths.tesla_address.clone());
+        tick(&mut session, &settings(Mode::TeslaAndroid));
+        let preserved = vec![
+            ("wlan1".into(), "3.3.3.1".parse().unwrap(), 32),
+            ("wlan0".into(), "3.3.3.1".parse().unwrap(), 24),
+            ("wlan0".into(), "3.3.3.2".parse().unwrap(), 32),
+            ("wlan0".into(), "10.42.0.1".parse().unwrap(), 24),
+        ];
+        backend.rows.lock().unwrap().extend(preserved.clone());
+        assert_eq!(paths.network_addresses().unwrap(), preserved);
+        assert_eq!((paths.addresses)().unwrap().len(), preserved.len() + 1);
+        session.stop(200);
+        assert_eq!(paths.network_addresses().unwrap(), preserved);
     }
     #[test]
     fn drop_removes_the_owned_host_address() {

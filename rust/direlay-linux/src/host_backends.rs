@@ -325,12 +325,15 @@ impl StationFactory for NetworkManagerBackend {
             .ok_or_else(|| std::io::Error::other("No saved Wi-Fi is connected or in range"))?;
         Ok((
             network.ssid.clone(),
-            Arc::new(linux_hotspot::ExistingWifiManager::new(
-                self.runner.clone(),
-                interface.into(),
-                network.ssid.clone(),
-                network.password.clone(),
-            )),
+            Arc::new(
+                linux_hotspot::ExistingWifiManager::new(
+                    self.runner.clone(),
+                    interface.into(),
+                    network.ssid.clone(),
+                    network.password.clone(),
+                )
+                .with_addresses(self.paths.network_address_source()),
+            ),
         ))
     }
 }

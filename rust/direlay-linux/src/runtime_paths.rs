@@ -29,6 +29,7 @@ pub struct RuntimePaths {
     pub root: PathBuf,
     pub runner: Arc<dyn CommandRunner>,
     pub addresses: InterfaceAddresses,
+    pub(crate) tesla_address: crate::tesla_address::Ownership,
 }
 impl RuntimePaths {
     pub fn new(state_dir: &Path) -> Self {
@@ -61,7 +62,17 @@ impl RuntimePaths {
             root: state_dir.join("host"),
             runner,
             addresses: Arc::new(|| Ok(Vec::new())),
+            tesla_address: Default::default(),
         }
+    }
+    /// Network topology excludes the Tesla session's auxiliary address. Collision and kernel
+    /// presence checks must use `addresses` directly so ownership cannot hide a real conflict.
+    pub fn network_addresses(&self) -> crate::Result<Vec<(String, Ipv4Addr, u8)>> {
+        self.tesla_address.network_addresses(&self.addresses)
+    }
+    pub fn network_address_source(&self) -> InterfaceAddresses {
+        let paths = self.clone();
+        Arc::new(move || paths.network_addresses())
     }
     pub fn managed_dns(&self) -> Option<local_dns::Paths> {
         self.network_services.then(|| self.local_dns.clone())
