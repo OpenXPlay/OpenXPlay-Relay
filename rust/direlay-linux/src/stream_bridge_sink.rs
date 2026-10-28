@@ -10,6 +10,9 @@ use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
+#[cfg(test)]
+#[path = "stream_bridge_session_tests.rs"]
+mod session_tests;
 struct BridgeState {
     session: u64,
     codec: Option<VideoCodec>,
@@ -23,7 +26,7 @@ pub struct StreamBridgeSink {
     input: Arc<DiPlayInput>,
     delegate: Arc<dyn MediaSink>,
     events: Arc<JsonEvents>,
-    state: Mutex<BridgeState>,
+    state: Arc<Mutex<BridgeState>>,
 }
 impl StreamBridgeSink {
     pub fn new(
@@ -43,14 +46,14 @@ impl StreamBridgeSink {
             input,
             delegate,
             events,
-            state: Mutex::new(BridgeState {
+            state: Arc::new(Mutex::new(BridgeState {
                 session,
                 codec: None,
                 format: None,
                 sequence: 0,
                 audio: BTreeMap::new(),
                 tails: BTreeMap::new(),
-            }),
+            })),
         }
     }
     pub fn with_arrival_clock(mut self, clock: Arc<dyn Fn() -> u64 + Send + Sync>) -> Self {
@@ -211,8 +214,21 @@ impl MediaSink for StreamBridgeSink {
         self.delegate.on_video_frame(kind, data, sender, arrival)
     }
     fn set_video_recovery_handler(&self, kind: u16, handler: Arc<dyn Fn() + Send + Sync>) {
+        let mut handler = handler;
         if kind == 110 {
             self.resume();
+            let bridge = Arc::downgrade(&self.state);
+            let input = Arc::downgrade(&self.input.state);
+            handler = Arc::new(move || {
+                let current = bridge.upgrade().zip(input.upgrade()).is_some_and(|(b, i)| {
+                    let id = b.lock().unwrap().session;
+                    i.lock().unwrap().current == Some(id)
+                });
+                // Saved handlers must follow this bridge across resume, but never across takeover.
+                if current {
+                    handler();
+                }
+            });
             let id = self.state.lock().unwrap().session;
             let mut s = self.input.state.lock().unwrap();
             if s.latest == Some(id) {

@@ -36,6 +36,12 @@ pub trait MediaSink: Send + Sync {
     ) -> Result<()>;
     /// Errors propagate to the lifecycle owner.
     fn set_video_recovery_handler(&self, kind: u16, handler: Arc<dyn Fn() + Send + Sync>);
+    fn set_video_diagnostic_handler(
+        &self,
+        _kind: u16,
+        _handler: Arc<dyn Fn(String) + Send + Sync>,
+    ) {
+    }
     /// Errors propagate to the lifecycle owner.
     fn on_screen_stream_active(&self, kind: u16, active: bool);
     /// Errors propagate to the lifecycle owner.
@@ -90,11 +96,15 @@ struct Engine {
     sink: Arc<dyn MediaSink>,
     transport: Arc<dyn StreamTransport>,
     microphone_enabled: bool,
+    screen_policy: ScreenSessionPolicy,
+    screen_delivery: DeliveryGate,
     state: Mutex<EngineState>,
 }
 #[derive(Default)]
 struct EngineState {
     streams: HashMap<StreamKey, Arc<Slot>>,
+    screen_owners: HashMap<u16, (StreamKey, Arc<Slot>)>,
+    retired_screens: HashSet<(usize, u16)>,
     sessions: HashMap<usize, SessionBinding>,
     handler: Option<Arc<dyn IapTunnelListener>>,
     pending: HashMap<usize, Arc<AirPlayIapTunnelStream>>,
@@ -118,6 +128,8 @@ struct StreamKey {
     audio_type: String,
 }
 struct Slot {
+    #[cfg(test)]
+    screen_listener: Mutex<Option<Arc<dyn ScreenListener>>>,
     active: AtomicBool,
     delivery: DeliveryGate,
     resource: Mutex<Option<Resource>>,
@@ -165,6 +177,8 @@ impl Slot {
             .as_ref()
             .map(|f| FeedbackPositionMonitor::new(f.rtp_clock_rate));
         Self {
+            #[cfg(test)]
+            screen_listener: Mutex::new(None),
             active: AtomicBool::new(true),
             delivery: DeliveryGate::default(),
             resource: Mutex::new(None),
@@ -187,11 +201,26 @@ impl CarPlayMediaEngine {
         transport: Arc<dyn StreamTransport>,
         microphone_enabled: bool,
     ) -> Self {
+        Self::with_screen_session_policy(
+            sink,
+            transport,
+            microphone_enabled,
+            ScreenSessionPolicy::default(),
+        )
+    }
+    pub fn with_screen_session_policy(
+        sink: Arc<dyn MediaSink>,
+        transport: Arc<dyn StreamTransport>,
+        microphone_enabled: bool,
+        policy: ScreenSessionPolicy,
+    ) -> Self {
         Self {
             inner: Arc::new(Engine {
                 sink,
                 transport,
                 microphone_enabled,
+                screen_policy: policy,
+                screen_delivery: DeliveryGate::default(),
                 state: Mutex::new(EngineState::default()),
             }),
         }
@@ -201,6 +230,15 @@ impl CarPlayMediaEngine {
     pub fn bind_session(&self, session: &Arc<AirPlaySession>, peer: std::net::IpAddr) {
         let mut s = self.inner.state.lock().unwrap();
         s.retired.remove(&session_id(session));
+        if !s
+            .sessions
+            .get(&session_id(session))
+            .and_then(|b| b.session.upgrade())
+            .is_some_and(|bound| Arc::ptr_eq(&bound, session))
+        {
+            s.retired_screens
+                .retain(|(sid, _)| *sid != session_id(session));
+        }
         s.sessions.insert(
             session_id(session),
             SessionBinding {
@@ -247,6 +285,48 @@ impl CarPlayMediaEngine {
             .get(&session_id(session))
             .and_then(|b| b.session.upgrade().map(|session| (session, b.peer)))
     }
+    fn registered_screen(&self, state: &EngineState, key: &StreamKey, slot: &Arc<Slot>) -> bool {
+        state.streams.get(key).is_some_and(|s| Arc::ptr_eq(s, slot))
+            && (!self.inner.screen_policy.isolate_sessions
+                || state
+                    .screen_owners
+                    .get(&key.kind)
+                    .is_some_and(|(_, s)| Arc::ptr_eq(s, slot)))
+    }
+    fn owns_screen(&self, key: &StreamKey, slot: &Arc<Slot>) -> bool {
+        let state = self.inner.state.lock().unwrap();
+        slot.active()
+            && self.registered_screen(&state, key, slot)
+            && !state.closed
+            && !state
+                .sessions
+                .get(&key.session)
+                .and_then(|b| b.session.upgrade())
+                .is_some_and(|s| s.is_closed())
+    }
+    // Screen mutations hold screen_delivery, but release state before entering the sink.
+    fn forget_screen(&self, key: &StreamKey, slot: &Arc<Slot>) {
+        let mut state = self.inner.state.lock().unwrap();
+        slot.active.store(false, Ordering::Release);
+        if state.streams.get(key).is_some_and(|s| Arc::ptr_eq(s, slot)) {
+            state.streams.remove(key);
+        }
+        if state
+            .screen_owners
+            .get(&key.kind)
+            .is_some_and(|(_, s)| Arc::ptr_eq(s, slot))
+        {
+            state.screen_owners.remove(&key.kind);
+        }
+    }
+    fn remove_screen(&self, key: &StreamKey, slot: &Arc<Slot>) -> bool {
+        if !self.registered_screen(&self.inner.state.lock().unwrap(), key, slot) {
+            return false;
+        }
+        self.forget_screen(key, slot);
+        self.inner.sink.on_screen_stream_active(key.kind, false);
+        true
+    }
     fn install(&self, key: StreamKey, slot: Arc<Slot>) -> Result<bool> {
         let previous = {
             let mut state = self.inner.state.lock().unwrap();
@@ -285,9 +365,6 @@ impl CarPlayMediaEngine {
                     failure.get_or_insert(error);
                 }
             }
-            if slot.id.kind == 110 {
-                self.inner.sink.on_screen_stream_active(110, false);
-            }
             resource
         };
         if let Some(resource) = resource {
@@ -302,11 +379,27 @@ impl CarPlayMediaEngine {
     }
     pub fn close(&self) -> Result<()> {
         let (slots, pending) = {
+            let _delivery = self.inner.screen_delivery.enter();
             let mut s = self.inner.state.lock().unwrap();
             s.closed = true;
+            let screens = s
+                .streams
+                .iter()
+                .filter(|(k, _)| k.kind == 110)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<Vec<_>>();
+            drop(s);
+            for (key, slot) in &screens {
+                self.remove_screen(key, slot);
+            }
+            let mut s = self.inner.state.lock().unwrap();
             s.sessions.clear();
             (
-                s.streams.drain().map(|(_, v)| v).collect::<Vec<_>>(),
+                s.streams
+                    .drain()
+                    .map(|(_, v)| v)
+                    .chain(screens.into_iter().map(|(_, v)| v))
+                    .collect::<Vec<_>>(),
                 s.pending.drain().map(|(_, v)| v).collect::<Vec<_>>(),
             )
         };
@@ -599,6 +692,7 @@ impl KeyframeProbe {
     }
 }
 struct CurrentScreenListener {
+    owner: Option<(Weak<Engine>, StreamKey)>,
     slot: Weak<Slot>,
     sink: Arc<dyn MediaSink>,
     session: Option<Weak<AirPlaySession>>,
@@ -607,6 +701,43 @@ struct CurrentScreenListener {
     first_frame: Box<dyn Fn() + Send + Sync>,
 }
 impl CurrentScreenListener {
+    fn engine(&self) -> Option<CarPlayMediaEngine> {
+        self.owner
+            .as_ref()?
+            .0
+            .upgrade()
+            .map(|inner| CarPlayMediaEngine { inner })
+    }
+    fn current(&self, slot: &Arc<Slot>) -> bool {
+        slot.active()
+            && !self
+                .session
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .is_some_and(|s| s.is_closed())
+            && self
+                .owner
+                .as_ref()
+                .is_none_or(|(_, key)| self.engine().is_some_and(|e| e.owns_screen(key, slot)))
+    }
+    fn deliver<T>(&self, default: T, action: impl FnOnce(&Arc<Slot>) -> T) -> T {
+        let Some(slot) = self.slot.upgrade() else {
+            return default;
+        };
+        let engine = self.engine();
+        let gate = engine
+            .as_ref()
+            .map_or(&slot.delivery, |e| &e.inner.screen_delivery);
+        let serialize = engine
+            .as_ref()
+            .is_none_or(|e| e.inner.screen_policy.serialize_delivery);
+        let _delivery = serialize.then(|| gate.enter());
+        if self.current(&slot) {
+            action(&slot)
+        } else {
+            default
+        }
+    }
     fn log(&self, line: Option<String>) {
         if let (Some(line), Some(session)) = (line, self.session.as_ref().and_then(Weak::upgrade)) {
             session.log_debug(&line);
@@ -615,48 +746,71 @@ impl CurrentScreenListener {
 }
 impl ScreenListener for CurrentScreenListener {
     fn on_codec(&self, codec: VideoCodec) {
-        if let Some(s) = self.slot.upgrade() {
-            let _d = s.delivery.enter();
-            if s.active() {
-                self.keyframes.codec(codec);
-                let _ = self.sink.on_video_codec(s.id.kind, codec);
-            }
-        }
+        self.deliver((), |s| {
+            self.keyframes.codec(codec);
+            let _ = self.sink.on_video_codec(s.id.kind, codec);
+        });
     }
     fn on_config(&self, bytes: &[u8]) -> Result<()> {
-        if let Some(s) = self.slot.upgrade() {
-            let _d = s.delivery.enter();
-            if s.active() {
-                self.log(self.keyframes.config(bytes.len(), Instant::now()));
-                return self.sink.on_video_config(s.id.kind, bytes);
-            }
-        }
-        Ok(())
+        self.deliver(Ok(()), |s| {
+            self.log(self.keyframes.config(bytes.len(), Instant::now()));
+            self.sink.on_video_config(s.id.kind, bytes)
+        })
     }
     fn on_frame(&self, bytes: &[u8], sender: u64, arrival: u64) -> Result<()> {
-        if let Some(s) = self.slot.upgrade() {
-            let _d = s.delivery.enter();
-            if s.active() {
-                if !self.received.swap(true, Ordering::AcqRel) {
-                    (self.first_frame)();
-                }
-                let result = self.sink.on_video_frame(s.id.kind, bytes, sender, arrival);
-                self.log(self.keyframes.frame(bytes, Instant::now()));
-                return result;
+        self.deliver(Ok(()), |s| {
+            if !self.received.swap(true, Ordering::AcqRel) {
+                (self.first_frame)();
             }
-        }
-        Ok(())
+            if !self.current(s) {
+                return Ok(());
+            }
+            let result = self.sink.on_video_frame(s.id.kind, bytes, sender, arrival);
+            self.log(self.keyframes.frame(bytes, Instant::now()));
+            result
+        })
     }
     fn on_closed(&self, _cause: Option<std::io::Error>) {
-        if let Some(s) = self.slot.upgrade() {
-            let _d = s.delivery.enter();
-            if !s.active.swap(false, Ordering::AcqRel) {
-                return;
+        let Some(slot) = self.slot.upgrade() else {
+            if self
+                .engine()
+                .is_some_and(|e| !e.inner.screen_policy.isolate_sessions)
+            {
+                if let Some(session) = self.session.as_ref().and_then(Weak::upgrade) {
+                    let _ = session.close();
+                }
             }
-            self.sink.on_screen_stream_active(s.id.kind, false);
-        }
-        if let Some(session) = self.session.as_ref().and_then(Weak::upgrade) {
-            let _ = session.close();
+            return;
+        };
+        let close = if let (Some(engine), Some((_, key))) = (self.engine(), &self.owner) {
+            let _delivery = engine.inner.screen_delivery.enter();
+            slot.active.store(false, Ordering::Release);
+            let registered =
+                engine.registered_screen(&engine.inner.state.lock().unwrap(), key, &slot);
+            if registered {
+                engine
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .retired_screens
+                    .insert((key.session, key.kind));
+                engine.remove_screen(key, &slot);
+            }
+            registered || !engine.inner.screen_policy.isolate_sessions
+        } else {
+            let _delivery = slot.delivery.enter();
+            if slot.active.swap(false, Ordering::AcqRel) {
+                self.sink.on_screen_stream_active(slot.id.kind, false);
+                true
+            } else {
+                false
+            }
+        };
+        if close {
+            if let Some(session) = self.session.as_ref().and_then(Weak::upgrade) {
+                let _ = session.close();
+            }
         }
     }
 }
@@ -744,57 +898,208 @@ impl AirPlayMediaHandler for CarPlayMediaEngine {
             kind,
             audio_type: String::new(),
         };
-        if !self.install(sk, slot.clone())? {
-            return Ok(None);
-        }
         let transport = self.transport(session);
         let diagnostic = self.diagnostic(session);
-        let session = self.binding(session).map(|(s, _)| Arc::downgrade(&s));
-        let weak_slot = Arc::downgrade(&slot);
-        let recovery_session = session.clone();
+        let bound_session = self.binding(session).map(|(s, _)| Arc::downgrade(&s));
+        let first_frame_session = bound_session.clone();
         let keyframes = Arc::new(KeyframeProbe::default());
-        let probe = keyframes.clone();
-        self.inner.sink.set_video_recovery_handler(
-            kind,
-            Arc::new(move || {
-                if let Some(s) = weak_slot.upgrade() {
-                    if s.active() {
-                        if let Some(session) = recovery_session.as_ref().and_then(Weak::upgrade) {
-                            let sent = session
-                                .send_command(&dict([(
-                                    "type",
-                                    BplistValue::String("forceKeyFrame".into()),
-                                )]))
-                                .unwrap_or(false);
-                            if let Some(line) = probe.requested(sent, Instant::now()) {
-                                session.log_debug(&line);
-                            }
-                        }
-                    }
-                }
-            }),
-        );
-        let screen = ScreenStream::with_key(transport, key).with_diagnostic(diagnostic);
-        let first_frame_session = session.clone();
-        let port = screen.listen(Arc::new(CurrentScreenListener {
+        let listener = Arc::new(CurrentScreenListener {
+            owner: Some((Arc::downgrade(&self.inner), sk.clone())),
             slot: Arc::downgrade(&slot),
             sink: self.inner.sink.clone(),
-            session,
-            keyframes,
+            session: bound_session.clone(),
+            keyframes: keyframes.clone(),
             received: AtomicBool::new(false),
             first_frame: Box::new(move || {
                 if let Some(session) = first_frame_session.as_ref().and_then(Weak::upgrade) {
                     session.startup_milestone("first_video_received");
                 }
             }),
-        }))?;
-        let _d = slot.delivery.enter();
-        if !slot.active() {
-            screen.close()?;
+        });
+        let screen = ScreenStream::with_key(transport, key).with_diagnostic(diagnostic);
+        #[cfg(test)]
+        {
+            *slot.screen_listener.lock().unwrap() = Some(listener.clone());
+        }
+        let port = match screen.listen(listener) {
+            Ok(port) => port,
+            Err(error) => {
+                screen.close()?;
+                return Err(error);
+            }
+        };
+        let mut previous = None;
+        let mut displaced = None;
+        let installed = {
+            let _delivery = self.inner.screen_delivery.enter();
+            // Retain the resource even if EOF or a reentrant callback prevents publication.
+            *slot.resource.lock().unwrap() = Some(Resource::Screen(screen));
+            let policy = self.inner.screen_policy;
+            let allowed = || {
+                let state = self.inner.state.lock().unwrap();
+                !state.closed
+                    && !session.is_closed()
+                    && slot.active()
+                    && !(policy.isolate_sessions
+                        && state.retired_screens.contains(&(sk.session, kind)))
+            };
+            if !allowed() {
+                false
+            } else {
+                previous = self
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .screen_owners
+                    .get(&kind)
+                    .cloned();
+                if let Some((old_key, old)) = &previous {
+                    if old_key.session != sk.session {
+                        if policy.isolate_sessions {
+                            self.inner
+                                .state
+                                .lock()
+                                .unwrap()
+                                .retired_screens
+                                .insert((old_key.session, kind));
+                        }
+                        if policy.reset_on_reconnect {
+                            self.remove_screen(old_key, old);
+                        } else if policy.isolate_sessions {
+                            self.forget_screen(old_key, old);
+                        }
+                    } else {
+                        // Reconfiguration preserves the session's audio and control.
+                        self.forget_screen(old_key, old);
+                    }
+                }
+                let changed_owner = self
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .screen_owners
+                    .get(&kind)
+                    .is_some_and(|(_, s)| {
+                        !previous
+                            .as_ref()
+                            .is_some_and(|(_, old)| Arc::ptr_eq(s, old))
+                    });
+                if !allowed() || changed_owner {
+                    false
+                } else {
+                    displaced = self
+                        .inner
+                        .state
+                        .lock()
+                        .unwrap()
+                        .streams
+                        .get(&sk)
+                        .cloned()
+                        .filter(|s| {
+                            !previous
+                                .as_ref()
+                                .is_some_and(|(_, old)| Arc::ptr_eq(s, old))
+                        });
+                    if let Some(old) = &displaced {
+                        self.forget_screen(&sk, old);
+                    }
+                    {
+                        let mut state = self.inner.state.lock().unwrap();
+                        state.screen_owners.insert(kind, (sk.clone(), slot.clone()));
+                        state.streams.insert(sk.clone(), slot.clone());
+                    }
+                    let weak = Arc::downgrade(&self.inner);
+                    let output = Arc::downgrade(&slot);
+                    let output_key = sk.clone();
+                    let diagnostic_session = bound_session.clone();
+                    self.inner.sink.set_video_diagnostic_handler(
+                        kind,
+                        Arc::new(move |message| {
+                            let current = weak.upgrade().zip(output.upgrade()).is_some_and(
+                                |(inner, slot)| {
+                                    let _delivery = inner.screen_delivery.enter();
+                                    CarPlayMediaEngine {
+                                        inner: inner.clone(),
+                                    }
+                                    .owns_screen(&output_key, &slot)
+                                },
+                            );
+                            // Controller callbacks must run outside the delivery gate.
+                            if current {
+                                if let Some(session) =
+                                    diagnostic_session.as_ref().and_then(Weak::upgrade)
+                                {
+                                    if message == "first frame rendered" {
+                                        if let Some(token) = session.playback_token() {
+                                            session.report_video_frame_rendered(&token);
+                                        }
+                                    }
+                                    session.log_debug(&format!("Video: {message}"));
+                                }
+                            }
+                        }),
+                    );
+                    if self.owns_screen(&sk, &slot) {
+                        let weak = Arc::downgrade(&self.inner);
+                        let output = Arc::downgrade(&slot);
+                        let output_key = sk.clone();
+                        self.inner.sink.set_video_recovery_handler(
+                            kind,
+                            Arc::new(move || {
+                                let current = weak.upgrade().zip(output.upgrade()).is_some_and(
+                                    |(inner, slot)| {
+                                        let _delivery = inner.screen_delivery.enter();
+                                        CarPlayMediaEngine {
+                                            inner: inner.clone(),
+                                        }
+                                        .owns_screen(&output_key, &slot)
+                                    },
+                                );
+                                if current {
+                                    if let Some(session) =
+                                        bound_session.as_ref().and_then(Weak::upgrade)
+                                    {
+                                        let sent = session
+                                            .send_command(&dict([(
+                                                "type",
+                                                BplistValue::String("forceKeyFrame".into()),
+                                            )]))
+                                            .unwrap_or(false);
+                                        if let Some(line) =
+                                            keyframes.requested(sent, Instant::now())
+                                        {
+                                            session.log_debug(&line);
+                                        }
+                                    }
+                                }
+                            }),
+                        );
+                    }
+                    if self.owns_screen(&sk, &slot) {
+                        self.inner.sink.on_screen_stream_active(kind, true);
+                    }
+                    self.owns_screen(&sk, &slot)
+                }
+            }
+        };
+        // Closing sockets can wake workers; publish ownership before closing old resources.
+        if let Some((old_key, old)) = previous {
+            if self.inner.screen_policy.isolate_sessions
+                || self.inner.screen_policy.reset_on_reconnect
+                || old_key == sk
+            {
+                self.retire(old)?;
+            }
+        }
+        if let Some(old) = displaced {
+            self.retire(old)?;
+        }
+        if !installed {
+            self.retire(slot)?;
             return Ok(None);
         }
-        *slot.resource.lock().unwrap() = Some(Resource::Screen(screen));
-        self.inner.sink.on_screen_stream_active(kind, true);
         Ok(Some(port))
     }
     fn on_audio(
@@ -1201,6 +1506,27 @@ impl AirPlayMediaHandler for CarPlayMediaEngine {
     }
     fn on_teardown(&self, session: &AirPlaySession, kind: u16) -> Result<()> {
         let sid = session_id(session);
+        if kind == 110 {
+            let key = StreamKey {
+                session: sid,
+                kind,
+                audio_type: String::new(),
+            };
+            let slot = {
+                let _delivery = self.inner.screen_delivery.enter();
+                let slot = self.inner.state.lock().unwrap().streams.get(&key).cloned();
+                if let Some(slot) = &slot {
+                    self.remove_screen(&key, slot);
+                } else if !self.inner.screen_policy.isolate_sessions {
+                    self.inner.sink.on_screen_stream_active(kind, false);
+                }
+                slot
+            };
+            if let Some(slot) = slot {
+                self.retire(slot)?;
+            }
+            return Ok(());
+        }
         let (slots, owns_barrier) = {
             let mut s = self.inner.state.lock().unwrap();
             let mut owns_barrier = false;
@@ -1252,7 +1578,26 @@ impl AirPlayMediaHandler for CarPlayMediaEngine {
     }
     fn on_session_closed(&self, session: &AirPlaySession) -> Result<()> {
         let sid = session_id(session);
-        self.inner.state.lock().unwrap().retired.insert(sid);
+        let screens = {
+            let _delivery = self.inner.screen_delivery.enter();
+            let mut state = self.inner.state.lock().unwrap();
+            state.retired.insert(sid);
+            state.retired_screens.insert((sid, 110));
+            let screens = state
+                .streams
+                .iter()
+                .filter(|(k, _)| k.session == sid && k.kind == 110)
+                .map(|(k, s)| (k.clone(), s.clone()))
+                .collect::<Vec<_>>();
+            drop(state);
+            for (key, slot) in &screens {
+                self.remove_screen(key, slot);
+            }
+            screens
+        };
+        for (_, slot) in screens {
+            self.retire(slot)?;
+        }
         let kinds = {
             let s = self.inner.state.lock().unwrap();
             s.streams
@@ -1416,10 +1761,16 @@ pub const OPUS_48K: u64 = 0x40000000;
 #[cfg(test)]
 mod tests {
     use super::*;
+    type DiagnosticHandler = Arc<dyn Fn(String) + Send + Sync>;
     #[derive(Default)]
     struct Sink {
         events: Mutex<Vec<String>>,
         invalidate: Mutex<Option<Weak<Slot>>>,
+        states: Mutex<Vec<bool>>,
+        recovery: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+        diagnostic: Mutex<Option<DiagnosticHandler>>,
+        installing: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+        frame_action: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     }
     impl MediaSink for Sink {
         fn on_video_codec(&self, kind: u16, codec: VideoCodec) -> Result<()> {
@@ -1446,14 +1797,29 @@ mod tests {
             Ok(())
         }
         fn on_video_frame(&self, kind: u16, bytes: &[u8], sender: u64, arrival: u64) -> Result<()> {
+            let action = self.frame_action.lock().unwrap().clone();
+            if let Some(action) = action {
+                action();
+            }
             self.events
                 .lock()
                 .unwrap()
                 .push(format!("frame {kind} {bytes:?} {sender} {arrival}"));
             Ok(())
         }
-        fn set_video_recovery_handler(&self, _: u16, _: Arc<dyn Fn() + Send + Sync>) {}
-        fn on_screen_stream_active(&self, _: u16, _: bool) {}
+        fn set_video_recovery_handler(&self, _: u16, handler: Arc<dyn Fn() + Send + Sync>) {
+            *self.recovery.lock().unwrap() = Some(handler);
+        }
+        fn set_video_diagnostic_handler(&self, _: u16, handler: Arc<dyn Fn(String) + Send + Sync>) {
+            *self.diagnostic.lock().unwrap() = Some(handler);
+            let action = self.installing.lock().unwrap().clone();
+            if let Some(action) = action {
+                action();
+            }
+        }
+        fn on_screen_stream_active(&self, _: u16, active: bool) {
+            self.states.lock().unwrap().push(active);
+        }
         fn on_audio_started(&self, id: &AudioStreamId, _: &AudioFormat, sample: u32) -> Result<()> {
             self.events
                 .lock()
@@ -1490,6 +1856,7 @@ mod tests {
     fn listener(sink: Arc<Sink>) -> (Arc<Slot>, CurrentScreenListener) {
         let slot = Arc::new(Slot::new(110, String::new(), None, 0, 0));
         let listener = CurrentScreenListener {
+            owner: None,
             slot: Arc::downgrade(&slot),
             sink,
             session: None,
@@ -1732,5 +2099,702 @@ mod tests {
         listener.on_rtp(&format, b"encoded opus", 522).unwrap();
         assert!(sink.events.lock().unwrap().is_empty());
         assert!(slot.origin.lock().unwrap().is_none());
+    }
+    #[derive(Default)]
+    struct Observer {
+        events: Mutex<Vec<String>>,
+        close_at_first: AtomicBool,
+        callback: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    }
+    impl AirPlaySessionListener for Observer {
+        fn on_startup_milestone(&self, session: &AirPlaySession, name: &str) {
+            self.events.lock().unwrap().push(name.into());
+            if self.close_at_first.load(Ordering::Acquire) {
+                session.close().unwrap();
+            }
+        }
+        fn on_debug_log(&self, line: &str) {
+            self.events.lock().unwrap().push(line.into());
+            let callback = self.callback.lock().unwrap().clone();
+            if let Some(callback) = callback {
+                callback();
+            }
+        }
+        fn on_video_frame_rendered(&self, _: &AirPlaySession) {
+            self.events.lock().unwrap().push("rendered".into());
+        }
+    }
+    struct Peer(Arc<AirPlaySession>);
+    impl std::ops::Deref for Peer {
+        type Target = AirPlaySession;
+        fn deref(&self) -> &AirPlaySession {
+            &self.0
+        }
+    }
+    impl Drop for Peer {
+        fn drop(&mut self) {
+            self.0.close().unwrap();
+        }
+    }
+    #[derive(Default)]
+    struct Server {
+        closed: Mutex<bool>,
+        changed: std::sync::Condvar,
+    }
+    impl StreamListener for Server {
+        fn port(&self) -> Result<u16> {
+            Ok(1234)
+        }
+        fn accept(&self, timeout: Duration) -> Result<Option<Arc<dyn DuplexStream>>> {
+            let closed = self.closed.lock().unwrap();
+            if !*closed {
+                drop(self.changed.wait_timeout(closed, timeout).unwrap());
+            }
+            Ok(None)
+        }
+        fn close(&self) -> Result<()> {
+            *self.closed.lock().unwrap() = true;
+            self.changed.notify_all();
+            Ok(())
+        }
+    }
+    struct Transport;
+    impl StreamTransport for Transport {
+        fn listen(&self, _: std::net::IpAddr) -> Result<Arc<dyn StreamListener>> {
+            Ok(Arc::new(Server::default()))
+        }
+        fn bind_datagram(&self, _: std::net::SocketAddr) -> Result<Arc<dyn DatagramTransport>> {
+            Err(invalid("unused datagram"))
+        }
+    }
+    struct Harness {
+        engine: CarPlayMediaEngine,
+        sink: Arc<Sink>,
+    }
+    impl Harness {
+        fn new(policy: ScreenSessionPolicy) -> Self {
+            let sink = Arc::new(Sink::default());
+            let engine = CarPlayMediaEngine::with_screen_session_policy(
+                sink.clone(),
+                Arc::new(Transport),
+                false,
+                policy,
+            );
+            Self { engine, sink }
+        }
+        fn peer(&self) -> Peer {
+            self.observed_peer(Arc::new(Observer::default()))
+        }
+        fn observed_peer(&self, observer: Arc<Observer>) -> Peer {
+            let session = crate::air_play_session::event_tests::media_session(
+                Arc::new(self.engine.clone()),
+                observer,
+            );
+            self.engine
+                .bind_session(&session, "127.0.0.1".parse().unwrap());
+            Peer(session)
+        }
+        fn screen(&self, peer: &AirPlaySession, id: u64) -> Arc<dyn ScreenListener> {
+            assert!(self
+                .engine
+                .on_screen(peer, 110, &screen_setup(id))
+                .unwrap()
+                .is_some());
+            let key = StreamKey {
+                session: session_id(peer),
+                kind: 110,
+                audio_type: String::new(),
+            };
+            let slot = self.engine.inner.state.lock().unwrap().streams[&key].clone();
+            let listener = slot
+                .screen_listener
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .clone();
+            listener
+        }
+        fn states(&self) -> Vec<bool> {
+            self.sink.states.lock().unwrap().clone()
+        }
+        fn active(&self) -> bool {
+            self.states().last() == Some(&true)
+        }
+        fn events(&self) -> Vec<String> {
+            self.sink.events.lock().unwrap().clone()
+        }
+    }
+    impl Default for Harness {
+        fn default() -> Self {
+            Self::new(ScreenSessionPolicy::default())
+        }
+    }
+    impl Drop for Harness {
+        fn drop(&mut self) {
+            self.engine.close().unwrap();
+        }
+    }
+    fn screen_setup(id: u64) -> BplistValue {
+        dict([("streamConnectionID", integer(id))])
+    }
+    fn deliver_screen(listener: &dyn ScreenListener) {
+        listener.on_codec(VideoCodec::H265);
+        listener.on_config(&[1, 2]).unwrap();
+        listener.on_frame(&[3], 0, 0).unwrap();
+        listener.on_frame(&[4], 77, 88).unwrap();
+    }
+    fn policy(bits: u8) -> ScreenSessionPolicy {
+        ScreenSessionPolicy {
+            isolate_sessions: bits & 1 != 0,
+            reset_on_reconnect: bits & 2 != 0,
+            serialize_delivery: bits & 4 != 0,
+        }
+    }
+    #[test]
+    fn closing_old_session_must_not_deactivate_the_new_main_screen() {
+        let h = Harness::default();
+        let old = h.peer();
+        let fresh = h.peer();
+        h.screen(&old, 1);
+        let current = h.screen(&fresh, 2);
+        current.on_frame(&[2], 0, 0).unwrap();
+        let states = h.states();
+        old.close().unwrap();
+        assert!(!fresh.is_closed());
+        assert!(h.active());
+        assert_eq!(h.states(), states);
+        assert_eq!(h.events(), ["frame 110 [2] 0 0"]);
+    }
+    #[test]
+    fn old_session_frames_must_not_overwrite_the_new_main_screen() {
+        let h = Harness::default();
+        let old = h.peer();
+        let fresh = h.peer();
+        let previous = h.screen(&old, 1);
+        let current = h.screen(&fresh, 2);
+        current.on_frame(&[2], 0, 0).unwrap();
+        previous.on_frame(&[1], 0, 0).unwrap();
+        assert_eq!(h.events(), ["frame 110 [2] 0 0"]);
+    }
+    #[test]
+    fn closing_the_only_screen_must_still_deactivate_it() {
+        let h = Harness::default();
+        let peer = h.peer();
+        h.screen(&peer, 1);
+        assert!(h.active());
+        peer.close().unwrap();
+        assert!(!h.active());
+        assert_eq!(h.states(), [true, false]);
+    }
+    #[test]
+    fn closing_an_old_session_without_a_screen_must_leave_the_new_screen_active() {
+        let h = Harness::default();
+        let old = h.peer();
+        let fresh = h.peer();
+        h.screen(&fresh, 2);
+        old.close().unwrap();
+        assert_eq!(h.states(), [true]);
+    }
+    #[test]
+    fn old_teardown_and_delayed_end_cannot_stop_the_replacement() {
+        let h = Harness::default();
+        let old = h.peer();
+        let fresh = h.peer();
+        let previous = h.screen(&old, 1);
+        let current = h.screen(&fresh, 2);
+        let states = h.states();
+        h.engine.on_teardown(&old, 110).unwrap();
+        previous.on_closed(None);
+        assert!(h.active());
+        assert!(!fresh.is_closed());
+        assert!(!old.is_closed());
+        assert_eq!(h.states(), states);
+        current.on_frame(&[2], 0, 0).unwrap();
+        assert_eq!(h.events(), ["frame 110 [2] 0 0"]);
+    }
+    #[test]
+    fn replaced_stream_end_cannot_close_the_same_control_session() {
+        let h = Harness::default();
+        let peer = h.peer();
+        let previous = h.screen(&peer, 1);
+        let current = h.screen(&peer, 2);
+        previous.on_closed(None);
+        assert!(!peer.is_closed());
+        assert!(h.active());
+        current.on_frame(&[2], 0, 0).unwrap();
+        assert_eq!(h.events(), ["frame 110 [2] 0 0"]);
+        assert_eq!(h.states(), [true, true]);
+    }
+    #[test]
+    fn every_old_delivery_and_saved_callback_is_fenced() {
+        let h = Harness::default();
+        let observer = Arc::new(Observer::default());
+        let old = h.observed_peer(observer.clone());
+        let fresh = h.peer();
+        let previous = h.screen(&old, 1);
+        let recovery = h.sink.recovery.lock().unwrap().as_ref().unwrap().clone();
+        let diagnostic = h.sink.diagnostic.lock().unwrap().as_ref().unwrap().clone();
+        h.screen(&fresh, 2);
+        observer.events.lock().unwrap().clear();
+        deliver_screen(previous.as_ref());
+        recovery();
+        diagnostic("first frame rendered".into());
+        assert!(h.events().is_empty());
+        assert!(observer.events.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn a_retired_session_cannot_reclaim_the_new_main_screen() {
+        let h = Harness::default();
+        let old = h.peer();
+        let fresh = h.peer();
+        h.screen(&old, 1);
+        let current = h.screen(&fresh, 2);
+        assert!(h
+            .engine
+            .on_screen(&old, 110, &screen_setup(3))
+            .unwrap()
+            .is_none());
+        current.on_frame(&[2], 0, 0).unwrap();
+        assert!(h.active());
+        assert_eq!(h.events(), ["frame 110 [2] 0 0"]);
+    }
+    #[test]
+    fn current_teardown_can_reopen_on_the_same_control() {
+        let h = Harness::default();
+        let peer = h.peer();
+        let previous = h.screen(&peer, 1);
+        h.engine.on_teardown(&peer, 110).unwrap();
+        assert!(!h.active());
+        h.screen(&peer, 2);
+        previous.on_closed(None);
+        assert!(h.active());
+        assert!(!peer.is_closed());
+        assert_eq!(h.states(), [true, false, true]);
+    }
+    #[test]
+    fn closed_session_cannot_start_or_install_callbacks() {
+        let h = Harness::default();
+        let peer = h.peer();
+        peer.close().unwrap();
+        assert!(h
+            .engine
+            .on_screen(&peer, 110, &screen_setup(1))
+            .unwrap()
+            .is_none());
+        assert!(h.states().is_empty());
+        assert!(h.sink.recovery.lock().unwrap().is_none());
+        assert!(h.sink.diagnostic.lock().unwrap().is_none());
+    }
+    #[test]
+    fn reentrant_close_during_callback_installation_cannot_publish_a_live_screen() {
+        let h = Harness::default();
+        let peer = h.peer();
+        let session = Arc::downgrade(&peer.0);
+        *h.sink.installing.lock().unwrap() = Some(Arc::new(move || {
+            session.upgrade().unwrap().close().unwrap();
+        }));
+        assert!(h
+            .engine
+            .on_screen(&peer, 110, &screen_setup(1))
+            .unwrap()
+            .is_none());
+        assert!(!h.states().contains(&true));
+        assert!(peer.is_closed());
+        assert!(h.sink.recovery.lock().unwrap().is_none());
+    }
+    #[test]
+    fn reentrant_close_at_first_frame_cannot_deliver_after_the_stop() {
+        for bits in 0..8 {
+            let h = Harness::new(policy(bits));
+            let observer = Arc::new(Observer::default());
+            observer.close_at_first.store(true, Ordering::Release);
+            let peer = h.observed_peer(observer);
+            let current = h.screen(&peer, 1);
+            current.on_frame(&[1], 0, 0).unwrap();
+            assert!(!h.active());
+            assert!(h.events().is_empty());
+            assert!(peer.is_closed());
+        }
+    }
+    #[test]
+    fn all_policy_combinations_have_real_enabled_and_disabled_behavior() {
+        for bits in 0..8 {
+            let policy = policy(bits);
+            let h = Harness::new(policy);
+            let old = h.peer();
+            let fresh = h.peer();
+            let previous = h.screen(&old, 1);
+            let current = h.screen(&fresh, 2);
+            previous.on_frame(&[1], 0, 0).unwrap();
+            current.on_frame(&[2], 0, 0).unwrap();
+            assert_eq!(
+                h.events(),
+                if policy.isolate_sessions || policy.reset_on_reconnect {
+                    vec!["frame 110 [2] 0 0"]
+                } else {
+                    vec!["frame 110 [1] 0 0", "frame 110 [2] 0 0"]
+                },
+                "{policy:?}"
+            );
+            assert_eq!(
+                h.states(),
+                if policy.reset_on_reconnect {
+                    vec![true, false, true]
+                } else {
+                    vec![true, true]
+                },
+                "{policy:?}"
+            );
+            old.close().unwrap();
+            assert_eq!(
+                h.active(),
+                policy.isolate_sessions || policy.reset_on_reconnect,
+                "{policy:?}"
+            );
+            assert!(!fresh.is_closed());
+        }
+    }
+    #[test]
+    fn isolation_option_controls_retired_setup_and_unknown_teardown() {
+        for isolate_sessions in [false, true] {
+            let h = Harness::new(ScreenSessionPolicy {
+                isolate_sessions,
+                ..ScreenSessionPolicy::default()
+            });
+            let old = h.peer();
+            let fresh = h.peer();
+            h.screen(&old, 1);
+            h.screen(&fresh, 2);
+            h.engine.on_teardown(&old, 110).unwrap();
+            assert_eq!(h.active(), isolate_sessions);
+            assert_eq!(
+                h.engine
+                    .on_screen(&old, 110, &screen_setup(3))
+                    .unwrap()
+                    .is_some(),
+                !isolate_sessions
+            );
+        }
+    }
+    #[test]
+    fn same_control_reconfiguration_preserves_the_session_under_every_policy() {
+        for bits in 0..8 {
+            let h = Harness::new(policy(bits));
+            let peer = h.peer();
+            h.screen(&peer, 1);
+            let format = AudioStreamCodec::from_format_bits(0x20000000, 100, "telephony").unwrap();
+            let audio = Arc::new(Slot::new(
+                100,
+                "telephony".into(),
+                Some(format.clone()),
+                9,
+                0,
+            ));
+            let key = StreamKey {
+                session: session_id(&peer),
+                kind: 100,
+                audio_type: "telephony".into(),
+            };
+            h.engine.install(key.clone(), audio.clone()).unwrap();
+            let listener = CurrentAudioListener {
+                slot: Arc::downgrade(&audio),
+                sink: h.sink.clone(),
+                probe: Mutex::new(RtpClockProbe::new(24000)),
+            };
+            listener.on_started(&format, 42).unwrap();
+            h.screen(&peer, 2);
+            assert!(audio.active());
+            assert!(Arc::ptr_eq(
+                &h.engine.inner.state.lock().unwrap().streams[&key],
+                &audio
+            ));
+            listener.on_rtp(&format, b"opus", 522).unwrap();
+            assert_eq!(h.events(), ["start 100 42", "rtp 100 522"]);
+            assert!(Arc::ptr_eq(&h.engine.current_session().unwrap(), &peer.0));
+            assert_eq!(h.states(), [true, true], "{:?}", policy(bits));
+            assert!(!peer.is_closed());
+        }
+    }
+    #[test]
+    fn on_screen_stops_the_replaced_streams_listener_for_the_same_key() {
+        let h = Harness::default();
+        let peer = h.peer();
+        let first = h.screen(&peer, 1);
+        deliver_screen(first.as_ref());
+        let events = h.events();
+        let second = h.screen(&peer, 2);
+        assert!(!Arc::ptr_eq(&first, &second));
+        deliver_screen(first.as_ref());
+        assert_eq!(h.events(), events);
+        deliver_screen(second.as_ref());
+        assert_eq!(h.events(), [events.clone(), events].concat());
+    }
+    #[test]
+    fn unknown_screen_teardown_does_not_stop_the_sink() {
+        let h = Harness::default();
+        let peer = h.peer();
+        h.engine.on_teardown(&peer, 110).unwrap();
+        h.engine.on_teardown(&peer, 100).unwrap();
+        peer.close().unwrap();
+        assert!(h.states().is_empty());
+    }
+    #[test]
+    fn session_close_reports_all_supported_screen_streams_inactive() {
+        let h = Harness::default();
+        let peer = h.peer();
+        h.screen(&peer, 1);
+        let key = StreamKey {
+            session: session_id(&peer),
+            kind: 100,
+            audio_type: String::new(),
+        };
+        h.engine
+            .install(key, Arc::new(Slot::new(100, String::new(), None, 0, 0)))
+            .unwrap();
+        h.sink.states.lock().unwrap().clear();
+        h.engine.on_session_closed(&peer).unwrap();
+        peer.close().unwrap();
+        assert_eq!(h.states(), [false]);
+        assert!(h.engine.inner.state.lock().unwrap().streams.is_empty());
+    }
+    struct ReleaseFrame(Arc<(Mutex<bool>, std::sync::Condvar)>);
+    impl Drop for ReleaseFrame {
+        fn drop(&mut self) {
+            *self.0 .0.lock().unwrap() = true;
+            self.0 .1.notify_all();
+        }
+    }
+    fn handoff_during_frame(serialize_delivery: bool, actual_engine: bool) -> Vec<String> {
+        use std::sync::mpsc;
+        let h = Harness::new(ScreenSessionPolicy {
+            serialize_delivery,
+            ..ScreenSessionPolicy::default()
+        });
+        let old = h.peer();
+        let fresh = h.peer();
+        let previous = h.screen(&old, 1);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let release_guard = ReleaseFrame(release.clone());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let log = events.clone();
+        *h.sink.frame_action.lock().unwrap() = Some(Arc::new(move || {
+            log.lock().unwrap().push("old-frame-start".into());
+            entered_tx.send(()).unwrap();
+            let released = release.0.lock().unwrap();
+            let (released, _) = release
+                .1
+                .wait_timeout_while(released, Duration::from_secs(5), |v| !*v)
+                .unwrap();
+            assert!(*released, "frame was not released");
+            log.lock().unwrap().push("old-frame-end".into());
+        }));
+        let listener = previous.clone();
+        let delivery = std::thread::spawn(move || listener.on_frame(&[1], 0, 0).unwrap());
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (replacing_tx, replacing_rx) = mpsc::channel();
+        let (replaced_tx, replaced_rx) = mpsc::channel();
+        let engine = h.engine.clone();
+        let session = fresh.0.clone();
+        let log = events.clone();
+        let replacement = std::thread::spawn(move || {
+            replacing_tx.send(()).unwrap();
+            if actual_engine {
+                assert!(engine
+                    .on_screen(&session, 110, &screen_setup(2))
+                    .unwrap()
+                    .is_some());
+            } else {
+                let _gate = engine.inner.screen_delivery.enter();
+                let (key, slot) = engine.inner.state.lock().unwrap().screen_owners[&110].clone();
+                engine.forget_screen(&key, &slot);
+                drop(_gate);
+                engine.retire(slot).unwrap();
+            }
+            log.lock().unwrap().push("replacement".into());
+            replaced_tx.send(()).unwrap();
+        });
+        replacing_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        if serialize_delivery {
+            assert_eq!(
+                replaced_rx.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+        } else {
+            replaced_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        drop(release_guard);
+        delivery.join().unwrap();
+        replacement.join().unwrap();
+        *h.sink.frame_action.lock().unwrap() = None;
+        let before = h.events();
+        previous.on_frame(&[2], 0, 0).unwrap();
+        assert_eq!(h.events(), before);
+        let result = events.lock().unwrap().clone();
+        result
+    }
+    #[test]
+    fn replacement_waits_until_an_in_flight_delivery_finishes() {
+        assert_eq!(
+            handoff_during_frame(true, false),
+            ["old-frame-start", "old-frame-end", "replacement"]
+        );
+    }
+    #[test]
+    fn disabled_serialization_allows_handoff_during_an_in_flight_frame() {
+        assert_eq!(
+            handoff_during_frame(false, false),
+            ["old-frame-start", "replacement", "old-frame-end"]
+        );
+    }
+    #[test]
+    fn serialization_policy_controls_actual_engine_handoff_during_a_frame() {
+        assert_eq!(
+            handoff_during_frame(true, true),
+            ["old-frame-start", "old-frame-end", "replacement"]
+        );
+        assert_eq!(
+            handoff_during_frame(false, true),
+            ["old-frame-start", "replacement", "old-frame-end"]
+        );
+    }
+    #[test]
+    fn current_screen_eof_stops_once_closes_and_retires_its_session() {
+        let h = Harness::default();
+        let peer = h.peer();
+        let current = h.screen(&peer, 1);
+        current.on_closed(None);
+        current.on_closed(None);
+        assert_eq!(h.states(), [true, false]);
+        assert!(peer.is_closed());
+        assert!(h
+            .engine
+            .on_screen(&peer, 110, &screen_setup(2))
+            .unwrap()
+            .is_none());
+        assert!(h
+            .engine
+            .inner
+            .state
+            .lock()
+            .unwrap()
+            .retired_screens
+            .contains(&(session_id(&peer), 110)));
+    }
+    #[test]
+    fn default_policy_is_captured_per_engine_from_the_provider() {
+        struct Provider(ScreenSessionPolicy);
+        impl ScreenSessionPolicyProvider for Provider {
+            fn screen_session_policy(&self) -> ScreenSessionPolicy {
+                self.0
+            }
+        }
+        assert_eq!(ScreenSessionPolicy::default(), policy(7));
+        let mut provider = Provider(policy(0));
+        let h = Harness::new(provider.screen_session_policy());
+        provider.0 = policy(7);
+        assert_eq!(h.engine.inner.screen_policy, policy(0));
+        let default = CarPlayMediaEngine::new(h.sink.clone(), Arc::new(Transport), false);
+        assert_eq!(
+            default.inner.screen_policy,
+            provider.screen_session_policy()
+        );
+        default.close().unwrap();
+    }
+    #[test]
+    fn current_saved_handlers_run_controller_callbacks_outside_the_delivery_gate() {
+        let h = Harness::default();
+        let observer = Arc::new(Observer::default());
+        let peer = h.observed_peer(observer.clone());
+        h.screen(&peer, 1);
+        let engine = h.engine.clone();
+        *observer.callback.lock().unwrap() = Some(Arc::new(move || {
+            let inner = engine.inner.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let thread = std::thread::spawn(move || {
+                let _gate = inner.screen_delivery.enter();
+                tx.send(()).unwrap();
+            });
+            rx.recv_timeout(Duration::from_secs(5))
+                .expect("controller callback held the delivery gate");
+            thread.join().unwrap();
+        }));
+        let recovery = h.sink.recovery.lock().unwrap().as_ref().unwrap().clone();
+        let diagnostic = h.sink.diagnostic.lock().unwrap().as_ref().unwrap().clone();
+        recovery();
+        diagnostic("first frame rendered".into());
+        let observed = observer.events.lock().unwrap();
+        assert!(observed
+            .iter()
+            .any(|v| v.starts_with("Video recovery: requested keyframe")));
+        assert!(observed.iter().any(|v| v == "rendered"));
+        assert!(observed.iter().any(|v| v == "Video: first frame rendered"));
+    }
+    #[test]
+    fn isolation_option_controls_delayed_old_eof_session_close() {
+        for isolate_sessions in [false, true] {
+            let h = Harness::new(ScreenSessionPolicy {
+                isolate_sessions,
+                ..ScreenSessionPolicy::default()
+            });
+            let old = h.peer();
+            let fresh = h.peer();
+            let previous = h.screen(&old, 1);
+            h.screen(&fresh, 2);
+            let states = h.states();
+            previous.on_closed(None);
+            assert_eq!(old.is_closed(), !isolate_sessions);
+            assert!(!fresh.is_closed());
+            assert_eq!(h.states(), states);
+        }
+    }
+    #[test]
+    fn rebinding_a_retired_session_cannot_restore_screen_ownership() {
+        let h = Harness::default();
+        let old = h.peer();
+        let fresh = h.peer();
+        h.screen(&old, 1);
+        h.screen(&fresh, 2);
+        h.engine.bind_session(&old.0, "127.0.0.1".parse().unwrap());
+        assert!(h
+            .engine
+            .on_screen(&old, 110, &screen_setup(3))
+            .unwrap()
+            .is_none());
+        assert!(h.active());
+    }
+    #[test]
+    fn engine_close_stops_the_current_screen_once() {
+        let h = Harness::default();
+        let peer = h.peer();
+        let previous = h.screen(&peer, 1);
+        h.engine.close().unwrap();
+        h.engine.close().unwrap();
+        previous.on_closed(None);
+        deliver_screen(previous.as_ref());
+        assert_eq!(h.states(), [true, false]);
+        assert!(h.events().is_empty());
+        assert!(h
+            .engine
+            .on_screen(&peer, 110, &screen_setup(2))
+            .unwrap()
+            .is_none());
+    }
+    #[test]
+    fn nonisolated_session_can_replace_its_retained_screen_key() {
+        let h = Harness::new(policy(0));
+        let old = h.peer();
+        let fresh = h.peer();
+        let previous = h.screen(&old, 1);
+        let other = h.screen(&fresh, 2);
+        let current = h.screen(&old, 3);
+        previous.on_frame(&[1], 0, 0).unwrap();
+        other.on_frame(&[2], 0, 0).unwrap();
+        current.on_frame(&[3], 0, 0).unwrap();
+        assert_eq!(h.events(), ["frame 110 [2] 0 0", "frame 110 [3] 0 0"]);
+        assert_eq!(h.states(), [true, true, true]);
+        assert!(!old.is_closed());
+        assert!(!fresh.is_closed());
     }
 }
