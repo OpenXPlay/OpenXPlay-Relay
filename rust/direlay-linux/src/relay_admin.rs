@@ -407,7 +407,9 @@ impl LinuxRelayAdmin {
             receiver_tls_sans: Mutex::new(Vec::new()),
             public_name_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             receiver_tls_queued: AtomicBool::new(false),
-            tesla: Mutex::new(crate::tesla_address::Session::new(runtime.runner.clone())),
+            tesla: Mutex::new(crate::tesla_address::Session::new(Arc::new(
+                crate::tesla_address::KernelAddresses,
+            ))),
             receiver_tesla_tls: Mutex::new(None),
             pairing: Mutex::new(None),
             pairing_backend: backends.bluetooth.pairing(),
@@ -691,6 +693,11 @@ impl LinuxRelayAdmin {
             self.admin_hotspot.prepare()?;
         }
         self.inventory.wait_for_probe(timeout);
+        let mut settings = self.effective_options()?.settings;
+        if let Some((interface, _)) = self.active_hotspot() {
+            settings.wifi_interface = interface;
+        }
+        self.tesla.lock().unwrap().cleanup_stale(&settings);
         // Secure Connections on from the start, and again whenever bluetoothd resets the adapter.
         self.secure_connections.start(Some(&self.bluetooth_wake))?;
         self.stream.start()?;
@@ -1024,9 +1031,9 @@ impl LinuxRelayAdmin {
         let settings = self.settings.lock().unwrap().clone();
         let mut tesla = self.tesla.lock().unwrap();
         tesla.stop(crate::platform::wall_clock().as_millis() as u64);
-        let change = tesla.journal_change(&settings);
+        let changes = tesla.journal_changes(&settings);
         drop(tesla);
-        if let Some(change) = change {
+        for change in changes {
             self.events.emit("tesla-address", &change);
         }
         self.public_name.published_address_override(None);
@@ -1577,10 +1584,10 @@ impl LinuxRelayAdmin {
             .as_ref()
             .filter(|a| a.mode.uses_name())
             .map(|a| a.address);
-        let change = tesla.journal_change(&settings);
+        let changes = tesla.journal_changes(&settings);
         drop(tesla);
         self.public_name.published_address_override(published);
-        if let Some(change) = change {
+        for change in changes {
             self.events.emit("tesla-address", &change);
         }
     }
@@ -4815,6 +4822,9 @@ mod tests {
             runtime_paths(&dir),
         )
         .unwrap();
+        admin.tesla = Mutex::new(crate::tesla_address::Session::new(Arc::new(
+            crate::tesla_address::tests::FakeBackend::default(),
+        )));
         // These legacy lifecycle tests bypass the new car waits; dedicated tests exercise them.
         admin.start_policy.lock().unwrap().skip();
         admin.start_policy.lock().unwrap().skip();
