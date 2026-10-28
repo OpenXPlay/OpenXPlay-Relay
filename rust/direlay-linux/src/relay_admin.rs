@@ -3257,6 +3257,43 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn android_screen_experiments_import_and_dry_run_leave_linux_settings_unchanged() {
+        let (admin, dir) = fake();
+        let before_file = std::fs::read(dir.join("settings.json")).unwrap();
+        let before_export = admin.config_export(false).unwrap()["settings"].clone();
+        let before_settings = admin.settings().values;
+        for enabled in [true, false] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "format":"openxplay-user-config","version":1,"platform":"android",
+                "settings":{"experimental":{"version":2,"screenSessionIsolation":enabled,
+                    "screenReconnectReset":enabled,"screenDeliverySerialization":enabled}}
+            }))
+            .unwrap();
+            for dry_run in [true, false] {
+                assert_eq!(
+                    admin.config_import(&bytes, dry_run).unwrap(),
+                    serde_json::json!({
+                        "applied":[],"ignored":["experimental.screenDeliverySerialization",
+                            "experimental.screenReconnectReset","experimental.screenSessionIsolation"],
+                        "restartNeeded":false
+                    })
+                );
+                assert_eq!(admin.settings().values, before_settings);
+                assert_eq!(
+                    admin.config_export(false).unwrap()["settings"],
+                    before_export
+                );
+                assert_eq!(
+                    std::fs::read(dir.join("settings.json")).unwrap(),
+                    before_file
+                );
+                assert!(admin.pending.lock().unwrap().is_empty());
+            }
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn network_roles_api_auth_preview_probing_persistence_and_application() {
         use std::os::unix::fs::PermissionsExt;
         let (a, dir) = fake();

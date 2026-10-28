@@ -806,10 +806,11 @@ impl NetworkAttachment for LinuxNetwork {
             .ok_or_else(|| std::io::Error::other("Hotspot IPv4 unavailable"))?;
         let transport: Arc<dyn StreamTransport> =
             Arc::new(LinuxStreamTransport::new(address.into()));
-        let media = Arc::new(CarPlayMediaEngine::new(
+        let media = Arc::new(CarPlayMediaEngine::with_screen_session_policy(
             self.sink.clone(),
             transport.clone(),
             true,
+            crate::carplay_policy::screen_session_policy(),
         ));
         let endpoint = Arc::new(Mutex::new(None));
         let handler = Arc::new(TunnelHandler {
@@ -855,7 +856,12 @@ impl NetworkAttachment for LinuxNetwork {
                     StreamBridgeSink::new(input.clone(), sink.clone(), control, events.clone())
                         .with_arrival_clock(Arc::new(|| oxp_core::monotonic_nanos() as u64)),
                 );
-                let engine = Arc::new(CarPlayMediaEngine::new(bridge, transport, true));
+                let engine = Arc::new(CarPlayMediaEngine::with_screen_session_policy(
+                    bridge,
+                    transport,
+                    true,
+                    crate::carplay_policy::screen_session_policy(),
+                ));
                 let _ = engine.set_iap_tunnel_handler(Some(handler.clone()));
                 engine
             }));
