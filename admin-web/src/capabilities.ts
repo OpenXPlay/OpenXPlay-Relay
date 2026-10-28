@@ -6,6 +6,9 @@ import type { Status } from './api';
 import type { Translate } from './stage';
 import { esc } from './html';
 
+export function capabilityFieldVisible(key: string, status: Status): boolean {
+  return !['webTranscode', 'carlinkHevc', 'carlinkPictureSize'].includes(key) || capabilityFieldEnabled(key, status);
+}
 export function capabilityFieldEnabled(key: string, status: Status): boolean {
   if (status.platform !== 'linux') return true;
   if (key === 'playCarPlayAudio') return status.localAudio?.playbackAvailable === true;

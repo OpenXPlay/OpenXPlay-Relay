@@ -3,13 +3,24 @@
 // Created by riko chen on 2026-10-27
 
 import { describe, expect, it } from 'vitest';
-import { capabilityFieldEnabled, capabilityView } from '../src/capabilities';
+import { capabilityFieldEnabled, capabilityFieldVisible, capabilityView } from '../src/capabilities';
 import type { Status } from '../src/api';
 import { fieldEnabled, fieldRoute } from '../src/settings-tree';
 import { translate } from '../src/i18n';
 
 describe('Linux optional capabilities', () => {
   const empty = () => ({ platform: 'linux' } as Status);
+  it('hides encoder-dependent choices on decoder-only devices and follows capability updates', () => {
+    const status = empty();
+    for (const key of ['webTranscode', 'carlinkHevc', 'carlinkPictureSize']) expect(capabilityFieldVisible(key, status)).toBe(false);
+    expect(capabilityFieldVisible('playCarPlayAudio', status)).toBe(true);
+    const cap = { enabled: true, available: true, decode: ['H264'], encode: [{ codec: 'H264', maxWidth: null, maxHeight: null }, { codec: 'H265', maxWidth: null, maxHeight: null }], scaling: true, description: 'encoder' };
+    status.transcoding = { web: cap, clink: cap };
+    for (const key of ['webTranscode', 'carlinkHevc', 'carlinkPictureSize']) expect(capabilityFieldVisible(key, status)).toBe(true);
+    cap.available = false;
+    expect(capabilityFieldVisible('carlinkHevc', status)).toBe(false);
+    expect(capabilityFieldVisible('carlinkHevc', { platform: 'android' } as Status)).toBe(true);
+  });
   it('disables encoder and ALSA options until an appropriate device is reported', () => {
     const status = empty();
     for (const key of ['webTranscode', 'carlinkHevc', 'carlinkPictureSize', 'playCarPlayAudio', 'microphoneSource']) expect(capabilityFieldEnabled(key, status)).toBe(false);

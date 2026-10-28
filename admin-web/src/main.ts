@@ -38,7 +38,7 @@ import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkV
 import { icon } from './icons';
 import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
 import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-stats';
-import { capabilityFieldEnabled, capabilityView } from './capabilities';
+import { capabilityFieldEnabled, capabilityFieldVisible, capabilityView } from './capabilities';
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
 import { PublicNameDrafts, publicNamePanel, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, type PublicNameMessage } from './public-name';
 
@@ -478,8 +478,10 @@ function confirmRemovePublicName() {
   on(dialog.querySelector('.confirm')!, 'click', () => { close(); void publicNameAction('public-name-remove'); });
 }
 function renderCapabilities() {
-  const node = document.getElementById('capabilities'); if (!node || !status || !settings) return;
-  patchMarkup(node, capabilityView(status, t));
+  if (!status || !settings) return;
+  const node = document.getElementById('capabilities');
+  if (node) patchMarkup(node, capabilityView(status, t));
+  updateVisibility();
   for (const field of fields()) {
     const control = document.getElementById(fieldId(field.key));
     control?.closest('.field')?.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea').forEach(input => { input.disabled = !fieldEnabled(field.key, settings!.values) || !capabilityFieldEnabled(field.key, status!); });
@@ -928,7 +930,7 @@ function renderSwitching() {
 function updateVisibility() {
   for (const field of fields()) {
     const el = document.getElementById(fieldId(field.key))?.closest<HTMLElement>('.field');
-    if (el) el.hidden = !isVisible(field, settings!.values) && !['networkRoles', 'wifiInterface', 'carlinkInterface', 'wifiCountry', 'adminHotspotPassword'].includes(field.key);
+    if (el) el.hidden = !capabilityFieldVisible(field.key, status!) || (!isVisible(field, settings!.values) && !['networkRoles', 'wifiInterface', 'carlinkInterface', 'wifiCountry', 'adminHotspotPassword'].includes(field.key));
   }
   document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = ![...section.children].some(child => !(child as HTMLElement).hidden); });
   renderPublicName(); renderTesla(); renderCarScreen();
