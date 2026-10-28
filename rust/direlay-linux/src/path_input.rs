@@ -22,7 +22,12 @@ pub fn update(
     if let Some(carlink) = &mut status.carlink {
         carlink.code = facts.carlink.code.clone();
         carlink.retrying = facts.carlink.retrying;
-        carlink.trail = facts.carlink.trail.clone();
+        carlink.trail = facts
+            .carlink
+            .failure
+            .as_ref()
+            .map(|f| f.trail.clone())
+            .unwrap_or_else(|| facts.carlink.trail.clone());
     }
     status.path_input = build(facts, settings, status, now, identity_ready, bluetooth_on);
 }
@@ -53,6 +58,7 @@ pub fn build(
     let hotspot = status.hotspot.as_ref();
     let phone = &facts.iphone;
     let clink = &facts.carlink;
+    let carlink_failure = clink.failure.as_ref();
     let failure = phone.failure.as_ref().map(|f| {
         json!({
             "step": f.step, "code": f.code, "text": f.text, "atMillis": f.at_millis,
@@ -77,6 +83,8 @@ pub fn build(
     let output_off = json!({"phase":"OFF", "name":null, "code":null, "sinceMillis":null});
     json!({
         "platform":"linux", "nowMillis":now, "version":status.version,
+        "startup":{"automatic":facts.automatic,"bootStart":facts.boot_start,"paused":facts.auto_start_paused,
+            "arrival":{"pending":facts.arrival_until_millis.is_some(),"deadlineMillis":facts.arrival_until_millis,"remainingMillis":facts.arrival_remaining_millis}},
         "setup":{"network":if shared {"SHARED_WIFI"} else {"PHONE_HOTSPOT"},
             "outputs":outputs, "summary":"", "valid":true},
         "relay":{"identity":if identity_ready {"READY"} else {"MISSING"}, "identityLabel":null,
@@ -93,13 +101,14 @@ pub fn build(
             "screen":screen(facts.screen.or(facts.carlink.screen)),
             "savedScreen":screen(facts.saved_screen.or(facts.built_in_screen)),
             "carlink":{"phase":if carlink {if clink.pin_pending {"PIN"} else {&clink.phase}} else {"OFF"},
-                "sinceMillis":clink.since_millis, "code":clink.code, "error":clink.error,
+                "sinceMillis":carlink_failure.map(|f| f.at_millis).or(clink.since_millis), "code":clink.code, "error":clink.error,
                 "retrying":clink.retrying, "carName":clink.car_name, "joinMethod":clink.join_method,
-                "trusted":clink.trusted, "pinPending":clink.pin_pending, "picture":clink.picture, "trail":clink.trail},
+                "trusted":clink.trusted, "pinPending":clink.pin_pending, "picture":clink.picture, "trail":carlink_failure.map(|f| &f.trail).unwrap_or(&clink.trail)},
             "dlna":output_off, "miracast":output_off, "tesla":output_off},
         "iphone":{"pick":pick, "name":status.iphone.name, "usb":"UNKNOWN",
-            "started":status.running || waiting, "armed":false, "carWaitUntilMillis":phone.car_wait_until_millis,
-            "step":phone.step, "stepSinceMillis":phone.since_millis, "stepDetail":phone.detail, "failure":failure},
+            "started":status.running || waiting, "armed":phone.armed, "carWaitUntilMillis":phone.car_wait_until_millis,
+            "step":phone.step, "stepSinceMillis":phone.since_millis, "stepDetail":phone.detail, "failure":failure,
+            "trail":facts.phone_trail(), "runtimeIap2Frames":phone.runtime_iap2_frames},
         "live":{"pictureOnCar":facts.picture_on_car, "sessionSinceMillis":phone.session_since_millis, "chips":facts.chips},
     })
 }

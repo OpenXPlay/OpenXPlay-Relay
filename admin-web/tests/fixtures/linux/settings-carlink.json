@@ -368,6 +368,11 @@
           "type": "bool"
         },
         {
+          "key": "bootStart",
+          "labelKey": "field.bootStart",
+          "type": "bool"
+        },
+        {
           "key": "videoStats",
           "labelKey": "field.videoStats",
           "options": [
@@ -873,6 +878,7 @@
   ],
   "values": {
     "autoStart": true,
+    "bootStart": true,
     "carBluetoothAudio": true,
     "carBrand": "xpeng",
     "carBrandText": "",

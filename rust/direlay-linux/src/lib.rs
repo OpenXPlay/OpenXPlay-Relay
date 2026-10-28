@@ -123,6 +123,7 @@ pub mod wifi_country;
 pub mod car_models;
 pub mod carlink_policy;
 pub mod carplay_policy;
+pub mod failure_text;
 pub mod path_facts;
 pub mod path_input;
 pub mod start_policy;

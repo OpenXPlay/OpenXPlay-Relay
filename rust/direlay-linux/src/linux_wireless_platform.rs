@@ -509,6 +509,10 @@ impl WirelessControlEvents for ControlEvents {
         self.before_start_session()
     }
     fn on_incoming(&self, frame: &Iap2Frame) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        self.events.iap2_frame();
         if let Some(input) = &self.input {
             input.iap2_context(frame);
         }
@@ -1012,6 +1016,15 @@ mod network_tests {
         assert!(controls.before_start_session().is_err());
         controls.on_stage_changed(Iap2WirelessControlStage::WifiConfigSent);
         assert_eq!(events.runtime_path_facts().iphone.step, "WIFI_SENT");
+        let frame = Iap2Frame {
+            message_id: 0,
+            payload: Vec::new(),
+        };
+        controls.on_incoming(&frame);
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 1);
+        controls.closed.store(true, Ordering::Release);
+        controls.on_incoming(&frame);
+        assert_eq!(events.runtime_path_facts().iphone.runtime_iap2_frames, 1);
     }
     #[test]
     fn external_accepts_feed_the_listener_watchdog_and_retirement_fences_them() {

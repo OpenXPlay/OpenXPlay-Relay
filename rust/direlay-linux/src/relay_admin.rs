@@ -92,6 +92,7 @@ fn carlink_event_sink(
     events: Arc<JsonEvents>,
 ) -> EventSink {
     Arc::new(move |v| {
+        let v = events.filtered(&v);
         apply_carlink_event(
             &mut carlink.lock().unwrap(),
             &mut armed.lock().unwrap(),
@@ -158,6 +159,9 @@ pub struct LinuxRelayAdmin {
     lifecycle: Mutex<()>,
     sink: Arc<RecordingMediaSink>,
     desired: Arc<AtomicBool>,
+    auto_start_gate: Mutex<crate::start_policy::AutoStartGate>,
+    arrival: Mutex<crate::start_policy::Arrival>,
+    recovery: Mutex<crate::start_policy::RecoverOnce>,
     start_policy: Arc<Mutex<crate::start_policy::StartPolicy>>,
     operations: std::sync::mpsc::SyncSender<Operation>,
     pending: Mutex<HashMap<std::thread::ThreadId, Operation>>,
@@ -344,7 +348,14 @@ impl LinuxRelayAdmin {
         if runtime.inventory_refresh == InventoryRefresh::Automatic {
             inventory.refresh();
         }
+        let auto_start_gate =
+            crate::start_policy::AutoStartGate::load(&options.state_dir, &runtime.root)?;
+        let desired = settings.boot_start && !auto_start_gate.paused();
+        events.failure_secrets(failure_secrets(&settings, &options.state_dir));
         Ok(Self {
+            auto_start_gate: Mutex::new(auto_start_gate),
+            arrival: Mutex::default(),
+            recovery: Mutex::default(),
             log_exports: crate::logs::Service::new(options.state_dir.clone()),
             release_checks: crate::update_check::Checker::default(),
             admin_hotspot: Arc::new(
@@ -393,7 +404,7 @@ impl LinuxRelayAdmin {
             network_override: Mutex::new(None),
             lifecycle: Mutex::new(()),
             sink,
-            desired: Arc::new(AtomicBool::new(settings.auto_start)),
+            desired: Arc::new(AtomicBool::new(desired)),
             start_policy: Arc::default(),
             operations: tx,
             pending: Mutex::new(HashMap::new()),
@@ -837,7 +848,7 @@ impl LinuxRelayAdmin {
                     if event["type"] == "receiver-restarting" && carlink_retry {
                         facts.carlink.retrying = true;
                     }
-                    facts.carlink_event(&event, now)
+                    facts.carlink_event(&timeline_events.filtered(&event), now)
                 };
                 if let Some(summary) = summary {
                     timeline_events.log(&summary);
@@ -1011,6 +1022,7 @@ impl LinuxRelayAdmin {
                     self.desired.store(true, Ordering::Release);
                     return Ok(());
                 }
+                self.resume_start()?;
                 self.start_policy.lock().unwrap().cancel();
                 self.stop_controller();
                 self.operation(Operation::Initialize)?;
@@ -1021,6 +1033,9 @@ impl LinuxRelayAdmin {
                 self.desired.store(true, Ordering::Release);
             }
             Operation::Stop => {
+                // Persist before changing resources: a failed write must not pretend Stop survived.
+                self.auto_start_gate.lock().unwrap().set_paused(true)?;
+                self.arrival.lock().unwrap().cancel();
                 self.desired.store(false, Ordering::Release);
                 self.start_policy.lock().unwrap().cancel();
                 self.input.clear_picture_trial();
@@ -1058,6 +1073,7 @@ impl LinuxRelayAdmin {
                 }
             }
             Operation::Restart => {
+                self.resume_start()?;
                 self.input.accept_picture_default();
                 self.start_policy.lock().unwrap().cancel();
                 // An explicit restart starts over like Start, closing the AP too; only receiver
@@ -1223,10 +1239,40 @@ impl LinuxRelayAdmin {
         }
         Ok(addresses)
     }
+    fn resume_start(&self) -> Result<()> {
+        self.auto_start_gate.lock().unwrap().set_paused(false)?;
+        self.arrival.lock().unwrap().cancel();
+        self.recovery.lock().unwrap().reset();
+        self.events.facts.lock().unwrap().reset_phone();
+        Ok(())
+    }
     /// Read-only snapshot for E-b2; reads bounded memory and never probes the host.
     pub fn runtime_path_facts(&self) -> crate::path_facts::RuntimePathFacts {
         let mut facts = self.input.runtime_path_facts();
         let now = std::time::Instant::now();
+        let wall = crate::platform::wall_clock().as_millis() as u64;
+        let settings = self.settings.lock().unwrap();
+        facts.auto_start_paused = self.auto_start_gate.lock().unwrap().paused();
+        facts.automatic = settings.auto_start && !facts.auto_start_paused;
+        facts.boot_start = settings.boot_start;
+        facts.arrival_remaining_millis = self
+            .arrival
+            .lock()
+            .unwrap()
+            .deadline
+            .map(|d| d.saturating_duration_since(now).as_millis() as u64);
+        facts.arrival_until_millis = facts
+            .arrival_remaining_millis
+            .map(|ms| wall.saturating_add(ms));
+        facts.iphone.armed = self.desired.load(Ordering::Acquire)
+            && self.controller.lock().unwrap().is_none()
+            && !self.start_policy.lock().unwrap().waiting()
+            && facts
+                .iphone
+                .failure
+                .as_ref()
+                .is_none_or(|failure| failure.retrying);
+        drop(settings);
         facts.iphone.car_wait_until_millis =
             self.start_policy.lock().unwrap().deadline().map(|d| {
                 (crate::platform::wall_clock() + d.saturating_duration_since(now)).as_millis()
@@ -1406,6 +1452,7 @@ impl LinuxRelayAdmin {
         if self.start_policy.lock().unwrap().take_failure() {
             self.stop_controller();
         }
+        self.observe_automatic_start()?;
         if self.busy.load(Ordering::Acquire)
             || !self.desired.load(Ordering::Acquire)
             || !self.pending.lock().unwrap().is_empty()
@@ -1431,9 +1478,94 @@ impl LinuxRelayAdmin {
         }
         self.ensure_controller()
     }
+    fn observe_automatic_start(&self) -> Result<()> {
+        let options = self.effective_options()?;
+        let bluetooth = match self.backends.bluetooth.check_radio() {
+            Ok(()) => Some(true),
+            Err(e) => matches!(
+                crate::carplay_policy::classify_failure(&e.to_string()),
+                "bluetooth_off" | "bluetooth_unusable"
+            )
+            .then_some(false),
+        };
+        let wifi = crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface);
+        let inventory = self.inventory.get();
+        let hotspot = inventory
+            .interfaces
+            .iter()
+            .find(|i| i.name == options.wifi_interface)
+            .filter(|_| inventory.probed_at.is_some())
+            .map(|i| i.activity.mode.as_deref() == Some("AP"));
+        let paused = self.auto_start_gate.lock().unwrap().paused();
+        let failure = self.events.runtime_path_facts().iphone.failure;
+        let restored = self.recovery.lock().unwrap().observe(
+            failure.as_ref(),
+            crate::start_policy::RadioReadings {
+                bluetooth,
+                wifi,
+                hotspot,
+            },
+            paused,
+        );
+        if restored {
+            self.stop_controller();
+            self.start_policy.lock().unwrap().cancel();
+            self.events.facts.lock().unwrap().iphone.failure = None;
+            self.desired.store(true, Ordering::Release);
+            self.events.log("carplay_radio_recover");
+        }
+        if self.desired.load(Ordering::Acquire)
+            || paused
+            || !options.settings.auto_start
+            || failure.is_some()
+        {
+            self.arrival.lock().unwrap().cancel();
+            return Ok(());
+        }
+        let devices = self.backends.bluetooth.devices().unwrap_or_default();
+        let selection =
+            crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
+        let identity = self.options.test_input.is_some()
+            || ["identity.pk8", "certificate.p7b"].iter().all(|name| {
+                std::fs::metadata(options.identity_dir.join(name)).is_ok_and(|m| m.len() > 0)
+            });
+        let network_ready = self.wifi_present(&options.wifi_interface)
+            && wifi != Some(false)
+            && (options.settings.network_mode != "shared-wifi"
+                || self.wifi_status().ssid.is_some());
+        let ready = identity
+            && network_ready
+            && bluetooth == Some(true)
+            && matches!(
+                selection.reason(),
+                "Selected" | "Connected" | "OnlyCandidate"
+            )
+            && !self.busy.load(Ordering::Acquire)
+            && self.pending.lock().unwrap().is_empty();
+        if self
+            .arrival
+            .lock()
+            .unwrap()
+            .ready(std::time::Instant::now(), ready)
+        {
+            self.arrival.lock().unwrap().cancel();
+            self.desired.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
     /// Runs the CarPlay controller: starts one unless it runs, Carlink or the setup hotspot owns
     /// the radio, and applies a requested session restart. The caller holds `lifecycle`.
     fn ensure_controller(&self) -> Result<()> {
+        if self
+            .events
+            .runtime_path_facts()
+            .iphone
+            .failure
+            .as_ref()
+            .is_some_and(|f| !f.retrying)
+        {
+            return Ok(());
+        }
         if self.provision.lock().unwrap().is_none()
             || !self.wifi_present(&self.effective_options()?.wifi_interface)
         {
@@ -1469,6 +1601,33 @@ impl LinuxRelayAdmin {
             }
         }
         let mut options = self.carplay_options()?;
+        // A requested start remains armed while a known radio problem needs the user.
+        let bluetooth_problem = self
+            .backends
+            .bluetooth
+            .check_radio()
+            .err()
+            .is_some_and(|e| {
+                matches!(
+                    crate::carplay_policy::classify_failure(&e.to_string()),
+                    "bluetooth_off" | "bluetooth_unusable"
+                )
+            });
+        if bluetooth_problem
+            || crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface)
+                == Some(false)
+                && self
+                    .runtime
+                    .root
+                    .join("sys/class/net")
+                    .join(&options.wifi_interface)
+                    .join("address")
+                    .exists()
+        {
+            return Ok(());
+        }
+        self.events
+            .failure_secrets(failure_secrets(&options.settings, &options.state_dir));
         self.input.configure_runtime_settings(&options.settings)?;
         {
             let mut policy = self.start_policy.lock().unwrap();
@@ -1907,6 +2066,7 @@ pub fn settings_schema() -> Vec<Section> {
         ("carlinkHevc", "choice"),
         ("carlinkTrace", "choice"),
         ("autoStart", "bool"),
+        ("bootStart", "bool"),
         ("videoStats", "choice"),
         ("carPlayViewAreas", "bool"),
         ("receiverPort", "number"),
@@ -2132,6 +2292,20 @@ pub fn settings_schema() -> Vec<Section> {
         },
     ]
 }
+fn failure_secrets(settings: &Settings, state_dir: &std::path::Path) -> Vec<String> {
+    let mut secrets: Vec<_> = settings
+        .shared_wifi_networks
+        .iter()
+        .map(|n| n.password.clone())
+        .collect();
+    secrets.extend(settings.carlink_pin.clone());
+    secrets.extend(settings.admin_hotspot_password.clone());
+    if let Ok((_, password)) = crate::linux_hotspot::hotspot_credentials(state_dir) {
+        secrets.push(password);
+    }
+    secrets
+}
+
 pub fn update_settings(
     current: &Settings,
     values: Values,
@@ -2139,6 +2313,11 @@ pub fn update_settings(
     let mut merged = serde_json::to_value(current).unwrap();
     let mut errors = BTreeMap::new();
     for (k, mut v) in values {
+        let k = match k.as_str() {
+            "autoStartWhenReady" => "autoStart".to_owned(),
+            "autoStartOnBoot" => "bootStart".to_owned(),
+            _ => k,
+        };
         if k == "pluginsEnabled" {
             let ids = serde_json::from_value::<Vec<String>>(v.clone());
             let mut seen = std::collections::BTreeSet::new();
@@ -2676,7 +2855,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             admin_urls: admin_urls(&public_name, head_unit, &host_addresses),
             receiver_urls,
             state: stage,
-            running: controller.is_some(),
+            running: controller.as_ref().is_some_and(|c| c.running()),
             auto_start_paused: !self.desired.load(Ordering::Acquire),
             iphone: AdminIphone {
                 name: selection.device().map(|d| d.name.clone()),
@@ -3000,6 +3179,19 @@ impl RelayAdmin for LinuxRelayAdmin {
                     self.events
                         .log(&format!("runtime settings not applied: {e}"));
                 }
+                if !current.auto_start && next.auto_start {
+                    if let Err(e) = self.auto_start_gate.lock().unwrap().set_paused(false) {
+                        return AdminUpdate::Errors(BTreeMap::from([(
+                            "autoStart".into(),
+                            e.to_string(),
+                        )]));
+                    }
+                }
+                if !next.auto_start {
+                    self.arrival.lock().unwrap().cancel();
+                }
+                self.events
+                    .failure_secrets(failure_secrets(&next, &self.options.state_dir));
                 *current = next;
                 if outputs_changed {
                     self.apply_pending.store(true, Ordering::Release);
@@ -3046,7 +3238,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 Ok(())
             }
             "start" => self.defer(Operation::Start),
-            "stop" => self.defer(Operation::Stop),
+            "stop" | "cancel-arrival" => self.defer(Operation::Stop),
             "restart" => self.defer(Operation::Restart),
             "forget-wifi" => self.defer(Operation::Forget),
             "forget-carlink" => self.defer(Operation::ForgetCarlink),
@@ -3149,6 +3341,10 @@ impl RelayAdmin for LinuxRelayAdmin {
             self.response_failed();
             return Err("error.request".into());
         }
+        self.events.failure_secrets(failure_secrets(
+            &self.settings.lock().unwrap(),
+            &self.options.state_dir,
+        ));
         if self.settings.lock().unwrap().network_mode == "device-hotspot" {
             self.apply_pending.store(true, Ordering::Release);
         }
@@ -3210,13 +3406,13 @@ mod tests {
         let preview = admin.config_import(&bytes, true).unwrap();
         assert_eq!(
             preview,
-            serde_json::json!({"applied":["autoStart","output"],"ignored":["localPreview"],"restartNeeded":true})
+            serde_json::json!({"applied":["bootStart","output"],"ignored":["localPreview"],"restartNeeded":true})
         );
         assert_eq!(std::fs::read(dir.join("settings.json")).unwrap(), before);
         assert!(admin.pending.lock().unwrap().is_empty());
         assert_eq!(admin.config_import(&bytes, false).unwrap(), preview);
         assert_eq!(admin.settings.lock().unwrap().output, "both");
-        assert!(!admin.settings.lock().unwrap().auto_start);
+        assert!(!admin.settings.lock().unwrap().boot_start);
         assert!(!admin.pending.lock().unwrap().is_empty());
         admin.response_failed();
         let invalid=serde_json::to_vec(&serde_json::json!({"format":"openxplay-user-config","version":1,"settings":{"receiverPort":6975}})).unwrap();
@@ -3497,6 +3693,8 @@ mod tests {
         let options =
             Options::parse(&["--state-dir".into(), dir.to_str().unwrap().into()]).unwrap();
         let state = Arc::new(PersistentState::open(&dir).unwrap());
+        // Existing-installation lifecycle fixtures explicitly enable boot startup.
+        std::fs::write(dir.join("settings.json"), br#"{"bootStart":true}"#).unwrap();
         let events = Arc::new(JsonEvents::new(Arc::new(|_| {})));
         let provision = WifiProvisioner::new(
             ProcessNetworkManagerCli {
@@ -3524,6 +3722,48 @@ mod tests {
         (Arc::new(admin), dir)
     }
     #[test]
+    fn stop_cancels_arrival_and_survives_shell_recreation_until_boot_changes() {
+        let (a, dir) = fake();
+        a.arrival
+            .lock()
+            .unwrap()
+            .ready(std::time::Instant::now(), true);
+        assert_eq!(a.status().path_input["startup"]["arrival"]["pending"], true);
+        a.operation(Operation::Stop).unwrap();
+        assert!(a.arrival.lock().unwrap().deadline.is_none());
+        let options = a.options.clone();
+        let state = a.state.clone();
+        drop(a);
+        let a = LinuxRelayAdmin::with_optional_provisioner(
+            options.clone(),
+            state.clone(),
+            Arc::new(JsonEvents::new(Arc::new(|_| {}))),
+            None,
+            runtime_paths(&dir),
+        )
+        .unwrap();
+        assert!(!a.desired.load(Ordering::Acquire));
+        assert_eq!(a.status().path_input["startup"]["paused"], true);
+        drop(a);
+        let paths = runtime_paths(&dir);
+        let boot = paths.root.join("proc/sys/kernel/random");
+        std::fs::create_dir_all(&boot).unwrap();
+        std::fs::write(boot.join("boot_id"), "next-boot").unwrap();
+        let a = LinuxRelayAdmin::with_optional_provisioner(
+            options,
+            state,
+            Arc::new(JsonEvents::new(Arc::new(|_| {}))),
+            None,
+            paths,
+        )
+        .unwrap();
+        assert!(a.desired.load(Ordering::Acquire));
+        assert_eq!(a.status().path_input["startup"]["paused"], false);
+        assert_eq!(a.status().path_input["iphone"]["armed"], true);
+        drop(a);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn runtime_waits_before_concurrent_carlink_and_start_now_skips_once() {
         let (a, dir) = fake();
         a.settings.lock().unwrap().output = "both".into();
@@ -3532,6 +3772,7 @@ mod tests {
         a.ensure_controller().unwrap();
         assert!(a.controller.lock().unwrap().is_some());
         let f = a.runtime_path_facts();
+        assert!(!f.iphone.armed);
         assert!(f.iphone.car_wait_until_millis.is_some());
         a.perform_operation(Operation::Start).unwrap();
         assert!(!a.start_policy.lock().unwrap().waiting());
@@ -3594,6 +3835,7 @@ mod tests {
         let (old, dir) = fake();
         Settings {
             auto_start: false,
+            boot_start: false,
             ..Default::default()
         }
         .save(&dir)
@@ -3785,7 +4027,7 @@ mod tests {
         ] {
             assert!(fields.iter().any(|f| f.key == key), "{key}");
         }
-        assert!(!fields.iter().any(|f| f.key == "bootStart"));
+        assert!(fields.iter().any(|f| f.key == "bootStart"));
         assert_eq!(
             fields
                 .iter()
@@ -3834,6 +4076,7 @@ mod tests {
         let (a, dir) = fake();
         Settings {
             auto_start: false,
+            boot_start: false,
             ..Default::default()
         }
         .save(&dir)
@@ -4358,6 +4601,7 @@ mod tests {
         )
         .unwrap();
         Settings {
+            boot_start: true,
             network_mode: mode.into(),
             shared_wifi_networks: vec![SharedWifiNetwork {
                 ssid: "Home".into(),
@@ -6480,7 +6724,7 @@ esac
         });
         let controller = Arc::new(
             LinuxCarPlayController::new(platform.clone(), a.events.clone(), Duration::from_secs(1))
-                .with_retry_delay(Duration::from_millis(1), Duration::from_millis(5)),
+                .with_retry_delay(Duration::from_millis(50), Duration::from_millis(100)),
         );
         *a.controller.lock().unwrap() = Some(controller.clone());
         let running = controller.clone();

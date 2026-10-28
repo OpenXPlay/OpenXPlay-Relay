@@ -80,6 +80,10 @@ fn admin_contract_status(state: &str) {
     status.running = false;
     status.auto_start_paused = true;
     let mut facts = crate::path_facts::RuntimePathFacts::default();
+    facts.automatic = settings.auto_start;
+    facts.boot_start = settings.boot_start;
+    facts.auto_start_paused = true;
+    let clock = std::time::Instant::now();
     facts.web.phase = "LISTENING".into();
     facts.web.port = 8443;
     facts.web.since_millis = Some(now - 10_000);
@@ -112,22 +116,36 @@ fn admin_contract_status(state: &str) {
                 "carlink-pin" => serde_json::json!({"type":"pin-request"}),
                 _ => serde_json::json!({"type":"state","state":"playing","headUnit":{"name":"G6"}}),
             };
-            facts.carlink_event(&event, now - 1_000);
+            facts.carlink_event_at(&event, now - 1_000, clock);
             let mut clink = AdminCarlink::default();
             clink.apply_event(&event, 100);
             status.carlink = Some(clink.at(100, now / 1000));
             if state == "live-carlink" {
-                facts.carlink_event(&serde_json::json!({"type":"media-stats","liveFrames":10,"width":1920,"height":720,"codec":"H265"}), now);
+                facts.carlink_event_at(&serde_json::json!({"type":"media-stats","liveFrames":10,"width":1920,"height":720,"codec":"H265"}), now, clock + Duration::from_secs(1));
             }
         }
         "iphone-failure" => {
             status.running = true;
-            facts.observe(
+            facts.observe_at(
                 "iap2-stage",
                 &serde_json::json!({"stage":"ConnectingBluetooth"}),
                 now - 3_000,
+                clock,
             );
-            facts.failure("rfcomm timeout", true, now - 1_000);
+            facts.failure_at(
+                "rfcomm timeout",
+                true,
+                now - 1_000,
+                clock + Duration::from_secs(2),
+            );
+        }
+        "arrival" => {
+            facts.arrival_until_millis = Some(now + 5_000);
+            facts.arrival_remaining_millis = Some(5_000);
+            facts.auto_start_paused = false;
+        }
+        "armed" => {
+            facts.iphone.armed = true;
         }
         "car-first-wait" => {
             facts.saved_screen = None;
@@ -186,6 +204,7 @@ contract_states! {
     admin_contract_failure => "iphone-failure", admin_contract_wait => "car-first-wait",
     admin_contract_live_browser => "live-browser", admin_contract_live_carlink => "live-carlink",
     admin_contract_shared_wifi => "shared-wifi",
+    admin_contract_arrival => "arrival", admin_contract_armed => "armed",
 }
 
 #[test]

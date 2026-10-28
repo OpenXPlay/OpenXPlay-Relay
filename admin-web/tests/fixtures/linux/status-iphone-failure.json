@@ -111,18 +111,23 @@
         "code": "rfcomm_timeout",
         "retrying": true,
         "step": "BLUETOOTH",
-        "text": "The Bluetooth connection timed out",
+        "text": "rfcomm timeout",
         "trail": [
-          "1792999997000 ConnectingBluetooth",
-          "1792999999000 failed rfcomm_timeout"
+          "07:33:17.000 status=ConnectingBluetooth",
+          "+2.000s status=Failed reason=rfcomm_timeout retrying=true"
         ]
       },
       "name": "iPhone",
       "pick": "PICKED",
+      "runtimeIap2Frames": 0,
       "started": true,
       "step": "BLUETOOTH",
       "stepDetail": null,
       "stepSinceMillis": 1792999997000,
+      "trail": [
+        "07:33:17.000 status=ConnectingBluetooth",
+        "+2.000s status=Failed reason=rfcomm_timeout retrying=true"
+      ],
       "usb": "UNKNOWN"
     },
     "live": {
@@ -156,6 +161,16 @@
       ],
       "summary": "",
       "valid": true
+    },
+    "startup": {
+      "arrival": {
+        "deadlineMillis": null,
+        "pending": false,
+        "remainingMillis": null
+      },
+      "automatic": true,
+      "bootStart": true,
+      "paused": true
     },
     "version": "0.1.6-beta.1"
   },

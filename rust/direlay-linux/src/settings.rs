@@ -58,7 +58,10 @@ pub struct Settings {
     pub experimental_active: bool,
     pub experimental_send_bluetooth_address: bool,
     pub experimental_bluetooth_address: String,
+    #[serde(alias = "autoStartWhenReady")]
     pub auto_start: bool,
+    #[serde(alias = "autoStartOnBoot")]
+    pub boot_start: bool,
     pub video_stats: String,
     #[serde(rename = "carPlayViewAreas")]
     pub car_play_view_areas: bool,
@@ -115,6 +118,7 @@ impl Default for Settings {
             experimental_send_bluetooth_address: false,
             experimental_bluetooth_address: String::new(),
             auto_start: true,
+            boot_start: false,
             video_stats: "off".into(),
             car_play_view_areas: true,
             car_bluetooth_audio_defaulted: true,
@@ -176,8 +180,16 @@ impl Settings {
                     value["carBluetoothAudio"] = true.into();
                     value["carBluetoothAudioDefaulted"] = true.into();
                 }
-                // Persist only the migration, leaving absent profile-derived settings absent.
-                let migrated = migrate_audio.then(|| value.clone());
+                let migrate_startup =
+                    value.get("bootStart").is_none() && value.get("autoStartOnBoot").is_none();
+                if migrate_startup {
+                    value["bootStart"] = value
+                        .get("autoStart")
+                        .cloned()
+                        .unwrap_or(defaults.boot_start.into());
+                }
+                // Persist only migrations, leaving absent profile-derived settings absent.
+                let migrated = (migrate_audio || migrate_startup).then(|| value.clone());
                 if let Some(object) = value.as_object_mut() {
                     object
                         .entry("devicePreset")
@@ -397,6 +409,27 @@ impl Settings {
 mod tests {
     use super::*;
     #[test]
+    fn legacy_auto_start_migrates_boot_preference_without_coupling_future_edits() {
+        let dir = std::env::temp_dir().join(format!(
+            "w11-settings-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), br#"{"autoStart":false}"#).unwrap();
+        let mut settings = Settings::load(&dir).unwrap();
+        assert!(!settings.auto_start && !settings.boot_start);
+        settings.boot_start = true;
+        settings.save(&dir).unwrap();
+        let settings = Settings::load(&dir).unwrap();
+        assert!(!settings.auto_start && settings.boot_start);
+        let aliases: Settings = serde_json::from_value(
+            serde_json::json!({"autoStartOnBoot":false,"autoStartWhenReady":true}),
+        )
+        .unwrap();
+        assert!(!aliases.boot_start && aliases.auto_start);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn linux_car_settings_defaults_validation_and_round_trip() {
         let defaults = Settings::default();
         let json = serde_json::to_value(&defaults).unwrap();
@@ -411,6 +444,7 @@ mod tests {
             ("carlinkHevc", serde_json::json!("auto")),
             ("carlinkTrace", serde_json::json!("off")),
             ("autoStart", serde_json::json!(true)),
+            ("bootStart", serde_json::json!(false)),
             ("videoStats", serde_json::json!("off")),
             ("carPlayViewAreas", serde_json::json!(true)),
             ("carBluetoothAudio", serde_json::json!(true)),

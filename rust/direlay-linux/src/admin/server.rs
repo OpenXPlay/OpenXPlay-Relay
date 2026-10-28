@@ -374,6 +374,7 @@ impl AdminServer {
                 if ![
                     "start",
                     "stop",
+                    "cancel-arrival",
                     "restart",
                     "regenerate-pairing-code",
                     "forget-wifi",

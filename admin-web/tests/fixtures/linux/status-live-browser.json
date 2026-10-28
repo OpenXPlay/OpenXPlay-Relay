@@ -109,10 +109,12 @@
       "failure": null,
       "name": "iPhone",
       "pick": "PICKED",
+      "runtimeIap2Frames": 0,
       "started": true,
       "step": "VIDEO",
       "stepDetail": null,
       "stepSinceMillis": null,
+      "trail": [],
       "usb": "UNKNOWN"
     },
     "live": {
@@ -150,6 +152,16 @@
       ],
       "summary": "",
       "valid": true
+    },
+    "startup": {
+      "arrival": {
+        "deadlineMillis": null,
+        "pending": false,
+        "remainingMillis": null
+      },
+      "automatic": true,
+      "bootStart": true,
+      "paused": true
     },
     "version": "0.1.6-beta.1"
   },

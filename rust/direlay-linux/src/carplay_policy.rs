@@ -56,7 +56,9 @@ pub fn media_button(key: u16) -> Option<u8> {
 }
 pub fn classify_failure(message: &str) -> &'static str {
     let m = message.to_ascii_lowercase();
-    if m.contains("first_tcp_timeout") {
+    if m.contains("wifi_reset_required") {
+        "wifi_reset_required"
+    } else if m.contains("first_tcp_timeout") {
         "first_tcp_timeout"
     } else if m.contains("hotspot")
         && (m.contains("configuration") || m.contains("security") || m.contains("ssid differs"))
@@ -64,7 +66,11 @@ pub fn classify_failure(message: &str) -> &'static str {
         "hotspot_configuration"
     } else if m.contains("hotspot") || m.contains("network is not ready") {
         "hotspot_not_ready"
-    } else if m.contains("bluetooth") && (m.contains("off") || m.contains("powered")) {
+    } else if m.contains("bluetooth")
+        && (m.contains("off")
+            || m.contains("powered")
+            || m.contains("adapter") && m.contains("unavailable"))
+    {
         "bluetooth_off"
     } else if m.contains("no sockets")
         || m.contains("unreal")
@@ -167,6 +173,7 @@ mod tests {
         for (text, code) in [
             ("RFCOMM timed out", "rfcomm_timeout"),
             ("Bluetooth powered off", "bluetooth_off"),
+            ("Bluetooth adapter address unavailable", "bluetooth_off"),
             ("iPhone no longer paired", "iphone_unpaired"),
             ("first_tcp_timeout", "first_tcp_timeout"),
             ("Hotspot address changed", "hotspot_not_ready"),
