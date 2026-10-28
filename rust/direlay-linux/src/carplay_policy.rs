@@ -63,6 +63,20 @@ pub fn media_button(key: u16) -> Option<u8> {
         _ => None,
     }
 }
+/// Only use before RFCOMM connects. The same OS error after connection spends the startup budget.
+pub fn iphone_unreachable(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        error.kind(),
+        ErrorKind::ConnectionRefused
+            | ErrorKind::HostUnreachable
+            | ErrorKind::NetworkUnreachable
+            | ErrorKind::TimedOut
+    ) || error.raw_os_error() == Some(libc::EHOSTDOWN)
+        || error
+            .get_ref()
+            .is_some_and(|cause| cause.is::<crate::linux_bluetooth::IphoneUnavailable>())
+}
 pub fn classify_failure(message: &str) -> &'static str {
     let m = message.to_ascii_lowercase();
     if m.contains("carlink output did not become ready")
@@ -145,6 +159,38 @@ pub fn startup_stage(stage: &str) -> Option<(&'static str, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reachability_uses_error_kinds_and_typed_selection_and_sdp_failures() {
+        use std::io::{Error, ErrorKind};
+        for code in [
+            libc::ECONNREFUSED,
+            libc::EHOSTDOWN,
+            libc::EHOSTUNREACH,
+            libc::ENETUNREACH,
+            libc::ETIMEDOUT,
+        ] {
+            assert!(iphone_unreachable(&Error::from_raw_os_error(code)));
+        }
+        assert!(iphone_unreachable(&Error::new(
+            ErrorKind::TimedOut,
+            "no message marker"
+        )));
+        assert!(iphone_unreachable(
+            &crate::linux_bluetooth::select_iphone(&[], None).unwrap_err()
+        ));
+        assert!(iphone_unreachable(
+            &crate::linux_bluetooth::rfcomm_channel("").unwrap_err()
+        ));
+        for error in [
+            Error::other("Connection refused (os error 111)"),
+            Error::other("sdptool failed (exit 255)"),
+            Error::new(ErrorKind::PermissionDenied, "Bluetooth rejected"),
+            Error::new(ErrorKind::NotFound, "Missing local file"),
+            crate::linux_bluetooth::select_iphone(&[], Some("AA:BB:CC:DD:EE:01")).unwrap_err(),
+        ] {
+            assert!(!iphone_unreachable(&error), "{error}");
+        }
+    }
     #[test]
     fn screen_policy_captures_each_choice_and_master_without_erasing_choices() {
         for bits in 0..16 {

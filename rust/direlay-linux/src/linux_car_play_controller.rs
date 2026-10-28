@@ -159,11 +159,13 @@ enum Layer {
     Network,
     Bluetooth,
 }
-/// First delay of the waits for the Bluetooth adapter and the iPhone; it doubles per failure.
+/// First delay of the waits for the Bluetooth adapter; it doubles per failure.
 pub const BLUETOOTH_RETRY_INITIAL: Duration = Duration::from_secs(2);
-/// Cap of those waits, so an iPhone back in range or a late adapter is retried within seconds
-/// even when no BlueZ change ends the wait early.
+/// Cap of adapter waits when no BlueZ change ends the wait early.
 pub const BLUETOOTH_RETRY_MAX: Duration = Duration::from_secs(10);
+/// An absent iPhone never exhausts startup retries, even when no BlueZ edge announces its return.
+pub const IPHONE_RETRY_INITIAL: Duration = Duration::from_secs(10);
+pub const IPHONE_RETRY_MAX: Duration = Duration::from_secs(30);
 /// What a Bluetooth retry wait waits for; only a change that can help ends it early.
 enum Awaited {
     Adapter,
@@ -294,6 +296,7 @@ pub struct LinuxCarPlayController {
     timeout: Duration,
     retry_delay: (Duration, Duration),
     bluetooth_retry: (Duration, Duration),
+    iphone_retry: (Duration, Duration),
     state: SharedState,
     retry_budget: Mutex<crate::start_policy::RetryBudget>,
 }
@@ -309,6 +312,7 @@ impl LinuxCarPlayController {
             timeout: handoff_timeout,
             retry_delay: (Duration::from_secs(2), Duration::from_secs(30)),
             bluetooth_retry: (BLUETOOTH_RETRY_INITIAL, BLUETOOTH_RETRY_MAX),
+            iphone_retry: (IPHONE_RETRY_INITIAL, IPHONE_RETRY_MAX),
             state: Arc::new((
                 Mutex::new(ControllerState {
                     hotspot: None,
@@ -346,10 +350,10 @@ impl LinuxCarPlayController {
         self.retry_delay = (initial, maximum);
         self
     }
-    /// The first delay and the cap of the waits for the Bluetooth adapter and the iPhone
-    /// (default [`BLUETOOTH_RETRY_INITIAL`] and [`BLUETOOTH_RETRY_MAX`]).
+    /// Overrides both Bluetooth wait cadences, e.g. for accelerated controller tests.
     pub fn with_bluetooth_retry(mut self, initial: Duration, maximum: Duration) -> Self {
         self.bluetooth_retry = (initial, maximum);
+        self.iphone_retry = (initial, maximum);
         self
     }
     fn set_stage(&self, stage: &str, fields: serde_json::Value) {
@@ -418,7 +422,7 @@ impl LinuxCarPlayController {
     /// Waits up to `delay` for the armed change, logs what ended the wait and returns the next
     /// delay: the backoff doubles up to its cap and starts over after a change, which means the
     /// adapter or the iPhone is around again.
-    fn wait_armed(&self, delay: Duration) -> Result<Duration> {
+    fn wait_armed(&self, delay: Duration, retry: (Duration, Duration)) -> Result<Duration> {
         let started = Instant::now();
         let (m, c) = &*self.state;
         let s = m.lock().unwrap();
@@ -437,7 +441,7 @@ impl LinuxCarPlayController {
             woken.as_deref().unwrap_or("timer"),
             started.elapsed().as_millis()
         ));
-        let (initial, maximum) = self.bluetooth_retry;
+        let (initial, maximum) = retry;
         Ok(if woken.is_some() {
             initial
         } else {
@@ -466,35 +470,40 @@ impl LinuxCarPlayController {
                         "WaitingForBluetooth",
                         serde_json::json!({"reason":crate::failure_text::error_text(&e),"retryMillis":delay.as_millis() as u64}),
                     );
-                    delay = self.wait_armed(delay)?;
+                    delay = self.wait_armed(delay, self.bluetooth_retry)?;
                 }
             }
         }
     }
-    /// Opens iAP2 to the bonded iPhone, retrying with a capped backoff that a returning iPhone
-    /// (BlueZ reports it connected) or a returning adapter ends early.
+    /// Opens iAP2 to the bonded iPhone. Unreachable attempts wait indefinitely at 10–30 seconds;
+    /// a returning iPhone or adapter ends the wait early and resets its cadence, not its budget.
     fn connect_iphone(&self) -> Result<Arc<dyn BluetoothConnection>> {
-        let mut delay = self.bluetooth_retry.0;
+        let mut delay = self.iphone_retry.0;
         let mut selected = None;
         loop {
             self.set_stage(
                 "WaitingForPairedIphone",
                 serde_json::json!({"reason":"Selecting bonded iPhone"}),
             );
+            let previous = selected.clone();
             match self.try_connect_iphone(&mut selected) {
                 Ok(c) => return Ok(c),
                 Err(e) => {
                     self.check()?;
+                    if selected != previous {
+                        delay = self.iphone_retry.0;
+                    }
+                    let unreachable = crate::carplay_policy::iphone_unreachable(&e);
                     // Armed only now: the failed attempt itself may have connected the iPhone.
-                    if !self.retry_failure(&e, delay) {
+                    if !unreachable && !self.retry_failure(&e, delay) {
                         return Err(e);
                     }
                     self.arm(Awaited::Iphone(selected.clone()));
                     self.set_stage(
                         "WaitingForPairedIphone",
-                        serde_json::json!({"reason":crate::failure_text::error_text(&e),"retryMillis":delay.as_millis() as u64}),
+                        serde_json::json!({"reason":crate::failure_text::error_text(&e),"retryMillis":delay.as_millis() as u64,"unreachable":unreachable}),
                     );
-                    delay = self.wait_armed(delay)?;
+                    delay = self.wait_armed(delay, self.iphone_retry)?;
                 }
             }
         }
@@ -504,7 +513,12 @@ impl LinuxCarPlayController {
         &self,
         selected: &mut Option<String>,
     ) -> Result<Arc<dyn BluetoothConnection>> {
-        let device = self.platform.select_iphone()?;
+        let device = self.platform.select_iphone().inspect_err(|e| {
+            if crate::carplay_policy::iphone_unreachable(e) {
+                *selected = None;
+                self.state.0.lock().unwrap().selected_iphone = None;
+            }
+        })?;
         *selected = Some(device.address.clone());
         self.state.0.lock().unwrap().selected_iphone = selected.clone();
         self.check()?;

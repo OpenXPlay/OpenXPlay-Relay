@@ -265,6 +265,18 @@ impl RuntimePathFacts {
         let mut reason = None;
         if kind == "stage" || kind == "iap2-stage" {
             let stage = fields["stage"].as_str().unwrap_or("");
+            let waiting = stage == "WaitingForPairedIphone" && fields["unreachable"] == true;
+            if waiting {
+                self.iphone.failure = None;
+                self.iphone.detail = None;
+                self.video_since = None;
+                self.iphone.session_since_millis = None;
+                self.picture_on_car = false;
+                let message =
+                    crate::failure_text::redact(fields["reason"].as_str().unwrap_or(""), &[]);
+                self.phone_trail
+                    .record(&format!("waiting_for_iphone {message}"), now, monotonic);
+            }
             if stage == "DiscoveringMfi" {
                 self.phone_trail = StepTrail::default();
                 self.iphone.runtime_iap2_frames = 0;
@@ -295,7 +307,7 @@ impl RuntimePathFacts {
             }
             if let Some(message) = fields["reason"]
                 .as_str()
-                .filter(|_| fields["retryMillis"].is_number())
+                .filter(|_| !waiting && fields["retryMillis"].is_number())
             {
                 if !self.iphone.failure.as_ref().is_some_and(|f| {
                     f.retrying && f.text == crate::failure_text::redact(message, &[])

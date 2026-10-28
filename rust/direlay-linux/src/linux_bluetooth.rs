@@ -27,6 +27,24 @@ pub const PAIRING_DEVICE_CLASS: u32 = 0x240408;
 fn err(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
 }
+/// Selection and SDP have no OS reachability kind. Preserve their cause with a typed marker.
+#[derive(Debug)]
+pub(crate) struct IphoneUnavailable(std::io::Error);
+impl IphoneUnavailable {
+    fn wrap(error: std::io::Error) -> std::io::Error {
+        std::io::Error::other(Self(error))
+    }
+}
+impl std::fmt::Display for IphoneUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for IphoneUnavailable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
 pub fn valid_mac(a: &str) -> bool {
     let p: Vec<_> = a.split(':').collect();
     p.len() == 6
@@ -118,14 +136,15 @@ impl IphoneSelection {
 }
 pub fn select_iphone(devices: &[BondedDevice], choice: Option<&str>) -> Result<BondedDevice> {
     let selection = IphoneSelection::select(choice, devices);
-    selection.device().cloned().ok_or_else(|| {
-        err(match selection {
-            IphoneSelection::SelectedUnpaired(_) => "The configured iPhone is no longer paired",
-            IphoneSelection::MultipleConnected(_) | IphoneSelection::MultipleCandidates(_) => {
-                "More than one bonded iPhone candidate; configure --iphone ADDR"
-            }
-            _ => "No unambiguous bonded iPhone found; pair one iPhone",
-        })
+    selection.device().cloned().ok_or_else(|| match selection {
+        IphoneSelection::NoIphone => {
+            IphoneUnavailable::wrap(err("No unambiguous bonded iPhone found; pair one iPhone"))
+        }
+        IphoneSelection::SelectedUnpaired(_) => err("The configured iPhone is no longer paired"),
+        IphoneSelection::MultipleConnected(_) | IphoneSelection::MultipleCandidates(_) => {
+            err("More than one bonded iPhone candidate; configure --iphone ADDR")
+        }
+        _ => unreachable!(),
     })
 }
 pub fn rfcomm_channel(text: &str) -> Result<u8> {
@@ -171,9 +190,9 @@ pub fn rfcomm_channel(text: &str) -> Result<u8> {
     if channels.len() == 1 {
         Ok(channels[0])
     } else {
-        Err(err(
+        Err(IphoneUnavailable::wrap(err(
             "SDP did not report one iAP2 RFCOMM channel; configure --rfcomm-channel",
-        ))
+        )))
     }
 }
 type Objects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
@@ -425,12 +444,18 @@ impl LinuxBluetooth {
         let c = Connection::system().map_err(err)?;
         let path = self.selection.adapter(&c)?;
         let name = path.rsplit('/').next().unwrap();
-        rfcomm_channel(&command(
-            self.runner.as_ref(),
-            &sdp_command(name, address),
-            Duration::from_secs(20),
-        )?)
+        sdp_lookup(self.runner.as_ref(), name, address)
     }
+}
+fn sdp_lookup(runner: &dyn CommandRunner, adapter: &str, address: &str) -> Result<u8> {
+    let result = runner.run(
+        &sdp_command(adapter, address)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        Duration::from_secs(20),
+    )?;
+    rfcomm_channel(&result.checked("sdptool").map_err(IphoneUnavailable::wrap)?)
 }
 fn sdp_command<'a>(adapter: &'a str, address: &'a str) -> Vec<&'a str> {
     let mut args = vec!["sdptool"];
@@ -1155,6 +1180,37 @@ impl BluetoothOutput {
 #[cfg(test)]
 mod signal_tests {
     use super::*;
+    #[test]
+    fn sdp_lookup_failures_are_typed_and_keep_the_command_cause() {
+        struct MissingService;
+        impl CommandRunner for MissingService {
+            fn run(&self, _: &[String], _: Duration) -> Result<crate::platform::CommandResult> {
+                Ok(crate::platform::CommandResult {
+                    exit_code: 255,
+                    output: String::new(),
+                })
+            }
+        }
+        let error = sdp_lookup(&MissingService, "hci0", "AA:BB:CC:DD:EE:01").unwrap_err();
+        assert!(crate::carplay_policy::iphone_unreachable(&error));
+        assert!(crate::failure_text::error_text(&error).contains("sdptool failed (exit 255)"));
+        assert!(std::error::Error::source(error.get_ref().unwrap()).is_some());
+        struct ToolError(std::io::ErrorKind);
+        impl CommandRunner for ToolError {
+            fn run(&self, _: &[String], _: Duration) -> Result<crate::platform::CommandResult> {
+                Err(std::io::Error::new(self.0, "local tool error"))
+            }
+        }
+        for (kind, waiting) in [
+            (std::io::ErrorKind::NotFound, false),
+            (std::io::ErrorKind::PermissionDenied, false),
+            (std::io::ErrorKind::TimedOut, true),
+        ] {
+            let error = sdp_lookup(&ToolError(kind), "hci0", "AA:BB:CC:DD:EE:01").unwrap_err();
+            assert_eq!(crate::carplay_policy::iphone_unreachable(&error), waiting);
+            assert_eq!(error.kind(), kind);
+        }
+    }
     #[test]
     fn adapter_selection_is_deterministic_and_never_falls_back() {
         assert_eq!(sdp_command("hci0", "phone"), ["sdptool", "browse", "phone"]);

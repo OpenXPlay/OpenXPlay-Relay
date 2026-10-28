@@ -61,3 +61,16 @@ it('retains the backend arrival, armed and frozen failure contracts for the star
   expect(failure.trail.some(line => line.startsWith('+2.000s '))).toBe(true);
   expect(linuxSettings.values.bootStart).toBe(true);
 });
+
+it('presents an unreachable iPhone as waiting in English and Simplified Chinese', () => {
+  const input = linuxStatusFixtures['iphone-waiting'].pathInput!;
+  expect(input.iphone!.step).toBe('WAITING_IPHONE');
+  expect(input.iphone!.failure).toBeNull();
+  const path = presentPath(input), stage = presentStage(path);
+  expect(path.running).toBe(true);
+  expect(path.tone).toBe('PROGRESS');
+  expect(stage.failure).toBeNull();
+  expect(stage.headline).toEqual({ res: 'state.waiting', args: [] });
+  expect(translate('en', stage.headline.res!)).toBe('Waiting for iPhone');
+  expect(translate('zh-CN', stage.headline.res!)).toBe('等待 iPhone');
+});

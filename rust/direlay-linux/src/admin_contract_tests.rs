@@ -151,6 +151,14 @@ fn admin_contract_status(state: &str) {
                 facts.tesla.failure = Some("NetworkManager could not add the address".into());
             }
         }
+        "iphone-waiting" => {
+            status.running = true;
+            status.auto_start_paused = false;
+            facts.auto_start_paused = false;
+            facts.observe_at("stage", &serde_json::json!({"stage":"WaitingForPairedIphone",
+                "unreachable":true,"reason":"Connection refused (os error 111)","retryMillis":30000}),
+                now - 1_000, clock);
+        }
         "iphone-failure" => {
             status.running = true;
             facts.observe_at(
@@ -258,6 +266,11 @@ fn admin_contract_status(state: &str) {
         "carlink-scanning" => assert_eq!(p["car"]["carlink"]["phase"], "SCANNING"),
         "carlink-pin" => assert_eq!(p["car"]["carlink"]["pinPending"], true),
         "iphone-failure" => assert_eq!(p["iphone"]["failure"]["retrying"], true),
+        "iphone-waiting" => {
+            assert_eq!(p["iphone"]["step"], "WAITING_IPHONE");
+            assert!(p["iphone"]["failure"].is_null());
+            assert_eq!(p["iphone"]["started"], true);
+        }
         "car-first-wait" => assert_eq!(p["iphone"]["started"], true),
         "shared-wifi" => assert_eq!(p["setup"]["network"], "SHARED_WIFI"),
         _ => assert_eq!(p["iphone"]["pick"], "PICKED"),
@@ -276,6 +289,7 @@ contract_states! {
     admin_contract_scanning => "carlink-scanning", admin_contract_pin => "carlink-pin",
     admin_contract_confirm => "carlink-confirm",
     admin_contract_failure => "iphone-failure", admin_contract_wait => "car-first-wait",
+    admin_contract_iphone_waiting => "iphone-waiting",
     admin_contract_live_browser => "live-browser", admin_contract_live_carlink => "live-carlink",
     admin_contract_shared_wifi => "shared-wifi",
     admin_contract_tesla_ready => "tesla-ready", admin_contract_tesla_failed => "tesla-failed",
