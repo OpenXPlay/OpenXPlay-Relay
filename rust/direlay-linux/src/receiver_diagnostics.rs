@@ -27,16 +27,22 @@ struct Client {
     seen: Instant,
 }
 #[derive(Default)]
+struct DiagnosticsState {
+    clients: Vec<Client>,
+    screens: VecDeque<((u32, u32, u32), Value)>,
+    exits: VecDeque<Value>,
+}
+#[derive(Default)]
 pub struct ReceiverDiagnostics {
-    clients: Mutex<Vec<Client>>,
+    state: Mutex<DiagnosticsState>,
 }
 impl ReceiverDiagnostics {
     /// Takes oxp-relay's `receiver-info` and `stats` events and returns whether the event was
-    /// one of them. Client ids belong to one oxp-relay process, so a stopped receiver clears all.
+    /// one of them. Client ids belong to one oxp-relay process, so a stopped receiver clears live clients only.
     pub fn observe(&self, event: &Value, now: Instant) -> bool {
         let kind = event["type"].as_str().unwrap_or("");
         if matches!(kind, "receiver-stopped" | "receiver-restarting") {
-            self.clear();
+            self.state.lock().unwrap().clients.clear();
             return false;
         }
         if !matches!(kind, "receiver-info" | "stats" | "fullscreen-exit") {
@@ -58,7 +64,30 @@ impl ReceiverDiagnostics {
         if !entry.is_object() || serde_json::to_vec(&entry).map_or(true, |b| b.len() > limit) {
             return true;
         }
-        let mut clients = self.clients.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        if kind == "fullscreen-exit" {
+            if let Some(client) = state.clients.iter_mut().find(|client| client.id == id) {
+                if client.fullscreen_exits.len() == MAX_SAMPLES {
+                    client.fullscreen_exits.pop_front();
+                }
+                client.fullscreen_exits.push_back(entry.clone());
+            }
+            if state.exits.len() == MAX_SAMPLES {
+                state.exits.pop_front();
+            }
+            state.exits.push_back(json!({"time": crate::platform::wall_clock().as_millis() as u64, "client":id, "report":entry}));
+            return true;
+        }
+        if kind == "receiver-info" {
+            if let Some(key) = screen_key(&entry) {
+                state.screens.retain(|(screen, _)| *screen != key);
+                state.screens.push_back((key, entry.clone()));
+                if state.screens.len() > 10 {
+                    state.screens.pop_front();
+                }
+            }
+        }
+        let clients = &mut state.clients;
         clients.retain(|c| now.saturating_duration_since(c.seen) < EXPIRY);
         let index = match clients.iter().position(|c| c.id == id) {
             Some(index) => index,
@@ -83,11 +112,6 @@ impl ReceiverDiagnostics {
         client.seen = now;
         if kind == "receiver-info" {
             client.info = Some(entry);
-        } else if kind == "fullscreen-exit" {
-            if client.fullscreen_exits.len() == MAX_SAMPLES {
-                client.fullscreen_exits.pop_front();
-            }
-            client.fullscreen_exits.push_back(entry);
         } else {
             if client.stats.len() == MAX_SAMPLES {
                 client.stats.pop_front();
@@ -96,29 +120,61 @@ impl ReceiverDiagnostics {
         }
         true
     }
-    pub fn page_count(&self, now: Instant) -> usize {
-        self.clients
+    /// Screen keys use physical pixels and Android's 160 dpi reference density.
+    pub fn latest_info(&self, width: u32, height: u32, density_dpi: u32) -> Option<Value> {
+        self.state
             .lock()
             .unwrap()
+            .screens
+            .iter()
+            .find(|(key, _)| *key == (width, height, density_dpi))
+            .map(|(_, info)| info.clone())
+    }
+    /// Retained independently of live clients, including across receiver process restarts.
+    pub fn history(&self) -> Value {
+        let state = self.state.lock().unwrap();
+        let screens: Vec<_> = state.screens.iter().map(|((width, height, density), info)|
+            json!({"width":width,"height":height,"densityDpi":density,"info":info})).collect();
+        json!({"screens":screens,"fullscreenExits":state.exits})
+    }
+    pub fn page_count(&self, now: Instant) -> usize {
+        self.state
+            .lock()
+            .unwrap()
+            .clients
             .iter()
             .filter(|c| now.saturating_duration_since(c.seen) < EXPIRY)
             .count()
     }
     pub fn clear(&self) {
-        self.clients.lock().unwrap().clear();
+        *self.state.lock().unwrap() = DiagnosticsState::default();
     }
     /// `[{client, idleSeconds, info, stats}]` in arrival order, oldest sample first.
     pub fn snapshot(&self, now: Instant) -> Vec<Value> {
-        let mut clients = self.clients.lock().unwrap();
-        clients.retain(|c| now.saturating_duration_since(c.seen) < EXPIRY);
-        clients
+        let mut state = self.state.lock().unwrap();
+        state
+            .clients
+            .retain(|c| now.saturating_duration_since(c.seen) < EXPIRY);
+        state.clients
             .iter()
             .map(|c| {
                 let idle = now.saturating_duration_since(c.seen).as_secs_f64();
-                json!({"client": c.id, "idleSeconds": (idle * 10.0).round() / 10.0, "info": c.info, "stats": c.stats, "fullscreenExits": c.fullscreen_exits})
+                json!({"client": c.id, "idleSeconds": (idle * 10.0).round() / 10.0, "info": c.info, "stats": c.stats, "fullscreenExits":c.fullscreen_exits})
             })
             .collect()
     }
+}
+fn screen_key(info: &Value) -> Option<(u32, u32, u32)> {
+    let ratio = info["devicePixelRatio"]
+        .as_f64()
+        .filter(|v| v.is_finite() && *v > 0.0)?;
+    let dimension =
+        |v: f64| (v.is_finite() && (1.0..=32768.0).contains(&v.round())).then(|| v.round() as u32);
+    Some((
+        dimension(info["screen"]["width"].as_f64()? * ratio)?,
+        dimension(info["screen"]["height"].as_f64()? * ratio)?,
+        dimension(ratio * 160.0)?,
+    ))
 }
 fn client_id(value: &Value) -> Option<String> {
     let id = match value {
@@ -171,14 +227,66 @@ mod tests {
         for n in 0..40 {
             assert!(d.observe(&json!({"type":"fullscreen-exit","client":"1","hiddenMs":n,"autoRestore":"denied","display":{"widthPx":1000,"heightPx":700}}),t));
         }
-        let row = &d.snapshot(t)[0];
+        assert!(d.snapshot(t + EXPIRY).is_empty());
+        assert_eq!(d.page_count(t), 0);
+        let history = d.history();
         assert_eq!(
-            row["fullscreenExits"].as_array().unwrap().len(),
+            history["fullscreenExits"].as_array().unwrap().len(),
             MAX_SAMPLES
         );
-        assert_eq!(row["fullscreenExits"][0]["hiddenMs"], 10);
-        assert_eq!(row["fullscreenExits"][29]["autoRestore"], "denied");
-        assert!(row["stats"].as_array().unwrap().is_empty());
+        assert_eq!(history["fullscreenExits"][0]["report"]["hiddenMs"], 10);
+        assert_eq!(
+            history["fullscreenExits"][29]["report"]["autoRestore"],
+            "denied"
+        );
+        d.observe(&json!({"type":"receiver-restarting"}), t);
+        assert_eq!(d.history(), history);
+        d.observe(&stats("1", 60), t);
+        assert!(d.snapshot(t)[0]["fullscreenExits"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        d.observe(
+            &json!({"type":"fullscreen-exit","client":"1","autoRestore":"denied"}),
+            t,
+        );
+        assert_eq!(
+            d.snapshot(t)[0]["fullscreenExits"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        d.clear();
+        assert!(d.history()["fullscreenExits"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn screen_info_survives_expiry_eviction_and_receiver_restart_with_ten_screen_bound() {
+        let d = ReceiverDiagnostics::default();
+        let t = Instant::now();
+        for width in 100..112 {
+            d.observe(&json!({"type":"receiver-info","client":width,"info":{"screen":{"width":width,"height":50},"devicePixelRatio":2,"userAgent":"old"}}), t);
+        }
+        assert!(d.latest_info(200, 100, 320).is_none());
+        assert!(d.latest_info(204, 100, 320).is_some());
+        d.observe(&json!({"type":"receiver-info","client":1,"info":{"screen":{"width":102,"height":50},"devicePixelRatio":2,"userAgent":"new"}}), t);
+        assert!(d.snapshot(t + EXPIRY).is_empty());
+        assert_eq!(d.page_count(t + EXPIRY), 0);
+        d.observe(&json!({"type":"receiver-stopped"}), t + EXPIRY);
+        assert_eq!(d.latest_info(204, 100, 320).unwrap()["userAgent"], "new");
+        let history = d.history();
+        assert_eq!(history["screens"].as_array().unwrap().len(), 10);
+        assert!(history["screens"][0].get("client").is_none());
+        // Malformed screen data must not replace retained valid records.
+        for ratio in [0.0, -1.0, 1e12] {
+            d.observe(&json!({"type":"receiver-info","client":1,"info":{"screen":{"width":10,"height":10},"devicePixelRatio":ratio}}), t);
+        }
+        assert_eq!(d.history(), history);
+        d.clear();
+        assert!(d.latest_info(204, 100, 320).is_none());
     }
     #[test]
     fn bounds_browsers_and_forgets_silent_ones() {

@@ -188,10 +188,18 @@
   "state": "Idle",
   "version": "0.1.6-beta.1",
   "video": {
+    "active": false,
+    "appliedFps": 60,
+    "bytes": 0,
+    "bytesMeasured": false,
     "codec": "H264",
     "codecString": null,
+    "frames": 0,
     "height": null,
+    "hevcFailure": null,
     "reason": "no-main-screen-output",
+    "requestedFps": 60,
+    "session": null,
     "width": null
   },
   "wifiClient": {

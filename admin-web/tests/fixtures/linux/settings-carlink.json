@@ -368,6 +368,7 @@
           "type": "bool"
         },
         {
+          "hintKey": "hint.field.videoStats",
           "key": "videoStats",
           "labelKey": "field.videoStats",
           "options": [

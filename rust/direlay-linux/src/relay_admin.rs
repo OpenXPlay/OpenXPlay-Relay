@@ -933,6 +933,7 @@ impl LinuxRelayAdmin {
         self.stop_controller_for_restart(false);
     }
     fn stop_controller_for_restart(&self, keep_hotspot: bool) {
+        self.input.expect_stop();
         self.tesla
             .lock()
             .unwrap()
@@ -2222,6 +2223,7 @@ pub fn settings_schema() -> Vec<Section> {
                     | "carlinkAutoReconnect"
                     | "carlinkReconnectOnResize"
                     | "carlinkHevc"
+                    | "videoStats"
                     | "hotspotChannel"
                     | "carlinkLink"
                     | "carlinkInterface"
@@ -2952,6 +2954,7 @@ impl RelayAdmin for LinuxRelayAdmin {
                 })
                 .collect(),
             receivers: None,
+            receiver_history: None,
             bluetooth_guard: crate::bluetooth_guard::read(&options.bluetooth_guard_status),
             bluetooth_secure_connections: self.secure_connections.enabled(),
             platform: "linux".into(),
@@ -3495,6 +3498,9 @@ impl RelayAdmin for LinuxRelayAdmin {
     }
     fn receivers(&self) -> Vec<serde_json::Value> {
         self.receivers.snapshot(std::time::Instant::now())
+    }
+    fn receiver_history(&self) -> serde_json::Value {
+        self.receivers.history()
     }
     fn wifi_status(&self) -> WifiClient {
         self.provision

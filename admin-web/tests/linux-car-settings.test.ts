@@ -28,45 +28,16 @@ it('places Linux Carlink settings in Car screen, startup in connection, and tech
     for (const output of ['carlink', 'both']) expect(isVisible(field, { output })).toBe(true);
   }
 });
-it.each(['5', '15'])('refreshes the session statistics card every %s seconds', interval => {
-  const settings = mockSettings(true); settings.values.videoStats = interval;
-  const ms = Number(interval) * 1000;
-  expect(videoStatsInterval(settings, 'linux')).toBe(ms);
-  const snapshot = new VideoStatsSnapshot(); const status = fixture();
-  status.carlink = { state: 'playing', detail: '', viewSize: { width: 1814, height: 1200 }, stats: { liveFrames: 1, liveBytes: 100, codec: 'H265' } };
-  const first = snapshot.read(status, ms, 0);
-  const html = videoStatsView(first, t);
-  expect(html).toContain('Video statistics'); expect(html).toContain('1814 × 1200'); expect(html).toContain('Live frames'); expect(html).toContain('H265'); expect(html).toContain('fps');
-  status.carlink.stats!.liveFrames = 20;
-  expect(snapshot.read(status, ms, ms - 1)?.carlink?.stats?.liveFrames).toBe(1);
-  expect(snapshot.read(status, ms, ms)?.carlink?.stats?.liveFrames).toBe(20);
-  expect(snapshot.read(status, 0, ms)).toBe(null);
-  expect(videoStatsView(null, t)).toBe('');
-});
-it('hides statistics when off, without a schema field, on Android, and between sessions', () => {
+it('hides measurements when off, unsupported, or between sessions', () => {
   const settings = mockSettings(true);
   expect(videoStatsInterval(settings, 'linux')).toBe(0);
   settings.values.videoStats = '5';
   expect(videoStatsInterval(settings, 'android')).toBe(0);
   settings.schema = [];
   expect(videoStatsInterval(settings, 'linux')).toBe(0);
-  const status = fixture(); const snapshot = new VideoStatsSnapshot();
-  snapshot.read(status, 15000, 0);
-  status.state = 'idle'; status.carlink = null;
-  expect(snapshot.read(status, 15000, 1)).toBe(null);
-  status.state = 'active'; status.receivers = [];
-  expect(snapshot.read(status, 15000, 2)?.receivers).toEqual([]);
-});
-it('clears cached statistics when sessions or authenticated users change', () => {
-  const status = fixture(); const snapshot = new VideoStatsSnapshot();
-  status.carlink = { state: 'playing', detail: '', stats: { liveFrames: 500 } };
-  snapshot.read(status, 15000, 0);
-  status.carlink.stats = { liveFrames: 1 };
-  expect(snapshot.read(status, 15000, 1)?.carlink?.stats?.liveFrames).toBe(1);
-  status.carlink.stats = null;
-  expect(snapshot.read(status, 15000, 2)?.carlink?.stats).toBe(null);
-  snapshot.reset(); status.carlink.stats = { liveFrames: 20 };
-  expect(snapshot.read(status, 15000, 3)?.carlink?.stats?.liveFrames).toBe(20);
+  const snapshot = new VideoStatsSnapshot(); const status = fixture();
+  expect(snapshot.read(status, 15000, 0)).toBe(null);
+  expect(videoStatsView(null, t)).toBe('');
 });
 it('shows Carlink view size and all media counters on Home and in developer diagnostics', () => {
   const status = fixture();

@@ -18,6 +18,7 @@ struct BridgeState {
     codec: Option<VideoCodec>,
     format: Option<oxp_core::model::VideoFormat>,
     sequence: u32,
+    video_clock_offset: Option<i128>,
     audio: BTreeMap<u16, (AudioStreamId, Arc<AudioPolicyRun>)>,
     tails: BTreeMap<u16, Arc<AudioPolicyRun>>,
 }
@@ -51,6 +52,7 @@ impl StreamBridgeSink {
                 codec: None,
                 format: None,
                 sequence: 0,
+                video_clock_offset: None,
                 audio: BTreeMap::new(),
                 tails: BTreeMap::new(),
             })),
@@ -88,6 +90,21 @@ impl StreamBridgeSink {
     fn dropped(&self, event: &str, e: impl std::fmt::Display) {
         self.events
             .emit(event, &serde_json::json!({"reason":e.to_string()}));
+    }
+}
+impl BridgeState {
+    /// Keep the sender's cadence on the relay's audio clock, re-anchoring beyond one second.
+    fn video_pts_us(&mut self, sender: u64, arrival: u64) -> i64 {
+        let (sender, arrival) = (i128::from(sender), i128::from(arrival));
+        let offset = self
+            .video_clock_offset
+            .filter(|offset| (sender + offset - arrival).abs() <= 1_000_000_000)
+            .unwrap_or_else(|| {
+                let offset = arrival - sender;
+                self.video_clock_offset = Some(offset);
+                offset
+            });
+        ((sender + offset) / 1000) as i64
     }
 }
 impl MediaSink for StreamBridgeSink {
@@ -186,13 +203,14 @@ impl MediaSink for StreamBridgeSink {
                             key |= if h264 { t == 5 } else { (16..=21).contains(&t) };
                             p += n;
                         }
+                        let pts_us = s.video_pts_us(sender, frame_arrival);
                         let m = Message::Binary {
                             header: Header {
                                 kind: Kind::Video,
                                 stream: 0,
                                 flags: if key { oxp_wire::KEYFRAME } else { 0 },
                                 sequence: s.sequence,
-                                pts_us: (frame_arrival / 1000) as i64,
+                                pts_us,
                                 sender_clock_us: (frame_arrival / 1000) as i64,
                             },
                             payload,
@@ -556,6 +574,69 @@ mod tests {
     }
     fn config() -> Vec<u8> {
         hex("01 42 c0 1e ff e1 00 09 67 42 c0 1e f4 05 01 ec 80 01 00 04 68 ce 3c 80")
+    }
+    #[test]
+    fn sender_pts_preserves_cadence_through_arrival_jitter_and_reanchors_past_one_second() {
+        let (_, bridge, rx, _) = setup();
+        bridge.on_video_codec(110, VideoCodec::H264).unwrap();
+        bridge.on_video_config(110, &config()).unwrap();
+        // The sender clock is far ahead of the relay, as with an NTP timestamp.
+        let sender = u64::MAX - 10_000_000_000;
+        for (sent, arrival) in [
+            (0, 2_000_000_000),
+            (40_000_000, 2_190_000_000),
+            (80_000_000, 3_080_000_000),
+            (120_000_000, 3_120_000_001),
+            (160_000_000, 3_300_000_000),
+        ] {
+            bridge
+                .on_video_frame(110, &hex("00 00 01 65 88"), sender + sent, arrival)
+                .unwrap();
+        }
+        let times: Vec<_> = rx
+            .try_iter()
+            .filter_map(|m| match m {
+                Message::Binary { header, .. } => Some((header.pts_us, header.sender_clock_us)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            times,
+            [
+                (2_000_000, 2_000_000),
+                (2_040_000, 2_190_000),
+                (2_080_000, 3_080_000),
+                (3_120_000, 3_120_000),
+                (3_160_000, 3_300_000)
+            ]
+        );
+    }
+    #[test]
+    fn sender_clock_restart_and_relay_clock_override_reanchor_in_both_directions() {
+        let (_, bridge, rx, _) = setup();
+        let now = Arc::new(std::sync::atomic::AtomicU64::new(5_000_000_000));
+        let clock = now.clone();
+        let bridge = bridge.with_arrival_clock(Arc::new(move || clock.load(Ordering::SeqCst)));
+        bridge.on_video_codec(110, VideoCodec::H264).unwrap();
+        bridge.on_video_config(110, &config()).unwrap();
+        for (sender, arrival) in [
+            (9_000_000_000, 5_000_000_000),
+            (0, 5_040_000_000),
+            (10_000_000_000, 5_080_000_000),
+        ] {
+            now.store(arrival, Ordering::SeqCst);
+            bridge
+                .on_video_frame(110, &hex("00 00 01 65 88"), sender, 1)
+                .unwrap();
+        }
+        let times: Vec<_> = rx
+            .try_iter()
+            .filter_map(|m| match m {
+                Message::Binary { header, .. } => Some(header.pts_us),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(times, [5_000_000, 5_040_000, 5_080_000]);
     }
     #[test]
     fn media_translates_through_fake_unix_socket() {

@@ -45,7 +45,7 @@ it('matches Android menu summaries and hides unavailable or empty pages', () => 
   const status = linuxStatusFixtures.ready, t = (key: string) => translate('en', key);
   expect(menuSummary(linuxSettings, status, 'settings/car', 'en', t)).toBe('');
   expect(menuSummary(carlink, status, 'settings/car', 'en', t)).toBe('XPeng · G6 · 2023');
-  expect(menuSummary(linuxSettings, status, 'settings/picture', 'en', t)).toBe('Automatic · 200 mm · Automatic · Auto');
+  expect(menuSummary(linuxSettings, status, 'settings/picture', 'en', t)).toBe('Automatic · 200 mm · Automatic · Auto · 60 fps');
   const android = { ...status, platform: 'android' as const, adminFeatures: undefined };
   for (const route of ['settings/logs', 'settings/config-files', 'settings/experimental']) expect(pageAvailable(mockSettings(), android, route)).toBe(false);
   expect(pageAvailable(linuxSettings, status, 'settings/developer/video')).toBe(false);

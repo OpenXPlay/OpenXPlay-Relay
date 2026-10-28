@@ -161,7 +161,8 @@ export function mockReceivers(now = Date.now()): ReceiverReport[] {
     videoDecoder: true, videoDecode: [decode('avc1.640028', true), decode('hvc1.1.6.L120.B0', false)],
     audio: { sampleRate: 48000, baseLatency: 0.01, outputLatency: 0.04, audioWorklet: true }, audioDecoder: [{ codec: 'mp4a.40.2', supported: true }, { codec: 'opus', supported: true }],
     network: { type: 'wifi', effectiveType: '4g', downlink: 10, rtt: 20, saveData: false }, memory: { jsHeapSizeLimit: 1073741824, totalJSHeapSize: 33554432, usedJSHeapSize: 25165824 } };
-  const stats = Array.from({ length: 10 }, (_, i) => ({ type: 'stats', screen: 0, wsBytesPerSecond: 480000 + ((now / 1000 + i) % 7) * 10000, videoFramesPerSecond: 60, decoderOutputPerSecond: 60,
+  const stats = Array.from({ length: 10 }, (_, i) => ({ type: 'stats', session: '1', screen: 0,
+    rendered: Math.floor((now / 1000 + i) * 59.8), dropped: Math.floor((now / 1000 + i) / 8), relayDroppedFrames: Math.floor((now / 1000 + i) / 16), decodeMs: 4, renderedLatencyMs: 30, wsBytesPerSecond: 480000 + ((now / 1000 + i) % 7) * 10000, videoFramesPerSecond: 60, decoderOutputPerSecond: 60,
     decodeLatencyP50Ms: 4, decodeLatencyP95Ms: 9 + (i % 3), decodeLatencyMaxMs: 14 + i, renderedFps: 59.8, droppedFrames: i === 6 ? 2 : 0,
     eventLoopLagAvgMs: 1, eventLoopLagMaxMs: 6 + (i % 4), longTaskCount: i === 3 ? 1 : 0, longTaskTotalMs: i === 3 ? 62 : 0, usedJSHeapSize: 25165824 }));
   return [{ client: '1', idleSeconds: 0.4, info, stats }];
@@ -588,6 +589,11 @@ export function mockApi(linux = false): Plugin {
         result.pairingRemaining = result.pairingDeadline ? Math.ceil(result.pairingDeadline - Date.now() / 1000) : null;
         if (pictureTrial && typeof pictureTrial === 'object' && 'width' in pictureTrial && result.pathInput?.car?.carlink) result.pathInput.car.carlink.picture = `${pictureTrial.width}×${pictureTrial.height} H.265`;
         if (pinAccepted && result.pathInput?.car?.carlink) { result.pathInput.car.carlink.phase = 'PLAYING'; result.pathInput.car.carlink.pinPending = false; result.pathInput.car.carlink.trusted = true; }
+        if (linux && result.video) {
+          const seconds = Date.now() / 1000, active = result.state === 'active';
+          Object.assign(result.video, { session: active ? '1' : null, active, frames: Math.floor(seconds * 60), bytes: Math.floor(seconds * 480000),
+            bytesMeasured: settings.values.videoStats !== 'off', appliedFps: 60, requestedFps: 60, hevcFailure: null });
+        }
         if (url.searchParams.get('diagnostics') === '1') result.receivers = running || preview ? mockReceivers() : [];
         return send(200, result);
       }
