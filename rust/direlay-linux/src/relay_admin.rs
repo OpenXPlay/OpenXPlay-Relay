@@ -1128,78 +1128,12 @@ impl LinuxRelayAdmin {
         self.inventory.refresh_now();
         result
     }
+    // Chained actions share a 256 KiB worker stack; keep their Options snapshots in separate handlers.
     fn perform_operation(&self, op: Operation) -> Result<()> {
         match op {
-            Operation::Roles(mut changes) => {
-                if changes.iter().any(|c| c == "wifiCountry") {
-                    self.apply_wifi_country();
-                    let (options, status) = self.effective_options_with_status()?;
-                    if let Some(old) = self.running_links.lock().unwrap().as_ref() {
-                        for change in old.changes(&self.links(&options, &status)) {
-                            if !changes.contains(&change) {
-                                changes.push(change);
-                            }
-                        }
-                    }
-                }
-                let network =
-                    changes
-                        .iter()
-                        .any(|c| c == "controller")
-                        .then_some(Operation::Network {
-                            mode_changed: true,
-                            reconnect: true,
-                        });
-                if changes.iter().any(|c| c == "carlink") {
-                    self.operation(Operation::Outputs(network.map(Box::new)))?;
-                } else if let Some(network) = network {
-                    self.operation(network)?;
-                }
-                let (options, status) = self.effective_options_with_status()?;
-                if !status.probing {
-                    *self.running_links.lock().unwrap() = Some(self.links(&options, &status));
-                }
-                self.public_name.head_unit_address(self.head_unit_address());
-                self.reconcile_admin_hotspot();
-            }
-            Operation::Startup => {
-                if !self.prepare_wifi()? {
-                    return Ok(());
-                }
-                // In device-hotspot mode the provisioning only takes the saved Wi-Fi client
-                // connections down, which matters to the AP alone; at boot its nmcli calls end
-                // once NetworkManager has set wlan0 up. So the controller starts now, Bluetooth
-                // and iAP2 go ahead, and only the AP's activation waits for the provisioning.
-                // In shared-Wi-Fi mode the provisioning brings the network up and decides
-                // whether CarPlay runs at all, so the controller still follows it.
-                let early = self.network_override.lock().unwrap().is_none()
-                    && self.desired.load(Ordering::Acquire)
-                    && self.effective_options()?.settings.network_mode == "device-hotspot";
-                let _provisioning = early.then(|| self.provisioning.hold());
-                if early {
-                    if let Err(e) = self.ensure_controller() {
-                        self.fail_start(&e);
-                    }
-                }
-                self.operation(Operation::Initialize)?;
-            }
-            Operation::Initialize => {
-                if self.network_override.lock().unwrap().is_some() {
-                    return Ok(());
-                }
-                let options = self.effective_options()?;
-                if !self.prepare_wifi()? {
-                    return Ok(());
-                }
-                let mut provision_guard = self.provision.lock().unwrap();
-                let provision = provision_guard.as_mut().unwrap();
-                provision.sync(&options.settings.shared_wifi_networks)?;
-                if options.settings.network_mode == "shared-wifi" {
-                    provision.start()?;
-                } else {
-                    provision.stop()?;
-                }
-            }
+            Operation::Roles(changes) => self.apply_roles(changes)?,
+            Operation::Startup => self.startup()?,
+            Operation::Initialize => self.initialize_network()?,
             Operation::Start => {
                 if self.start_policy.lock().unwrap().waiting() {
                     self.start_policy.lock().unwrap().skip();
@@ -1210,9 +1144,7 @@ impl LinuxRelayAdmin {
                 self.start_policy.lock().unwrap().cancel();
                 self.stop_controller();
                 self.operation(Operation::Initialize)?;
-                if let Some(mut s) = self.supervisor.lock().unwrap().take() {
-                    s.stop();
-                }
+                self.stop_supervisor();
                 self.start_supervisor()?;
                 self.desired.store(true, Ordering::Release);
             }
@@ -1238,9 +1170,7 @@ impl LinuxRelayAdmin {
             }
             Operation::Outputs(network) => {
                 // Output processes can be replaced while the controller and AP keep running.
-                if let Some(mut supervisor) = self.supervisor.lock().unwrap().take() {
-                    supervisor.stop();
-                }
+                self.stop_supervisor();
                 self.carlink_hevc_disabled.store(false, Ordering::Release);
                 self.reconcile_carlink_network()?;
                 if let Some(network) = network {
@@ -1297,9 +1227,7 @@ impl LinuxRelayAdmin {
                 // renegotiation keeps it (see tick).
                 self.stop_controller();
                 self.operation(Operation::Initialize)?;
-                if let Some(mut s) = self.supervisor.lock().unwrap().take() {
-                    s.stop();
-                }
+                self.stop_supervisor();
                 self.start_supervisor()?;
                 self.desired.store(true, Ordering::Release);
                 self.restart_required.store(false, Ordering::Release);
@@ -1330,61 +1258,17 @@ impl LinuxRelayAdmin {
                 }
             }
             Operation::RegeneratePairingCode => {
-                if let Some(mut supervisor) = self.supervisor.lock().unwrap().take() {
-                    supervisor.stop();
-                }
+                self.stop_supervisor();
                 self.start_supervisor()?;
             }
             Operation::ClearSavedHeadUnit => {
                 self.input.display.lock().unwrap().clear_saved()?;
             }
-            Operation::ForgetCarlink => {
-                *self.armed_pin.lock().unwrap() = None;
-                let supervisor = self.supervisor.lock().unwrap().take();
-                let restart = supervisor.is_some();
-                if let Some(mut supervisor) = supervisor {
-                    supervisor.stop();
-                }
-                // The band escalation belonged to the forgotten head unit.
-                *self.carlink_backoff.lock().unwrap() = CarlinkBackoff::default();
-                let mut carlink = self.carlink.lock().unwrap();
-                *carlink = AdminCarlink {
-                    state: "idle".into(),
-                    ..Default::default()
-                };
-                remove_carlink_pin(&self.options.state_dir)?;
-                clear_carlink_trust(&self.options.state_dir)?;
-                let mut settings = self.settings.lock().unwrap();
-                settings.carlink_address = None;
-                settings.save(&self.options.state_dir)?;
-                drop(settings);
-                drop(carlink);
-                if restart {
-                    self.start_supervisor()?;
-                }
-            }
+            Operation::ForgetCarlink => self.forget_carlink()?,
             Operation::Network {
                 mode_changed,
                 reconnect,
-            } => {
-                if mode_changed || reconnect {
-                    self.stop_controller();
-                }
-                let options = self.effective_options()?;
-                if !self.prepare_wifi()? {
-                    return Ok(());
-                }
-                let mut provision_guard = self.provision.lock().unwrap();
-                let provision = provision_guard.as_mut().unwrap();
-                provision.sync(&options.settings.shared_wifi_networks)?;
-                if options.settings.network_mode == "shared-wifi" {
-                    if mode_changed || reconnect || provision.status().ssid.is_none() {
-                        provision.start()?;
-                    }
-                } else if mode_changed {
-                    provision.stop()?;
-                }
-            }
+            } => self.change_network(mode_changed, reconnect)?,
             Operation::Join(ssid, password) => {
                 self.stop_controller();
                 self.provision
@@ -1408,6 +1292,129 @@ impl LinuxRelayAdmin {
                 }
                 settings.save(&self.options.state_dir)?;
             }
+        }
+        Ok(())
+    }
+    fn forget_carlink(&self) -> Result<()> {
+        *self.armed_pin.lock().unwrap() = None;
+        let supervisor = self.supervisor.lock().unwrap().take();
+        let restart = supervisor.is_some();
+        if let Some(mut supervisor) = supervisor {
+            supervisor.stop();
+        }
+        // The band escalation belonged to the forgotten head unit.
+        *self.carlink_backoff.lock().unwrap() = CarlinkBackoff::default();
+        let mut carlink = self.carlink.lock().unwrap();
+        *carlink = AdminCarlink {
+            state: "idle".into(),
+            ..Default::default()
+        };
+        remove_carlink_pin(&self.options.state_dir)?;
+        clear_carlink_trust(&self.options.state_dir)?;
+        let mut settings = self.settings.lock().unwrap();
+        settings.carlink_address = None;
+        settings.save(&self.options.state_dir)?;
+        drop(settings);
+        drop(carlink);
+        if restart {
+            self.start_supervisor()?;
+        }
+        Ok(())
+    }
+    fn stop_supervisor(&self) {
+        if let Some(mut supervisor) = self.supervisor.lock().unwrap().take() {
+            supervisor.stop();
+        }
+    }
+    fn apply_roles(&self, mut changes: Vec<String>) -> Result<()> {
+        if changes.iter().any(|c| c == "wifiCountry") {
+            self.apply_wifi_country();
+            let (options, status) = self.effective_options_with_status()?;
+            if let Some(old) = self.running_links.lock().unwrap().as_ref() {
+                for change in old.changes(&self.links(&options, &status)) {
+                    if !changes.contains(&change) {
+                        changes.push(change);
+                    }
+                }
+            }
+        }
+        let network = changes
+            .iter()
+            .any(|c| c == "controller")
+            .then_some(Operation::Network {
+                mode_changed: true,
+                reconnect: true,
+            });
+        if changes.iter().any(|c| c == "carlink") {
+            self.operation(Operation::Outputs(network.map(Box::new)))?;
+        } else if let Some(network) = network {
+            self.operation(network)?;
+        }
+        let (options, status) = self.effective_options_with_status()?;
+        if !status.probing {
+            *self.running_links.lock().unwrap() = Some(self.links(&options, &status));
+        }
+        self.public_name.head_unit_address(self.head_unit_address());
+        self.reconcile_admin_hotspot();
+        Ok(())
+    }
+    fn startup(&self) -> Result<()> {
+        if !self.prepare_wifi()? {
+            return Ok(());
+        }
+        // In device-hotspot mode the provisioning only takes the saved Wi-Fi client
+        // connections down, which matters to the AP alone; at boot its nmcli calls end
+        // once NetworkManager has set wlan0 up. So the controller starts now, Bluetooth
+        // and iAP2 go ahead, and only the AP's activation waits for the provisioning.
+        // In shared-Wi-Fi mode the provisioning brings the network up and decides
+        // whether CarPlay runs at all, so the controller still follows it.
+        let early = self.network_override.lock().unwrap().is_none()
+            && self.desired.load(Ordering::Acquire)
+            && self.effective_options()?.settings.network_mode == "device-hotspot";
+        let _provisioning = early.then(|| self.provisioning.hold());
+        if early {
+            if let Err(e) = self.ensure_controller() {
+                self.fail_start(&e);
+            }
+        }
+        self.operation(Operation::Initialize)?;
+        Ok(())
+    }
+    fn initialize_network(&self) -> Result<()> {
+        if self.network_override.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        let options = self.effective_options()?;
+        if !self.prepare_wifi()? {
+            return Ok(());
+        }
+        let mut provision_guard = self.provision.lock().unwrap();
+        let provision = provision_guard.as_mut().unwrap();
+        provision.sync(&options.settings.shared_wifi_networks)?;
+        if options.settings.network_mode == "shared-wifi" {
+            provision.start()?;
+        } else {
+            provision.stop()?;
+        }
+        Ok(())
+    }
+    fn change_network(&self, mode_changed: bool, reconnect: bool) -> Result<()> {
+        if mode_changed || reconnect {
+            self.stop_controller();
+        }
+        let options = self.effective_options()?;
+        if !self.prepare_wifi()? {
+            return Ok(());
+        }
+        let mut provision_guard = self.provision.lock().unwrap();
+        let provision = provision_guard.as_mut().unwrap();
+        provision.sync(&options.settings.shared_wifi_networks)?;
+        if options.settings.network_mode == "shared-wifi" {
+            if mode_changed || reconnect || provision.status().ssid.is_none() {
+                provision.start()?;
+            }
+        } else if mode_changed {
+            provision.stop()?;
         }
         Ok(())
     }
@@ -8825,6 +8832,39 @@ esac
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+    #[test]
+    fn admin_operations_fit_the_device_worker_stack() {
+        let (mut admin, dir) = fake();
+        let _children = link_children(&mut admin);
+        admin.desired.store(false, Ordering::Release);
+        admin.settings.lock().unwrap().output = "both".into();
+        add_second_radio(&admin);
+        trust_carlink(&dir);
+        admin.inventory.set(role_inventory());
+        let worker = admin.clone();
+        std::thread::Builder::new()
+            .name("admin-operations-small-stack".into())
+            // Leave headroom below the device worker's 256 KiB for caller and platform frames.
+            .stack_size(192 * 1024)
+            .spawn(move || {
+                // Roles chains output and network changes; startup and restart initialize Wi-Fi.
+                for operation in [
+                    Operation::Startup,
+                    Operation::Roles(vec!["carlink".into(), "controller".into()]),
+                    Operation::Restart,
+                    Operation::Start,
+                ] {
+                    worker.operation(operation).unwrap();
+                }
+                assert!(worker.supervisor.lock().unwrap().is_some());
+                assert!(worker.desired.load(Ordering::Acquire));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn unprobed_options_keep_legacy_inputs_and_tick_does_not_record_roles() {
