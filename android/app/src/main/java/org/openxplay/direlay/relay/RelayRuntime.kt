@@ -708,6 +708,8 @@ class RelayRuntime(private val context: Context,
     private val miracastLifecycle = RetiringOutputPolicy<MiracastPicture>()
     @Volatile private var dlnaToken: Any? = null
     @Volatile private var miracastToken: Any? = null
+    private val dlnaStatisticsLog = WirelessStatisticsLogLimiter()
+    private val miracastStatisticsLog = WirelessStatisticsLogLimiter()
     @Volatile var dlnaStateSinceMillis: Long? = null
         private set
     @Volatile var dlnaState: CastState? = null
@@ -944,6 +946,7 @@ class RelayRuntime(private val context: Context,
         try { setup.execute { if (!closed) block() } }
         catch (_: java.util.concurrent.RejectedExecutionException) { }
     }
+    private fun wirelessLogMessage(message: String): String = wirelessLogLine(redactFailureMessage(message))
 
     private fun configureDlna() {
         if (closed) return
@@ -963,8 +966,13 @@ class RelayRuntime(private val context: Context,
         dlnaState = CastState.SEARCHING; dlnaRendererName = settings.dlnaRenderer?.name
         dlnaFailure = null; dlnaStatistics = null
         val listener = object : CastListener {
+            private var reportedState: CastState? = null
             override fun state(state: CastState, renderer: CastRenderer?) = wirelessUpdate {
                 if (dlnaToken !== token) return@wirelessUpdate
+                if (reportedState != state) {
+                    reportedState = state
+                    Log.i("OpenXPlay DLNA", wirelessLogMessage("state $state renderer=${renderer?.friendlyName ?: "-"}"))
+                }
                 if (state == CastState.ENDED) {
                     hub.removeOutput("cast")
                     dlnaLifecycle.ended(); dlnaToken = null
@@ -977,23 +985,32 @@ class RelayRuntime(private val context: Context,
                 }
             }
             override fun failure(failure: CastFailure) = wirelessUpdate {
-                if (dlnaToken === token && !dlnaLifecycle.retiring)
+                if (dlnaToken === token && !dlnaLifecycle.retiring) {
                     dlnaFailure = WirelessDisplayFailure(failure.code, redactFailureMessage(failure.detail), System.currentTimeMillis())
+                    Log.w("OpenXPlay DLNA", wirelessLogMessage("failure ${failure.code}: ${failure.detail}"))
+                }
             }
             override fun diagnostic(message: String) = wirelessUpdate {
-                if (dlnaToken === token) Log.i("OpenXPlay DLNA", redactFailureMessage(message))
+                if (dlnaToken === token) Log.i("OpenXPlay DLNA", wirelessLogMessage(message))
             }
             override fun statistics(statistics: CastStatistics) = wirelessUpdate {
-                if (dlnaToken === token && !dlnaLifecycle.retiring) dlnaStatistics = statistics
+                if (dlnaToken === token && !dlnaLifecycle.retiring) {
+                    dlnaStatistics = statistics
+                    if (dlnaStatisticsLog.allow(System.nanoTime())) Log.i("OpenXPlay DLNA", wirelessLogMessage(
+                        "stats clients=${statistics.clients} video=${statistics.videoFrames} audio=${statistics.audioFrames} " +
+                            "silent=${statistics.silentFrames} bytes=${statistics.bytesSent} dropped=${statistics.droppedFrames} " +
+                            "overflows=${statistics.overflows} renderer=${statistics.rendererState ?: "-"}"))
+                }
             }
         }
         try {
             val output = CastOutput(CastOutputConfig(plan.udn, plan.size.width, plan.size.height, fps = 30, audio = true),
                 castNetwork, listener)
-            hub.addOutput(carDisplayMemory.exclude(TranscodingOutput(output, MediaCodecPipeline.factory, deliveryCodecs = setOf(VideoCodec.H264))))
+            hub.addOutput(carDisplayMemory.exclude(output))
         } catch (failure: Exception) {
             dlnaToken = null; dlnaLifecycle.ended()
             dlnaFailure = WirelessDisplayFailure("output_failed", failureText(failure, ::redactFailureMessage), System.currentTimeMillis())
+            Log.w("OpenXPlay DLNA", wirelessLogMessage("failure output_failed: ${dlnaFailure?.detail}"))
         }
     }
 
@@ -1010,8 +1027,15 @@ class RelayRuntime(private val context: Context,
         miracastStateSinceMillis = System.currentTimeMillis()
         miracastState = MiracastState.WAITING_FOR_DISPLAY; miracastDisplay = null; miracastFailure = null
         val listener = object : MiracastListener {
+            private var reportedState: Pair<MiracastState, MiracastDisplay?>? = null
             override fun state(state: MiracastState, display: MiracastDisplay?) = wirelessUpdate {
                 if (miracastToken !== token) return@wirelessUpdate
+                val next = state to display
+                if (reportedState != next) {
+                    reportedState = next
+                    val target = display?.let { "${it.id}:${it.name}:${it.width}x${it.height}" } ?: "-"
+                    Log.i("OpenXPlay Miracast", wirelessLogMessage("state $state display=$target"))
+                }
                 if (state == MiracastState.ENDED) {
                     hub.removeOutput("miracast")
                     miracastLifecycle.ended(); miracastToken = null
@@ -1024,14 +1048,25 @@ class RelayRuntime(private val context: Context,
                 }
             }
             override fun failure(code: String, detail: String) = wirelessUpdate {
-                if (miracastToken === token && !miracastLifecycle.retiring)
+                if (miracastToken === token && !miracastLifecycle.retiring) {
                     miracastFailure = WirelessDisplayFailure(code, redactFailureMessage(detail), System.currentTimeMillis())
+                    Log.w("OpenXPlay Miracast", wirelessLogMessage("failure $code: $detail"))
+                }
+            }
+            override fun diagnostic(message: String) = wirelessUpdate {
+                if (miracastToken === token) Log.i("OpenXPlay Miracast", wirelessLogMessage(message))
+            }
+            override fun statistics(statistics: MiracastStatistics) = wirelessUpdate {
+                if (miracastToken === token && !miracastLifecycle.retiring && miracastStatisticsLog.allow(System.nanoTime()))
+                    Log.i("OpenXPlay Miracast", "stats decoded=${statistics.decodedFrames} dropped=${statistics.droppedFrames} " +
+                        "codec=${statistics.codec ?: "-"} ${statistics.width}x${statistics.height}")
             }
         }
         try { hub.addOutput(carDisplayMemory.exclude(MiracastOutput(context.applicationContext, listener, picture = checkNotNull(requested)))) }
         catch (failure: Exception) {
             miracastToken = null; miracastLifecycle.ended()
             miracastFailure = WirelessDisplayFailure("output_failed", failureText(failure, ::redactFailureMessage), System.currentTimeMillis())
+            Log.w("OpenXPlay Miracast", wirelessLogMessage("failure output_failed: ${miracastFailure?.detail}"))
         }
     }
 

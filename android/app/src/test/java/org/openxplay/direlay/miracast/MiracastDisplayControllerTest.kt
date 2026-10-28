@@ -24,9 +24,13 @@ class MiracastDisplayControllerTest {
     private val car = MiracastDisplay(2, "Car", 1920, 1080, 240, 60.0)
     private class Displays : MiracastDisplays {
         var values = emptyList<MiracastDisplay>()
+        var descriptions: List<String>? = null
         var changed: () -> Unit = {}
         var closed = false
         override fun displays() = values
+        override fun descriptions(): List<String> = descriptions ?: values.map {
+            "${it.id}:${it.name}:${it.width}x${it.height}:flags=8:presentation=true"
+        }
         override fun start(changed: () -> Unit) { this.changed = changed }
         override fun close() { closed = true; changed = {} }
         fun update(vararg values: MiracastDisplay) { this.values = values.toList(); changed() }
@@ -53,6 +57,41 @@ class MiracastDisplayControllerTest {
             }, { allowed }, listOf(DecoderSupport("avc1.64002a", true)), events,
             { capabilities += it }, { surfaces += it }, picture)
         fun poll() = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+    }
+    @Test fun displayDiagnosticsReportAllKnownDisplaysOnlyWhenTheirDescriptionsChange() {
+        val f = Fixture()
+        f.controller.start()
+        assertEquals(listOf("displays none"), f.events.diagnostics)
+        f.source.changed()
+        assertEquals(1, f.events.diagnostics.size)
+        val phone = "0:Phone:1080x2400:flags=3:presentation=false"
+        val unmarked = "5:Cast:1280x720:flags=0:presentation=false"
+        val presentation = "2:Car:1920x1080:flags=8:presentation=true"
+        val descriptions = mutableListOf(phone, unmarked)
+        f.source.descriptions = descriptions
+        f.source.changed()
+        assertEquals("displays $phone; $unmarked", f.events.diagnostics.last())
+        assertTrue(f.windows.isEmpty())
+        descriptions += presentation
+        f.source.update(car)
+        assertEquals("displays $phone; $unmarked; $presentation", f.events.diagnostics[2])
+        assertEquals("window shown on 2 1920x1080", f.events.diagnostics[3])
+        f.poll(); f.poll()
+        f.source.descriptions = descriptions.toList()
+        f.source.changed()
+        assertEquals(4, f.events.diagnostics.size)
+        f.source.descriptions = descriptions
+        f.source.changed()
+        val resized = unmarked.replace("1280x720", "1920x1080")
+        descriptions[1] = resized
+        f.source.changed()
+        assertEquals("displays $phone; $resized; $presentation", f.events.diagnostics.last())
+        assertEquals(1, f.windows.size)
+        f.source.descriptions = emptyList()
+        f.source.update()
+        assertEquals("displays none", f.events.diagnostics.last())
+        assertEquals(5, f.events.diagnostics.count { it.startsWith("displays ") })
+        f.controller.close()
     }
     @Test fun customPictureUsesDisplayDensityAndRefreshOnlyWhileItsWindowIsShowing() {
         val f = Fixture(MiracastPicture(Viewport(1920, 720), stretch = true))
@@ -120,14 +159,19 @@ class MiracastDisplayControllerTest {
         f.broken = true
         f.source.update(car)
         f.controller.start()
+        val diagnostic = "window failed on 2: IllegalStateException: window unavailable"
+        assertEquals(diagnostic, f.events.diagnostics.last())
         f.poll()
         assertEquals(listOf("window_failed"), f.events.failures)
+        assertEquals(1, f.events.diagnostics.count { it == diagnostic })
         assertTrue(f.capabilities.last().displays.isEmpty())
         f.broken = false
         f.poll()
         assertEquals(MiracastState.SHOWING, f.events.states.last().first)
+        assertEquals("window shown on 2 1920x1080", f.events.diagnostics.last())
         val first = f.windows.single()
         f.source.update(car.copy(width = 1280, height = 720, refreshHz = 50.0))
+        assertEquals("window shown on 2 1280x720", f.events.diagnostics.last())
         assertTrue(first.closed)
         assertEquals(DisplayInfo(1280, 720, 240, 50.0), f.capabilities.last().displays[ScreenId.MAIN])
         val count = f.surfaces.size
