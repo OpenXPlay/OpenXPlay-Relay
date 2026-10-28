@@ -259,6 +259,23 @@
     "https://10.42.0.1:8443/"
   ],
   "running": true,
+  "screenData": {
+    "active": 0,
+    "areas": [],
+    "builtIn": false,
+    "connected": false,
+    "detected": null,
+    "enabled": true,
+    "preference": null,
+    "records": [],
+    "savedCanvas": {
+      "densityDpi": 160,
+      "height": 720,
+      "source": "default",
+      "width": 1280
+    },
+    "switches": []
+  },
   "state": "Idle",
   "version": "0.1.6-beta.1",
   "video": {

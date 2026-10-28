@@ -47,7 +47,7 @@ pub struct HeadUnit {
     pub fullscreen: Option<bool>,
     pub fullscreen_preferred: Option<bool>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
     pub screen: Screen,
@@ -381,6 +381,32 @@ pub fn fit_canvas(mut size: Size, resolution: &str, limit: Option<u32>) -> Size 
     }
     fitted
 }
+fn significant(running: Size, desired: Size) -> bool {
+    distance(desired, running) > 0.03
+        || (desired.width as f64 / running.width as f64 - 1.).abs() > 0.10
+        || (desired.height as f64 / running.height as f64 - 1.).abs() > 0.10
+}
+fn profile_density(canvas: Size) -> u32 {
+    if canvas.width.max(canvas.height) <= 1280 && canvas.width.min(canvas.height) <= 720 {
+        160
+    } else {
+        240
+    }
+}
+pub fn merge_records(local: &[Record], built_in: &[Record]) -> Vec<Record> {
+    let mut merged: Vec<Record> = Vec::new();
+    for row in local.iter().chain(built_in) {
+        if let Some(existing) = merged.iter_mut().find(|r| {
+            r.screen == row.screen && r.size == row.size && r.fullscreen == row.fullscreen
+        }) {
+            existing.count = existing.count.saturating_add(row.count);
+            existing.last_seen = existing.last_seen.max(row.last_seen);
+        } else {
+            merged.push(row.clone());
+        }
+    }
+    merged
+}
 pub fn physical_width(canvas: Size, preset: u32) -> u32 {
     ((preset as f64 * (canvas.width as f64 / 1920.).max(1.) / 25.).ceil() as u32 * 25)
         .clamp(100, 400)
@@ -497,6 +523,7 @@ struct Target {
     disable_view_areas: bool,
     canvas: Size,
     physical: u32,
+    density: u32,
     screen: Option<Screen>,
     settings: DisplaySettings,
 }
@@ -520,51 +547,209 @@ pub(crate) struct DisplayRuntime {
     pub areas: Vec<Area>,
     pub active: usize,
     pub connected: bool,
+    pub live_head: Option<HeadUnit>,
+    live_limit: Option<u32>,
+    cleared_report: Option<HeadUnit>,
+    pub fixed_profile: Option<Screen>,
+    pub physical_override: Option<u32>,
+    requested_fixed_profile: Option<Screen>,
+    requested_physical_override: Option<u32>,
+    force_record: bool,
+    pub area_switches: std::collections::VecDeque<Value>,
     switch: SwitchDebounce,
 }
 impl DisplayRuntime {
+    pub fn head(&self) -> Option<&HeadUnit> {
+        self.live_head
+            .as_ref()
+            .filter(|_| self.connected)
+            .or(self.saved.head_unit.as_ref())
+            .or_else(|| self.fallback.as_ref().map(|(h, _)| h))
+    }
+    fn limit(&self) -> Option<u32> {
+        if self.connected {
+            self.live_limit.or(self.saved.max_macroblocks)
+        } else {
+            self.saved.max_macroblocks
+        }
+    }
+    fn automatic_canvas(&self, head: Option<&HeadUnit>) -> Size {
+        head.map(|h| {
+            let size = if self.disable_view_areas
+                && !["screen", "native"].contains(&self.saved.resolution.as_str())
+            {
+                h.viewport.unwrap_or(Size {
+                    width: h.screen.width,
+                    height: h.screen.height,
+                })
+            } else {
+                Size {
+                    width: h.screen.width,
+                    height: h.screen.height,
+                }
+            };
+            fit_canvas(size, &self.saved.resolution, self.limit())
+        })
+        .unwrap_or(self.saved.canvas)
+    }
+    fn automatic_density(&self, canvas: Size, head: Option<&HeadUnit>) -> u32 {
+        if self.saved.resolution == "native" {
+            if let Some(h) = head {
+                let capped = fit_canvas(
+                    Size {
+                        width: h.screen.width,
+                        height: h.screen.height,
+                    },
+                    "auto",
+                    self.limit(),
+                );
+                return (profile_density(capped) as f64 * canvas.width as f64 / capped.width as f64)
+                    .round()
+                    .clamp(120., 640.) as u32;
+            }
+        }
+        profile_density(canvas)
+    }
+    pub fn view_areas_enabled(&self) -> bool {
+        !self.disable_view_areas && self.fixed_profile.is_none() && self.pictures.applied.is_none()
+    }
     fn target(&self) -> Target {
         let canvas = self
             .pictures
             .applied
             .or_else(|| {
-                self.saved
-                    .head_unit
-                    .is_none()
-                    .then(|| {
-                        self.fallback.as_ref().map(|(h, _)| {
-                            fit_canvas(
-                                Size {
-                                    width: h.screen.width,
-                                    height: h.screen.height,
-                                },
-                                &self.saved.resolution,
-                                self.saved.max_macroblocks,
-                            )
-                        })
-                    })
-                    .flatten()
+                self.fixed_profile.map(|p| Size {
+                    width: p.width,
+                    height: p.height,
+                })
             })
             .unwrap_or_else(|| {
-                if self.saved.head_unit.is_none() {
+                if self.head().is_none() {
                     self.pictures
                         .automatic_canvas
-                        .unwrap_or_else(|| self.saved.planned_canvas())
+                        .unwrap_or_else(|| self.automatic_canvas(None))
                 } else {
-                    self.saved.planned_canvas()
+                    self.automatic_canvas(self.head())
                 }
             });
         Target {
-            disable_view_areas: self.disable_view_areas,
+            disable_view_areas: !self.view_areas_enabled(),
             canvas,
-            physical: physical_width(canvas, self.saved.screen_width),
-            screen: self.saved.head_unit.as_ref().map(|h| h.screen),
+            physical: self
+                .physical_override
+                .unwrap_or_else(|| physical_width(canvas, self.saved.screen_width)),
+            density: self
+                .fixed_profile
+                .map(|p| p.density_dpi)
+                .unwrap_or_else(|| self.automatic_density(canvas, self.head())),
+            screen: self
+                .head()
+                .filter(|_| self.fixed_profile.is_none())
+                .map(|h| h.screen),
             settings: {
                 let mut settings = self.saved.settings();
                 settings.frame_rate = Default::default();
                 settings
             },
         }
+    }
+    pub fn configure(&mut self, settings: &crate::settings::Settings) {
+        let fixed = (settings.display_mode == "fixed").then_some(Screen {
+            width: settings.display_width,
+            height: settings.display_height,
+            density_dpi: settings.display_density,
+        });
+        let physical = (settings.developer_active && settings.physical_width_enabled)
+            .then_some(settings.physical_width_override_mm)
+            .filter(|w| *w > 0);
+        self.requested_fixed_profile = fixed;
+        self.requested_physical_override = physical;
+    }
+    pub fn observe(&mut self, head: HeadUnit, limit: Option<u32>, now: u64) -> bool {
+        let previous = self.live_head.replace(head.clone());
+        self.live_limit = limit;
+        let suppressed = self.cleared_report.as_ref() == Some(&head);
+        if !suppressed {
+            self.cleared_report = None;
+        } else if !self.force_record {
+            return false;
+        }
+        // Record transitions even after clearing the saved screen; identical refreshes are not visits.
+        if suppressed {
+            self.saved.head_unit = previous;
+        }
+        if self.force_record {
+            self.saved.head_unit = None;
+            self.force_record = false;
+        }
+        let changed = self.saved.observe(head, limit, now);
+        if suppressed {
+            self.saved.head_unit = None;
+            self.saved.max_macroblocks = None;
+            self.saved.canvas = DisplayState::default().canvas;
+        }
+        changed
+    }
+    pub fn disconnected(&mut self) {
+        self.connected = false;
+        self.live_head = None;
+        self.live_limit = None;
+        self.cleared_report = None;
+    }
+    pub fn clear_saved(&mut self) -> std::io::Result<()> {
+        let old = self.saved.clone();
+        let old_cleared = self.cleared_report.clone();
+        self.cleared_report = self.live_head.clone().or_else(|| {
+            self.connected
+                .then(|| self.saved.head_unit.clone())
+                .flatten()
+        });
+        self.saved.head_unit = None;
+        self.saved.max_macroblocks = None;
+        self.saved.canvas = DisplayState::default().canvas;
+        if let Err(e) = self.persist() {
+            self.saved = old;
+            self.cleared_report = old_cleared;
+            return Err(e);
+        }
+        Ok(())
+    }
+    pub fn clear_records(&mut self) -> std::io::Result<()> {
+        let old = self.saved.clone();
+        self.saved.records.clear();
+        self.force_record = true;
+        for car in self.saved.cars.values_mut() {
+            car.records.clear();
+        }
+        if let Err(e) = self.persist() {
+            self.saved = old;
+            return Err(e);
+        }
+        Ok(())
+    }
+    pub fn record_switch(&mut self, index: usize, accepted: bool) {
+        if self.area_switches.len() == 32 {
+            self.area_switches.pop_front();
+        }
+        self.area_switches.push_back(json!({"time": crate::platform::wall_clock().as_millis() as u64, "index":index, "accepted":accepted}));
+        self.switch = SwitchDebounce::default();
+    }
+    /// Numeric screen data only. Receiver capability sharing is separately allowlisted by the UI.
+    pub fn admin_status(&self) -> Value {
+        let head = self.head();
+        let saved_head = self
+            .saved
+            .head_unit
+            .as_ref()
+            .or_else(|| self.fallback.as_ref().map(|(h, _)| h));
+        let canvas = self.automatic_canvas(saved_head);
+        json!({"savedCanvas":{"width":canvas.width,"height":canvas.height,"densityDpi":self.automatic_density(canvas,saved_head),
+            "source":if self.saved.head_unit.is_some() {"remembered"} else if self.fallback.is_some() {"built-in model"} else {"default"}},
+            "detected": self.saved.records.first().map(|r| r.screen),
+            "builtIn":self.fallback.is_some(), "records":self.saved.records,
+            "areas":self.areas.iter().enumerate().map(|(index,a)| json!({"index":index,"width":a.size.width,"height":a.size.height,"fullscreen":a.fullscreen,"windowed":a.windowed})).collect::<Vec<_>>(),
+            "active":self.active,"preference":head.and_then(|h| h.fullscreen_preferred),"switches":self.area_switches,
+            "enabled":self.view_areas_enabled(),"connected":self.connected})
     }
     pub fn persist(&self) -> std::io::Result<()> {
         if let Some(path) = &self.path {
@@ -573,6 +758,8 @@ impl DisplayRuntime {
         Ok(())
     }
     pub fn freeze(&mut self) {
+        self.fixed_profile = self.requested_fixed_profile;
+        self.physical_override = self.requested_physical_override;
         // The Linux output currently negotiates CEA 5 (1280x720). An explicit trial or saved
         // picture takes precedence over the legacy window/mode selection.
         let picture = self.pictures.trial.unwrap_or_else(|| {
@@ -582,7 +769,7 @@ impl DisplayRuntime {
             }))
         });
         if self.carlink_primary && picture.is_some() && self.pictures.automatic_canvas.is_none() {
-            self.pictures.automatic_canvas = Some(self.saved.planned_canvas());
+            self.pictures.automatic_canvas = Some(self.automatic_canvas(self.head()));
         }
         self.pictures.applied = self
             .carlink_primary
@@ -590,30 +777,20 @@ impl DisplayRuntime {
             .flatten()
             .map(|s| fit_canvas(s, "auto", self.saved.max_macroblocks));
         let target = self.target();
-        self.saved.canvas = target.canvas;
-        self.areas = if self.pictures.applied.is_some() {
+        if self.fixed_profile.is_none() {
+            self.saved.canvas = target.canvas;
+        }
+        self.areas = if self.pictures.applied.is_some() || target.disable_view_areas {
             plan_areas(target.canvas, None, &[])
         } else {
-            plan_areas(
-                target.canvas,
-                self.saved
-                    .head_unit
+            let records = merge_records(
+                &self.saved.records,
+                self.fallback
                     .as_ref()
-                    .or_else(|| self.fallback.as_ref().map(|(h, _)| h))
-                    .filter(|_| !self.disable_view_areas),
-                if self.disable_view_areas {
-                    &[]
-                } else {
-                    if self.saved.head_unit.is_none() {
-                        self.fallback
-                            .as_ref()
-                            .map(|(_, r)| r.as_slice())
-                            .unwrap_or(&self.saved.records)
-                    } else {
-                        &self.saved.records
-                    }
-                },
-            )
+                    .map(|(_, r)| r.as_slice())
+                    .unwrap_or(&[]),
+            );
+            plan_areas(target.canvas, self.head(), &records)
         };
         self.applied = Some(target);
         self.active = 0;
@@ -624,7 +801,14 @@ impl DisplayRuntime {
     }
     pub fn due(&mut self, now: Instant) -> bool {
         let desired = self.target();
-        if self.applied.as_ref() == Some(&desired) {
+        let insignificant = self.applied.as_ref().is_some_and(|old| {
+            old.settings == desired.settings
+                && old.screen == desired.screen
+                && old.disable_view_areas == desired.disable_view_areas
+                && self.settings_since.is_none()
+                && !significant(old.canvas, desired.canvas)
+        });
+        if self.applied.as_ref() == Some(&desired) || insignificant {
             self.pending = None;
             self.settings_since = None;
             return false;
@@ -661,7 +845,7 @@ impl DisplayRuntime {
         config.width_pixels = t.canvas.width;
         config.height_pixels = t.canvas.height;
         config.width_physical_mm = Some(t.physical);
-        config.view_areas = (!self.disable_view_areas).then(|| {
+        config.view_areas = (!t.disable_view_areas).then(|| {
             self.areas
                 .iter()
                 .map(|a| AirPlayViewArea {
@@ -686,9 +870,9 @@ impl DisplayRuntime {
         oxp_wire::Message::Json(json!({"type":"view-area","screen":0,"area":area}))
     }
     pub fn switch_due(&mut self, now: Instant) -> Option<usize> {
-        let candidate = (self.connected && !self.disable_view_areas)
+        let candidate = (self.connected && self.view_areas_enabled())
             .then_some(())
-            .and(self.saved.head_unit.as_ref())
+            .and(self.live_head.as_ref().or(self.saved.head_unit.as_ref()))
             .and_then(|h| match_area(&self.areas, h))
             .filter(|i| *i != self.active);
         self.switch.observe(candidate, now);
@@ -699,6 +883,194 @@ impl DisplayRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn merged_libraries_sum_counts_saturate_and_keep_screen_density_separate() {
+        let screen = head().screen;
+        let row = Record {
+            screen,
+            size: Size {
+                width: 1533,
+                height: 1014,
+            },
+            fullscreen: false,
+            count: u64::MAX - 1,
+            last_seen: 2,
+        };
+        let built = Record {
+            count: 4,
+            last_seen: 0,
+            ..row.clone()
+        };
+        let other = Record {
+            screen: Screen {
+                density_dpi: 160,
+                ..screen
+            },
+            ..built.clone()
+        };
+        let merged = merge_records(&[row], &[built, other]);
+        assert_eq!(merged.len(), 2);
+        assert_eq!((merged[0].count, merged[0].last_seen), (u64::MAX, 2));
+        let mut d = DisplayRuntime {
+            fallback: Some((head(), merged.clone())),
+            ..Default::default()
+        };
+        d.saved.observe(head(), None, 3);
+        d.saved.records.clear();
+        d.freeze();
+        assert!(d
+            .areas
+            .iter()
+            .any(|a| a.windowed && a.size != d.areas[0].size));
+    }
+    #[test]
+    fn disabled_areas_fit_viewport_and_refit_after_one_second_but_native_keeps_screen() {
+        let mut d = DisplayRuntime {
+            disable_view_areas: true,
+            ..Default::default()
+        };
+        d.connected = true;
+        d.observe(head(), None, 1);
+        d.freeze();
+        assert_eq!(
+            d.areas[0].size,
+            fit_canvas(head().viewport.unwrap(), "auto", None)
+        );
+        let mut jitter = head();
+        jitter.viewport.as_mut().unwrap().width += 10;
+        d.observe(jitter, None, 2);
+        assert!(!d.due(Instant::now() + Duration::from_secs(20)));
+        let mut h = head();
+        h.viewport = Some(Size {
+            width: 1800,
+            height: 720,
+        });
+        d.observe(h, None, 2);
+        let now = Instant::now();
+        assert!(!d.due(now));
+        assert!(!d.due(now + Duration::from_millis(999)));
+        assert!(d.due(now + Duration::from_secs(1)));
+        for resolution in ["native", "screen"] {
+            d.saved.resolution = resolution.into();
+            d.freeze();
+            assert_eq!(
+                d.areas[0].size,
+                fit_canvas(
+                    Size {
+                        width: head().screen.width,
+                        height: head().screen.height
+                    },
+                    resolution,
+                    None
+                )
+            );
+        }
+    }
+    #[test]
+    fn clear_during_use_keeps_declarations_history_and_ignores_identical_refresh() {
+        let mut d = DisplayRuntime {
+            connected: true,
+            ..Default::default()
+        };
+        d.saved.select_car("car-a".into());
+        d.observe(head(), Some(8192), 1);
+        d.freeze();
+        let canvas = d.areas[0].size;
+        let records = d.saved.records.clone();
+        d.clear_saved().unwrap();
+        assert!(d.saved.head_unit.is_none());
+        assert_eq!(d.saved.car_key, "car-a");
+        assert_eq!(d.saved.records, records);
+        assert_eq!(d.areas[0].size, canvas);
+        d.observe(head(), Some(8192), 2);
+        assert!(d.saved.head_unit.is_none());
+        assert_eq!(d.saved.records, records);
+        assert!(!d.due(Instant::now() + Duration::from_secs(20)));
+        let mut changed = head();
+        changed.viewport = Some(Size {
+            width: 1700,
+            height: 900,
+        });
+        d.observe(changed.clone(), Some(8192), 3);
+        assert_eq!(d.saved.head_unit, Some(changed));
+        d.clear_saved().unwrap();
+        d.disconnected();
+        d.connected = true;
+        d.observe(head(), None, 4);
+        assert!(d.saved.head_unit.is_some());
+        d.clear_records().unwrap();
+        assert!(d.saved.records.is_empty());
+        d.observe(head(), None, 5);
+        assert_eq!(d.saved.records.len(), 1);
+    }
+    #[test]
+    fn fixed_profile_applies_at_next_start_and_only_calibration_is_parked_by_master() {
+        let mut d = DisplayRuntime::default();
+        d.saved.observe(head(), None, 1);
+        d.freeze();
+        let original = d.areas[0].size;
+        let mut settings = crate::settings::Settings {
+            developer_active: false,
+            display_mode: "fixed".into(),
+            display_width: 1024,
+            display_height: 600,
+            display_density: 160,
+            physical_width_enabled: true,
+            physical_width_override_mm: 325,
+            ..Default::default()
+        };
+        d.configure(&settings);
+        assert!(!d.due(Instant::now() + Duration::from_secs(20)));
+        d.freeze();
+        assert_eq!(
+            d.areas[0].size,
+            Size {
+                width: 1024,
+                height: 600
+            }
+        );
+        assert_eq!(d.applied.as_ref().unwrap().physical, 200);
+        settings.developer_active = true;
+        d.configure(&settings);
+        assert!(!d.due(Instant::now() + Duration::from_secs(20)));
+        d.freeze();
+        let mut config = AirPlayDisplayConfig::new(1280, 720);
+        d.config(&mut config);
+        assert_eq!((config.width_pixels, config.height_pixels), (1024, 600));
+        assert_eq!(config.width_physical_mm, Some(325));
+        assert!(config.view_areas.is_none());
+        assert_eq!(d.applied.as_ref().unwrap().density, 160);
+        settings.developer_active = false;
+        d.configure(&settings);
+        d.freeze();
+        assert_eq!(
+            d.areas[0].size,
+            Size {
+                width: 1024,
+                height: 600
+            }
+        );
+        assert_eq!(d.applied.as_ref().unwrap().physical, 200);
+        settings.display_mode = "automatic".into();
+        d.configure(&settings);
+        d.freeze();
+        assert_eq!(d.areas[0].size, original);
+        for (key, value) in [
+            ("displayWidth", 321),
+            ("displayHeight", 239),
+            ("displayDensity", 641),
+            ("physicalWidthOverrideMm", 126),
+        ] {
+            let mut value_json = serde_json::to_value(&settings).unwrap();
+            value_json[key] = json!(value);
+            assert!(
+                serde_json::from_value::<crate::settings::Settings>(value_json)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn remembered_display_is_scoped_to_car_and_round_trips() {
         let mut s = DisplayState::default();
@@ -827,11 +1199,17 @@ mod tests {
         d.connected = true;
         d.freeze();
         assert_eq!(d.areas.len(), 1);
-        assert_eq!(d.areas[0].size, d.saved.planned_canvas());
+        assert_eq!(
+            d.areas[0].size,
+            fit_canvas(head().viewport.unwrap(), "auto", None)
+        );
         let mut config = AirPlayDisplayConfig::new(1280, 720);
         d.config(&mut config);
         assert!(config.view_areas.is_none());
-        assert_eq!(config.width_pixels, d.saved.planned_canvas().width);
+        assert_eq!(
+            config.width_pixels,
+            fit_canvas(head().viewport.unwrap(), "auto", None).width
+        );
         let now = Instant::now();
         assert_eq!(d.switch_due(now), None);
         assert_eq!(d.switch_due(now + Duration::from_secs(1)), None);

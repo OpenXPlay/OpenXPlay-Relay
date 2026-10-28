@@ -6,12 +6,12 @@ import { isVisible, optionLabel, type Field, type Settings } from './schema';
 import type { Status } from './api';
 import type { Language } from './i18n';
 export const pageKeys: Record<string, string[]> = {
-  output: ['output', 'wirelessDisplay', 'carlinkName', 'vehicleInformation', 'carlinkAutoReconnect', 'carlinkReconnectOnResize', 'carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'],
+  output: ['output', 'wirelessDisplay', 'carlinkName', 'vehicleInformation', 'carlinkAutoReconnect', 'carlinkReconnectOnResize'],
   vehicle: [],
   'output/plugins': ['plugins', 'pluginsEnabled'],
   tesla: ['teslaBrowser', 'teslaVirtualAddress', 'teslaPublicAddress', 'teslaMirrorAddress', 'teslaAndroidAddress'],
-  car: ['carBrand', 'carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText', 'savedHeadUnit', 'savedScreen'],
-  picture: ['carplayResolution', 'resolution', 'carplayScreenWidth', 'screenWidth', 'frameRate', 'videoCodec', 'videoStats', 'carPlayViewAreas', 'viewAreas'],
+  car: ['carBrand', 'carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText', 'savedHeadUnit', 'savedScreen', 'carPlayViewAreas', 'viewAreas'],
+  picture: ['carplayResolution', 'resolution', 'carplayScreenWidth', 'screenWidth', 'frameRate', 'videoCodec', 'videoStats', 'carlinkPictureSizes', 'carlinkPictureDefault', 'carlinkPictureTry'],
   audio: ['carBluetoothAudio', 'microphone', 'microphoneSource'],
   connection: ['iphone', 'transport'],
   'connection/network': ['networkMode', 'hotspotSsid', 'hotspotPassword', 'hotspotBand', 'wifiSsid', 'wifiPassword', 'wifiCountry', 'sharedWifiNetworks'],
@@ -19,7 +19,7 @@ export const pageKeys: Record<string, string[]> = {
   startup: ['autoStart', 'bootStart'],
   access: ['requirePairingCode', 'adminPort', 'webPort'],
   'access/public-name': ['publicNameEnabled', 'publicNameProvider', 'publicName', 'publicNameToken', 'publicNameAgreeTerms'],
-  'developer/carlink': ['carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
+  'developer/carlink': ['physicalWidthEnabled', 'physicalWidthOverrideMm', 'carlinkModel', 'carlinkHevc', 'carlinkTrace', 'carlinkLink', 'carlinkAddress', 'carlinkHeadUnit', 'carlinkLocal', 'carlinkPictureSize'],
   'developer/video': ['displayMode', 'displayWidth', 'displayHeight', 'displayDensity', 'fps'],
   'developer/connection': ['receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset'],
   'developer/identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget'],
@@ -49,7 +49,7 @@ export function normalizeRoute(hash: string): string {
   return valid.includes(route) ? route : 'settings';
 }
 export function settingsPlacement(settings: Settings) { return settings.schema.flatMap(s => s.fields).map(field => ({ field, route: fieldRoute(field.key) })); }
-export function restartsPicture(key: string): boolean { return ['carplayResolution', 'carplayScreenWidth', 'resolution', 'screenWidth', 'videoCodec', 'frameRate', 'displayMode', 'displayWidth', 'displayHeight', 'displayDensity'].includes(key); }
+export function restartsPicture(key: string): boolean { return ['carplayResolution', 'carplayScreenWidth', 'resolution', 'screenWidth', 'videoCodec', 'frameRate'].includes(key); }
 
 export const developerIcons: Record<string, string> = { diagnostics: 'info', carlink: 'car', video: 'settings', connection: 'wifi', identity: 'file-key-2', other: 'sliders-horizontal' };
 export function pageAvailable(settings: Settings, status: Status, route: string): boolean {
@@ -91,6 +91,6 @@ export function menuSummary(settings: Settings, status: Status, route: string, l
   if (route === 'settings/about') return status.version;
   if (route === 'settings/developer/carlink') return [label('carlinkHevc'), label('carlinkTrace')].filter(Boolean).join(' · ');
   if (route === 'settings/developer/connection') return [label('output'), t(v.transport === 'usb' ? 'option.transport.usb' : 'option.transport.wireless')].filter(Boolean).join(' · ');
-  if (route === 'settings/developer/video') return v.displayMode === 'custom' ? `${v.displayWidth} × ${v.displayHeight} · ${v.displayDensity} dpi` : label('displayMode');
+  if (route === 'settings/developer/video') return ['custom', 'fixed'].includes(String(v.displayMode)) ? `${v.displayWidth} × ${v.displayHeight} · ${v.displayDensity} dpi` : label('displayMode');
   return '';
 }

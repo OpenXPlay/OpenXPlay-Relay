@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
+import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRecommended, displayPresets, displayPresetsView } from './car-screen';
 import { teslaHint, teslaNotes } from './tesla';
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
 import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
@@ -109,7 +110,7 @@ function resetSession(next: SessionState) {
 }
 on(events, 'unauthorized', () => { if (session === 'ready' && !handoff) resetSession('login'); });
 // Anchor deadlines on this browser's clock; statistics are fetched only when displayed.
-async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(route === 'settings/developer/diagnostics' || route === 'settings/connection/network/interfaces' || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
+async function fetchStatus(): Promise<Status> { return anchorPairing(await api.status(['settings/developer/diagnostics', 'settings/developer/carlink', 'settings/car'].includes(route) || route === 'settings/connection/network/interfaces' || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0), Date.now() / 1000, status?.pairingDeadline ?? null); }
 function errorKey(error: unknown): string { return error instanceof ApiError ? error.key : error instanceof NetworkError ? 'error.network' : 'error.request'; }
 function shell() {
   document.documentElement.lang = language;
@@ -184,7 +185,7 @@ function renderReady() {
     stage = mountStage(document.getElementById('dashboard')!, { t, action: action => void dispatchStage(action), copy: value => void copyStage(value),
       details: () => `${menuRow('settings/car', 'menu.car', pageSummary('settings/car'), 'car')}<div class="inset-group">${fields().filter(f => f.key === 'autoStart').map(f => fieldMarkup({ ...f, labelKey: 'stage.automatic', hintKey: undefined })).join('')}</div>${addressesView(status!, true, t)}${devicesView(status!, true, t)}<div id="pairing-panel" data-preserve></div>${videoStatsView(videoStats.read(status!, videoStatsInterval(settings, status!.platform), performance.now()), t)}${status!.notices.length ? `<div class="inset-group">${status!.notices.map(n => `<p>${esc(t(n))}</p>`).join('')}</div>` : ''}`,
       bindDetails: scope => { bindCopies(scope); const auto = fields().find(f => f.key === 'autoStart'); if (auto) bindField(auto); renderPairingPanel(); syncVisibleTimer(); },
-      notice: notice => { if (notice === 'DISPLAY_CHANGED') void dispatchStage({ type: 'Step', action: 'RETRY', step: 'CARPLAY_START', label: null }); else showSettings(notice === 'CHOOSE_CAR' ? 'settings/car' : 'settings'); },
+      notice: notice => { if (notice === 'DISPLAY_CHANGED') void dispatchStage({ type: 'Step', action: 'RETRY', step: 'CARPLAY_START', label: null }); else showSettings(notice === 'TRUSTED_HTTPS' ? 'settings/access/public-name' : notice === 'CHOOSE_CAR' ? 'settings/car' : 'settings'); },
     });
     main.insertAdjacentHTML('beforeend', status!.platform === 'linux' ? `<a class="inset-group inset-row" href="#settings/vehicle" data-vehicle-tile>${t('vehicle.title')}</a>` : '');
     updateDashboard(); return;
@@ -225,11 +226,20 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="password-card"><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form><button id="logout">${t('ui.logout')}</button></section>`);
       bindPassword(); on(document.getElementById('logout')!, 'click', async () => { try { await api.logout(); resetSession('login'); } catch (e) { pageError = errorKey(e); } });
     }
-    if (route === 'settings/car' && status!.platform === 'linux') container.insertAdjacentHTML('beforeend', `<div class="inset-group"><div class="inset-row"><span>${t('car.savedScreen')} · ${esc(status!.pathInput?.car?.savedScreen ?? t('stage.noScreen'))}</span></div><button class="quiet full-width" id="clear-saved-head-unit">${t('car.clearSaved')}</button><p id="clear-saved-result" role="status"></p></div>`);
-    on(document.getElementById('clear-saved-head-unit'), 'click', async () => { if (!await confirmSheet(t('carlink.clearSavedHint'), t('car.clearSaved'), t('ui.cancel'))) return; try { await api.action('clear-saved-head-unit'); document.getElementById('clear-saved-result')!.textContent = t('ui.saved'); } catch (e) { document.getElementById('clear-saved-result')!.textContent = t(errorKey(e)); } });
+    if (route === 'settings/car' && status!.platform === 'linux') {
+      container.insertAdjacentHTML('beforeend', '<div id="car-notes"></div><div id="car-screen"></div>'); renderCarScreen();
+    }
+    if (route === 'settings/developer/video' && status!.platform === 'linux') {
+      container.insertAdjacentHTML('beforeend', displayPresetsView(t));
+      container.querySelectorAll<HTMLButtonElement>('[data-display-preset]').forEach(button => on(button, 'click', async () => {
+        const profile = displayPresets[Number(button.dataset.displayPreset)];
+        try { const response = await api.save({ displayMode: 'fixed', displayWidth: profile[0], displayHeight: profile[1], displayDensity: profile[2] }); needsRestart ||= restartRequired([], response.applied); settings = await api.settings(); render(); }
+        catch (e) { pageError = errorKey(e); }
+      }));
+    }
     if (route === 'settings/developer/diagnostics') { container.insertAdjacentHTML('beforeend', '<div id="vehicle-sample" class="inset-group"></div><div id="diagnostics" class="inset-group"></div>'); renderDiagnostics(); if (status!.platform === 'linux') disposeVehicle = mountVehicleSample(document.getElementById('vehicle-sample')!, t, errorKey); }
     if (route === 'settings/developer/connection') {
-      container.insertAdjacentHTML('beforeend', `<div class="inset-group"><button id="developer-restart">${t('home.restart')}</button><button id="forget-all-wifi">${t('net.forgetAll')}</button>${status!.platform === 'linux' ? `<button id="carlink-forget">${t('carlink.forget')}</button><button id="regenerate-code">${t('stage.regenerate')}</button>` : ''}</div>`);
+      container.insertAdjacentHTML('beforeend', `<div class="inset-group"><button id="developer-restart">${t('home.restart')}</button><button id="forget-all-wifi">${t('net.forgetAll')}</button>${status!.platform === 'linux' ? `<button id="carlink-forget">${t('carlink.forget')}</button><button id="regenerate-code" ${settings!.values.requirePairingCode && settings!.values.output !== 'carlink' ? '' : 'disabled'}>${t('stage.regenerate')}</button>` : ''}</div>`);
       on(document.getElementById('developer-restart')!, 'click', async () => { if (await confirmSheet(t('home.restartHint'), t('home.restart'), t('ui.cancel'))) void api.action('restart').then(() => tick()); });
       on(document.getElementById('forget-all-wifi')!, 'click', () => void forgetAllWifi()); on(document.getElementById('carlink-forget')!, 'click', confirmForgetCarlink);
       on(document.getElementById('regenerate-code')!, 'click', () => void api.action('regenerate-pairing-code').then(() => tick()));
@@ -237,6 +247,7 @@ function renderReady() {
     }
     if (route === 'settings/developer/carlink') { container.insertAdjacentHTML('beforeend', `<details class="inset-group"><summary>${t('carlink.connect')}</summary><div id="context-action"></div></details>`); renderCarlink(); }
     if (route === 'settings/developer/carlink' && status!.platform === 'linux') {
+      container.insertAdjacentHTML('beforeend', '<div id="view-areas"></div>'); renderCarScreen();
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="carlink-debug"><h2>${t('trace.title')}</h2><label for="trace-filter">${t('trace.filter')}</label><select id="trace-filter" data-trace-filter>${traceFilters.map((value, i) => `<option value="${value}">${t(['trace.all', 'trace.rtsp', 'trace.frames', 'trace.media', 'trace.link', 'trace.errors'][i])}</option>`).join('')}</select><p class="error" role="alert" data-trace-error></p><div data-trace-content></div></section>`);
       disposeTrace = mountTrace(document.getElementById('carlink-debug')!, t, errorKey);
     }
@@ -271,7 +282,7 @@ function updateDashboard() {
   const vehicleTile = document.querySelector<HTMLElement>('[data-vehicle-tile]');
   if (vehicleTile) vehicleTile.textContent = t(`vehicle.${(!status?.carlink?.vehicle || status.carlink.vehicle.state === 'off') ? 'off' : status?.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`);
   if (!status || !stage) { if (status && document.getElementById('context-action')) renderCarlink(); syncPinDialog(); syncVisibleTimer(); return; }
-  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: needsRestart || restartRequired(status.notices), carIncomplete: !status.pathInput?.car?.screen && !status.pathInput?.car?.savedScreen && !settings?.values.carBrand && !settings?.values.carModel }, pageError);
+  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: needsRestart || restartRequired(status.notices), carIncomplete: !!settings && Object.keys(carSelectionErrors(settings.values)).length > 0, trustedHttpsRecommended: !!settings && trustedHttpsRecommended(settings.values) }, pageError);
   syncPinDialog(); syncVisibleTimer();
 }
 function syncVisibleTimer() {
@@ -543,6 +554,28 @@ function topology(mode: Illustration): string {
   const labelTwo = t(phoneHotspot ? 'ui.hotspot' : 'ui.wifi');
   return `<figure class="topology"><svg viewBox="0 0 310 ${shared ? 136 : 94}" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="${links}" stroke-dasharray="4 4"/></g>${shared ? node('router', 155, 16) : ''}${node('smartphone', 45, y)}${node('router', 155, y)}${node('car', 265, y)}<g fill="currentColor" font-size="11" text-anchor="middle">${shared ? `<text x="211" y="23">${t('ui.wifi')}</text>` : `<text x="100" y="29">${labelOne}</text><text x="210" y="29">${labelTwo}</text>`}<text x="45" y="${y + 32}">${t('ui.iphone')}</text><text x="155" y="${y + 32}">${t('ui.relay')}</text><text x="265" y="${y + 32}">${t('ui.screen')}</text></g></svg><figcaption>${t(`ui.topology.${mode}`)}</figcaption></figure>`;
 }
+function renderCarScreen() {
+  if (!status || !settings) return;
+  const notes = document.getElementById('car-notes');
+  if (notes) patchMarkup(notes, carNotes(settings.values, t));
+  const panel = document.getElementById('car-screen'), areas = document.getElementById('view-areas');
+  if (panel) patchMarkup(panel, carScreenView(status, t));
+  if (areas) patchMarkup(areas, viewAreasView(status, t));
+  for (const scope of [panel, areas]) {
+    scope?.querySelectorAll<HTMLButtonElement>('[data-screen-action], [data-show-area], [data-screen-copy]').forEach(button => on(button, 'click', async () => {
+      button.disabled = true;
+      const feedback = scope.querySelector<HTMLElement>('[data-screen-result]');
+      try {
+        if (button.hasAttribute('data-screen-copy')) await copyStage(screenShareText(status!, settings!, language, t));
+        else if (button.dataset.showArea) await api.showViewArea(Number(button.dataset.showArea));
+        else await api.action(button.dataset.screenAction as 'clear-saved-head-unit' | 'clear-window-records');
+        if (feedback) feedback.textContent = t(button.hasAttribute('data-screen-copy') ? 'car.copied' : 'ui.saved');
+        await tick();
+      } catch (e) { if (feedback) feedback.textContent = t(errorKey(e)); }
+      finally { button.disabled = false; }
+    }));
+  }
+}
 function renderTesla() {
   if (!settings || !status) return;
   const panel = document.getElementById('tesla-notes');
@@ -565,7 +598,7 @@ function fieldMarkup(field: Field): string {
   } else {
     const object = field.type === 'object' || typeof value === 'object' && value !== null;
     const string = draft ?? (object ? JSON.stringify(value, null, 2) : String(value ?? ''));
-    control = `<label for="${id}">${label}</label><div class="input-row">${object ? `<textarea ${attr} rows="4">${esc(string)}</textarea>` : `<input ${attr} type="${field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'}" value="${esc(string)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1" inputmode="numeric"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''}>`}${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}">${icon('eye')}</button>` : ''}</div><div class="field-edit-actions" ${draft === undefined ? 'hidden' : ''}><button type="button" data-save="${esc(field.key)}">${t('net.save')}</button><button type="button" data-cancel="${esc(field.key)}">${t('ui.cancel')}</button></div>`;
+    control = `<label for="${id}">${label}</label><div class="input-row">${object ? `<textarea ${attr} rows="4">${esc(string)}</textarea>` : `<input ${attr} type="${field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'}" value="${esc(string)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1" inputmode="numeric"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${/^car(Brand|Model|Year)Text$/.test(field.key) ? 'maxlength="40"' : ''}>`}${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}">${icon('eye')}</button>` : ''}</div><div class="field-edit-actions" ${draft === undefined ? 'hidden' : ''}><button type="button" data-save="${esc(field.key)}">${t('net.save')}</button><button type="button" data-cancel="${esc(field.key)}">${t('ui.cancel')}</button></div>`;
   }
   const hint = field.key === 'teslaBrowser' ? esc(teslaHint(settings!.values, String(value), t)) : field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
   return `<div class="field" data-field="${esc(field.key)}">${control}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result" role="status">${esc(t(feedback.get(field.key) ?? ''))}</p></div>`;
@@ -799,7 +832,7 @@ function updateVisibility() {
     if (el) el.hidden = !isVisible(field, settings!.values) && !['networkRoles', 'wifiInterface', 'carlinkInterface', 'wifiCountry', 'adminHotspotPassword'].includes(field.key);
   }
   document.querySelectorAll<HTMLElement>('.settings-section').forEach(section => { section.hidden = ![...section.children].some(child => !(child as HTMLElement).hidden); });
-  renderPublicName(); renderTesla();
+  renderPublicName(); renderTesla(); renderCarScreen();
 }
 async function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
@@ -855,7 +888,7 @@ async function save(key: string) {
       if (token) { token.value = String(settings.values.publicNameToken ?? ''); token.placeholder = settings.values.publicNameTokenSet ? t('publicName.tokenSaved') : ''; }
       for (const field of fields().filter(f => f.key.startsWith('publicName'))) result(field.key, 'ui.saved');
     }
-    if (revision === item.revision) { pending.delete(key); if (['carBrand', 'carModel', 'carYear'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
+    if (revision === item.revision) { pending.delete(key); if (['carBrand', 'carModel', 'carYear', 'physicalWidthEnabled'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {
@@ -974,7 +1007,7 @@ async function tick() {
           for (const [key, item] of pending) settings.values[key] = item.value;
           if (pending.has('publicNameProvider')) publicNameDrafts.select(String(settings.values.publicNameProvider), settings.values);
           switching = null; render(); document.getElementById('network-switch')?.focus();
-        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderTesla(); renderConnections(); } }
+        } else if (!switching) { updateDashboard(); renderNetworkPanel(); renderPairingPanel(); renderDiagnostics(); renderPublicName(); renderTesla(); renderCarScreen(); renderConnections(); } }
     }
   } catch (error) { if (!(error instanceof NetworkError)) { pageError = errorKey(error); if (!status) render(); } }
   finally { polling = false; }

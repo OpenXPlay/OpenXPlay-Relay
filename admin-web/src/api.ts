@@ -80,6 +80,7 @@ export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updati
 // trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
+  screenData?: import('./car-screen').ScreenData;
   adminFeatures?: ('logs' | 'config-files' | 'update-check')[];
   pathInput?: import('./path/model').PartialInput & {
     startup?: RuntimeStartup;
@@ -155,6 +156,7 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
-  action: (name: 'start' | 'stop' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink'].includes(name)),
+  action: (name: 'start' | 'stop' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'clear-window-records' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, !['forget-wifi', 'forget-carlink', 'regenerate-pairing-code'].includes(name)),
+  showViewArea: (index: number) => request('/view-area', 'POST', { index }, false),
   phones: () => request<Phone[]>('/phones'),
 };

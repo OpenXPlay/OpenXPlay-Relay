@@ -208,6 +208,29 @@ fn admin_contract_status(state: &str) {
         facts.picture_on_car = true;
         facts.chips = vec!["1920×720".into(), "60 fps".into(), "H.265".into()];
     }
+    if state == "live-browser" {
+        let mut d = admin.input.display.lock().unwrap();
+        d.connected = true;
+        d.observe(
+            crate::display::HeadUnit {
+                screen: crate::display::Screen {
+                    width: 2401,
+                    height: 1201,
+                    density_dpi: 280,
+                },
+                viewport: Some(Size {
+                    width: 1533,
+                    height: 1014,
+                }),
+                fullscreen: Some(true),
+                fullscreen_preferred: Some(true),
+            },
+            None,
+            now - 1000,
+        );
+        d.freeze();
+        status.screen_data = Some(d.admin_status());
+    }
     status.output = settings.output.clone();
     crate::path_input::update(&facts, &settings, &mut status, now, true, true);
     let p = &status.path_input;

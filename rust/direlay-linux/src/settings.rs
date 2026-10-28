@@ -62,7 +62,16 @@ pub struct Settings {
     pub car_model: String,
     pub car_model_text: String,
     pub car_year: String,
+    pub car_year_text: String,
+    /// Developer width calibration remains parked while this master is off.
+    /// The display runtime captures effective overrides at the next CarPlay start.
     pub developer_active: bool,
+    pub display_mode: String,
+    pub display_width: u32,
+    pub display_height: u32,
+    pub display_density: u32,
+    pub physical_width_enabled: bool,
+    pub physical_width_override_mm: u32,
     pub experimental_active: bool,
     pub experimental_screen_session_isolation: bool,
     pub experimental_screen_reconnect_reset: bool,
@@ -136,7 +145,14 @@ impl Default for Settings {
             car_model: String::new(),
             car_model_text: String::new(),
             car_year: String::new(),
+            car_year_text: String::new(),
             developer_active: true,
+            display_mode: "automatic".into(),
+            display_width: 1280,
+            display_height: 720,
+            display_density: 160,
+            physical_width_enabled: false,
+            physical_width_override_mm: 0,
             experimental_active: true,
             experimental_screen_session_isolation: true,
             experimental_screen_reconnect_reset: true,
@@ -216,6 +232,7 @@ impl Settings {
             model: self.car_model.clone(),
             model_text: self.car_model_text.clone(),
             year: self.car_year.clone(),
+            year_text: self.car_year_text.clone(),
         }
         .normalized()
     }
@@ -226,6 +243,7 @@ impl Settings {
         self.car_model = c.model;
         self.car_model_text = c.model_text;
         self.car_year = c.year;
+        self.car_year_text = c.year_text;
     }
     pub fn load(dir: &Path) -> Result<Self> {
         Self::load_with_defaults(dir, &Self::default())
@@ -335,12 +353,25 @@ impl Settings {
         {
             return Err(invalid("Invalid experimentalBluetoothAddress"));
         }
+        if !["automatic", "fixed"].contains(&self.display_mode.as_str())
+            || !(320..=3840).contains(&self.display_width)
+            || !self.display_width.is_multiple_of(2)
+            || !(240..=2160).contains(&self.display_height)
+            || !self.display_height.is_multiple_of(2)
+            || !(120..=640).contains(&self.display_density)
+            || (self.physical_width_override_mm != 0
+                && (!(100..=400).contains(&self.physical_width_override_mm)
+                    || !self.physical_width_override_mm.is_multiple_of(25)))
+        {
+            return Err(invalid("error.displayProfile"));
+        }
         for text in [
             &self.car_brand,
             &self.car_brand_text,
             &self.car_model,
             &self.car_model_text,
             &self.car_year,
+            &self.car_year_text,
         ] {
             if text.chars().count() > 128 || text.chars().any(char::is_control) {
                 return Err(invalid("Invalid car selection"));
