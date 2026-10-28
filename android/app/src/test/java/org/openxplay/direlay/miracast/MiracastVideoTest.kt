@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit
 @Config(sdk = [33], application = Application::class)
 class MiracastVideoTest {
     private class Codec : MiracastCodec {
+        override val name = "fake.decoder"
         val bytes = mutableListOf<ByteArray>()
         val timestamps = mutableListOf<Long>()
         var closed = false
@@ -41,7 +42,11 @@ class MiracastVideoTest {
         val codecs = mutableListOf<Codec>()
         val texture = SurfaceTexture(0)
         val surface = Surface(texture)
-        val video = MiracastVideo(host, events, "miracast", MiracastCodec.Factory { _, _ -> Codec().also { it.render = !holdOutput; codecs += it } })
+        var creationFailure: Exception? = null
+        val video = MiracastVideo(host, events, "miracast", MiracastCodec.Factory { _, _ ->
+            creationFailure?.let { throw it }
+            Codec().also { it.render = !holdOutput; codecs += it }
+        })
         init {
             video.session(SessionState(SessionId(1), SessionPhase.ACTIVE))
             video.format(avcFormat())
@@ -65,6 +70,7 @@ class MiracastVideoTest {
             assertEquals(1L, f.events.statistics.single().decodedFrames)
             assertEquals(1L, f.events.statistics.single().droppedFrames)
             assertEquals(VideoCodec.H264, f.events.statistics.single().codec)
+            assertEquals(listOf("decoder fake.decoder video/avc 640x480"), f.events.diagnostics)
         }
     }
     @Test fun repeatedFormatsDoNotReconfigureButChangedContentAndSurfacesDo() {
@@ -96,6 +102,8 @@ class MiracastVideoTest {
             f.video.step(600)
             assertEquals(3, f.codecs.size)
             assertEquals(1, f.host.controls.size)
+            assertEquals(3, f.events.diagnostics.size)
+            assertTrue(f.events.diagnostics.all { it == "decoder fake.decoder video/avc 640x480" })
         }
     }
     @Test fun decoderFailureReleasesAndRetriesOnlyWithTheNextKeyframe() {
@@ -109,12 +117,51 @@ class MiracastVideoTest {
             f.video.step(100)
             assertTrue(first.closed)
             assertEquals(listOf("decoder_failed"), f.events.failures)
+            assertEquals("decoder failed: IllegalStateException: broken codec", f.events.diagnostics.last())
             f.video.offer(frame())
             f.video.step(200)
             assertEquals(1, f.codecs.size)
             f.video.offer(frame(true, 5))
             f.video.step(300)
             assertEquals(listOf(5L), f.codecs.last().timestamps)
+            assertEquals(1, f.events.diagnostics.count { it.startsWith("decoder failed:") })
+            assertEquals(2, f.events.diagnostics.count { it.startsWith("decoder fake.decoder ") })
+        }
+    }
+    @Test fun decoderCreationFailuresReportEachAttemptAndRecoverWithHevcDiagnostics() {
+        Fixture().use { f ->
+            f.creationFailure = IllegalArgumentException("decoder unavailable")
+            f.video.offer(frame(true))
+            f.video.step(0)
+            f.video.step(1)
+            assertTrue(f.codecs.isEmpty())
+            assertEquals(listOf("decoder failed: IllegalArgumentException: decoder unavailable"), f.events.diagnostics)
+            f.video.offer(frame(true, 2))
+            f.video.step(2)
+            assertEquals(2, f.events.diagnostics.size)
+            assertEquals(listOf("decoder_failed", "decoder_failed"), f.events.failures)
+            f.creationFailure = null
+            val format = VideoFormat.create(ScreenId.MAIN, VideoCodec.H265, hevcBytes)
+            f.video.format(format)
+            f.video.offer(VideoFrame(ScreenId.MAIN, SessionId(1), hex("00 00 00 03 26 01 80"), 3, true, 0))
+            f.video.step(3)
+            assertEquals("decoder fake.decoder video/hevc ${format.width}x${format.height}", f.events.diagnostics.last())
+            f.video.step(4)
+            assertEquals(3, f.events.diagnostics.size)
+        }
+    }
+    @Test fun decoderDiagnosticsCanReenterFromAnotherThreadWithoutHoldingTheVideoGate() {
+        Fixture().use { f ->
+            f.events.onDiagnostic = {
+                CompletableFuture.runAsync { f.video.videoSize() }.get(2, TimeUnit.SECONDS)
+            }
+            f.video.offer(frame(true))
+            f.video.step(0)
+            f.codecs.single().fail = true
+            f.video.offer(frame(pts = 2))
+            f.video.step(1)
+            assertEquals(listOf("decoder fake.decoder video/avc 640x480",
+                "decoder failed: IllegalStateException: broken codec"), f.events.diagnostics)
         }
     }
     @Test fun overflowReconfiguresAtTheNextQueuedKeyframeAndRequestsAreRateLimited() {

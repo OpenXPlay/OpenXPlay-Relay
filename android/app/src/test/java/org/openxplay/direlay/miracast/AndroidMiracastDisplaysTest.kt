@@ -42,6 +42,12 @@ class AndroidMiracastDisplaysTest {
             assertEquals(1080, display.mode.physicalHeight)
             assertEquals(60f, display.mode.refreshRate, 0f)
             assertEquals(160, DisplayMetrics().also { display.getRealMetrics(it) }.densityDpi)
+            val initial = source.descriptions()
+            assertEquals(manager.displays.size, initial.size)
+            assertTrue(initial.any { it.startsWith("0:") && it.endsWith("presentation=false") })
+            assertTrue(initial.any { it.startsWith("$ordinary:") && it.endsWith("presentation=false") })
+            assertTrue(initial.any { it.startsWith("$external:") &&
+                it.endsWith(":1920x1080:flags=${Integer.toHexString(display.flags)}:presentation=false") })
             shadowOf(display).setFlags(Display.FLAG_PRESENTATION)
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals(listOf(external), manager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).map { it.displayId })
@@ -52,11 +58,13 @@ class AndroidMiracastDisplaysTest {
             assertEquals(160, selected.densityDpi)
             assertTrue(selected.refreshHz > 0)
             assertTrue(source.displays().none { it.id == Display.DEFAULT_DISPLAY || it.id == ordinary })
+            assertTrue(source.descriptions().any { it.startsWith("$external:") && it.endsWith(":1920x1080:flags=8:presentation=true") })
             val before = changes
             ShadowDisplayManager.removeDisplay(external)
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(changes > before)
             assertNull(MiracastPolicy.display(source.displays()))
+            assertTrue(source.descriptions().none { it.startsWith("$external:") })
             source.close()
             val stopped = changes
             ShadowDisplayManager.removeDisplay(ordinary)

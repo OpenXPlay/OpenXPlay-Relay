@@ -16,6 +16,7 @@ data class MiracastStatistics(val decodedFrames: Long, val droppedFrames: Long, 
 interface MiracastListener {
     fun state(state: MiracastState, display: MiracastDisplay?) {}
     fun failure(code: String, detail: String) {}
+    fun diagnostic(message: String) {}
     fun statistics(statistics: MiracastStatistics) {}
 }
 
