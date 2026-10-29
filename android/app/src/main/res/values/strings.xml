@@ -820,9 +820,9 @@
     <string name="radio_conflict_use">Use this</string>
     <string name="radio_conflict_keep">Not now</string>
     <string name="experimental_iap_channel_when_offered">Open the iAP2 Wi-Fi channel only when the iPhone offers it</string>
-    <string name="experimental_iap_channel_when_offered_hint">Try this when an iPhone, for example on iOS 16, connects but never shows a picture. If the iPhone does not offer this channel, iAP2 stays on Bluetooth, and the first picture confirms the connection.</string>
+    <string name="experimental_iap_channel_when_offered_hint">For iPhones, for example on iOS 16, that connect but never show a picture. When the iPhone does not offer this channel, iAP2 stays on Bluetooth, and the first picture confirms the connection.</string>
     <string name="experimental_release_bluetooth">Release Bluetooth when the iPhone asks</string>
-    <string name="experimental_release_bluetooth_hint">Try this when an iPhone connects but never shows a picture. When the iPhone asks to turn off Bluetooth and no picture or Wi-Fi channel follows within 5 seconds, close the Bluetooth link and keep the CarPlay session on Wi-Fi.</string>
+    <string name="experimental_release_bluetooth_hint">For iPhones that connect but never show a picture. When the iPhone asks to turn off Bluetooth and no picture or Wi-Fi channel follows within 5 seconds, close the Bluetooth link and keep the CarPlay session on Wi-Fi.</string>
     <string name="experimental_await_iphone_reconnect">Wait for the iPhone to reconnect</string>
     <string name="experimental_await_iphone_reconnect_hint">If the iPhone disconnects before CarPlay starts, wait up to 25 seconds for it to come back before restarting. A queued restart is cancelled once a new session is running.</string>
     <string name="experimental_radio_conflict_prompt">Suggest working modes</string>

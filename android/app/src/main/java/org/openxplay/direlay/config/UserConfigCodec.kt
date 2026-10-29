@@ -54,7 +54,7 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   startupDiagnostics, networkObservationBackoff, screenSessionIsolation, screenReconnectReset,
  *   screenDeliverySerialization, iapChannelWhenOffered, releaseBluetoothOnRequest,
  *   awaitIphoneReconnect, radioConflictPrompt, stallWatchdog and sendBluetoothAddress are booleans; missing experiment keys default true
- *   except iapChannelWhenOffered, releaseBluetoothOnRequest and sendBluetoothAddress, which default false;
+ *   except sendBluetoothAddress, which defaults false;
  *   bluetoothAddress is a user-entered unicast Bluetooth address. Retired booleans are ignored.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
  * Android aliases: iphoneConnection, mfiI2cPath, mfiRemoteServer and hotspot*.

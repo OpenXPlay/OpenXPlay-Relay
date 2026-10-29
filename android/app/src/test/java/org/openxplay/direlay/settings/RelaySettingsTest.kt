@@ -774,7 +774,7 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { migrated ->
             val value = migrated.load()
             assertTrue(value.experimental.active)
-            assertEquals(11, value.experimental.optionCount)
+            assertEquals(13, value.experimental.optionCount)
             assertTrue(value.experimental.effective().keepScanning)
             assertFalse(value.experimental.sendBluetoothAddress)
             migrated.save(value.copy(experimental = value.experimental.copy(active = false, startupDiagnostics = false)))
@@ -819,9 +819,9 @@ class RelaySettingsTest {
             RelaySettingsStore(context).use { upgraded ->
                 val defaults = upgraded.load().experimental
                 assertEquals(active, defaults.active)
-                assertFalse(defaults.iapChannelWhenOffered || defaults.releaseBluetoothOnRequest)
-                assertTrue(defaults.awaitIphoneReconnect)
-                assertFalse(defaults.effective().iapChannelWhenOffered || defaults.effective().releaseBluetoothOnRequest)
+                assertTrue(defaults.iapChannelWhenOffered && defaults.releaseBluetoothOnRequest && defaults.awaitIphoneReconnect)
+                assertEquals(active, defaults.effective().iapChannelWhenOffered)
+                assertEquals(active, defaults.effective().releaseBluetoothOnRequest)
                 assertEquals(active, defaults.effective().awaitIphoneReconnect)
                 for (bits in 0..7) {
                     val choice = defaults.copy(iapChannelWhenOffered = bits and 1 != 0,

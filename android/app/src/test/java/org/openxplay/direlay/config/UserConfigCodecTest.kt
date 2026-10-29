@@ -487,10 +487,10 @@ class UserConfigCodecTest {
             val old = UserConfigCodec.decode(json.toString(), chosen.copy(experimental = ExperimentalOptions.OFF))
             assertTrue(old.errors.toString(), old.errors.isEmpty())
             assertTrue(old.ignoredKeys.isEmpty())
-            assertEquals(options.copy(iapChannelWhenOffered = false, releaseBluetoothOnRequest = false, awaitIphoneReconnect = true),
+            assertEquals(options.copy(iapChannelWhenOffered = true, releaseBluetoothOnRequest = true, awaitIphoneReconnect = true),
                 old.settings.experimental)
-            assertFalse(old.settings.experimental.effective().iapChannelWhenOffered)
-            assertFalse(old.settings.experimental.effective().releaseBluetoothOnRequest)
+            assertEquals(active, old.settings.experimental.effective().iapChannelWhenOffered)
+            assertEquals(active, old.settings.experimental.effective().releaseBluetoothOnRequest)
             assertEquals(active, old.settings.experimental.effective().awaitIphoneReconnect)
         }
     }

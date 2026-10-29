@@ -33,8 +33,7 @@ class WirelessConnectionPolicyProviderTest {
             DiRelayApplication::class.java.getDeclaredField("runtime").apply { isAccessible = true }
                 .set(application, runtime)
             val provider: WirelessConnectionPolicyProvider = application
-            assertFalse(provider.iapChannelOnlyWhenOffered || provider.releaseBluetoothOnHandoffRequest)
-            assertTrue(provider.awaitIphoneReconnect)
+            assertTrue(provider.iapChannelOnlyWhenOffered && provider.releaseBluetoothOnHandoffRequest && provider.awaitIphoneReconnect)
             for (active in listOf(false, true)) for (bits in 0..7) {
                 val options = ExperimentalOptions(active = active, iapChannelWhenOffered = bits and 1 != 0,
                     releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)

@@ -14,7 +14,7 @@ class ExperimentalOptionsTest {
     @Test fun newLaboratoryOptionsDefaultOnAndPromotedFeaturesSurviveMasterOff() {
         val defaults = ExperimentalOptions()
         assertTrue(defaults.active); assertFalse(defaults.sendBluetoothAddress)
-        assertEquals(11, defaults.optionCount)
+        assertEquals(13, defaults.optionCount)
         assertEquals(ExperimentalOptions.OFF, defaults.copy(active = false).effective())
         val disabled = selected.copy(active = false).effective()
         assertEquals(ExperimentalOptions.OFF, disabled)
@@ -76,10 +76,9 @@ class ExperimentalOptionsTest {
 
     @Test fun handoffExperimentsKeepTheirDefaultsAndRemainIndependentUnderTheMaster() {
         val defaults = ExperimentalOptions()
-        assertFalse(defaults.iapChannelWhenOffered || defaults.releaseBluetoothOnRequest)
-        assertTrue(defaults.awaitIphoneReconnect)
+        assertTrue(defaults.iapChannelWhenOffered && defaults.releaseBluetoothOnRequest && defaults.awaitIphoneReconnect)
         val names = listOf("iap_channel_when_offered", "release_bluetooth_on_request", "await_iphone_reconnect")
-        assertEquals(listOf("await_iphone_reconnect"), defaults.names().filter { it in names })
+        assertEquals(names, defaults.names().filter { it in names })
         assertFalse(ExperimentalOptions.OFF.iapChannelWhenOffered || ExperimentalOptions.OFF.releaseBluetoothOnRequest ||
             ExperimentalOptions.OFF.awaitIphoneReconnect)
         assertEquals(0, ExperimentalOptions.OFF.optionCount)
@@ -107,7 +106,7 @@ class ExperimentalOptionsTest {
             val selected = defaults.copy(radioConflictPrompt = bits and 1 != 0, stallWatchdog = bits and 2 != 0)
             val enabled = selected.effective()
             assertEquals(selected, enabled)
-            assertEquals(9 + Integer.bitCount(bits), enabled.optionCount)
+            assertEquals(11 + Integer.bitCount(bits), enabled.optionCount)
             assertEquals(names.filterIndexed { index, _ -> bits and (1 shl index) != 0 }, enabled.names().filter { it in names })
             val disabled = selected.copy(active = false).effective()
             assertFalse(disabled.radioConflictPrompt || disabled.stallWatchdog)
