@@ -35,7 +35,10 @@ import org.openxplay.direlay.ui.design.*
     homeDestination: String? = null, onHomeDestinationHandled: () -> Unit = {},
     importMaterial: (Boolean) -> Unit, removeMaterial: (Boolean) -> Unit, importPublicName: () -> Unit = {},
     openSetup: Boolean = false, openLaunch: Boolean = false, onLater: () -> Unit = {}, surfaceBlocked: Boolean = false,
-    onGuideVisible: (Boolean) -> Unit = {}) {
+    onGuideVisible: (Boolean) -> Unit = {},
+    radioConflict: org.openxplay.direlay.network.RadioConflict? = null,
+    /** Null keeps the current setup. Either answer quiets the dialog until the conflict changes or Start is pressed. */
+    onRadioConflictAnswer: (org.openxplay.direlay.network.RadioConflict, org.openxplay.direlay.network.RadioChoice?) -> Unit = { _, _ -> }) {
     val running = value.presentation.running
     val context = LocalContext.current
     val motion by sources.motion.screenState()
@@ -152,6 +155,18 @@ import org.openxplay.direlay.ui.design.*
         if (destination != null) open(destination)
         if (stepNavigation != null) onStepNavigationHandled()
     }
+    // A radio choice opens its settings page first; the editor session starts there, then takes the change.
+    var radioChoice by rememberSaveable { mutableStateOf<org.openxplay.direlay.network.RadioChoice?>(null) }
+    var radioUsb by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(radioChoice, entries.last()) {
+        val choice = radioChoice ?: return@LaunchedEffect
+        val route = radioChoiceRoute(choice)
+        if (relayPageKey(entries.last()) != relayPageKey(route)) { open(route); return@LaunchedEffect }
+        withFrameNanos { }
+        if (choice == org.openxplay.direlay.network.RadioChoice.USB) radioUsb = true
+        else settingsEditor.draft.value = radioChoiceSettings(settingsEditor.draft.value, choice)
+        radioChoice = null
+    }
     fun stepAction(action: StepAction, step: PathStep) {
         endArrival(ArrivalEnd.STEP)
         onStepAction(action, step)
@@ -240,6 +255,14 @@ import org.openxplay.direlay.ui.design.*
                 rendererPicker = false
             }
             CarlinkCodeSheet(value)
+            if (radioUsb) UsbConnectionDialog(confirm = {
+                settingsEditor.draft.value = radioChoiceSettings(settingsEditor.draft.value, org.openxplay.direlay.network.RadioChoice.USB)
+                radioUsb = false
+            }, dismiss = { radioUsb = false })
+            if (radioConflict != null && radioChoice == null && !radioUsb) RadioConflictDialog(radioConflict, choose = {
+                onRadioConflictAnswer(radioConflict, it)
+                radioChoice = it
+            }, keep = { onRadioConflictAnswer(radioConflict, null) })
             SnackbarHost(snackbar, Modifier.align(androidx.compose.ui.Alignment.BottomCenter).navigationBarsPadding().padding(16.dp)) { data ->
                 Snackbar(data, containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     contentColor = MaterialTheme.colorScheme.onSurface, actionColor = RelayGreen)

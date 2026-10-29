@@ -91,6 +91,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private val importOnly get() = intent.getBooleanExtra(EXTRA_IMPORT_IDENTITY, false) ||
         intent.getBooleanExtra(EXTRA_IMPORT_TLS, false) || intent.getBooleanExtra(EXTRA_IMPORT_PUBLIC_NAME, false)
     private var content by androidx.compose.runtime.mutableStateOf<org.openxplay.direlay.ui.HomeContent?>(null)
+    /** The runtime's radio conflict unless the user kept the current setup for it. */
+    private var radioConflict by androidx.compose.runtime.mutableStateOf<org.openxplay.direlay.network.RadioConflict?>(null)
     private val refreshStatus = object : Runnable {
         override fun run() {
             refreshNetwork()
@@ -126,6 +128,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { presentation.sources.settings.collect { settingsReady = it != null } }
                 launch { presentation.home.collect { content = it } }
+                launch { runtime.radioConflict.collect { radioConflict = it?.takeIf { conflict -> conflict != runtime.keptRadioConflict } } }
                 launch { presentation.readiness.collect { sample ->
                     if (sample != null && sample.flags == hostFlags() && shouldAutoStart(sample.automatic, hostFlags())) startCarPlay()
                 } }
@@ -139,6 +142,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     onStartStop = {
                         val path = value.path
                         bootAutoStart = false
+                        // Asking to start again reopens the choice the user kept for now.
+                        if (!path.running) { runtime.keptRadioConflict = null; radioConflict = runtime.radioConflict.value }
                         if (path.running || path.canStart)
                             work { runtime.sessionActions.action(if (path.running) "stop" else "start") }
                         refreshPresentation()
@@ -185,6 +190,13 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onGuideVisible = { visible -> guideOpen = visible; refreshPresentation() },
+                    radioConflict = radioConflict,
+                    onRadioConflictAnswer = { conflict, choice ->
+                        runtime.keptRadioConflict = conflict
+                        radioConflict = null
+                        runtime.connectionLog.event("relay", "radio_conflict_answer",
+                            "choice=${choice?.name?.lowercase() ?: "keep"} ${conflict.line()}")
+                    },
                     )
                 } }
             }

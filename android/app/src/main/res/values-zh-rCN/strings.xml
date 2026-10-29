@@ -805,4 +805,9 @@
     <string name="experimental_screen_reconnect_reset_hint">换用新的 iPhone 连接时，重新等待画面和播放确认。同一连接内重建画面保留原会话。下一次连接生效。</string>
     <string name="experimental_screen_delivery_serialization">同步画面交接</string>
     <string name="experimental_screen_delivery_serialization_hint">交接画面时保持处理顺序，避免旧数据晚到后干扰新画面。下一次连接生效。</string>
+    <string name="radio_conflict_title">这台手机不能同时开 Wi-Fi 和热点</string>
+    <string name="radio_conflict_car_wifi">这台手机打开热点时会关闭 Wi-Fi。连接车机要用此手机的 Wi-Fi，iPhone 又要连接此手机的热点，所以 CarPlay 无法启动。这台手机可以用：</string>
+    <string name="radio_conflict_hotspot">这台手机打开热点时会关闭 Wi-Fi。现在热点开着，而 iPhone 的连接方式需要 Wi-Fi，所以 CarPlay 无法启动。这台手机可以用：</string>
+    <string name="radio_conflict_use">改用此方式</string>
+    <string name="radio_conflict_keep">暂不更改</string>
 </resources>
