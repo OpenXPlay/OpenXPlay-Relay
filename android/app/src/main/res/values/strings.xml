@@ -825,4 +825,8 @@
     <string name="experimental_release_bluetooth_hint">Try this when an iPhone connects but never shows a picture. When the iPhone asks to turn off Bluetooth and no picture or Wi-Fi channel follows within 5 seconds, close the Bluetooth link and keep the CarPlay session on Wi-Fi.</string>
     <string name="experimental_await_iphone_reconnect">Wait for the iPhone to reconnect</string>
     <string name="experimental_await_iphone_reconnect_hint">If the iPhone disconnects before CarPlay starts, wait up to 25 seconds for it to come back before restarting. A queued restart is cancelled once a new session is running.</string>
+    <string name="experimental_radio_conflict_prompt">Suggest working modes</string>
+    <string name="experimental_radio_conflict_prompt_hint">On a phone that turns Wi-Fi off while its hotspot is on, ask to switch when the current mode cannot start CarPlay. Off: the conflict is only written to the log.</string>
+    <string name="experimental_stall_watchdog">Watch for stalls</string>
+    <string name="experimental_stall_watchdog_hint">Checks the relay every second and logs pauses, blocked threads and connection steps that stop moving; keeps a heartbeat for the next start and restarts a silent log recorder. Uses a little more battery.</string>
 </resources>

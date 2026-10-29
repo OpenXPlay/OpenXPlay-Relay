@@ -816,4 +816,8 @@
     <string name="experimental_release_bluetooth_hint">iPhone 连接后一直没有画面时可尝试。iPhone 要求关闭蓝牙后，5 秒内仍没有画面和 Wi-Fi 通道时，断开蓝牙连接，CarPlay 会话保留在 Wi-Fi 上。</string>
     <string name="experimental_await_iphone_reconnect">等待 iPhone 自行重连</string>
     <string name="experimental_await_iphone_reconnect_hint">iPhone 在 CarPlay 开始前断开时，先等它最多 25 秒自行重连，再重建连接；新会话建立后，取消已排队的重建。</string>
+    <string name="experimental_radio_conflict_prompt">提示可用的连接方式</string>
+    <string name="experimental_radio_conflict_prompt_hint">手机打开热点会关闭 Wi-Fi 时，如果当前方式无法启动 CarPlay，弹窗建议改用可用的方式。关闭后只写入日志。</string>
+    <string name="experimental_stall_watchdog">卡顿监测</string>
+    <string name="experimental_stall_watchdog_hint">每秒检查一次，记录暂停、线程卡住和长时间不动的连接步骤；为下次启动保留心跳，并重启停止输出的日志记录。会多耗一点电。</string>
 </resources>

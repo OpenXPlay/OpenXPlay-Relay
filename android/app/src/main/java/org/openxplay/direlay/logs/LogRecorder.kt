@@ -27,6 +27,8 @@ class LogRecorder(val store: LogSegmentStore, private val redactor: LogRedactor,
     @Volatile private var restarts = 0
     @Volatile private var gaps = 0
     @Volatile private var silences = 0
+    /** The stall-watch experiment: false never restarts a silent logcat. */
+    @Volatile var watchSilence: () -> Boolean = { true }
     @Synchronized fun start(version: String, code: Long) {
         if (running) return
         running = true
@@ -90,7 +92,7 @@ class LogRecorder(val store: LogSegmentStore, private val redactor: LogRedactor,
     /** Runs on the timer under this lock. A paused timer means a paused process, not a silent logcat. */
     private fun checkSilence() {
         val now = clock()
-        if (now - lastTimerAt > 5_000) lastLineAt = now
+        if (now - lastTimerAt > 5_000 || !runCatching { watchSilence() }.getOrDefault(false)) lastLineAt = now
         lastTimerAt = now
         val child = process ?: return
         if (now - lastLineAt < silenceLimit) return

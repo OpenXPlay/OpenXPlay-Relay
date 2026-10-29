@@ -66,8 +66,11 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             runtime.logs.start()
             connectionLog.event("relay", "recorder_start")
             networkTimeline = org.openxplay.direlay.logs.NetworkTimeline(this, connectionLog).also { it.start() }
+            val stallWatch = { runtime.settingsStore.snapshot.value?.experimental?.effective()?.stallWatchdog }
+            runtime.logs.recorder.watchSilence = { stallWatch() == true }
             val watched = org.openxplay.direlay.logs.RelayWatchdog(this, connectionLog, runtime::tickAge,
-                facts = { runtime.watchFacts() + ("visible" to (startedActivities > 0).toString()) }, pathLine = ::watchedPathLine)
+                facts = { runtime.watchFacts() + ("visible" to (startedActivities > 0).toString()) }, pathLine = ::watchedPathLine,
+                enabled = stallWatch)
             watchdog = watched.also { it.start() }
             runtime.logs.details = { "Wi-Fi with hotspot: ${runtime.radioFacts()}\n" + watched.details() }
         }

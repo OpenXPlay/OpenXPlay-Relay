@@ -69,6 +69,8 @@ class HeartbeatFile(private val file: File) {
             if (!temporary.renameTo(file)) { file.delete(); temporary.renameTo(file) }
         }
     }
+
+    fun delete() { runCatching { file.delete() } }
 }
 
 internal fun exitReasonName(reason: Int) = when (reason) {

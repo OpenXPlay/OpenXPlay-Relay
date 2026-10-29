@@ -289,6 +289,16 @@ class SettingsDraftSaverTest {
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
 
+    @Test fun diagnosticsChoicesSurviveTheDraftBundle() {
+        for (bits in 0..3) {
+            val chosen = base.copy(experimental = base.experimental.copy(radioConflictPrompt = bits and 1 != 0, stallWatchdog = bits and 2 != 0))
+            val saved = bundle(chosen)
+            assertEquals(chosen.experimental.radioConflictPrompt, saved.getBoolean("experimental.radioConflictPrompt", !chosen.experimental.radioConflictPrompt))
+            assertEquals(chosen.experimental.stallWatchdog, saved.getBoolean("experimental.stallWatchdog", !chosen.experimental.stallWatchdog))
+            assertEquals(chosen, relaySettingsSaver(base).restore(saved))
+        }
+    }
+
     @Test fun handoffChoicesSurviveParcelRoundTripAndOlderDraftsKeepTheBaseChoices() {
         for (active in listOf(false, true)) for (bits in 0..7) {
             val options = ExperimentalOptions(active = active, iapChannelWhenOffered = bits and 1 != 0,
