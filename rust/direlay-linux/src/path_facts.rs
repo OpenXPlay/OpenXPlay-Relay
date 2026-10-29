@@ -149,9 +149,18 @@ pub struct TeslaFacts {
     pub since_millis: Option<u64>,
     pub activation: Option<crate::tesla_address::Activation>,
 }
+/// WP3 publishes `usb-presence` on discovery, re-enumeration and unplug:
+/// `{ "present": true, "product": "iPhone" }` or `{ "present": false }`.
+/// Presence is independent of attempts and is not cleared by reset_phone.
+#[derive(Clone, Debug, Default)]
+pub struct UsbPresence {
+    pub present: bool,
+    pub product: Option<String>,
+}
 #[derive(Clone, Debug, Default)]
 pub struct RuntimePathFacts {
     pub iphone: IphoneFacts,
+    pub usb: UsbPresence,
     pub automatic: bool,
     pub boot_start: bool,
     pub auto_start_paused: bool,
@@ -263,6 +272,13 @@ impl RuntimePathFacts {
         monotonic: Instant,
     ) -> Option<&'static str> {
         let mut reason = None;
+        if kind == "usb-presence" {
+            self.usb.present = fields["present"].as_bool().unwrap_or(false);
+            self.usb.product = fields["product"]
+                .as_str()
+                .filter(|_| self.usb.present)
+                .map(str::to_owned);
+        }
         if kind == "stage" || kind == "iap2-stage" {
             let stage = fields["stage"].as_str().unwrap_or("");
             let waiting = stage == "WaitingForPairedIphone" && fields["unreachable"] == true;
@@ -288,8 +304,10 @@ impl RuntimePathFacts {
                 .filter(|_| !matches!(stage, "Failed" | "Stopped") || self.iphone.failure.is_none())
             {
                 // A late handoff callback must not move an active stream backwards.
-                if !(matches!(step, "JOINING" | "WIFI_SENT" | "AUTH")
-                    && matches!(self.iphone.step.as_str(), "SESSION" | "VIDEO"))
+                if !(matches!(
+                    step,
+                    "JOINING" | "WIFI_SENT" | "AUTH" | "USB_DETECT" | "USB_TRUST" | "USB_CONTROL"
+                ) && matches!(self.iphone.step.as_str(), "SESSION" | "VIDEO"))
                 {
                     self.step(step, now);
                     self.phone_trail
@@ -801,5 +819,47 @@ mod tests {
             )
             .is_some());
         assert_eq!(f.carlink.code.as_deref(), Some("auth_rejected"));
+    }
+}
+
+#[cfg(test)]
+mod usb_tests {
+    use super::*;
+    #[test]
+    fn usb_presence_survives_attempt_reset_and_unplug_clears_product() {
+        let mut facts = RuntimePathFacts::default();
+        facts.observe(
+            "usb-presence",
+            &serde_json::json!({"present":true,"product":"iPhone 16"}),
+            1,
+        );
+        facts.reset_phone();
+        assert!(facts.usb.present);
+        assert_eq!(facts.usb.product.as_deref(), Some("iPhone 16"));
+        for stage in [
+            carplay_policy::WAITING_FOR_IPHONE_USB,
+            carplay_policy::PAIRING,
+            carplay_policy::START_SESSION_SENT,
+        ] {
+            facts.observe("stage", &serde_json::json!({"stage":stage}), 2);
+            assert_eq!(
+                facts.iphone.step,
+                carplay_policy::startup_stage(stage).unwrap().0
+            );
+        }
+        facts.observe("airplay-session-active", &serde_json::json!({}), 3);
+        facts.observe(
+            "stage",
+            &serde_json::json!({"stage":carplay_policy::START_SESSION_SENT}),
+            4,
+        );
+        assert_eq!(facts.iphone.step, "SESSION");
+        facts.observe(
+            "usb-presence",
+            &serde_json::json!({"present":false,"product":"stale"}),
+            5,
+        );
+        assert!(!facts.usb.present);
+        assert_eq!(facts.usb.product, None);
     }
 }

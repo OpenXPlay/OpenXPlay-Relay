@@ -126,7 +126,7 @@ pub struct AdminHostAddress {
 }
 impl AdminHostAddress {
     pub fn new(interface: String, ipv4: String) -> Self {
-        let developer_only = ["usb", "rndis", "veth", "docker", "tun", "wg"]
+        let developer_only = ["oxpusb", "usb", "rndis", "veth", "docker", "tun", "wg"]
             .iter()
             .any(|prefix| interface.starts_with(prefix));
         Self {

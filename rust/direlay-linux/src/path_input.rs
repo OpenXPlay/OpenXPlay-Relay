@@ -41,6 +41,7 @@ pub fn build(
     identity_ready: bool,
     bluetooth_on: bool,
 ) -> Value {
+    let usb = settings.transport == "usb";
     let shared = settings.network_mode == "shared-wifi";
     let web = settings.output != "carlink";
     let carlink = settings.output != "web";
@@ -94,7 +95,7 @@ pub fn build(
         "platform":"linux", "nowMillis":now, "version":status.version,
         "startup":{"automatic":facts.automatic,"bootStart":facts.boot_start,"paused":facts.auto_start_paused,
             "arrival":{"pending":facts.arrival_until_millis.is_some(),"deadlineMillis":facts.arrival_until_millis,"remainingMillis":facts.arrival_remaining_millis}},
-        "setup":{"network":if shared {"SHARED_WIFI"} else {"PHONE_HOTSPOT"},
+        "setup":{"network":if usb {"USB"} else if shared {"SHARED_WIFI"} else {"PHONE_HOTSPOT"},
             "outputs":outputs, "summary":"", "valid":true},
         "relay":{"identity":if identity_ready {"READY"} else {"MISSING"}, "identityLabel":null,
             "permissionsGranted":0, "permissionsTotal":0, "vpnConsentNeeded":false,
@@ -118,7 +119,8 @@ pub fn build(
                 "name":tesla.url.as_ref().filter(|_| tesla_enabled), "code":tesla.failure.as_ref().filter(|_| tesla_enabled),
                 "sinceMillis":tesla.since_millis.filter(|_| tesla_enabled), "activation":tesla.activation
             }},
-        "iphone":{"pick":pick, "name":status.iphone.name, "usb":"UNKNOWN",
+        "iphone":{"pick":pick, "name":if usb {facts.usb.product.as_ref()} else {status.iphone.name.as_ref()},
+            "usb":if usb {if facts.usb.present {"HOST"} else {"DISCONNECTED"}} else {"UNKNOWN"},
             "started":status.running || waiting, "armed":phone.armed, "carWaitUntilMillis":phone.car_wait_until_millis,
             "step":phone.step, "stepSinceMillis":phone.since_millis, "stepDetail":phone.detail, "failure":failure,
             "trail":facts.phone_trail(), "runtimeIap2Frames":phone.runtime_iap2_frames},

@@ -45,6 +45,14 @@ fn admin_contract_settings() {
         .values
         .insert("experimentalBluetoothAddress".into(), "".into());
     contract_fixture("settings-carlink", &serde_json::to_value(settings).unwrap());
+    {
+        let mut settings = admin.settings.lock().unwrap();
+        settings.transport = "usb".into();
+        settings.output = "web".into();
+    }
+    let mut settings = admin.settings();
+    settings.values.insert("experimentalBluetoothAddress".into(), "".into());
+    contract_fixture("settings-usb", &serde_json::to_value(settings).unwrap());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -105,6 +113,20 @@ fn admin_contract_status(state: &str) {
             name: None,
             reason: "NoIphone".into(),
         };
+    }
+    if state.starts_with("usb-") {
+        use crate::carplay_policy::*;
+        settings.transport = "usb".into();
+        status.running = true;
+        facts.observe("usb-presence", &serde_json::json!({"present":state != "usb-waiting", "product":"iPhone 16"}), now - 3000);
+        let stage = match state { "usb-waiting" => WAITING_FOR_IPHONE_USB, "usb-trust" => PAIRING, _ => START_SESSION_SENT };
+        facts.observe_at("stage", &serde_json::json!({"stage":stage}), now - 2000, clock);
+        if state == "usb-video" {
+            facts.observe_at("airplay-session-active", &serde_json::json!({}), now - 1000, clock);
+            facts.observe_at("airplay-milestone", &serde_json::json!({"name":"first_video_received"}), now, clock);
+            facts.picture_on_car = true;
+            facts.chips = vec!["1920×720".into(), "60 fps".into(), "H.265".into()];
+        }
     }
     match state {
         "multiple-iphones" => { status.iphone.reason = "MultipleCandidates".into(); status.iphone.name = None; }
@@ -280,8 +302,12 @@ fn admin_contract_status(state: &str) {
     }
     assert_eq!(p["platform"], "linux");
     assert_eq!(p["relay"]["keepAlive"], "NOT_NEEDED");
-    assert_eq!(p["iphone"]["usb"], "UNKNOWN");
-    assert_eq!(p["live"]["pictureOnCar"], state.starts_with("live-"));
+    if state.starts_with("usb-") {
+        assert_eq!(p["setup"]["network"], "USB");
+        assert_eq!(p["iphone"]["usb"], if state == "usb-waiting" {"DISCONNECTED"} else {"HOST"});
+        assert_eq!(p["iphone"]["name"], if state == "usb-waiting" {serde_json::Value::Null} else {"iPhone 16".into()});
+    } else { assert_eq!(p["iphone"]["usb"], "UNKNOWN"); }
+    assert_eq!(p["live"]["pictureOnCar"], state.starts_with("live-") || state == "usb-video");
     match state {
         "idle" | "pairing" => assert_eq!(p["iphone"]["pick"], "NONE"),
         "multiple-iphones" => assert_eq!(p["iphone"]["pick"], "MULTIPLE"),
@@ -308,6 +334,8 @@ macro_rules! contract_states {
     ($($name:ident => $state:literal),* $(,)?) => { $(#[test] fn $name() { admin_contract_status($state); })* };
 }
 contract_states! {
+    admin_contract_usb_waiting => "usb-waiting", admin_contract_usb_trust => "usb-trust",
+    admin_contract_usb_control => "usb-control", admin_contract_usb_video => "usb-video",
     admin_contract_invalid_identity => "identity-invalid",
     admin_contract_idle => "idle", admin_contract_ready => "ready", admin_contract_pairing => "pairing",
     admin_contract_scanning => "carlink-scanning", admin_contract_pin => "carlink-pin",

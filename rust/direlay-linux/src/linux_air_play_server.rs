@@ -8,7 +8,9 @@ use carplay_airplay::*;
 use carplay_iap2::{mfi::MfiAuthenticator, DuplexStream, Receive};
 use std::{
     io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket},
+    net::{
+        IpAddr, Ipv4Addr, Shutdown, SocketAddr, SocketAddrV6, TcpListener, TcpStream, UdpSocket,
+    },
     os::fd::AsRawFd,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -108,18 +110,86 @@ fn configure_peer_liveness(socket: &TcpStream) -> std::io::Result<()> {
         Ok(())
     }
 }
+/// Socket binding and routing scope for the iPhone-facing interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BindAddress {
+    pub ip: IpAddr,
+    pub scope_id: u32,
+}
+impl BindAddress {
+    pub const fn new(ip: IpAddr, scope_id: u32) -> Self {
+        Self { ip, scope_id }
+    }
+    pub fn socket_addr(self, port: u16) -> SocketAddr {
+        match self.ip {
+            IpAddr::V4(ip) => SocketAddr::new(ip.into(), port),
+            IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, self.scope_id)),
+        }
+    }
+    fn scope_peer(self, peer: SocketAddr) -> SocketAddr {
+        match peer {
+            SocketAddr::V6(mut address) => {
+                if address.scope_id() == 0 {
+                    address.set_scope_id(self.scope_id);
+                }
+                SocketAddr::V6(address)
+            }
+            address => address,
+        }
+    }
+}
+impl From<IpAddr> for BindAddress {
+    fn from(ip: IpAddr) -> Self {
+        Self::new(ip, 0)
+    }
+}
+impl From<Ipv4Addr> for BindAddress {
+    fn from(ip: Ipv4Addr) -> Self {
+        Self::new(ip.into(), 0)
+    }
+}
+
+/// All local IPs, including the scoped IPv6 address used by the wired link.
+fn host_ip_addresses() -> Result<Vec<IpAddr>> {
+    let mut head = std::ptr::null_mut();
+    if unsafe { libc::getifaddrs(&mut head) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut ips = Vec::new();
+    let mut row = head;
+    while !row.is_null() {
+        let address = unsafe { (*row).ifa_addr };
+        if !address.is_null() {
+            match unsafe { (*address).sa_family as i32 } {
+                libc::AF_INET => ips.push(IpAddr::V4(Ipv4Addr::from(unsafe {
+                    (*(address as *const libc::sockaddr_in))
+                        .sin_addr
+                        .s_addr
+                        .to_ne_bytes()
+                }))),
+                libc::AF_INET6 => ips.push(IpAddr::V6(std::net::Ipv6Addr::from(unsafe {
+                    (*(address as *const libc::sockaddr_in6)).sin6_addr.s6_addr
+                }))),
+                _ => {}
+            }
+        }
+        row = unsafe { (*row).ifa_next };
+    }
+    unsafe { libc::freeifaddrs(head) };
+    Ok(ips)
+}
 pub struct LinuxStreamTransport {
-    bind_address: IpAddr,
+    bind_address: BindAddress,
     peer: Option<IpAddr>,
 }
 impl LinuxStreamTransport {
-    pub fn new(bind_address: IpAddr) -> Self {
+    pub fn new(bind_address: BindAddress) -> Self {
         Self {
             bind_address,
             peer: None,
         }
     }
-    pub fn for_peer(bind_address: IpAddr, peer: IpAddr) -> Self {
+    pub fn for_peer(bind_address: BindAddress, peer: IpAddr) -> Self {
         Self {
             bind_address,
             peer: Some(peer),
@@ -162,6 +232,7 @@ impl StreamListener for TcpAcceptor {
 struct UdpTransport {
     socket: UdpSocket,
     peer: SocketAddr,
+    bind_address: BindAddress,
     read: Mutex<()>,
     closed: AtomicBool,
 }
@@ -205,7 +276,7 @@ impl DatagramTransport for UdpTransport {
         if !self.peer.ip().is_unspecified() && peer.ip() != self.peer.ip() {
             return Err(std::io::Error::other("Unexpected datagram peer"));
         }
-        self.socket.send_to(b, peer)?;
+        self.socket.send_to(b, self.bind_address.scope_peer(peer))?;
         Ok(())
     }
     fn recv_from(&self, max: usize, t: Duration) -> Result<Option<(Vec<u8>, SocketAddr)>> {
@@ -245,7 +316,7 @@ impl DatagramTransport for UdpTransport {
 }
 impl StreamTransport for LinuxStreamTransport {
     fn listen(&self, peer: IpAddr) -> Result<Arc<dyn StreamListener>> {
-        let listener = TcpListener::bind((self.bind_address, 0))?;
+        let listener = TcpListener::bind(self.bind_address.socket_addr(0))?;
         listener.set_nonblocking(true)?;
         Ok(Arc::new(TcpAcceptor {
             listener,
@@ -255,8 +326,11 @@ impl StreamTransport for LinuxStreamTransport {
     }
     fn bind_datagram(&self, peer: SocketAddr) -> Result<Arc<dyn DatagramTransport>> {
         Ok(Arc::new(UdpTransport {
-            socket: UdpSocket::bind((self.bind_address, 0))?,
-            peer: SocketAddr::new(self.peer.unwrap_or(peer.ip()), peer.port()),
+            socket: UdpSocket::bind(self.bind_address.socket_addr(0))?,
+            peer: self
+                .bind_address
+                .scope_peer(SocketAddr::new(self.peer.unwrap_or(peer.ip()), peer.port())),
+            bind_address: self.bind_address,
             read: Mutex::new(()),
             closed: AtomicBool::new(false),
         }))
@@ -273,7 +347,7 @@ struct ServerState {
     socket: Option<TcpListener>,
 }
 pub struct LinuxAirPlayServer {
-    address: Ipv4Addr,
+    address: BindAddress,
     state: Arc<Mutex<ServerState>>,
     identity: Arc<AirPlayIdentity>,
     pairings: Arc<dyn PairingStore>,
@@ -289,7 +363,7 @@ pub struct LinuxAirPlayServer {
 impl LinuxAirPlayServer {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        address: Ipv4Addr,
+        address: BindAddress,
         config: AirPlayConfig,
         identity: Arc<AirPlayIdentity>,
         pairings: Arc<dyn PairingStore>,
@@ -333,7 +407,7 @@ impl LinuxAirPlayServer {
         }
         let selected = Mutex::new(None);
         AirPlayPortSelector::select(state.config.port, &|port| {
-            let socket = TcpListener::bind((self.address, port))?;
+            let socket = TcpListener::bind(self.address.socket_addr(port))?;
             let port = socket.local_addr()?.port();
             *selected.lock().unwrap() = Some(socket);
             Ok(port)
@@ -363,10 +437,7 @@ impl LinuxAirPlayServer {
                         Ok((tcp, peer)) => {
                             // Local probes must not replace the phone's active session.
                             if peer.ip().is_loopback()
-                                || crate::linux_hotspot::interface_addresses()
-                                    .unwrap_or_default()
-                                    .iter()
-                                    .any(|(_, a, _)| IpAddr::V4(*a) == peer.ip())
+                                || host_ip_addresses().unwrap_or_default().contains(&peer.ip())
                             {
                                 let _ = tcp.shutdown(Shutdown::Both);
                                 continue;
@@ -502,5 +573,67 @@ impl StreamTransport for PeerTransport {
     fn bind_datagram(&self, peer: SocketAddr) -> Result<Arc<dyn DatagramTransport>> {
         self.base
             .bind_datagram(SocketAddr::new(self.peer, peer.port()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ipv4_and_ipv6_listen_accept_and_datagram() {
+        for ip in ["127.0.0.1", "::1"].map(|s| s.parse::<IpAddr>().unwrap()) {
+            let transport = LinuxStreamTransport::new(BindAddress::new(ip, 0));
+            let listener = transport.listen(ip).unwrap();
+            let mut client =
+                TcpStream::connect(SocketAddr::new(ip, listener.port().unwrap())).unwrap();
+            client.write_all(b"stream").unwrap();
+            let accepted = listener.accept(Duration::from_secs(2)).unwrap().unwrap();
+            assert_eq!(
+                accepted.recv(10, Duration::from_secs(1)).unwrap(),
+                Receive::Data(b"stream".to_vec())
+            );
+            accepted.close().unwrap();
+            listener.close().unwrap();
+            let peer = UdpSocket::bind(SocketAddr::new(ip, 0)).unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let datagram = transport.bind_datagram(peer.local_addr().unwrap()).unwrap();
+            peer.send_to(b"in", SocketAddr::new(ip, datagram.local_port().unwrap()))
+                .unwrap();
+            assert_eq!(
+                datagram.recv(10, Duration::from_secs(1)).unwrap(),
+                Receive::Data(b"in".to_vec())
+            );
+            datagram.send(b"out").unwrap();
+            let mut bytes = [0; 10];
+            assert_eq!(peer.recv_from(&mut bytes).unwrap().0, 3);
+            assert_eq!(&bytes[..3], b"out");
+            datagram.close().unwrap();
+        }
+    }
+    #[test]
+    fn link_local_scope_is_preserved_for_bind_and_peer_routing() {
+        let address = BindAddress::new("fe80::2".parse().unwrap(), 42);
+        assert_eq!(
+            address.socket_addr(7000),
+            "[fe80::2%42]:7000".parse().unwrap()
+        );
+        assert_eq!(
+            address.scope_peer("[fe80::1]:1234".parse().unwrap()),
+            "[fe80::1%42]:1234".parse().unwrap()
+        );
+        assert_eq!(
+            address.scope_peer("[fe80::1%7]:1234".parse().unwrap()),
+            "[fe80::1%7]:1234".parse().unwrap()
+        );
+        assert_eq!(
+            BindAddress::from(Ipv4Addr::LOCALHOST).socket_addr(7000),
+            "127.0.0.1:7000".parse().unwrap()
+        );
+    }
+    #[test]
+    fn own_addresses_include_ipv6_loopback() {
+        let addresses = host_ip_addresses().unwrap();
+        assert!(addresses.contains(&"127.0.0.1".parse().unwrap()));
+        assert!(addresses.contains(&"::1".parse().unwrap()));
     }
 }

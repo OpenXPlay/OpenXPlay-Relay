@@ -8,5 +8,5 @@ export function needsUsbConfirmation(platform: string | undefined, before: Value
   return platform === 'android' && before !== 'usb' && after === 'usb';
 }
 export function usbTransportHint(platform: string | undefined, transport: Value): string | undefined {
-  return platform === 'android' && transport === 'usb' ? 'hint.option.transport.usb.android' : undefined;
+  return transport === 'usb' && (platform === 'android' || platform === 'linux') ? `hint.option.transport.usb.${platform}` : undefined;
 }

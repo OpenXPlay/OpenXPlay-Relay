@@ -39,6 +39,7 @@ pub struct Settings {
     pub hotspot_channel: u8,
     pub hotspot_band: String,
     pub hotspot_security: String,
+    pub transport: String,
     pub iphone: Option<String>,
     pub rfcomm_channel: Option<u8>,
     pub receiver_port: u16,
@@ -129,6 +130,7 @@ impl Default for Settings {
             hotspot_channel: 0,
             hotspot_band: "auto".into(),
             hotspot_security: "wpa2".into(),
+            transport: "wireless".into(),
             iphone: None,
             rfcomm_channel: None,
             receiver_port: 8443,
@@ -355,6 +357,9 @@ impl Settings {
     }
     pub fn validate(&self) -> Result<()> {
         let invalid = |s: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, s);
+        if !["wireless", "usb"].contains(&self.transport.as_str()) {
+            return Err(invalid("Invalid transport (wireless or usb)"));
+        }
         if crate::carplay_policy::frame_rate_setting(&self.frame_rate).is_none() {
             return Err(invalid("Invalid frameRate"));
         }

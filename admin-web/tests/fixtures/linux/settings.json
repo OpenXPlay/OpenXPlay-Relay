@@ -310,9 +310,30 @@
           }
         },
         {
+          "key": "transport",
+          "labelKey": "field.transport",
+          "options": [
+            {
+              "labelKey": "option.transport.wireless",
+              "value": "wireless"
+            },
+            {
+              "labelKey": "option.transport.usb",
+              "value": "usb"
+            }
+          ],
+          "type": "choice"
+        },
+        {
           "key": "iphone",
           "labelKey": "field.iphone",
-          "type": "phone"
+          "type": "phone",
+          "visibleWhen": {
+            "equals": [
+              "wireless"
+            ],
+            "key": "transport"
+          }
         },
         {
           "key": "wifiInterface",
@@ -328,7 +349,13 @@
           "labelKey": "field.rfcommChannel",
           "max": 30.0,
           "min": 1.0,
-          "type": "number"
+          "type": "number",
+          "visibleWhen": {
+            "equals": [
+              "wireless"
+            ],
+            "key": "transport"
+          }
         },
         {
           "key": "requirePairingCode",
@@ -1276,6 +1303,7 @@
     "teslaMirrorAddress": "100.88.0.1",
     "teslaPublicAddress": "169.254.88.1",
     "teslaVirtualAddress": "169.254.88.1",
+    "transport": "wireless",
     "vehicleInformation": false,
     "videoCodec": "auto",
     "videoStats": "off",

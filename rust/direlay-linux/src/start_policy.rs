@@ -28,6 +28,9 @@ impl RetryBudget {
         ) {
             return false;
         }
+        if code == "iphone_unplugged" {
+            return true;
+        }
         self.failures = self.failures.saturating_add(1);
         self.failures <= MAX_STARTUP_RETRIES
     }

@@ -4,6 +4,9 @@
 
 #[cfg(test)]
 use crate::host_backends::shared_network;
+#[cfg(test)]
+use crate::linux_receiver::SessionListener;
+use crate::linux_receiver::{build_receiver, ReceiverSetup};
 use crate::Result;
 use crate::*;
 use carplay_airplay::*;
@@ -430,7 +433,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
     }
 }
 /// The AirPlay receiver the Linux relay declares to the iPhone, for a session of (fps, HEVC).
-fn air_play_config(
+pub(crate) fn air_play_config(
     device_id: String,
     bt_mac: String,
     session: (u32, bool),
@@ -455,7 +458,7 @@ fn air_play_config(
     config.oem_label = crate::branding::OEM_ICON_LABEL.into();
     config
 }
-fn identification(
+pub(crate) fn identification(
     identity: &AirPlayIdentity,
     bt: &str,
     ssid: &str,
@@ -619,82 +622,6 @@ impl LinuxNetwork {
         )
     }
 }
-struct SessionListener {
-    input: Option<Arc<DiPlayInput>>,
-    callbacks: NetworkCallbacks,
-    closed: Arc<AtomicBool>,
-    events: Arc<JsonEvents>,
-    active: Mutex<Vec<Weak<AirPlaySession>>>,
-    watchdog: Arc<Mutex<Option<carplay_airplay::first_tcp_watchdog::FirstTcpWatchdog>>>,
-}
-impl AirPlaySessionListener for SessionListener {
-    fn on_tcp_accepted(&self, event: AirPlayTcpAccepted) {
-        if let Some(w) = self.watchdog.lock().unwrap().as_mut() {
-            w.accepted(&event, std::time::Instant::now());
-        }
-    }
-    fn on_host_ui_requested(&self, _: &AirPlaySession) {
-        if !self.closed.load(Ordering::Acquire) {
-            if let Some(input) = &self.input {
-                input.host_ui_requested();
-            }
-        }
-    }
-    fn on_startup_milestone(&self, _: &AirPlaySession, name: &str) {
-        if !self.closed.load(Ordering::Acquire) {
-            self.events.startup_milestone(name);
-        }
-    }
-    fn on_video_frame_rendered(&self, _: &AirPlaySession) {
-        if !self.closed.load(Ordering::Acquire) {
-            self.events.startup_milestone("first_video_rendered");
-        }
-    }
-    fn on_session_active(&self, s: Arc<AirPlaySession>) {
-        if !self.closed.load(Ordering::Acquire) {
-            if let Some(w) = self.watchdog.lock().unwrap().as_mut() {
-                if !w.session_established() {
-                    return;
-                }
-            }
-            self.active.lock().unwrap().push(Arc::downgrade(&s));
-            if let Some(input) = &self.input {
-                input.session_context(true);
-            }
-            self.events
-                .emit("airplay-session-active", &serde_json::json!({}));
-            (self.callbacks.on_air_play)()
-        }
-    }
-    fn on_session_ended(&self, s: Arc<AirPlaySession>) {
-        let mut active = self.active.lock().unwrap();
-        let before = active.len();
-        active.retain(|w| w.upgrade().is_some_and(|x| !Arc::ptr_eq(&x, &s)));
-        if before > 0 && active.is_empty() {
-            if let Some(input) = &self.input {
-                input.session_context(false);
-            }
-        }
-        if before > 0 && active.is_empty() && !self.closed.load(Ordering::Acquire) {
-            (self.callbacks.on_failure)(std::io::Error::other("AirPlay session ended"));
-        }
-    }
-    fn on_transport_error(&self, s: &str) {
-        if !self.closed.load(Ordering::Acquire) {
-            (self.callbacks.on_failure)(std::io::Error::other(s));
-        }
-    }
-    fn on_command(&self, _: &AirPlaySession, kind: &str, params: &BplistValue) {
-        if let Some(input) = &self.input {
-            input.airplay_context(kind, params);
-        }
-        self.events
-            .log(&format!("airplay command type={kind} params={params:?}"))
-    }
-    fn on_debug_log(&self, s: &str) {
-        self.events.log(s)
-    }
-}
 struct TunnelHandler {
     input: Option<Arc<DiPlayInput>>,
     closed: Arc<AtomicBool>,
@@ -809,20 +736,6 @@ impl NetworkAttachment for LinuxNetwork {
             .info
             .host_address
             .ok_or_else(|| std::io::Error::other("Hotspot IPv4 unavailable"))?;
-        let transport: Arc<dyn StreamTransport> =
-            Arc::new(LinuxStreamTransport::new(address.into()));
-        let media = Arc::new(CarPlayMediaEngine::with_screen_session_policy(
-            self.sink.clone(),
-            transport.clone(),
-            true,
-            crate::carplay_policy::screen_session_policy(
-                &self
-                    .input
-                    .as_ref()
-                    .map(|(input, _, _)| input.connection_settings())
-                    .unwrap_or_default(),
-            ),
-        ));
         let endpoint = Arc::new(Mutex::new(None));
         let handler = Arc::new(TunnelHandler {
             input: self.input.as_ref().map(|(i, _, _)| i.clone()),
@@ -841,47 +754,21 @@ impl NetworkAttachment for LinuxNetwork {
             ),
             endpoint: endpoint.clone(),
         });
-        media.set_iap_tunnel_handler(Some(handler.clone()))?;
-        let listener = Arc::new(SessionListener {
-            input: self.input.as_ref().map(|(i, _, _)| i.clone()),
+        let server = build_receiver(ReceiverSetup {
+            address: address.into(),
+            config: self.config.clone(),
+            identity: self.identity.clone(),
+            pairings: self.pairings.clone(),
+            mfi: self.mfi.clone(),
+            sink: self.sink.clone(),
+            events: self.events.clone(),
             callbacks: self.callbacks.clone(),
             closed: self.closed.clone(),
-            events: self.events.clone(),
-            active: Mutex::new(Vec::new()),
+            input: self.input.clone(),
             watchdog: self.watchdog.clone(),
-        });
-        let mut server = LinuxAirPlayServer::new(
-            address,
-            self.config.clone(),
-            self.identity.clone(),
-            self.pairings.clone(),
-            self.mfi.clone(),
-            media,
-            listener,
-            transport,
-        );
-        if let Some((input, sink, events)) = &self.input {
-            let (input, sink, events) = (input.clone(), sink.clone(), events.clone());
-            server = server.with_media_factory(Arc::new(move |control, transport| {
-                let bridge = Arc::new(
-                    StreamBridgeSink::new(input.clone(), sink.clone(), control, events.clone())
-                        .with_arrival_clock(Arc::new(|| oxp_core::monotonic_nanos() as u64)),
-                );
-                let engine = Arc::new(CarPlayMediaEngine::with_screen_session_policy(
-                    bridge,
-                    transport,
-                    true,
-                    crate::carplay_policy::screen_session_policy(&input.connection_settings()),
-                ));
-                let _ = engine.set_iap_tunnel_handler(Some(handler.clone()));
-                engine
-            }));
-        }
-        let server = Arc::new(server);
-        *self.watchdog.lock().unwrap() = Some(
-            carplay_airplay::first_tcp_watchdog::FirstTcpWatchdog::new(server.listener_identity())
-                .with_session_timeout(Duration::from_secs(45)),
-        );
+            tunnel: Some(handler),
+            current: None,
+        })?;
         server.start()?;
         let c = server.config();
         let e = Iap2WirelessCarPlayEndpoint {
@@ -1041,6 +928,7 @@ mod network_tests {
             carplay_airplay::first_tcp_watchdog::FirstTcpWatchdog::new(identity.clone());
         watch.start_session_sent(now);
         let listener = SessionListener {
+            current: None,
             input: None,
             callbacks: NetworkCallbacks {
                 on_air_play: Arc::new(|| {}),
