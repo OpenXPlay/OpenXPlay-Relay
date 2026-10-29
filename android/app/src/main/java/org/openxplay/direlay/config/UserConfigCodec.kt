@@ -53,7 +53,7 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  * - experimental: version=2; active, remotePlaybackProof, cancelRecoveredRetries, startupStatus,
  *   startupDiagnostics, networkObservationBackoff, screenSessionIsolation, screenReconnectReset,
  *   screenDeliverySerialization, iapChannelWhenOffered, releaseBluetoothOnRequest,
- *   awaitIphoneReconnect and sendBluetoothAddress are booleans; missing experiment keys default true
+ *   awaitIphoneReconnect, radioConflictPrompt, stallWatchdog and sendBluetoothAddress are booleans; missing experiment keys default true
  *   except iapChannelWhenOffered, releaseBluetoothOnRequest and sendBluetoothAddress, which default false;
  *   bluetoothAddress is a user-entered unicast Bluetooth address. Retired booleans are ignored.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
@@ -183,6 +183,8 @@ object UserConfigCodec {
         .put("iapChannelWhenOffered", e.iapChannelWhenOffered)
         .put("releaseBluetoothOnRequest", e.releaseBluetoothOnRequest)
         .put("awaitIphoneReconnect", e.awaitIphoneReconnect)
+        .put("radioConflictPrompt", e.radioConflictPrompt)
+        .put("stallWatchdog", e.stallWatchdog)
         .put("sendBluetoothAddress", e.sendBluetoothAddress)
         .put("bluetoothAddress", e.bluetoothAddress)
 
@@ -324,6 +326,8 @@ object UserConfigCodec {
                             "iapChannelWhenOffered" -> e.copy(iapChannelWhenOffered = objectValue.bool(field))
                             "releaseBluetoothOnRequest" -> e.copy(releaseBluetoothOnRequest = objectValue.bool(field))
                             "awaitIphoneReconnect" -> e.copy(awaitIphoneReconnect = objectValue.bool(field))
+                            "radioConflictPrompt" -> e.copy(radioConflictPrompt = objectValue.bool(field))
+                            "stallWatchdog" -> e.copy(stallWatchdog = objectValue.bool(field))
                             "rememberSubscription" -> { objectValue.bool(field); e }
                             "keepScanning" -> { objectValue.bool(field); e }
                             "recordAdvertisements" -> { objectValue.bool(field); e }

@@ -92,8 +92,10 @@ class RelayRuntime(private val context: Context,
         org.openxplay.direlay.network.platformStaApConcurrency(context), radioObservations.read(), save = radioObservations::write)
     val radioConcurrency get() = radios.concurrency
     private val conflict = MutableStateFlow<org.openxplay.direlay.network.RadioConflict?>(null)
-    /** The setup needs Wi-Fi and the hotspot together on a phone that keeps only one of them. */
+    /** The setup needs Wi-Fi and the hotspot together on a phone that keeps only one of them; null while its prompt is off. */
     val radioConflict = conflict.asStateFlow()
+    /** Detected whether or not the prompt shows, so the log always has it. */
+    @Volatile private var detectedConflict: org.openxplay.direlay.network.RadioConflict? = null
     /** The conflict the user chose to keep; a manual start clears it so the choice is offered again. */
     @Volatile var keptRadioConflict: org.openxplay.direlay.network.RadioConflict? = null
     @Volatile private var lastTickAt = android.os.SystemClock.elapsedRealtime()
@@ -783,7 +785,8 @@ class RelayRuntime(private val context: Context,
     private val sessionTick = setup.scheduleWithFixedDelay({
         lastTickAt = android.os.SystemClock.elapsedRealtime()
         refreshNetworkReadings()
-        observeRadios()
+        // Diagnostics only: a failure here must never cancel the tick.
+        runCatching { observeRadios() }.onFailure { Log.w("OpenXPlay Relay", "Radio observation failed", it) }
         autoStartSessions.refresh()
         refreshTeslaAddress()
         sessionController.observeNetworkSession(autoStartSessions.tracker.running,
@@ -802,11 +805,14 @@ class RelayRuntime(private val context: Context,
         val settings = settingsStore.snapshot.value ?: return
         val next = org.openxplay.direlay.network.radioConflict(radios.concurrency, settingsStore.wireless(settings),
             settings.wirelessNetwork.choice, settings.carlinkOutput || settings.miracastOutput, readings)
-        if (next == conflict.value) return
-        conflict.value = next
-        if (next == null) connectionLog.event("relay", "radio_conflict_cleared")
-        else connectionLog.event("relay", "radio_conflict", "${next.line()} network=${settings.wirelessNetwork.choice.name.lowercase()} " +
-            "wireless=${settingsStore.wireless(settings)} carlink=${settings.carlinkOutput} miracast=${settings.miracastOutput}")
+        val prompt = settings.experimental.effective().radioConflictPrompt
+        if (next != detectedConflict) {
+            detectedConflict = next
+            if (next == null) connectionLog.event("relay", "radio_conflict_cleared")
+            else connectionLog.event("relay", "radio_conflict", "${next.line()} network=${settings.wirelessNetwork.choice.name.lowercase()} " +
+                "wireless=${settingsStore.wireless(settings)} carlink=${settings.carlinkOutput} miracast=${settings.miracastOutput} prompt=$prompt")
+        }
+        conflict.value = next.takeIf { prompt }
     }
     /** "platform=false observed=exclusive@2026-10-29T09:05:30Z effective=exclusive" */
     fun radioFacts(): String = "platform=${radios.platform ?: "unknown"} observed=" +
@@ -818,7 +824,7 @@ class RelayRuntime(private val context: Context,
         "start_pending" to startRequest.pending.toString(),
         "waits" to sessionController.waitSummary.ifEmpty { "none" },
         "radios" to radios.concurrency.name.lowercase(),
-        "conflict" to (conflict.value?.kind?.name?.lowercase() ?: "none"),
+        "conflict" to (detectedConflict?.kind?.name?.lowercase() ?: "none"),
         "carlink" to carlinkState,
         "tick_age" to tickAge().toString())
 

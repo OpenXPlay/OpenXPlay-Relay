@@ -65,12 +65,14 @@ class ProcessStallDetector(private val threshold: Long = 5_000) {
  * Its own thread, never the runtime executor: logs process pauses and runtime or main-thread blocks, reports a connection
  * path that stops changing, keeps a heartbeat file and tells, at start, how the previous process ended.
  * The lambdas read volatile state only, except [pathLine], which runs on a separate sampler thread.
+ * [enabled] is the stall-watch experiment (null until settings load); while it is off only the start report runs.
  */
 class RelayWatchdog(private val context: Context, private val log: ConnectionLog, private val tickAge: () -> Long?,
-    private val facts: () -> Map<String, String>, private val pathLine: () -> String?) : AutoCloseable {
+    private val facts: () -> Map<String, String>, private val pathLine: () -> String?,
+    private val enabled: () -> Boolean? = { true }) : AutoCloseable {
     private val heartbeat = HeartbeatFile(File(context.noBackupFilesDir, "diagnostics/heartbeat.properties"))
     private val preferences = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE)
-    private val detector = ProcessStallDetector()
+    private var detector = ProcessStallDetector()
     private val path = SteadyStateLog { waited, line -> log.event("relay", "path_waiting", "waited=$waited line=$line") }
     private val sampler = Executors.newSingleThreadExecutor { Thread(it, PATH_THREAD).apply { isDaemon = true } }
     private val sampling = AtomicBoolean()
@@ -94,10 +96,20 @@ class RelayWatchdog(private val context: Context, private val log: ConnectionLog
     private fun run() {
         runCatching { reportPrevious() }
         var round = 0L
+        var watching: Boolean? = null
         while (running.get()) {
-            runCatching { sample(round++) }
-            try { Thread.sleep(1_000) } catch (_: InterruptedException) { break }
+            val on = runCatching { enabled() }.getOrNull()
+            if (on != null && on != watching) { watching = on; runCatching { switched(on) } }
+            if (on == true) runCatching { sample(round++) }
+            try { Thread.sleep(if (on == true) 1_000 else 5_000) } catch (_: InterruptedException) { break }
         }
+    }
+
+    /** A fresh detector, so time spent off never reads as a pause; off drops the heartbeat so no start reports it stale. */
+    private fun switched(on: Boolean) {
+        detector = ProcessStallDetector()
+        if (!on) heartbeat.delete()
+        log.event("relay", "stall_watchdog", if (on) "on" else "off")
     }
 
     private fun sample(round: Long) {

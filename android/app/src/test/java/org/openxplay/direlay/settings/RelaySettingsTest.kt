@@ -774,7 +774,7 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { migrated ->
             val value = migrated.load()
             assertTrue(value.experimental.active)
-            assertEquals(9, value.experimental.optionCount)
+            assertEquals(11, value.experimental.optionCount)
             assertTrue(value.experimental.effective().keepScanning)
             assertFalse(value.experimental.sendBluetoothAddress)
             migrated.save(value.copy(experimental = value.experimental.copy(active = false, startupDiagnostics = false)))
@@ -833,6 +833,23 @@ class RelaySettingsTest {
                     assertEquals(2, prefs.getInt("experimental.version", 0))
                     RelaySettingsStore(context).use { restarted -> assertEquals(choice, restarted.load().experimental) }
                 }
+            }
+        }
+    }
+
+    @Test fun diagnosticsExperimentsStartOnForExistingSettingsAndPersistEachChoice() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        prefs.edit().putInt("experimental.version", 2).putBoolean("experimental.active", true)
+            .remove("experimental.radioConflictPrompt").remove("experimental.stallWatchdog").commit()
+        RelaySettingsStore(context).use { upgraded ->
+            val defaults = upgraded.load().experimental
+            assertTrue(defaults.radioConflictPrompt && defaults.stallWatchdog)
+            for (bits in 0..3) {
+                val choice = defaults.copy(radioConflictPrompt = bits and 1 != 0, stallWatchdog = bits and 2 != 0)
+                upgraded.save(upgraded.load().copy(experimental = choice))
+                assertEquals(choice.radioConflictPrompt, prefs.getBoolean("experimental.radioConflictPrompt", !choice.radioConflictPrompt))
+                assertEquals(choice.stallWatchdog, prefs.getBoolean("experimental.stallWatchdog", !choice.stallWatchdog))
+                RelaySettingsStore(context).use { restarted -> assertEquals(choice, restarted.load().experimental) }
             }
         }
     }

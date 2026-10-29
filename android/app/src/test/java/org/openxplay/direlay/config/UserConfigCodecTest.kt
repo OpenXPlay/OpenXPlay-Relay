@@ -404,7 +404,8 @@ class UserConfigCodecTest {
             val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
             val json = JSONObject(text).getJSONObject("settings").getJSONObject("experimental")
             assertEquals(setOf("version", "active", "remotePlaybackProof", "cancelRecoveredRetries", "startupStatus", "startupDiagnostics", "networkObservationBackoff", "screenSessionIsolation", "screenReconnectReset", "screenDeliverySerialization",
-                "iapChannelWhenOffered", "releaseBluetoothOnRequest", "awaitIphoneReconnect", "sendBluetoothAddress", "bluetoothAddress"),
+                "iapChannelWhenOffered", "releaseBluetoothOnRequest", "awaitIphoneReconnect", "radioConflictPrompt", "stallWatchdog",
+                "sendBluetoothAddress", "bluetoothAddress"),
                 json.keys().asSequence().toSet())
             val result = UserConfigCodec.decode(text, base.copy(experimental = ExperimentalOptions.OFF))
             assertTrue(result.errors.toString(), result.errors.isEmpty())
@@ -431,7 +432,8 @@ class UserConfigCodecTest {
             assertEquals(mapOf("experimental" to "invalid"), result.errors)
         }
         for (key in listOf("remotePlaybackProof", "cancelRecoveredRetries", "startupStatus", "startupDiagnostics", "networkObservationBackoff", "screenSessionIsolation", "screenReconnectReset", "screenDeliverySerialization", "active", "rememberSubscription", "keepScanning", "recordAdvertisements", "sendBluetoothAddress", "bluetoothAddress",
-            "isolateCarlinkNetwork", "waitForCarlink", "recoverWirelessNetwork", "iapChannelWhenOffered", "releaseBluetoothOnRequest", "awaitIphoneReconnect")) {
+            "isolateCarlinkNetwork", "waitForCarlink", "recoverWirelessNetwork", "iapChannelWhenOffered", "releaseBluetoothOnRequest", "awaitIphoneReconnect",
+            "radioConflictPrompt", "stallWatchdog")) {
             val result = decode(JSONObject().put("experimental", JSONObject().put(key, 1)).put("autoStartOnBoot", true))
             assertEquals(mapOf("experimental.$key" to "invalid"), result.errors)
             assertEquals(base, result.settings)
@@ -490,6 +492,25 @@ class UserConfigCodecTest {
             assertFalse(old.settings.experimental.effective().iapChannelWhenOffered)
             assertFalse(old.settings.experimental.effective().releaseBluetoothOnRequest)
             assertEquals(active, old.settings.experimental.effective().awaitIphoneReconnect)
+        }
+    }
+
+    @Test fun diagnosticsExperimentsRoundTripAndMissingKeysDefaultOn() {
+        for (active in listOf(false, true)) for (bits in 0..3) {
+            val options = ExperimentalOptions(active = active, radioConflictPrompt = bits and 1 != 0, stallWatchdog = bits and 2 != 0)
+            val chosen = base.copy(experimental = options)
+            val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
+            val json = JSONObject(text)
+            val experimental = json.getJSONObject("settings").getJSONObject("experimental")
+            assertEquals(options.radioConflictPrompt, experimental.getBoolean("radioConflictPrompt"))
+            assertEquals(options.stallWatchdog, experimental.getBoolean("stallWatchdog"))
+            val result = UserConfigCodec.decode(text, base.copy(experimental = ExperimentalOptions.OFF))
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            assertEquals(chosen, result.settings)
+            experimental.remove("radioConflictPrompt"); experimental.remove("stallWatchdog")
+            val old = UserConfigCodec.decode(json.toString(), chosen.copy(experimental = ExperimentalOptions.OFF))
+            assertTrue(old.errors.toString(), old.errors.isEmpty())
+            assertEquals(options.copy(radioConflictPrompt = true, stallWatchdog = true), old.settings.experimental)
         }
     }
 }

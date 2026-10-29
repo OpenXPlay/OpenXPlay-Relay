@@ -48,6 +48,16 @@ fun ExperimentalScreen(state: SettingsEditorState, back: () -> Unit, wireless: (
             footer = stringResource(R.string.experimental_await_iphone_reconnect_hint), enabled = options.active, header = header) { enabled ->
             state.changeExperimental { it.copy(awaitIphoneReconnect = enabled) }
         }
+        ExperimentalOption.RADIO_CONFLICT_PROMPT -> SettingsToggleGroup(stringResource(R.string.experimental_radio_conflict_prompt), options.radioConflictPrompt,
+            R.drawable.symbol_wifi, IconHue.NETWORK,
+            footer = stringResource(R.string.experimental_radio_conflict_prompt_hint), enabled = options.active, header = header) { enabled ->
+            state.changeExperimental { it.copy(radioConflictPrompt = enabled) }
+        }
+        ExperimentalOption.STALL_WATCHDOG -> SettingsToggleGroup(stringResource(R.string.experimental_stall_watchdog), options.stallWatchdog,
+            R.drawable.symbol_code, IconHue.LOGS,
+            footer = stringResource(R.string.experimental_stall_watchdog_hint), enabled = options.active, header = header) { enabled ->
+            state.changeExperimental { it.copy(stallWatchdog = enabled) }
+        }
         ExperimentalOption.SCREEN_SESSION_ISOLATION -> SettingsToggleGroup(stringResource(R.string.experimental_screen_session_isolation), options.screenSessionIsolation,
             R.drawable.symbol_activity, IconHue.DEVELOPER,
             footer = stringResource(R.string.experimental_screen_session_isolation_hint), enabled = options.active, header = header) { enabled ->

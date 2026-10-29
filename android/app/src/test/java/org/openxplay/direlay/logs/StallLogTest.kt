@@ -105,6 +105,8 @@ class StallLogTest {
         assertEquals(mapOf("pid" to "12498", "path" to "R MODE✓ | I CP·"), heartbeat.read())
         heartbeat.write(mapOf("pid" to "13108"))
         assertEquals(mapOf("pid" to "13108"), heartbeat.read())
+        heartbeat.delete()
+        assertNull(heartbeat.read())
         assertEquals("user_requested", exitReasonName(10))
         assertEquals("freezer", exitReasonName(14))
         assertEquals("cached", importanceName(400))

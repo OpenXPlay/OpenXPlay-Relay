@@ -28,6 +28,8 @@ data class ExperimentalOptions(
     val iapChannelWhenOffered: Boolean = false,
     val releaseBluetoothOnRequest: Boolean = false,
     val awaitIphoneReconnect: Boolean = true,
+    val radioConflictPrompt: Boolean = true,
+    val stallWatchdog: Boolean = true,
 ) {
     fun effective(carlinkTrace: Boolean = true): ExperimentalOptions {
         val address = normalizedBluetoothAddress(bluetoothAddress)
@@ -45,13 +47,16 @@ data class ExperimentalOptions(
             screenDeliverySerialization = active && screenDeliverySerialization,
             iapChannelWhenOffered = active && iapChannelWhenOffered,
             releaseBluetoothOnRequest = active && releaseBluetoothOnRequest,
-            awaitIphoneReconnect = active && awaitIphoneReconnect)
+            awaitIphoneReconnect = active && awaitIphoneReconnect,
+            radioConflictPrompt = active && radioConflictPrompt,
+            stallWatchdog = active && stallWatchdog)
     }
 
     val invalidAddress: Boolean get() = active && sendBluetoothAddress && normalizedBluetoothAddress(bluetoothAddress) == null
     val optionCount: Int get() = listOf(remotePlaybackProof, cancelRecoveredRetries, startupStatus, startupDiagnostics,
         networkObservationBackoff, screenSessionIsolation, screenReconnectReset, screenDeliverySerialization,
-        iapChannelWhenOffered, releaseBluetoothOnRequest, awaitIphoneReconnect, sendBluetoothAddress).count { it }
+        iapChannelWhenOffered, releaseBluetoothOnRequest, awaitIphoneReconnect, radioConflictPrompt, stallWatchdog,
+        sendBluetoothAddress).count { it }
 
     fun names(): List<String> = listOf(rememberSubscription to "remember_subscription", keepScanning to "keep_scanning",
         recordAdvertisements to "record_advertisements", sendBluetoothAddress to "send_bluetooth_address",
@@ -67,7 +72,9 @@ data class ExperimentalOptions(
         screenDeliverySerialization to "screen_delivery_serialization",
         iapChannelWhenOffered to "iap_channel_when_offered",
         releaseBluetoothOnRequest to "release_bluetooth_on_request",
-        awaitIphoneReconnect to "await_iphone_reconnect")
+        awaitIphoneReconnect to "await_iphone_reconnect",
+        radioConflictPrompt to "radio_conflict_prompt",
+        stallWatchdog to "stall_watchdog")
         .filter { it.first }.map { it.second }
 
     companion object {
@@ -82,7 +89,9 @@ data class ExperimentalOptions(
             screenDeliverySerialization = false,
             iapChannelWhenOffered = false,
             releaseBluetoothOnRequest = false,
-            awaitIphoneReconnect = false)
+            awaitIphoneReconnect = false,
+            radioConflictPrompt = false,
+            stallWatchdog = false)
 
         fun normalizedBluetoothAddress(value: String): String? {
             val octets = value.split(':')

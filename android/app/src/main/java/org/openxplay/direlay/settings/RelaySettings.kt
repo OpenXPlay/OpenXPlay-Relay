@@ -438,6 +438,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             iapChannelWhenOffered = relay.getBoolean("experimental.iapChannelWhenOffered", false),
             releaseBluetoothOnRequest = relay.getBoolean("experimental.releaseBluetoothOnRequest", false),
             awaitIphoneReconnect = relay.getBoolean("experimental.awaitIphoneReconnect", true),
+            radioConflictPrompt = relay.getBoolean("experimental.radioConflictPrompt", true),
+            stallWatchdog = relay.getBoolean("experimental.stallWatchdog", true),
         )
         if (legacy) relay.edit().also { writeExperimentalOptions(it, value) }.apply()
         return value
@@ -459,6 +461,8 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("experimental.iapChannelWhenOffered", value.iapChannelWhenOffered)
             .putBoolean("experimental.releaseBluetoothOnRequest", value.releaseBluetoothOnRequest)
             .putBoolean("experimental.awaitIphoneReconnect", value.awaitIphoneReconnect)
+            .putBoolean("experimental.radioConflictPrompt", value.radioConflictPrompt)
+            .putBoolean("experimental.stallWatchdog", value.stallWatchdog)
             .remove("experimental.rememberSubscription")
             .remove("experimental.keepScanning")
             .remove("experimental.recordAdvertisements")
