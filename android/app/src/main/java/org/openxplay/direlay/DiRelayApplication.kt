@@ -32,6 +32,9 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
 
     private fun startupOptions() = if (::runtime.isInitialized) runtime.settingsStore.snapshot.value?.experimental?.effective() else null
     override val cancelRecoveredRetries: Boolean get() = startupOptions()?.cancelRecoveredRetries == true
+    override val iapChannelOnlyWhenOffered: Boolean get() = startupOptions()?.iapChannelWhenOffered == true
+    override val releaseBluetoothOnHandoffRequest: Boolean get() = startupOptions()?.releaseBluetoothOnRequest == true
+    override val awaitIphoneReconnect: Boolean get() = startupOptions()?.awaitIphoneReconnect == true
     override val startupDiagnosticsEnabled: Boolean get() = startupOptions()?.startupDiagnostics == true
     override val networkObservationBackoffEnabled: Boolean get() = startupOptions()?.networkObservationBackoff == true
 
