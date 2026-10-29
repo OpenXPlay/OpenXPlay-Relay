@@ -814,4 +814,9 @@
     <string name="experimental_screen_reconnect_reset_hint">Wait for fresh video and playback confirmation when a new iPhone connection takes over. Rebuilding a screen on the same connection keeps the session. Applies to the next connection.</string>
     <string name="experimental_screen_delivery_serialization">Synchronize screen handoff</string>
     <string name="experimental_screen_delivery_serialization_hint">Keep frame delivery ordered during screen handoff so late work cannot overwrite the new picture. Applies to the next connection.</string>
+    <string name="radio_conflict_title">This phone can\'t keep Wi-Fi and its hotspot on together</string>
+    <string name="radio_conflict_car_wifi">The phone turns Wi-Fi off while its hotspot is on. The car connection needs this phone\'s Wi-Fi and the iPhone needs its hotspot, so CarPlay cannot start. These work on this phone:</string>
+    <string name="radio_conflict_hotspot">The phone turns Wi-Fi off while its hotspot is on. The hotspot is on now and the iPhone connection needs Wi-Fi, so CarPlay cannot start. These work on this phone:</string>
+    <string name="radio_conflict_use">Use this</string>
+    <string name="radio_conflict_keep">Not now</string>
 </resources>

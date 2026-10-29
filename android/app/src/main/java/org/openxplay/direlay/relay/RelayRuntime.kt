@@ -87,6 +87,18 @@ class RelayRuntime(private val context: Context,
     @Volatile var networkReadings = NetworkReadings()
         private set
     fun refreshNetworkReadings(): NetworkReadings = networkReader.read().also { networkReadings = it }
+    private val radioObservations = org.openxplay.direlay.network.RadioObservationStore(context)
+    private val radios = org.openxplay.direlay.network.RadioConcurrencyObserver(
+        org.openxplay.direlay.network.platformStaApConcurrency(context), radioObservations.read(), save = radioObservations::write)
+    val radioConcurrency get() = radios.concurrency
+    private val conflict = MutableStateFlow<org.openxplay.direlay.network.RadioConflict?>(null)
+    /** The setup needs Wi-Fi and the hotspot together on a phone that keeps only one of them. */
+    val radioConflict = conflict.asStateFlow()
+    /** The conflict the user chose to keep; a manual start clears it so the choice is offered again. */
+    @Volatile var keptRadioConflict: org.openxplay.direlay.network.RadioConflict? = null
+    @Volatile private var lastTickAt = android.os.SystemClock.elapsedRealtime()
+    /** How long ago the runtime executor last ran its session tick; the watchdog reads it. */
+    fun tickAge(): Long = android.os.SystemClock.elapsedRealtime() - lastTickAt
     fun networkReadiness(settings: RelaySettings, readings: NetworkReadings = networkReadings) =
         NetworkReadiness.read(CarlinkConnectionPolicy.enabled(settings), settingsStore.wireless(settings),
             settings.wirelessNetwork.choice == WirelessNetworkChoice.PHONE_HOTSPOT, readings, miracast = settings.miracastOutput,
@@ -737,6 +749,7 @@ class RelayRuntime(private val context: Context,
             loadRememberedDisplay()
             val initial = settingsStore.awaitSnapshot()
             connectionLog.event("relay", "settings_loaded")
+            connectionLog.event("network", "radio_concurrency", radioFacts())
             configuredPlugins = initial.plugins to initial.pluginsEnabled
             runCatching { bundledPlugins.root() }
                 .onFailure { Log.w("OpenXPlay Relay", "Plugin bundle installation failed", it) }
@@ -768,7 +781,9 @@ class RelayRuntime(private val context: Context,
     }
 
     private val sessionTick = setup.scheduleWithFixedDelay({
+        lastTickAt = android.os.SystemClock.elapsedRealtime()
         refreshNetworkReadings()
+        observeRadios()
         autoStartSessions.refresh()
         refreshTeslaAddress()
         sessionController.observeNetworkSession(autoStartSessions.tracker.running,
@@ -778,6 +793,34 @@ class RelayRuntime(private val context: Context,
         // A session start or stop can block or release Carlink without a settings change.
         if (carlinkBlock.sessionChanged(autoStartSessions.tracker.running)) enqueueCarlink()
     }, 0, 500, TimeUnit.MILLISECONDS)
+
+    private fun observeRadios() {
+        val readings = networkReadings
+        radios.observe(readings.wifi, readings.hotspot, android.os.SystemClock.elapsedRealtime(), System.currentTimeMillis())?.let {
+            connectionLog.event("network", "radio_concurrency", "exclusive=${it.exclusive} evidence=${it.evidence} ${radioFacts()}")
+        }
+        val settings = settingsStore.snapshot.value ?: return
+        val next = org.openxplay.direlay.network.radioConflict(radios.concurrency, settingsStore.wireless(settings),
+            settings.wirelessNetwork.choice, settings.carlinkOutput || settings.miracastOutput, readings)
+        if (next == conflict.value) return
+        conflict.value = next
+        if (next == null) connectionLog.event("relay", "radio_conflict_cleared")
+        else connectionLog.event("relay", "radio_conflict", "${next.line()} network=${settings.wirelessNetwork.choice.name.lowercase()} " +
+            "wireless=${settingsStore.wireless(settings)} carlink=${settings.carlinkOutput} miracast=${settings.miracastOutput}")
+    }
+    /** "platform=false observed=exclusive@2026-10-29T09:05:30Z effective=exclusive" */
+    fun radioFacts(): String = "platform=${radios.platform ?: "unknown"} observed=" +
+        (radios.observation?.let { "${if (it.exclusive) "exclusive" else "both"}@${java.time.Instant.ofEpochMilli(it.atMillis)}" } ?: "none") +
+        " effective=${radios.concurrency.name.lowercase()}"
+    /** Volatile reads only: the watchdog's heartbeat must never wait for the runtime. */
+    fun watchFacts(): Map<String, String> = mapOf(
+        "session" to (status.session?.phase?.name?.lowercase() ?: "none"),
+        "start_pending" to startRequest.pending.toString(),
+        "waits" to sessionController.waitSummary.ifEmpty { "none" },
+        "radios" to radios.concurrency.name.lowercase(),
+        "conflict" to (conflict.value?.kind?.name?.lowercase() ?: "none"),
+        "carlink" to carlinkState,
+        "tick_age" to tickAge().toString())
 
     private val codecRestarts = VideoCodecRestartLimiter()
     @Volatile var videoDecision = VideoCodecPolicy.resolve(emptyList())

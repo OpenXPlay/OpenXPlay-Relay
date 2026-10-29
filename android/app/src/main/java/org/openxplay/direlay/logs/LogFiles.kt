@@ -14,6 +14,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class LogFiles(private val context: Context, secrets: LogSecrets, traceDirectory: () -> File? = { null }) {
+    /** Facts other components add to the export summary; must not block for long. */
+    @Volatile var details: () -> String = { "" }
     private val redactor = LogRedactor(secrets)
     private val store = LogSegmentStore(File(context.noBackupFilesDir, "logs"))
     val recorder = LogRecorder(store, redactor)
@@ -46,7 +48,8 @@ class LogFiles(private val context: Context, secrets: LogSecrets, traceDirectory
         return "App: OpenXPlay Relay\nPackage: ${context.packageName}\nVersion: ${info.versionName} (${versionCode(info)})\n" +
             "Build type: ${if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) "debug" else "release"}\n" +
             "Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})\nManufacturer: ${Build.MANUFACTURER}\n" +
-            "Model: ${Build.MODEL}\nBuild display: ${Build.DISPLAY}\n"
+            "Model: ${Build.MODEL}\nBuild display: ${Build.DISPLAY}\n" + recorder.summary() + "\n" +
+            runCatching { details() }.getOrDefault("")
     }
     @Suppress("DEPRECATION") private fun versionCode(info: android.content.pm.PackageInfo): Long =
         if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()

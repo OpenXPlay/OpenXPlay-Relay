@@ -17,6 +17,7 @@ import org.openxplay.direlay.admin.AndroidBluetoothVisibility
 import org.openxplay.direlay.admin.PairingWindow
 import org.openxplay.direlay.bridge.StreamBridgeSink
 import org.openxplay.direlay.bridge.toScreenSessionPolicy
+import org.openxplay.direlay.presentation.sampledPathInput
 import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.service.AndroidRelayKeepAlive
 
@@ -47,6 +48,8 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
         ) else null
 
     private var networkTimeline: org.openxplay.direlay.logs.NetworkTimeline? = null
+    private var watchdog: org.openxplay.direlay.logs.RelayWatchdog? = null
+    @Volatile private var startedActivities = 0
     override fun onCreate() {
         val connectionLog = org.openxplay.direlay.logs.ConnectionLog()
         connectionLog.event("relay", "process_start")
@@ -60,6 +63,10 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             runtime.logs.start()
             connectionLog.event("relay", "recorder_start")
             networkTimeline = org.openxplay.direlay.logs.NetworkTimeline(this, connectionLog).also { it.start() }
+            val watched = org.openxplay.direlay.logs.RelayWatchdog(this, connectionLog, runtime::tickAge,
+                facts = { runtime.watchFacts() + ("visible" to (startedActivities > 0).toString()) }, pathLine = ::watchedPathLine)
+            watchdog = watched.also { it.start() }
+            runtime.logs.details = { "Wi-Fi with hotspot: ${runtime.radioFacts()}\n" + watched.details() }
         }
             .onFailure { android.util.Log.e("OXP-Logs", "Log recorder unavailable", it) }
         runtime.carlinkPins.onPending = { showPendingPin() }
@@ -68,8 +75,8 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             override fun onActivityResumed(activity: Activity) { foreground = activity; showPendingPin() }
             override fun onActivityPaused(activity: Activity) { if (foreground === activity) foreground = null }
             override fun onActivityCreated(activity: Activity, state: Bundle?) = Unit
-            override fun onActivityStarted(activity: Activity) = Unit
-            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivityStarted(activity: Activity) { visibility(activity, +1) }
+            override fun onActivityStopped(activity: Activity) { visibility(activity, -1) }
             override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) = Unit
             override fun onActivityDestroyed(activity: Activity) { if (foreground === activity) foreground = null }
         })
@@ -78,6 +85,20 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
             android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder()
                 .detectDiskReads().detectDiskWrites().detectCustomSlowCalls().penaltyLog().build())
         }
+    }
+
+    /** Started activities, not resumed ones: a dialog or the notification shade does not hide the app. */
+    private fun visibility(activity: Activity, change: Int) {
+        startedActivities = (startedActivities + change).coerceAtLeast(0)
+        runtime.connectionLog.transition("relay", "visibility", if (startedActivities > 0) "app_visible" else "app_hidden",
+            "activity=${activity.javaClass.simpleName}")
+    }
+
+    /** The connection path as Home would show it, sampled by the watchdog off the main thread. */
+    private fun watchedPathLine(): String? {
+        val settings = runtime.settingsStore.snapshot.value ?: return null
+        val version = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+        return org.openxplay.direlay.path.presentPath(runtime.sampledPathInput(this, settings, null, null, version)).diagnostic
     }
 
     override fun onHostUiRequested(): Boolean {
@@ -139,6 +160,7 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
     override fun onTerminate() {
         if (android.os.Build.VERSION.SDK_INT < 28 || Application.getProcessName() == packageName) runCatching { runtime.logs.recorder.close() }
         runCatching { networkTimeline?.close() }
+        runCatching { watchdog?.close() }
         runtime.close()
         super.onTerminate()
     }
