@@ -133,7 +133,10 @@ pub fn classify_failure(message: &str) -> &'static str {
         "wifi_off"
     } else if m.contains("userdeniedpairing") || m.contains("user denied lockdown pairing") {
         "usb_trust_denied"
-    } else if m.contains("password protected") || m.contains("passwordprotected") {
+    } else if m.contains("password protected")
+        || m.contains("passwordprotected")
+        || m.starts_with("unlock the iphone. it rejected the carplay usb mode request (")
+    {
         "iphone_locked"
     } else {
         "unknown"
@@ -316,6 +319,10 @@ mod tests {
             ("USB interface busy", "usb_interface_busy"),
             ("UserDeniedPairing", "usb_trust_denied"),
             ("PasswordProtected", "iphone_locked"),
+            (
+                "Unlock the iPhone. It rejected the CarPlay USB mode request (mode read 0:0:0:0)",
+                "iphone_locked",
+            ),
         ] {
             assert_eq!(classify_failure(message), code);
             assert_ne!(failure_text(code), failure_text("unknown"));

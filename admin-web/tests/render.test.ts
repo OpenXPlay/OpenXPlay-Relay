@@ -77,18 +77,17 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     }
     }
   }, 30000);
-  it('confirms Linux USB with cable advice and hides the Bluetooth picker after saving', async () => {
+  it('saves Linux USB without confirmation and keeps cable advice under the option', async () => {
     await showFixture(linuxStatusFixtures.ready, 'settings/connection', linuxSettings);
     await cdp.js(`document.querySelector('#field-transport').click(); new Promise(r=>setTimeout(r,50))`);
     expect(await cdp.js(`document.querySelector('dialog').innerText`)).toContain('USB-A');
-    await cdp.js(`document.querySelector('dialog [data-option="1"]').click(); new Promise(r=>setTimeout(r,100))`);
-    const advice = await cdp.js(`document.querySelector('dialog:last-of-type').innerText`);
+    const advice = await cdp.js(`document.querySelector('dialog [data-option="1"]').innerText`);
     expect(advice).toContain('USB-A to Lightning');
     expect(advice).toContain('Charge-only cables do not work');
     expect(advice).not.toContain('battery');
-    expect(await cdp.js('window.adminWrites')).toEqual([]);
-    await cdp.js(`document.querySelector('dialog:last-of-type [data-confirm]').click(); new Promise(r=>setTimeout(r,600))`);
+    await cdp.js(`document.querySelector('dialog [data-option="1"]').click(); new Promise(r=>setTimeout(r,600))`);
     expect(await cdp.js('window.adminWrites.at(-1)')).toEqual({ transport: 'usb' });
+    expect(await cdp.js(`document.querySelector('dialog[open]') !== null`)).toBe(false);
     expect(await cdp.js(`document.querySelector('#field-iphone').closest('.field').hidden`)).toBe(true);
     expect(await cdp.js('window.renderErrors')).toEqual([]);
   }, 10000);

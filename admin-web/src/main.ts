@@ -8,7 +8,7 @@ import { restartPending } from './startup';
 import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRecommended, displayPresets, displayPresetsView } from './car-screen';
 import { teslaHint, teslaNotes } from './tesla';
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
-import { needsUsbConfirmation, usbTransportHint, usbConfirmationKey } from './usb-connection';
+import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
 import { pluginList, togglePlugin } from './plugins';
 import { mfiSubmission, mfiError, mfiReadiness } from './mfi';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
@@ -954,7 +954,7 @@ async function queueSave(field: Field, raw: string | boolean) {
     return;
   }
   if (field.key === 'transport' && needsUsbConfirmation(status?.platform, settings!.values.transport, value)) {
-    if (!await confirmSheet(t(usbConfirmationKey(status?.platform)), t('ui.continue'), t('ui.cancel'))) { render(); return; }
+    if (!await confirmSheet(t('confirm.transport.usb.android'), t('ui.continue'), t('ui.cancel'))) { render(); return; }
   }
   if (field.key === 'output' && needsHotspotConfirmation(status?.platform, settings!.values, value)) {
     if (!await confirmSheet(t('constraint.carlinkWifiDirectConfirm'), t('ui.continue'), t('ui.cancel'))) { render(); return; }

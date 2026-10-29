@@ -19,6 +19,7 @@ pub const TAP_NAME: &str = "oxpusb0";
 pub const MTU: usize = 1500;
 pub const MAX_FRAME: usize = MTU + 14;
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
+const USB_SEND_TIMEOUT: Duration = Duration::from_millis(2000);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// One Ethernet frame per operation. Implementations must honor timeouts and close must
@@ -152,6 +153,7 @@ fn unmanage(runner: &dyn CommandRunner) -> io::Result<()> {
 pub struct FramePump {
     stopped: Arc<AtomicBool>,
     dropped: Arc<AtomicU64>,
+    timed_out: Arc<AtomicU64>,
     tap: Arc<dyn EthernetPort>,
     port: Arc<dyn EthernetPort>,
     workers: Mutex<Vec<JoinHandle<()>>>,
@@ -164,7 +166,7 @@ impl FramePump {
     ) -> io::Result<Self> {
         Self::start_ports(tap, port, failure)
     }
-    fn start_ports(
+    pub(crate) fn start_ports(
         tap: Arc<dyn EthernetPort>,
         port: Arc<dyn EthernetPort>,
         failure: Arc<dyn Fn(io::Error) + Send + Sync>,
@@ -172,17 +174,19 @@ impl FramePump {
         let pump = Self {
             stopped: Arc::new(AtomicBool::new(false)),
             dropped: Arc::new(AtomicU64::new(0)),
+            timed_out: Arc::new(AtomicU64::new(0)),
             tap: tap.clone(),
             port: port.clone(),
             workers: Mutex::default(),
         };
-        for (name, source, target) in [
-            ("usb-to-tap", port.clone(), tap.clone()),
-            ("tap-to-usb", tap, port),
+        for (name, source, target, send_timeout) in [
+            ("usb-to-tap", port.clone(), tap.clone(), IO_TIMEOUT),
+            ("tap-to-usb", tap, port, USB_SEND_TIMEOUT),
         ] {
             let stopped = pump.stopped.clone();
             let dropped = pump.dropped.clone();
             let failure = failure.clone();
+            let timed_out = pump.timed_out.clone();
             let worker = crate::platform::spawn_worker(
                 name,
                 Box::new(move || {
@@ -192,7 +196,17 @@ impl FramePump {
                                 if frame.len() > MAX_FRAME {
                                     dropped.fetch_add(1, Ordering::Relaxed);
                                 } else if !stopped.load(Ordering::Acquire) {
-                                    target.send_frame(&frame, IO_TIMEOUT)?;
+                                    match target.send_frame(&frame, send_timeout) {
+                                        Err(e)
+                                            if matches!(
+                                                e.kind(),
+                                                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                                            ) =>
+                                        {
+                                            timed_out.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                        result => result?,
+                                    }
                                 }
                             }
                         }
@@ -219,6 +233,9 @@ impl FramePump {
     }
     pub fn dropped_oversize(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+    pub fn dropped_send_timeout(&self) -> u64 {
+        self.timed_out.load(Ordering::Relaxed)
     }
     pub fn close(&self) -> io::Result<()> {
         self.close_with_timeout(CLOSE_TIMEOUT)
@@ -525,6 +542,8 @@ mod tests {
         sent: Vec<Vec<u8>>,
         closed: bool,
         send_error: bool,
+        send_timeouts: usize,
+        send_budgets: Vec<Duration>,
     }
     #[derive(Default)]
     struct Port {
@@ -540,10 +559,15 @@ mod tests {
     }
     impl EthernetPort for Port {
         fn send_frame(&self, frame: &[u8], timeout: Duration) -> io::Result<()> {
-            assert_eq!(timeout, IO_TIMEOUT);
+            assert!(timeout == IO_TIMEOUT || timeout == USB_SEND_TIMEOUT);
             let mut state = self.state.lock().unwrap();
             if state.closed || state.send_error {
                 return Err(io::Error::other("send failed"));
+            }
+            state.send_budgets.push(timeout);
+            if state.send_timeouts > 0 {
+                state.send_timeouts -= 1;
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "send expired"));
             }
             state.sent.push(frame.to_vec());
             Ok(())
@@ -703,6 +727,31 @@ mod tests {
         pump.close().unwrap();
         pump.close().unwrap();
         assert!(pump.workers.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn send_timeout_drops_one_frame_and_keeps_pumping_with_directional_budgets() {
+        let tap = Arc::new(Port::default());
+        let usb = Arc::new(Port::default());
+        tap.state.lock().unwrap().send_timeouts = 1;
+        usb.state.lock().unwrap().send_timeouts = 1;
+        let pump =
+            FramePump::start_ports(tap.clone(), usb.clone(), Arc::new(|e| panic!("{e}"))).unwrap();
+        for source in [&tap, &usb] {
+            source.push(Ok(vec![1; 14]));
+            source.push(Ok(vec![2; 14]));
+        }
+        wait_for(|| {
+            pump.dropped_send_timeout() == 2
+                && tap.state.lock().unwrap().sent.len() == 1
+                && usb.state.lock().unwrap().sent.len() == 1
+        });
+        assert_eq!(tap.state.lock().unwrap().send_budgets, [IO_TIMEOUT; 2]);
+        assert_eq!(
+            usb.state.lock().unwrap().send_budgets,
+            [USB_SEND_TIMEOUT; 2]
+        );
+        assert_eq!(pump.dropped_oversize(), 0);
+        pump.close().unwrap();
     }
     #[test]
     fn first_fatal_error_is_reported_once_and_wakes_other_worker() {

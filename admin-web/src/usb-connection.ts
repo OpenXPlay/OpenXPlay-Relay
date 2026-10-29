@@ -5,12 +5,8 @@
 import type { Value } from './schema';
 
 export function needsUsbConfirmation(platform: string | undefined, before: Value, after: Value): boolean {
-  return (platform === 'android' || platform === 'linux') && before !== 'usb' && after === 'usb';
+  return platform === 'android' && before !== 'usb' && after === 'usb';
 }
 export function usbTransportHint(platform: string | undefined, transport: Value): string | undefined {
   return transport === 'usb' && (platform === 'android' || platform === 'linux') ? `hint.option.transport.usb.${platform}` : undefined;
-}
-
-export function usbConfirmationKey(platform: string | undefined): string {
-  return platform === 'linux' ? 'confirm.transport.usb.linux' : 'confirm.transport.usb.android';
 }

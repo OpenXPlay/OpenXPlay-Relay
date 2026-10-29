@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
+use crate::carplay_controller::CarPlayController;
+use crate::linux_wired_controller::LinuxWiredController;
+use crate::linux_wired_platform::LinuxWiredPlatform;
 use crate::Result;
 use crate::*;
 use crate::{
@@ -166,7 +169,7 @@ pub struct LinuxRelayAdmin {
     provision: Arc<Mutex<Option<Provision>>>,
     provision_interface: Mutex<String>,
     net_root: std::path::PathBuf,
-    controller: Mutex<Option<Arc<LinuxCarPlayController>>>,
+    controller: Mutex<Option<Arc<dyn CarPlayController>>>,
     hotspot_lifetime: Arc<crate::hotspot_lifetime::HotspotLifetime>,
     /// BlueZ changes for every controller's Bluetooth waits; the bus listener outlives them.
     bluetooth_wake: Arc<crate::bluetooth_wake::BluetoothWake>,
@@ -1994,13 +1997,18 @@ impl LinuxRelayAdmin {
     }
     fn observe_automatic_start(&self) -> Result<()> {
         let options = self.effective_options()?;
-        let bluetooth = match self.backends.bluetooth.check_radio() {
-            Ok(()) => Some(true),
-            Err(e) => matches!(
-                crate::carplay_policy::classify_failure(&e.to_string()),
-                "bluetooth_off" | "bluetooth_unusable"
-            )
-            .then_some(false),
+        let usb = options.settings.transport == "usb";
+        let bluetooth = if usb {
+            None
+        } else {
+            match self.backends.bluetooth.check_radio() {
+                Ok(()) => Some(true),
+                Err(e) => matches!(
+                    crate::carplay_policy::classify_failure(&e.to_string()),
+                    "bluetooth_off" | "bluetooth_unusable"
+                )
+                .then_some(false),
+            }
         };
         let wifi = crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface);
         let inventory = self.inventory.get();
@@ -2015,12 +2023,20 @@ impl LinuxRelayAdmin {
         if let Some(controller) = self.controller.lock().unwrap().as_ref() {
             controller.set_start_when_ready(options.settings.auto_start);
         }
-        let devices = self.backends.bluetooth.devices().ok();
-        let iphone = devices.as_ref().map(|devices| {
-            crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), devices)
-                .device()
-                .is_some_and(|device| device.connected)
-        });
+        let devices = if usb {
+            None
+        } else {
+            self.backends.bluetooth.devices().ok()
+        };
+        let iphone = if usb {
+            Some(self.events.runtime_path_facts().usb.present)
+        } else {
+            devices.as_ref().map(|devices| {
+                crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), devices)
+                    .device()
+                    .is_some_and(|device| device.connected)
+            })
+        };
         let restored = self.recovery.lock().unwrap().observe(
             failure.as_ref(),
             crate::start_policy::RadioReadings {
@@ -2061,7 +2077,11 @@ impl LinuxRelayAdmin {
             self.arrival.lock().unwrap().cancel();
             return Ok(());
         }
-        let devices = self.backends.bluetooth.devices().unwrap_or_default();
+        let devices = if usb {
+            Vec::new()
+        } else {
+            self.backends.bluetooth.devices().unwrap_or_default()
+        };
         let selection =
             crate::linux_bluetooth::IphoneSelection::select(options.iphone.as_deref(), &devices);
         let identity = self.options.test_input.is_some()
@@ -2076,11 +2096,12 @@ impl LinuxRelayAdmin {
                 || self.wifi_status().ssid.is_some());
         let ready = identity
             && network_ready
-            && bluetooth == Some(true)
-            && matches!(
-                selection.reason(),
-                "Selected" | "Connected" | "OnlyCandidate"
-            )
+            && (usb
+                || bluetooth == Some(true)
+                    && matches!(
+                        selection.reason(),
+                        "Selected" | "Connected" | "OnlyCandidate"
+                    ))
             && !self.busy.load(Ordering::Acquire)
             && self.pending.lock().unwrap().is_empty();
         if self
@@ -2143,17 +2164,18 @@ impl LinuxRelayAdmin {
         }
         let mut options = self.carplay_options()?;
         // A requested start remains armed while a known radio problem needs the user.
-        let bluetooth_problem = self
-            .backends
-            .bluetooth
-            .check_radio()
-            .err()
-            .is_some_and(|e| {
-                matches!(
-                    crate::carplay_policy::classify_failure(&e.to_string()),
-                    "bluetooth_off" | "bluetooth_unusable"
-                )
-            });
+        let bluetooth_problem = options.settings.transport != "usb"
+            && self
+                .backends
+                .bluetooth
+                .check_radio()
+                .err()
+                .is_some_and(|e| {
+                    matches!(
+                        crate::carplay_policy::classify_failure(&e.to_string()),
+                        "bluetooth_off" | "bluetooth_unusable"
+                    )
+                });
         if bluetooth_problem
             || crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface)
                 == Some(false)
@@ -2242,6 +2264,7 @@ impl LinuxRelayAdmin {
             crate::platform::wall_clock().as_millis() as u64,
         );
         let start_when_ready = options.settings.auto_start;
+        let wired_options = options.clone();
         let platform = Arc::new(
             LinuxWirelessPlatform::new(
                 options,
@@ -2280,21 +2303,37 @@ impl LinuxRelayAdmin {
                 })
             }),
         );
-        // Test mode: a simulated iPhone behind the same hotspot.
-        let platform: Arc<dyn WirelessPlatform> = match &self.options.test_input {
-            Some(test) => test.platform(
-                platform,
-                self.input.clone(),
-                self.sink.clone(),
+        let controller: Arc<dyn CarPlayController> = if wired_options.settings.transport == "usb" {
+            Arc::new(LinuxWiredController::new(
+                Arc::new(LinuxWiredPlatform::new(
+                    platform,
+                    wired_options.clone(),
+                    self.state.identity()?,
+                    self.state.pairings()?,
+                    self.sink.clone(),
+                    self.events.clone(),
+                    self.input.clone(),
+                )),
                 self.events.clone(),
-            ),
-            None => platform,
+                wired_options.state_dir,
+            ))
+        } else {
+            // Test mode: a simulated iPhone behind the same hotspot.
+            let platform: Arc<dyn WirelessPlatform> = match &self.options.test_input {
+                Some(test) => test.platform(
+                    platform,
+                    self.input.clone(),
+                    self.sink.clone(),
+                    self.events.clone(),
+                ),
+                None => platform,
+            };
+            Arc::new(LinuxCarPlayController::new(
+                platform,
+                self.events.clone(),
+                Duration::from_secs(45),
+            ))
         };
-        let controller = Arc::new(LinuxCarPlayController::new(
-            platform,
-            self.events.clone(),
-            Duration::from_secs(45),
-        ));
         controller.set_start_when_ready(start_when_ready);
         *self.controller.lock().unwrap() = Some(controller.clone());
         let events = self.events.clone();
@@ -3973,7 +4012,11 @@ impl RelayAdmin for LinuxRelayAdmin {
             running: controller.as_ref().is_some_and(|c| c.running()),
             auto_start_paused: !self.desired.load(Ordering::Acquire),
             iphone: AdminIphone {
-                name: selection.device().map(|d| d.name.clone()),
+                name: if options.settings.transport == "usb" {
+                    self.events.runtime_path_facts().usb.product
+                } else {
+                    selection.device().map(|d| d.name.clone())
+                },
                 reason: selection.reason().into(),
             },
             network: AdminNetwork {
@@ -4726,6 +4769,106 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn usb_pair_record_is_never_in_configuration_exports() {
+        let (admin, dir) = fake();
+        let path = dir.join("lockdown/pair-record.plist");
+        crate::platform::private_state_file(
+            &path,
+            b"RootPrivateKey UNIQUE-LOCKDOWN-PRIVATE-MATERIAL",
+        )
+        .unwrap();
+        for privacy in [false, true] {
+            let value = admin.config_export(privacy).unwrap().to_string();
+            for forbidden in [
+                "lockdown",
+                "pair-record",
+                "RootPrivateKey",
+                "UNIQUE-LOCKDOWN-PRIVATE-MATERIAL",
+            ] {
+                assert!(!value.contains(forbidden), "{forbidden}");
+            }
+        }
+        assert!(path.exists());
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn transport_switch_builds_the_matching_controller_on_restart() {
+        let (admin, dir) = fake();
+        for transport in ["wireless", "usb", "wireless"] {
+            admin.stop_controller_for_restart(true);
+            admin.events.facts.lock().unwrap().reset_phone();
+            admin.settings.lock().unwrap().transport = transport.into();
+            admin.ensure_controller().unwrap();
+            assert_eq!(
+                admin
+                    .controller
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .transport(),
+                transport
+            );
+        }
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn usb_automatic_readiness_needs_identity_and_network_without_bluetooth_or_phone() {
+        let (mut admin, dir) = fake();
+        Arc::get_mut(&mut admin).unwrap().runtime.root = dir.clone();
+        let net = dir.join("sys/class/net/wlan0");
+        std::fs::create_dir_all(&net).unwrap();
+        std::fs::write(net.join("address"), "02:00:00:00:00:01").unwrap();
+        admin.desired.store(false, Ordering::Release);
+        {
+            let mut settings = admin.settings.lock().unwrap();
+            settings.transport = "usb".into();
+            settings.auto_start = true;
+            settings.mfi_target = "local".into();
+        }
+        admin.observe_automatic_start().unwrap();
+        assert!(
+            admin.arrival.lock().unwrap().deadline.is_none(),
+            "identity is required"
+        );
+        {
+            let mut settings = admin.settings.lock().unwrap();
+            settings.mfi_target = "remote".into();
+            settings.mfi_remote_server = "http://127.0.0.1:9".into();
+        }
+        admin.observe_automatic_start().unwrap();
+        assert!(
+            admin.arrival.lock().unwrap().deadline.is_some(),
+            "USB waits for a cable after automatic start"
+        );
+        admin.settings.lock().unwrap().transport = "wireless".into();
+        admin.observe_automatic_start().unwrap();
+        assert!(
+            admin.arrival.lock().unwrap().deadline.is_none(),
+            "wireless still needs Bluetooth and a selected iPhone"
+        );
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn usb_status_uses_product_name_and_clears_it_on_unplug() {
+        let (admin, dir) = fake();
+        admin.settings.lock().unwrap().transport = "usb".into();
+        admin.events.emit(
+            "usb-presence",
+            &serde_json::json!({"present":true,"product":"USB iPhone"}),
+        );
+        assert_eq!(admin.status().iphone.name.as_deref(), Some("USB iPhone"));
+        admin
+            .events
+            .emit("usb-presence", &serde_json::json!({"present":false}));
+        assert!(admin.status().iphone.name.is_none());
+        admin.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn transport_defaults_cli_validation_and_restart_contract() {
         let (admin, dir) = fake();
@@ -7215,8 +7358,8 @@ mod tests {
             unreachable!()
         }
     }
-    fn fake_controller(a: &LinuxRelayAdmin) -> Arc<LinuxCarPlayController> {
-        let controller = Arc::new(LinuxCarPlayController::new(
+    fn fake_controller(a: &LinuxRelayAdmin) -> Arc<dyn CarPlayController> {
+        let controller: Arc<dyn CarPlayController> = Arc::new(LinuxCarPlayController::new(
             Arc::new(UnusedPlatform),
             a.events.clone(),
             Duration::from_secs(1),
