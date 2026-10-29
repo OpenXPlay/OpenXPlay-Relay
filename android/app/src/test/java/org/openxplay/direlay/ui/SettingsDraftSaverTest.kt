@@ -289,4 +289,29 @@ class SettingsDraftSaverTest {
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
 
+    @Test fun handoffChoicesSurviveParcelRoundTripAndOlderDraftsKeepTheBaseChoices() {
+        for (active in listOf(false, true)) for (bits in 0..7) {
+            val options = ExperimentalOptions(active = active, iapChannelWhenOffered = bits and 1 != 0,
+                releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)
+            val chosen = base.copy(experimental = options)
+            val saved = bundle(chosen)
+            assertEquals(options.iapChannelWhenOffered, saved.getBoolean("experimental.iapChannelWhenOffered", !options.iapChannelWhenOffered))
+            assertEquals(options.releaseBluetoothOnRequest, saved.getBoolean("experimental.releaseBluetoothOnRequest", !options.releaseBluetoothOnRequest))
+            assertEquals(options.awaitIphoneReconnect, saved.getBoolean("experimental.awaitIphoneReconnect", !options.awaitIphoneReconnect))
+            val parcel = Parcel.obtain()
+            try {
+                parcel.writeBundle(saved); parcel.setDataPosition(0)
+                assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+            } finally { parcel.recycle() }
+        }
+        val old = bundle(base).apply {
+            remove("experimental.iapChannelWhenOffered"); remove("experimental.releaseBluetoothOnRequest")
+            remove("experimental.awaitIphoneReconnect")
+        }
+        assertEquals(base, relaySettingsSaver(base).restore(old))
+        val remembered = base.copy(experimental = ExperimentalOptions(iapChannelWhenOffered = false,
+            releaseBluetoothOnRequest = false, awaitIphoneReconnect = false))
+        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
+    }
+
 }

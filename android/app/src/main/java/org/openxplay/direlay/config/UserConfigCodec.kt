@@ -52,7 +52,9 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   developer.fps migrate to frameRate; otherwise both developer keys are ignored.
  * - experimental: version=2; active, remotePlaybackProof, cancelRecoveredRetries, startupStatus,
  *   startupDiagnostics, networkObservationBackoff, screenSessionIsolation, screenReconnectReset,
- *   screenDeliverySerialization and sendBluetoothAddress are booleans;
+ *   screenDeliverySerialization, iapChannelWhenOffered, releaseBluetoothOnRequest,
+ *   awaitIphoneReconnect and sendBluetoothAddress are booleans; missing experiment keys default true
+ *   except iapChannelWhenOffered, releaseBluetoothOnRequest and sendBluetoothAddress, which default false;
  *   bluetoothAddress is a user-entered unicast Bluetooth address. Retired booleans are ignored.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
  * Android aliases: iphoneConnection, mfiI2cPath, mfiRemoteServer and hotspot*.
@@ -178,6 +180,9 @@ object UserConfigCodec {
         .put("screenSessionIsolation", e.screenSessionIsolation)
         .put("screenReconnectReset", e.screenReconnectReset)
         .put("screenDeliverySerialization", e.screenDeliverySerialization)
+        .put("iapChannelWhenOffered", e.iapChannelWhenOffered)
+        .put("releaseBluetoothOnRequest", e.releaseBluetoothOnRequest)
+        .put("awaitIphoneReconnect", e.awaitIphoneReconnect)
         .put("sendBluetoothAddress", e.sendBluetoothAddress)
         .put("bluetoothAddress", e.bluetoothAddress)
 
@@ -316,6 +321,9 @@ object UserConfigCodec {
                             "screenSessionIsolation" -> e.copy(screenSessionIsolation = objectValue.bool(field))
                             "screenReconnectReset" -> e.copy(screenReconnectReset = objectValue.bool(field))
                             "screenDeliverySerialization" -> e.copy(screenDeliverySerialization = objectValue.bool(field))
+                            "iapChannelWhenOffered" -> e.copy(iapChannelWhenOffered = objectValue.bool(field))
+                            "releaseBluetoothOnRequest" -> e.copy(releaseBluetoothOnRequest = objectValue.bool(field))
+                            "awaitIphoneReconnect" -> e.copy(awaitIphoneReconnect = objectValue.bool(field))
                             "rememberSubscription" -> { objectValue.bool(field); e }
                             "keepScanning" -> { objectValue.bool(field); e }
                             "recordAdvertisements" -> { objectValue.bool(field); e }

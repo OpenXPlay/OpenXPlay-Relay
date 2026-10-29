@@ -8,13 +8,13 @@ import org.junit.Test
 
 class ExperimentalOptionsTest {
     private val selected = ExperimentalOptions(active = true, rememberSubscription = true, keepScanning = true,
-        recordAdvertisements = true, sendBluetoothAddress = true,
+        recordAdvertisements = true, sendBluetoothAddress = true, iapChannelWhenOffered = true, releaseBluetoothOnRequest = true,
             isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5")
 
     @Test fun newLaboratoryOptionsDefaultOnAndPromotedFeaturesSurviveMasterOff() {
         val defaults = ExperimentalOptions()
         assertTrue(defaults.active); assertFalse(defaults.sendBluetoothAddress)
-        assertEquals(8, defaults.optionCount)
+        assertEquals(9, defaults.optionCount)
         assertEquals(ExperimentalOptions.OFF, defaults.copy(active = false).effective())
         val disabled = selected.copy(active = false).effective()
         assertEquals(ExperimentalOptions.OFF, disabled)
@@ -22,7 +22,8 @@ class ExperimentalOptionsTest {
         assertTrue(disabled.recoverWirelessNetwork && disabled.keepScanning && disabled.waitForCarlink)
         assertFalse(disabled.remotePlaybackProof || disabled.cancelRecoveredRetries || disabled.startupStatus ||
             disabled.startupDiagnostics || disabled.networkObservationBackoff || disabled.screenSessionIsolation ||
-            disabled.screenReconnectReset || disabled.screenDeliverySerialization || disabled.sendBluetoothAddress)
+            disabled.screenReconnectReset || disabled.screenDeliverySerialization || disabled.iapChannelWhenOffered ||
+            disabled.releaseBluetoothOnRequest || disabled.awaitIphoneReconnect || disabled.sendBluetoothAddress)
         assertEquals(selected.effective(), selected.copy(active = false).copy(active = true).effective())
     }
 
@@ -37,7 +38,7 @@ class ExperimentalOptionsTest {
         assertTrue(invalid.effective().recordAdvertisements)
         assertFalse(invalid.copy(active = false).invalidAddress)
         assertFalse(invalid.copy(sendBluetoothAddress = false).invalidAddress)
-        assertEquals(15, selected.effective().names().size)
+        assertEquals(18, selected.effective().names().size)
     }
 
     @Test fun addressRequiresSixHexUnicastOctetsAndRejectsHiddenAndZeroAddresses() {
@@ -68,6 +69,29 @@ class ExperimentalOptionsTest {
             assertEquals(selected.screenDeliverySerialization, enabled.screenDeliverySerialization)
             val disabled = selected.copy(active = false).effective()
             assertFalse(disabled.screenSessionIsolation || disabled.screenReconnectReset || disabled.screenDeliverySerialization)
+            assertEquals(enabled, selected.copy(active = false).copy(active = true).effective())
+        }
+    }
+
+    @Test fun handoffExperimentsKeepTheirDefaultsAndRemainIndependentUnderTheMaster() {
+        val defaults = ExperimentalOptions()
+        assertFalse(defaults.iapChannelWhenOffered || defaults.releaseBluetoothOnRequest)
+        assertTrue(defaults.awaitIphoneReconnect)
+        val names = listOf("iap_channel_when_offered", "release_bluetooth_on_request", "await_iphone_reconnect")
+        assertEquals(listOf("await_iphone_reconnect"), defaults.names().filter { it in names })
+        assertFalse(ExperimentalOptions.OFF.iapChannelWhenOffered || ExperimentalOptions.OFF.releaseBluetoothOnRequest ||
+            ExperimentalOptions.OFF.awaitIphoneReconnect)
+        assertEquals(0, ExperimentalOptions.OFF.optionCount)
+        for (bits in 0..7) {
+            val selected = defaults.copy(iapChannelWhenOffered = bits and 1 != 0,
+                releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)
+            val enabled = selected.effective()
+            assertEquals(selected, enabled)
+            assertEquals(8 + Integer.bitCount(bits), enabled.optionCount)
+            assertEquals(names.filterIndexed { index, _ -> bits and (1 shl index) != 0 }, enabled.names().filter { it in names })
+            val disabled = selected.copy(active = false).effective()
+            assertEquals(ExperimentalOptions.OFF, disabled)
+            assertTrue(disabled.names().none { it in names })
             assertEquals(enabled, selected.copy(active = false).copy(active = true).effective())
         }
     }

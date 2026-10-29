@@ -435,6 +435,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             screenSessionIsolation = relay.getBoolean("experimental.screenSessionIsolation", true),
             screenReconnectReset = relay.getBoolean("experimental.screenReconnectReset", true),
             screenDeliverySerialization = relay.getBoolean("experimental.screenDeliverySerialization", true),
+            iapChannelWhenOffered = relay.getBoolean("experimental.iapChannelWhenOffered", false),
+            releaseBluetoothOnRequest = relay.getBoolean("experimental.releaseBluetoothOnRequest", false),
+            awaitIphoneReconnect = relay.getBoolean("experimental.awaitIphoneReconnect", true),
         )
         if (legacy) relay.edit().also { writeExperimentalOptions(it, value) }.apply()
         return value
@@ -453,6 +456,9 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .putBoolean("experimental.screenSessionIsolation", value.screenSessionIsolation)
             .putBoolean("experimental.screenReconnectReset", value.screenReconnectReset)
             .putBoolean("experimental.screenDeliverySerialization", value.screenDeliverySerialization)
+            .putBoolean("experimental.iapChannelWhenOffered", value.iapChannelWhenOffered)
+            .putBoolean("experimental.releaseBluetoothOnRequest", value.releaseBluetoothOnRequest)
+            .putBoolean("experimental.awaitIphoneReconnect", value.awaitIphoneReconnect)
             .remove("experimental.rememberSubscription")
             .remove("experimental.keepScanning")
             .remove("experimental.recordAdvertisements")

@@ -774,7 +774,7 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { migrated ->
             val value = migrated.load()
             assertTrue(value.experimental.active)
-            assertEquals(8, value.experimental.optionCount)
+            assertEquals(9, value.experimental.optionCount)
             assertTrue(value.experimental.effective().keepScanning)
             assertFalse(value.experimental.sendBluetoothAddress)
             migrated.save(value.copy(experimental = value.experimental.copy(active = false, startupDiagnostics = false)))
@@ -807,6 +807,33 @@ class RelaySettingsTest {
             assertFalse(options.active)
             assertTrue(options.screenSessionIsolation && options.screenReconnectReset && options.screenDeliverySerialization)
             assertFalse(options.effective().screenSessionIsolation)
+        }
+    }
+
+    @Test fun handoffExperimentsUseTheirDefaultsForExistingVersionTwoAndPersistEachParkedChoice() {
+        val prefs = context.getSharedPreferences("direlay", 0)
+        for (active in listOf(false, true)) {
+            prefs.edit().putInt("experimental.version", 2).putBoolean("experimental.active", active)
+                .remove("experimental.iapChannelWhenOffered").remove("experimental.releaseBluetoothOnRequest")
+                .remove("experimental.awaitIphoneReconnect").commit()
+            RelaySettingsStore(context).use { upgraded ->
+                val defaults = upgraded.load().experimental
+                assertEquals(active, defaults.active)
+                assertFalse(defaults.iapChannelWhenOffered || defaults.releaseBluetoothOnRequest)
+                assertTrue(defaults.awaitIphoneReconnect)
+                assertFalse(defaults.effective().iapChannelWhenOffered || defaults.effective().releaseBluetoothOnRequest)
+                assertEquals(active, defaults.effective().awaitIphoneReconnect)
+                for (bits in 0..7) {
+                    val choice = defaults.copy(iapChannelWhenOffered = bits and 1 != 0,
+                        releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)
+                    upgraded.save(upgraded.load().copy(experimental = choice))
+                    assertEquals(choice.iapChannelWhenOffered, prefs.getBoolean("experimental.iapChannelWhenOffered", !choice.iapChannelWhenOffered))
+                    assertEquals(choice.releaseBluetoothOnRequest, prefs.getBoolean("experimental.releaseBluetoothOnRequest", !choice.releaseBluetoothOnRequest))
+                    assertEquals(choice.awaitIphoneReconnect, prefs.getBoolean("experimental.awaitIphoneReconnect", !choice.awaitIphoneReconnect))
+                    assertEquals(2, prefs.getInt("experimental.version", 0))
+                    RelaySettingsStore(context).use { restarted -> assertEquals(choice, restarted.load().experimental) }
+                }
+            }
         }
     }
 }

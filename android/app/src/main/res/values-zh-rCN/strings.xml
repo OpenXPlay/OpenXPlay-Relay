@@ -810,4 +810,10 @@
     <string name="radio_conflict_hotspot">这台手机打开热点时会关闭 Wi-Fi。现在热点开着，而 iPhone 的连接方式需要 Wi-Fi，所以 CarPlay 无法启动。这台手机可以用：</string>
     <string name="radio_conflict_use">改用此方式</string>
     <string name="radio_conflict_keep">暂不更改</string>
+    <string name="experimental_iap_channel_when_offered">仅在 iPhone 提出时开启 iAP2 Wi-Fi 通道</string>
+    <string name="experimental_iap_channel_when_offered_hint">iPhone（如 iOS 16）连接后一直没有画面时可尝试。iPhone 不提出这个通道时，iAP2 继续走蓝牙，以第一帧画面确认连接。</string>
+    <string name="experimental_release_bluetooth">按 iPhone 请求释放蓝牙</string>
+    <string name="experimental_release_bluetooth_hint">iPhone 连接后一直没有画面时可尝试。iPhone 要求关闭蓝牙后，5 秒内仍没有画面和 Wi-Fi 通道时，断开蓝牙连接，CarPlay 会话保留在 Wi-Fi 上。</string>
+    <string name="experimental_await_iphone_reconnect">等待 iPhone 自行重连</string>
+    <string name="experimental_await_iphone_reconnect_hint">iPhone 在 CarPlay 开始前断开时，先等它最多 25 秒自行重连，再重建连接；新会话建立后，取消已排队的重建。</string>
 </resources>
