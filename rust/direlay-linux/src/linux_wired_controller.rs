@@ -114,6 +114,7 @@ pub trait WiredPlatform: Send + Sync {
 #[derive(Clone, Copy)]
 pub struct WiredTiming {
     pub usb_poll: Duration,
+    pub unplug_settle: Duration,
     pub reenumeration_poll: Duration,
     pub reenumeration_timeout: Duration,
     pub retry_initial: Duration,
@@ -124,6 +125,7 @@ impl Default for WiredTiming {
     fn default() -> Self {
         Self {
             usb_poll: Duration::from_secs(2),
+            unplug_settle: Duration::from_secs(10),
             reenumeration_poll: Duration::from_millis(250),
             reenumeration_timeout: Duration::from_secs(30),
             retry_initial: Duration::from_secs(2),
@@ -163,6 +165,8 @@ struct State {
     device: Option<UsbDeviceInfo>,
     restart_nodes: Vec<UsbDeviceInfo>,
     transitioning: bool,
+    // Invalidates presence snapshots across node changes and mode transitions.
+    presence_revision: u64,
     airplay: bool,
     resources: Vec<(Layer, Cleanup)>,
 }
@@ -207,6 +211,7 @@ impl LinuxWiredController {
                     device: None,
                     restart_nodes: Vec::new(),
                     transitioning: false,
+                    presence_revision: 0,
                     airplay: false,
                     resources: Vec::new(),
                 }),
@@ -306,6 +311,7 @@ impl LinuxWiredController {
             s.start_sent = false;
             s.device = None;
             s.transitioning = false;
+            s.presence_revision += 1;
             s.airplay = false;
             if !keep_hotspot {
                 s.hotspot = None;
@@ -473,8 +479,8 @@ impl LinuxWiredController {
                 continue;
             }
             if unplugged {
-                // DeviceGone may precede sysfs removal. Require absence or another enumeration
-                // before trying again, rather than reopening the same dying USB node in a loop.
+                // DeviceGone may precede sysfs removal. Give the old node time to disappear,
+                // but retry after a bounded wait if it remains visible.
                 if let Err(e) = self.wait_after_unplug(unplug_node.as_ref()) {
                     if self.state.0.lock().unwrap().closed {
                         break;
@@ -502,14 +508,24 @@ impl LinuxWiredController {
             Box::new(move || {
                 let mut previous: Option<Vec<UsbDeviceInfo>> = None;
                 loop {
-                    if state.0.lock().unwrap().closed {
-                        return;
-                    }
+                    let revision = {
+                        let s = state.0.lock().unwrap();
+                        if s.closed {
+                            return;
+                        }
+                        s.presence_revision
+                    };
                     if let Ok(devices) = platform.enumerate() {
                         {
                             let mut s = state.0.lock().unwrap();
-                            if !s.closed
-                                && !s.armed
+                            if s.closed {
+                                return;
+                            }
+                            if s.presence_revision != revision {
+                                // This snapshot predates the current device or mode state.
+                                continue;
+                            }
+                            if !s.armed
                                 && !s.transitioning
                                 && s.failure.is_none()
                                 && s.device.as_ref().is_some_and(|old| {
@@ -556,6 +572,7 @@ impl LinuxWiredController {
     }
     fn wait_after_unplug(&self, previous: Option<&UsbDeviceInfo>) -> Result<()> {
         let generation = self.state.0.lock().unwrap().generation;
+        let deadline = Instant::now() + self.timing.unplug_settle;
         self.stage_event(
             generation,
             WAITING_FOR_IPHONE_USB,
@@ -570,7 +587,12 @@ impl LinuxWiredController {
             if previous.is_none_or(|old| !devices.iter().any(|d| !different_node(d, old))) {
                 return Ok(());
             }
-            if self.wait(generation, self.timing.usb_poll).is_err() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero()
+                || self
+                    .wait(generation, self.timing.usb_poll.min(remaining))
+                    .is_err()
+            {
                 return Ok(());
             }
         }
@@ -602,6 +624,7 @@ impl LinuxWiredController {
                     s.restart_nodes.push(info.clone());
                 }
                 s.transitioning = false;
+                s.presence_revision += 1;
             }
             let current = self.callbacks(generation, node(&info)).current;
             let device = self.platform.open_device(&info, current)?;
@@ -632,11 +655,19 @@ impl LinuxWiredController {
                 WiredConfigurationAction::RequestTransition => {
                     self.stage_event(generation, REQUESTING_CARPLAY_MODE, serde_json::json!({}))?;
                     tried += 1;
-                    self.state.0.lock().unwrap().transitioning = true;
+                    {
+                        let mut s = self.state.0.lock().unwrap();
+                        s.transitioning = true;
+                        s.presence_revision += 1;
+                    }
                     let outcome = device.request_mode(&descriptors)?;
                     match outcome {
                         CarPlayModeOutcome::Rejected { diagnostic, .. } => {
-                            self.state.0.lock().unwrap().transitioning = false;
+                            {
+                                let mut s = self.state.0.lock().unwrap();
+                                s.transitioning = false;
+                                s.presence_revision += 1;
+                            }
                             if WiredConfigurationAction::fallback_after_rejection(
                                 config.is_some(),
                                 mode,

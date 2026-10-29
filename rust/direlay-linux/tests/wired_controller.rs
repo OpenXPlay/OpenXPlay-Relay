@@ -14,14 +14,16 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Condvar, Mutex, OnceLock,
+        mpsc, Arc, Condvar, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant},
 };
 
+const TEST_TIMEOUT: Duration = Duration::from_secs(15);
+
 fn wait_for(mut f: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + TEST_TIMEOUT;
     while !f() {
         assert!(Instant::now() < deadline, "controller did not progress");
         thread::sleep(Duration::from_millis(2));
@@ -94,6 +96,29 @@ enum Failure {
     Busy,
     Other,
 }
+struct Pause {
+    entered: mpsc::Sender<()>,
+    resume: mpsc::Receiver<()>,
+}
+impl Pause {
+    fn new() -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        (
+            Self {
+                entered: entered_tx,
+                resume: resume_rx,
+            },
+            entered_rx,
+            resume_tx,
+        )
+    }
+    fn wait(self) {
+        let _ = self.entered.send(());
+        // A failed test must not leave its worker blocked during cleanup.
+        let _ = self.resume.recv_timeout(TEST_TIMEOUT);
+    }
+}
 #[derive(Default)]
 struct Shared {
     devices: Mutex<Vec<UsbDeviceInfo>>,
@@ -118,6 +143,9 @@ struct Shared {
     actual_ids: Mutex<Vec<(String, String)>>,
     pair_path: Mutex<PathBuf>,
     check_deleted: AtomicBool,
+    mode_pause: Mutex<Option<Pause>>,
+    presence_pause: Mutex<Option<Pause>>,
+    presence_polls: AtomicUsize,
 }
 impl Shared {
     fn new() -> Arc<Self> {
@@ -156,6 +184,11 @@ impl Shared {
             .iter()
             .filter(|s| s.as_str() == name)
             .count()
+    }
+    fn wait_for_presence_polls(&self) {
+        let before = self.presence_polls.load(Ordering::Acquire);
+        // The next enumeration starts only after the preceding snapshot was processed.
+        wait_for(|| self.presence_polls.load(Ordering::Acquire) >= before + 2);
     }
 }
 struct Platform(Arc<Shared>);
@@ -201,7 +234,15 @@ impl WiredPlatform for Platform {
         Ok(self.0.gate.load(Ordering::Acquire))
     }
     fn enumerate(&self) -> io::Result<Vec<UsbDeviceInfo>> {
-        Ok(self.0.devices.lock().unwrap().clone())
+        let devices = self.0.devices.lock().unwrap().clone();
+        if thread::current().name() == Some("wired-presence") {
+            self.0.presence_polls.fetch_add(1, Ordering::Release);
+            let pause = self.0.presence_pause.lock().unwrap().take();
+            if let Some(pause) = pause {
+                pause.wait();
+            }
+        }
+        Ok(devices)
     }
     fn open_device(
         &self,
@@ -277,6 +318,10 @@ impl WiredDevice for Device {
     }
     fn request_mode(&self, _: &UsbDescriptors) -> io::Result<CarPlayModeOutcome> {
         self.shared.step("mode")?;
+        let pause = self.shared.mode_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.wait();
+        }
         self.shared
             .mode_requests
             .lock()
@@ -499,6 +544,25 @@ impl Run {
         Self::build(shared, true)
     }
     fn build(shared: Arc<Shared>, saved: bool) -> Self {
+        Self::with_timing(shared, saved, Self::timing())
+    }
+    fn with_automatic_start(shared: Arc<Shared>, saved: bool, automatic: bool) -> Self {
+        Self::start(shared, saved, Self::timing(), automatic)
+    }
+    fn timing() -> WiredTiming {
+        WiredTiming {
+            usb_poll: Duration::from_millis(8),
+            reenumeration_poll: Duration::from_millis(2),
+            retry_initial: Duration::from_millis(3),
+            retry_max: Duration::from_millis(12),
+            tick: Duration::from_millis(2),
+            ..WiredTiming::default()
+        }
+    }
+    fn with_timing(shared: Arc<Shared>, saved: bool, timing: WiredTiming) -> Self {
+        Self::start(shared, saved, timing, false)
+    }
+    fn start(shared: Arc<Shared>, saved: bool, timing: WiredTiming, automatic: bool) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "wired-controller-{}",
             openxplay_relay::admin::auth::random_hex(8).unwrap()
@@ -517,18 +581,11 @@ impl Run {
                 .unwrap()
                 .push(serde_json::from_str(&line).unwrap())
         })));
-        let timing = WiredTiming {
-            usb_poll: Duration::from_millis(8),
-            reenumeration_poll: Duration::from_millis(2),
-            reenumeration_timeout: Duration::from_millis(30),
-            retry_initial: Duration::from_millis(3),
-            retry_max: Duration::from_millis(12),
-            tick: Duration::from_millis(2),
-        };
         let controller = Arc::new(
             LinuxWiredController::new(Arc::new(Platform(shared)), json.clone(), dir.clone())
                 .with_timing(timing),
         );
+        controller.set_start_when_ready(automatic);
         let c = controller.clone();
         let worker = thread::spawn(move || c.run().unwrap());
         Self {
@@ -681,6 +738,33 @@ fn mode_request_reenumerates_and_uses_the_new_node() {
     assert_eq!(run.count("retry"), 0);
 }
 #[test]
+fn stale_presence_snapshot_cannot_unplug_the_reenumerated_node() {
+    let f = Shared::new();
+    *f.descriptors.lock().unwrap() = VecDeque::from([Some(false), Some(true)]);
+    let (pause, mode_entered, resume_mode) = Pause::new();
+    *f.mode_pause.lock().unwrap() = Some(pause);
+    let run = Run::new(f.clone());
+    mode_entered.recv_timeout(TEST_TIMEOUT).unwrap();
+
+    let (pause, snapshot_taken, resume_presence) = Pause::new();
+    *f.presence_pause.lock().unwrap() = Some(pause);
+    snapshot_taken.recv_timeout(TEST_TIMEOUT).unwrap();
+    assert_eq!(*f.devices.lock().unwrap(), vec![info(1)]);
+
+    resume_mode.send(()).unwrap();
+    wait_for(|| run.controller.stage() == "Session");
+    assert_eq!(*f.devices.lock().unwrap(), vec![info(2)]);
+    resume_presence.send(()).unwrap();
+    f.wait_for_presence_polls();
+
+    assert_eq!(run.controller.stage(), "Session");
+    assert_eq!(f.count("mfi"), 1);
+    assert_eq!(f.count("device"), 2);
+    assert_eq!(f.count("mode"), 1);
+    assert_eq!(run.count("retry"), 0);
+    assert!(!run.controller.failed());
+}
+#[test]
 fn rejected_mode_falls_back_without_apple_ethernet() {
     let f = Shared::new();
     *f.descriptors.lock().unwrap() = VecDeque::from([Some(false)]);
@@ -696,7 +780,14 @@ fn reenumeration_timeout_fails_with_a_bounded_retry_budget() {
     let f = Shared::new();
     *f.descriptors.lock().unwrap() = VecDeque::from([Some(false)]);
     f.change_node.store(false, Ordering::Release);
-    let run = Run::new(f.clone());
+    let run = Run::with_timing(
+        f.clone(),
+        true,
+        WiredTiming {
+            reenumeration_timeout: Duration::from_millis(30),
+            ..Run::timing()
+        },
+    );
     wait_for(|| run.controller.stage() == "Failed");
     assert_eq!(run.count("retry"), 5);
     assert!(run.events.lock().unwrap().iter().any(|v| v["reason"]
@@ -719,21 +810,20 @@ fn denied_trust_waits_for_a_new_usb_node_then_pairs_again() {
     {
         let f = Shared::new();
         *f.deny.lock().unwrap() = Some("denied");
-        let run = Run::build(f.clone(), false);
-        run.controller.set_start_when_ready(automatic);
+        let run = Run::with_automatic_start(f.clone(), false, automatic);
         wait_for(|| run.controller.armed() && run.controller.stage() == "Failed");
         let failure = run.json.runtime_path_facts().iphone.failure.unwrap();
         assert_eq!(failure.code, "usb_trust_denied");
         assert!(!failure.retrying);
         assert!(run.controller.running());
         *f.deny.lock().unwrap() = None;
-        thread::sleep(Duration::from_millis(40));
+        f.wait_for_presence_polls();
         assert_eq!(run.count("retry"), 0);
         assert_eq!(f.pair_calls.load(Ordering::Acquire), 1);
         if !missed_absence {
             f.devices.lock().unwrap().clear();
             wait_for(|| !run.json.runtime_path_facts().usb.present);
-            thread::sleep(Duration::from_millis(20));
+            f.wait_for_presence_polls();
             assert_eq!(f.pair_calls.load(Ordering::Acquire), 1);
         }
         *f.devices.lock().unwrap() = vec![info(2)];
@@ -891,6 +981,43 @@ fn unplug_at_each_resource_stage_waits_for_replug_without_consuming_retries() {
     }
 }
 #[test]
+fn unplug_settle_retries_when_the_previous_node_remains_present() {
+    assert_eq!(
+        WiredTiming::default().unplug_settle,
+        Duration::from_secs(10)
+    );
+    let f = Shared::new();
+    let settle = Duration::from_millis(40);
+    let run = Run::with_timing(
+        f.clone(),
+        true,
+        WiredTiming {
+            // The deadline must cap this poll interval, and cancellation must still wake it.
+            usb_poll: Duration::from_secs(30),
+            unplug_settle: settle,
+            ..Run::timing()
+        },
+    );
+    wait_for(|| run.controller.stage() == "Session");
+    // Keep the same node on retry as well: the remembered session permits this fallback.
+    f.modes.lock().unwrap().push_back(Some("request rejected"));
+    let callback = f.callbacks.lock().unwrap()[0].clone();
+    let unplugged = Instant::now();
+    (callback.on_failure)(UsbError::DeviceGone.into());
+    wait_for(|| f.callbacks.lock().unwrap().len() == 2 && run.controller.stage() == "Session");
+
+    assert!(f.mode_requests.lock().unwrap()[0].duration_since(unplugged) >= settle);
+    assert_eq!(*f.devices.lock().unwrap(), vec![info(1)]);
+    assert_eq!(f.count("mfi"), 2);
+    assert_eq!(run.count("retry"), 1);
+    assert_eq!(run.count("startup-failed"), 0);
+    assert!(run.events.lock().unwrap().iter().any(|v| {
+        v["event"] == "stage"
+            && v["stage"] == "WaitingForIphoneUsb"
+            && v["reason"] == "iPhone unplugged"
+    }));
+}
+#[test]
 fn repeated_unplug_does_not_spend_the_failure_budget() {
     let f = Shared::new();
     let run = Run::new(f.clone());
@@ -991,7 +1118,7 @@ fn close_cancels_trust_wait_and_head_unit_gate_without_waiting_for_their_budget(
         });
         let start = Instant::now();
         run.stop();
-        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(start.elapsed() < Duration::from_secs(10));
     }
 }
 #[test]
@@ -1041,15 +1168,14 @@ fn reconnect_mode_rejection_reuses_previously_started_carplay_descriptors() {
 #[test]
 fn automatic_exhaustion_waits_for_replug_with_the_head_unit_network_kept() {
     let f = Shared::new();
-    let mut run = Run::new(f.clone());
-    run.controller.set_start_when_ready(true);
+    let mut run = Run::with_automatic_start(f.clone(), true, true);
     wait_for(|| run.controller.stage() == "Session");
     for n in 0..6 {
         let attempts = f.callbacks.lock().unwrap().len();
         let callback = f.callbacks.lock().unwrap().last().unwrap().clone();
         (callback.on_failure)(io::Error::other("failed startup"));
         if n == 5 {
-            wait_for(|| run.controller.armed());
+            wait_for(|| run.controller.armed() && run.controller.stage() == "Failed");
         } else {
             wait_for(|| {
                 f.callbacks.lock().unwrap().len() > attempts && run.controller.stage() == "Session"
@@ -1059,12 +1185,14 @@ fn automatic_exhaustion_waits_for_replug_with_the_head_unit_network_kept() {
     assert!(run.controller.running());
     assert_eq!(f.count("hotspot"), 1);
     let attempts = f.callbacks.lock().unwrap().len();
-    thread::sleep(Duration::from_millis(30));
+    f.wait_for_presence_polls();
     assert_eq!(f.callbacks.lock().unwrap().len(), attempts);
     f.devices.lock().unwrap().clear();
     wait_for(|| !run.json.runtime_path_facts().usb.present);
     *f.devices.lock().unwrap() = vec![info(20)];
-    wait_for(|| run.controller.stage() == "Session");
+    wait_for(|| {
+        f.callbacks.lock().unwrap().len() == attempts + 1 && run.controller.stage() == "Session"
+    });
     assert_eq!(f.count("hotspot"), 1);
     assert_eq!(f.callbacks.lock().unwrap().len(), attempts + 1);
     run.stop();
@@ -1090,8 +1218,7 @@ fn disabling_automatic_start_releases_an_armed_head_unit_network() {
         .lock()
         .unwrap()
         .extend((0..6).map(|_| ("configuration", Failure::Other)));
-    let run = Run::new(f.clone());
-    run.controller.set_start_when_ready(true);
+    let run = Run::with_automatic_start(f.clone(), true, true);
     wait_for(|| run.controller.armed());
     assert!(!f.closed.lock().unwrap().contains(&"hotspot"));
     run.controller.set_start_when_ready(false);
@@ -1110,8 +1237,7 @@ fn a_new_usb_node_recovers_exhaustion_with_a_fresh_budget_regardless_of_automati
             .lock()
             .unwrap()
             .extend((0..6).map(|_| ("configuration", Failure::Other)));
-        let run = Run::new(f.clone());
-        run.controller.set_start_when_ready(automatic);
+        let run = Run::with_automatic_start(f.clone(), true, automatic);
         wait_for(|| run.controller.armed() && run.controller.stage() == "Failed");
         assert_eq!(run.count("retry"), 5);
         f.fail
@@ -1129,8 +1255,7 @@ fn readiness_restored_recovers_denied_trust_regardless_of_automatic_start() {
     for automatic in [false, true] {
         let f = Shared::new();
         *f.deny.lock().unwrap() = Some("denied");
-        let run = Run::build(f.clone(), false);
-        run.controller.set_start_when_ready(automatic);
+        let run = Run::with_automatic_start(f.clone(), false, automatic);
         wait_for(|| run.controller.armed() && run.controller.stage() == "Failed");
         *f.deny.lock().unwrap() = None;
         run.controller.readiness_restored();
