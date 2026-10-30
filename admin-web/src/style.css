@@ -207,3 +207,7 @@ dialog button.confirm { background: var(--ok); color: var(--primary-ink); }
 #arrival-ring rect { width: calc(100% - 8px); height: calc(100% - 8px); fill: none; stroke: rgb(255 255 255 / .7); stroke-width: 2; transition: stroke-dasharray 1s linear; }
 @media (prefers-reduced-motion: reduce) { #arrival-ring rect { transition: none; } }
 #arrival-countdown { margin: 0; text-align: center; }
+
+button.destructive { color: var(--failed); }
+.guide-blocker { outline: 2px solid var(--failed); outline-offset: 4px; border-radius: var(--chip-radius); }
+.guide-blocker small { display: block; color: var(--failed); }

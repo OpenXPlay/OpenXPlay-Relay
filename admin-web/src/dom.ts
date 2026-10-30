@@ -78,10 +78,10 @@ export function enhanceSheets(label: () => string) {
 }
 
 /** A shared confirmation sheet keeps primary and quiet actions in reading and focus order. */
-export function confirmSheet(message: string, primary: string, cancel: string): Promise<boolean> {
+export function confirmSheet(message: string, primary: string, cancel: string, tone: 'default' | 'destructive' = 'default'): Promise<boolean> {
   const trigger = document.activeElement as HTMLElement | null;
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', primary);
-  patchMarkup(dialog, `<h2>${esc(primary)}</h2><p>${esc(message)}</p><div class="dialog-actions"><button class="primary" data-confirm>${esc(primary)}</button><button class="quiet" data-close>${esc(cancel)}</button></div>`);
+  patchMarkup(dialog, `<h2>${esc(primary)}</h2><p>${esc(message)}</p><div class="dialog-actions"><button class="${tone === 'destructive' ? 'quiet destructive' : 'primary'}" data-confirm>${esc(primary)}</button><button class="${tone === 'destructive' ? 'primary' : 'quiet'}" data-close>${esc(cancel)}</button></div>`);
   return new Promise(resolve => {
     let closed = false;
     const close = (accepted: boolean) => {

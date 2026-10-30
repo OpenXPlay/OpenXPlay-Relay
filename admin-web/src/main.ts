@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-15
 
 import { mountIdentity, IdentitySelection } from './identity';
-import { setupSteps, setupFields, setupBlocked, preparationView, type SetupStep } from './setup-guide';
+import { setupSteps, setupFields, setupBlocked, setupBlocker, preparationView, type SetupStep } from './setup-guide';
 import { restartPending } from './startup';
 import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRecommended, displayPresets, displayPresetsView } from './car-screen';
 import { teslaHint, teslaNotes } from './tesla';
@@ -14,7 +14,7 @@ import { mfiSubmission, mfiError, mfiReadiness } from './mfi';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
 import { patchMarkup, on, enhanceSheets, confirmSheet } from './dom';
-import { mountStage, timer } from './stage';
+import { mountStage, timer, stepText } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
 import type { StageAction } from './path/present-stage';
@@ -28,7 +28,7 @@ import { connectionsView, editConnections } from './connections';
 import type { NetworkRolesSetting } from './schema';
 import { mountTrace, traceFilters, traceVisible } from './carlink-trace';
 import { carlinkConnectView, statusView, addressesView, devicesView, hotspotDetails, nearbyNetworksView, bindAddressSelector } from './views';
-import { homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
+import { displayChanged, homeView, settingsViews, developerPreference, networkPanelView, switchConsequences, savedNetworks, savedNetworkTags, addSavesAndConnects, canConnectNetwork } from './logic';
 import { putSharedNetwork, deleteSharedNetwork, sharedNetworkUpdate, sharedNetworkPassword } from './shared-networks';
 import type { SavedNetwork } from './schema';
 import { request, api, ApiError, NetworkError, events, type HotspotBand, type HotspotSecurity, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
@@ -71,6 +71,9 @@ let networkAnnouncement = '';
 const identitySelection = new IdentitySelection();
 let disposeFeature: (() => void) | undefined;
 let needsRestart = false;
+let restartOrigin = '';
+let guideError = false;
+const saves = new Map<string, Promise<void>>();
 let networkError = '';
 let status: Status | null = null;
 let settings: Settings | null = null;
@@ -127,7 +130,7 @@ function shell() {
   document.documentElement.lang = language;
   document.body.dataset.page = currentView;
   const title = t(routeTitle(route));
-  patchMarkup(root, `<header class="top-bar">${session === 'ready' ? currentView === 'home' ? `<a class="icon-button" href="#settings" aria-label="${t('ui.settings')}">${icon('settings')}</a>` : `<a class="icon-button back" href="#${parentRoute(route)}" aria-label="${t('ui.back')}">${icon('chevron-left')}</a><span id="bar-title" aria-hidden="true">${esc(title)}</span>` : `<span>OpenXPlay Relay</span>`}</header><div id="connection" role="status" class="banner" ${offline ? '' : 'hidden'}>${t('ui.reconnecting')}</div><div id="restart-required" class="card" hidden></div><main id="main"></main>`);
+  patchMarkup(root, `<header class="top-bar">${session === 'ready' ? currentView === 'home' ? `<a class="icon-button" href="#settings" aria-label="${t('ui.settings')}">${icon('settings')}</a>` : `<a class="icon-button back" href="#${parentRoute(route)}" aria-label="${t('ui.back')}">${icon('chevron-left')}</a><span id="bar-title" aria-hidden="true">${esc(title)}</span>` : `<span>OpenXPlay Relay</span>`}</header><div id="connection" role="status" class="banner" ${offline ? '' : 'hidden'}>${t('ui.reconnecting')}</div><main id="main"></main><div id="restart-required" class="card" hidden></div>`);
 }
 function render() {
   stage?.destroy(); stage = null; clearInterval(visibleTimer); visibleTimer = undefined;
@@ -252,7 +255,7 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', addressesView(status!, true, t) + `<div class="inset-group">${fields().some(f => f.key === 'publicNameEnabled') ? menuRow('settings/access/public-name', 'publicName.title', status!.publicName ? t(`publicName.state.${status!.publicName.state}`) : '', 'lock') : ''}${menuRow('settings/access/admin', 'menu.access/admin', defaultPassword ? t('home.passwordNote') : '', 'lock')}</div>`); bindCopies(container);
     }
     if (route === 'settings/access/admin') {
-      if (status!.platform === 'linux') { container.insertAdjacentHTML('beforeend', `<section class="inset-group"><label class="switch-row"><span>${esc(t('admin.enabled'))}</span><input id="admin-enabled" type="checkbox" role="switch" ${status!.adminEnabled === false ? '' : 'checked'}></label><p class="muted">${esc(t('admin.recovery'))}</p><button id="admin-reset">${esc(t('admin.reset'))}</button><p id="admin-result" role="status"></p></section>`); bindAdminAccess(); }
+      if (status!.platform === 'linux') { container.insertAdjacentHTML('beforeend', `<section class="inset-group"><label class="switch-row"><span>${esc(t('admin.enabled'))}</span><input id="admin-enabled" type="checkbox" role="switch" ${status!.adminEnabled === false ? '' : 'checked'}><span class="switch-track" aria-hidden="true"></span></label><button id="admin-reset">${esc(t('admin.reset'))}</button><p id="admin-result" role="status"></p></section>`); bindAdminAccess(); }
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="password-card"><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form><button id="logout">${t('ui.logout')}</button></section>`);
       bindPassword(); on(document.getElementById('logout')!, 'click', async () => { try { await api.logout(); resetSession('login'); } catch (e) { pageError = errorKey(e); } });
     }
@@ -302,14 +305,14 @@ function bindAdminAccess() {
   on(document.getElementById('admin-enabled'), 'change', async event => {
     const input = event.currentTarget as HTMLInputElement, enabled = input.checked;
     input.checked = !enabled;
-    if (!enabled && !await confirmSheet(t('admin.disableConfirm'), t('admin.disable'), t('ui.cancel'))) return;
+    if (!enabled && !await confirmSheet(t('admin.disableConfirm') + '\n' + t('admin.recovery'), t('admin.disable'), t('ui.cancel'), 'destructive')) return;
     input.disabled = true;
     try { await api.access(enabled); status!.adminEnabled = enabled; input.checked = enabled; if (!enabled) { disabledAccess = true; render(); } }
     catch (e) { document.getElementById('admin-result')!.textContent = t(errorKey(e)); }
     finally { input.disabled = false; }
   });
   on(document.getElementById('admin-reset'), 'click', async () => {
-    if (!await confirmSheet(t('admin.resetConfirm'), t('admin.reset'), t('ui.cancel'))) return;
+    if (!await confirmSheet(t('admin.resetConfirm'), t('admin.reset'), t('ui.cancel'), 'destructive')) return;
     try { await api.resetPassword(); defaultPassword = true; resetSession('login'); }
     catch (e) { document.getElementById('admin-result')!.textContent = t(errorKey(e)); }
   });
@@ -323,15 +326,35 @@ function renderGuide() {
   on(document.getElementById('setup-next'), 'click', async event => {
     const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
     try {
+      clearGuideError();
+      for (const field of list.filter(field => drafts.has(field.key))) {
+        const input = document.getElementById(fieldId(field.key)) as HTMLInputElement | HTMLTextAreaElement;
+        if (!input.checkValidity()) { result(field.key, 'error.range'); markGuideField(field.key); return; }
+        try { await queueSave(field, field.type === 'object' ? JSON.parse(input.value) : input.value); drafts.delete(field.key); }
+        catch { result(field.key, 'error.invalid'); markGuideField(field.key); return; }
+      }
+      await Promise.all([...saves.values()]);
       // Explicitly finish autosaves before advancing; invalid or failed fields keep this step open.
       for (const [key, item] of pending) { clearTimeout(item.timer); if (!item.busy) await save(key); }
-      if (pending.size || drafts.size || [...feedback.values()].some(value => value && !value.startsWith('ui.')) || setupBlocked(step, settings!, status!)) { document.getElementById('setup-error')!.textContent = t('setup_prepare_blocked'); return; }
+      const invalid = list.find(field => pending.has(field.key) || drafts.has(field.key) || !!feedback.get(field.key) && !['ui.saved', 'ui.nextStart'].includes(feedback.get(field.key)!));
+      if (invalid) { markGuideField(invalid.key); return; }
+      const blocker = setupBlocker(step, settings!, status!);
+      if (blocker) {
+        guideError = true;
+        let row = document.getElementById(blocker.id)?.closest<HTMLElement>('.field, .inset-row') ?? document.getElementById(blocker.id);
+        if (!row) { const target = document.getElementById('setup-preparation')!; patchMarkup(target, `<div class="inset-row" id="${blocker.id}"><span>${esc(t(blocker.title))}<small>${esc(stepText(blocker.reason, t))}</small></span></div>`); row = target.firstElementChild as HTMLElement; }
+        const reason = row.querySelector('.field-result'); if (reason) reason.textContent = stepText(blocker.reason, t);
+        focusGuideRow(row); return;
+      }
       if (step === 'start') { await api.completeSetup(); status!.setupCompleted = true; await api.action(status!.running ? 'restart' : 'start'); needsRestart = false; location.hash = 'home'; void tick(); }
       else location.hash = 'setup/' + setupSteps[index + 1];
     } catch (e) { document.getElementById('setup-error')!.textContent = t(errorKey(e)); }
     finally { button.disabled = false; }
   });
 }
+function focusGuideRow(row: HTMLElement) { row.classList.add('guide-blocker'); row.tabIndex = -1; row.focus(); row.scrollIntoView({ block: 'center' }); }
+function markGuideField(key: string) { guideError = true; const row = document.getElementById(fieldId(key))?.closest<HTMLElement>('.field'); if (row) focusGuideRow(row); }
+function clearGuideError() { if (!guideError) return; guideError = false; document.querySelectorAll('.guide-blocker').forEach(row => row.classList.remove('guide-blocker')); const error = document.getElementById('setup-error'); if (error) error.textContent = ''; }
 function updateGuide() {
   const target = document.getElementById('setup-preparation'); if (!target || !status) return;
   if (guideStep() !== 'prepare') return;
@@ -370,7 +393,7 @@ function updateDashboard() {
   const vehicleTile = document.querySelector<HTMLElement>('[data-vehicle-tile]');
   if (vehicleTile) vehicleTile.textContent = t(`vehicle.${(!status?.carlink?.vehicle || status.carlink.vehicle.state === 'off') ? 'off' : status?.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`);
   if (!status || !stage) { if (status && document.getElementById('context-action')) renderCarlink(); syncPinDialog(); syncVisibleTimer(); return; }
-  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: restartPending(status, needsRestart) || !!status.pathInput?.car?.displayMismatch, carIncomplete: !!settings && Object.keys(carSelectionErrors(settings.values)).length > 0, trustedHttpsRecommended: !!settings && trustedHttpsRecommended(settings.values), setupCompleted: status.setupCompleted }, pageError);
+  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: displayChanged(status, restartPending(status, needsRestart)), carIncomplete: !!settings && Object.keys(carSelectionErrors(settings.values)).length > 0, trustedHttpsRecommended: !!settings && trustedHttpsRecommended(settings.values), setupCompleted: status.setupCompleted }, pageError);
   syncPinDialog(); syncVisibleTimer();
 }
 function syncVisibleTimer() {
@@ -719,7 +742,7 @@ function bindField(field: Field) {
       return `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : field.key === 'hotspotSecurity' && !(status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']).includes(option.value as HotspotSecurity) ? 'disabled' : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(hintKey))}</small>` : ''}</button>`; }).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
     dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', async () => {
       const option = field.options![Number(button.dataset.option)];
-      if (restartsPicture(field.key) && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
+      if (restartsPicture(field.key) && status?.platform !== 'linux' && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
       close();
       if (field.key === 'networkMode') { requestNetworkSwitch(String(option.value)); return; }
       queueSave(field, String(option.value));
@@ -729,11 +752,11 @@ function bindField(field: Field) {
   else {
     const input = el as HTMLInputElement | HTMLTextAreaElement;
     const actions = el.closest('.field')!.querySelector<HTMLElement>('.field-edit-actions')!;
-    on(el, 'input', () => { const stored = settings!.values[field.key]; const baseline = typeof stored === 'object' && stored !== null ? JSON.stringify(stored, null, 2) : String(stored ?? ''); if (input.value === baseline) drafts.delete(field.key); else drafts.set(field.key, input.value); actions.hidden = !drafts.has(field.key); });
+    on(el, 'input', () => { clearGuideError(); result(field.key, ''); const stored = settings!.values[field.key]; const baseline = typeof stored === 'object' && stored !== null ? JSON.stringify(stored, null, 2) : String(stored ?? ''); if (input.value === baseline) drafts.delete(field.key); else drafts.set(field.key, input.value); actions.hidden = !drafts.has(field.key); });
     on(actions.querySelector('[data-cancel]')!, 'click', () => { drafts.delete(field.key); input.value = typeof settings!.values[field.key] === 'object' ? JSON.stringify(settings!.values[field.key], null, 2) : String(settings!.values[field.key] ?? ''); actions.hidden = true; result(field.key, ''); });
     on(actions.querySelector('[data-save]')!, 'click', async () => {
       if (!input.checkValidity()) { result(field.key, 'error.range'); input.reportValidity(); return; }
-      if (restartsPicture(field.key) && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
+      if (restartsPicture(field.key) && status?.platform !== 'linux' && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
       if (field.type === 'object') { try { const value = JSON.parse(input.value); queueValue(field, value); } catch { result(field.key, 'error.invalid'); return; } }
       else queueSave(field, input.value);
       drafts.delete(field.key); actions.hidden = true;
@@ -763,12 +786,13 @@ function networkDialog(title: string, body: string) {
 function renderRestart() {
   const el = document.getElementById('restart-required'); if (!el || !status) return;
   const required = restartPending(status, needsRestart);
-  el.hidden = !required || currentView === 'home';
-  const signature = `${required}:${language}`;
+  el.hidden = !required || currentView === 'home' || route !== restartOrigin;
+  const picture = status.platform === 'linux' && route === 'settings/picture';
+  const signature = `${required}:${picture}:${status.running}:${language}`;
   if (el.dataset.signature === signature) return;
-  el.dataset.signature = signature; patchMarkup(el, restartView(required, t));
+  el.dataset.signature = signature; patchMarkup(el, picture ? `<p role="status">${esc(t('ui.nextStart'))}</p>${status.running ? `<button id="restart-now" class="quiet">${esc(t('ui.reconnectNow'))}</button>` : ''}<p id="restart-error" class="error" role="status"></p>` : restartView(required, t));
   on(el.querySelector<HTMLButtonElement>('#restart-now'), 'click', async event => {
-    if (!await confirmSheet(t('home.restartHint'), t('home.restart'), t('ui.cancel'))) return;
+    if (!picture && !await confirmSheet(t('home.restartHint'), t('home.restart'), t('ui.cancel'))) return;
     const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
     try { await restartServices(); }
     catch (error) { el.querySelector('#restart-error')!.textContent = t(errorKey(error)); }
@@ -909,7 +933,8 @@ function requestNetworkSwitch(target: string) {
   if (wifiDirectDisabled(status.platform, settings.values, target)) { networkError = constraintKey; renderNetworkPanel(); return; }
   if (target === 'shared-wifi' && !savedNetworks(settings).length) { editSharedNetwork(null, () => requestNetworkSwitch(target)); return; }
   const c = switchConsequences(status, settings, target);
-  const { dialog, close } = networkDialog(t(c.title), `<p>${esc(t(c.change, c.parameters))}</p><p>${t('net.iphone')}</p><p>${esc(t(c.car, c.parameters))}</p>${!c.shared && status.hotspot ? hotspotDetails(status, t) : ''}<p>${esc(t(c.comeback, c.parameters))}</p><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button class="primary" data-confirm>${t(c.action)}</button></div>`);
+  const { dialog, close } = networkDialog(t(c.title), `<p>${esc(t(c.change, c.parameters))}</p><p>${t('net.iphone')}</p><p>${esc(t(c.car, c.parameters))}</p>${!c.shared && status.hotspot ? hotspotDetails(status, t) : ''}<div class="address-row"><code>${esc(c.parameters.url)}</code><button class="icon-button" data-copy="${esc(c.parameters.url)}" aria-label="${t('ui.copy')}">${icon('copy')}</button></div><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button class="primary" data-confirm>${t(c.action)}</button></div>`);
+  bindCopies(dialog);
   on(dialog.querySelector('[data-confirm]')!, 'click', () => { close(); void beginNetworkSwitch(target, c, () => api.switchNetwork(target)); });
 }
 async function beginNetworkSwitch(target: string, consequences: ReturnType<typeof switchConsequences>, mutation: () => Promise<unknown>) {
@@ -925,7 +950,7 @@ async function beginNetworkSwitch(target: string, consequences: ReturnType<typeo
 function renderSwitching() {
   const c = switching!.consequences;
   document.getElementById('connection')!.hidden = true;
-  patchMarkup(document.getElementById('main')!, `<section class="card" id="network-switching"><h1 tabindex="-1" role="status" aria-live="polite">${t('net.switching')}</h1><p>${esc(t(c.change, c.parameters))}</p><p>${t('net.iphone')}</p><p>${esc(t(c.car, c.parameters))}</p>${!c.shared && status ? hotspotDetails(status, t) : ''}<p>${esc(t(c.comeback, c.parameters))}</p></section>`);
+  patchMarkup(document.getElementById('main')!, `<section class="card" id="network-switching"><h1 tabindex="-1" role="status" aria-live="polite">${t('net.switching')}</h1><p>${esc(t(c.change, c.parameters))}</p><p>${t('net.iphone')}</p><p>${esc(t(c.car, c.parameters))}</p>${!c.shared && status ? hotspotDetails(status, t) : ''}<div class="address-row"><code>${esc(c.parameters.url)}</code><button class="icon-button" data-copy="${esc(c.parameters.url)}" aria-label="${t('ui.copy')}">${icon('copy')}</button></div></section>`);
   bindCopies(document.getElementById('network-switching')!);
 }
 
@@ -967,6 +992,7 @@ async function queueSave(field: Field, raw: string | boolean) {
   if (['output', 'developerActive', 'experimentalActive', 'mfiTarget'].includes(field.key)) render();
 }
 function queueValue(field: Field, value: Value) {
+  clearGuideError();
   settings!.values[field.key] = value;
   const item = pending.get(field.key) ?? { value, revision: 0, busy: false };
   clearTimeout(item.timer); item.value = value; item.revision++;
@@ -974,7 +1000,12 @@ function queueValue(field: Field, value: Value) {
   item.timer = setTimeout(() => void save(field.key), 450);
   updateVisibility();
 }
-async function save(key: string) {
+function save(key: string): Promise<void> {
+  const current = saves.get(key); if (current) return current;
+  const write = performSave(key).finally(() => { if (saves.get(key) === write) saves.delete(key); });
+  saves.set(key, write); return write;
+}
+async function performSave(key: string) {
   const item = pending.get(key); if (!item || item.busy || session !== 'ready' || handoff) return;
   if (key.startsWith('publicName') && publicNameBusy) { item.timer = setTimeout(() => void save(key), 2000); return; }
   if (switching) { item.timer = setTimeout(() => void save(key), 2000); return; }
@@ -994,7 +1025,7 @@ async function save(key: string) {
       if (token) { token.value = String(settings.values.publicNameToken ?? ''); token.placeholder = settings.values.publicNameTokenSet ? t('publicName.tokenSaved') : ''; }
       for (const field of fields().filter(f => f.key.startsWith('publicName'))) result(field.key, 'ui.saved');
     }
-    if (revision === item.revision) { if (key === 'mfiRemoteToken') { drafts.delete(key); delete settings!.values.mfiRemoteToken; } pending.delete(key); if (['carBrand', 'carModel', 'carYear', 'physicalWidthEnabled', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); renderRestart(); result(key, response.applied === 'now' ? 'ui.saved' : 'ui.restartRequired'); }
+    if (revision === item.revision) { if (key === 'mfiRemoteToken') { drafts.delete(key); delete settings!.values.mfiRemoteToken; } pending.delete(key); if (['carBrand', 'carModel', 'carYear', 'physicalWidthEnabled', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'].includes(key)) { const fresh = await api.settings(); for (const [pendingKey, pendingItem] of pending) fresh.values[pendingKey] = pendingItem.value; settings = fresh; render(); } needsRestart ||= restartRequired([], response.applied); if (response.applied !== 'now') restartOrigin = route; renderRestart(); result(key, response.applied === 'now' || status?.platform === 'linux' ? 'ui.saved' : 'ui.restartRequired'); }
   } catch (error) {
     if (current !== epoch) return;
     if (revision === item.revision) {

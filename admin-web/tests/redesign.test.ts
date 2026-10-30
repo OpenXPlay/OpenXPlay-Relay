@@ -113,3 +113,16 @@ it('parks physical-width calibration under the shared developer master without p
   values.developerActive = true;
   expect(fieldEnabled('physicalWidthOverrideMm', values)).toBe(true);
 });
+
+import { setupBlocker } from '../src/setup-guide';
+it('names the actual guide blocker rather than a generic Next error', () => {
+  const settings = mockSettings(true), status = previewStatus({ platform: 'linux', host: 'relay.local', receiverUrls: [] } as unknown as Status, 'ready');
+  settings.values.carBrand = ''; settings.values.carModel = '';
+  expect(setupBlocker('car', settings, status)).toMatchObject({ id: 'field-carBrand', reason: { res: 'car.brandRequired' } });
+  settings.values.carBrand = 'other'; settings.values.carBrandText = 'My car';
+  expect(setupBlocker('car', settings, status)).toMatchObject({ id: 'field-carModel' });
+  settings.values.networkMode = 'shared-wifi'; settings.values.sharedWifiNetworks = [];
+  expect(setupBlocker('network', settings, status)).toMatchObject({ id: 'network-panel' });
+  status.pathInput!.iphone!.pick = 'NONE'; status.running = false;
+  expect(setupBlocker('prepare', settings, status)?.id).toBe('prepare-IPHONE_PAIRED');
+});
