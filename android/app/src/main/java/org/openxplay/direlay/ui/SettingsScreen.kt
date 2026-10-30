@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.stateDescription
 import com.shilapi.xcertplay.orchestration.*
 import org.openxplay.direlay.R
+import org.openxplay.direlay.background.presentBackground
 import org.openxplay.direlay.settings.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,10 +121,11 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         when (page) {
             "settings" -> {
                 val identityStatus by sources.identity.screenState()
+                val background by backgroundState(sources, actions)
                 val summary = stringResource(R.string.menu_access_summary,
                     menuToggleSummary(settings.adminEnabled), menuToggleSummary(settings.publicNameEnabled))
                 SettingsMenu(draft, invalidPages, wireless(draft), summary, carSummary, identityStatus, frameRate,
-                    state.lastSaved.value.car.complete, open)
+                    state.lastSaved.value.car.complete, background?.let(::presentBackground), open)
             }
             "settings/configFiles" -> ConfigFilesScreen(support.config)
             "settings/logs" -> LogsScreen(support.logs, support.upload)
@@ -277,6 +279,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     footer = stringResource(R.string.settings_automatic_hint)) { draft = draft.copy(autoStartWhenReady = it) }
                 SettingsToggleGroup(stringResource(R.string.ui_boot), draft.autoStartOnBoot, R.drawable.symbol_power, IconHue.PERMISSIONS,
                     footer = stringResource(R.string.direlay_boot_hint)) { draft = draft.copy(autoStartOnBoot = it) }
+            }
+            "settings/background" -> {
+                val background by backgroundState(sources, actions)
+                BackgroundSettings(background, actions.openBackground)
             }
             "settings/access" -> {
                 val access by sources.admin.screenState()

@@ -560,6 +560,9 @@ pub struct WifiClient {
     pub ip: Option<String>,
     pub signal: Option<u8>,
     pub setup_hotspot: bool,
+    /// The open setup hotspot the relay falls back to, so the admin page can name it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_ssid: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WifiNetwork {

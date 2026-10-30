@@ -15,6 +15,10 @@ export function anchorPairing(status: Status, now = Date.now() / 1000, previous:
   const deadline = Math.round(now + status.pairingRemaining);
   return { ...status, pairingDeadline: previous !== null && Math.abs(previous - deadline) <= 1 ? previous : deadline };
 }
+// The name the iPhone lists under Bluetooth, as the relay reports it (on Android, the phone's own name).
+export function relayBluetoothName(status: Status): string {
+  return status.pathInput?.relay?.bluetoothName ?? status.name;
+}
 export function formatRemaining(seconds: number): string {
   const total = Math.max(0, Math.ceil(seconds));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -32,11 +36,11 @@ export function pairingView(status: Status, now = Date.now() / 1000) {
 export function pairingPanelView(status: Status, busy: boolean, error: string, t: Translate, now = Date.now() / 1000): string {
   const v = pairingView(status, now);
   const control = v.open
-    ? `<p id="pairing-remaining" role="timer">${esc(t('pairing.open', { time: v.time }))}</p><p>${t('pairing.howTo')}</p>${v.cancelable ? `<button type="button" id="pairing-cancel" ${busy ? 'disabled' : ''}>${t('pairing.cancel')}</button>` : `<p class="muted">${t('pairing.noCancel')}</p>`}`
+    ? `<p id="pairing-remaining" role="timer">${esc(t('pairing.open', { time: v.time }))}</p><p>${esc(t('pairing.howTo', { name: relayBluetoothName(status) }))}</p>${v.cancelable ? `<button type="button" id="pairing-cancel" ${busy ? 'disabled' : ''}>${t('pairing.cancel')}</button>` : `<p class="muted">${t('pairing.noCancel')}</p>`}`
     : v.notified ? `<p role="status">${t('pairing.notified')}</p>`
     : v.permission ? `<p role="status">${t('pairing.permission')}</p>`
     : v.confirm ? `<p role="status">${t('pairing.confirm')}</p>`
-    : v.onRelay ? `<p role="status">${t('pairing.settingsOpen')}</p><p>${t('pairing.howTo')}</p>${v.denied ? `<p class="muted">${t('pairing.permissionDenied')}</p>` : ''}`
+    : v.onRelay ? `<p role="status">${t('pairing.settingsOpen')}</p><p>${esc(t('pairing.howTo', { name: relayBluetoothName(status) }))}</p>${v.denied ? `<p class="muted">${t('pairing.permissionDenied')}</p>` : ''}`
     : v.available ? `<button type="button" id="pairing-open" ${busy ? 'disabled' : ''}>${t('pairing.start')}</button>` : `<p>${t('home.pairOnDevice')}</p>`;
   const rows = v.devices.map(d => `<li>${icon(d.iphone ? 'smartphone' : 'bluetooth')}<span>${esc(d.name || t('pairing.unnamed'))}</span>${d.connected ? `<span class="tag">${t('ui.connected')}</span>` : ''}</li>`).join('');
   return `<div class="field pairing"><h3>${t('pairing.title')}</h3><p class="muted">${t('pairing.when')}</p>${control}<p id="pairing-result" class="error" role="alert">${esc(error ? t(error) : '')}</p><h4>${t('pairing.devices')}</h4><ul class="paired-devices">${rows || `<li class="muted">${t('pairing.none')}</li>`}</ul></div>`;

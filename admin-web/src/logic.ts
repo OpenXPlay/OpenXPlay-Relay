@@ -8,6 +8,11 @@ export function sessionRoute(session: Session): 'login' | 'ready' { return sessi
 export function wifiGuidance(action: 'join' | 'forget'): string {
   return action === 'join' ? 'wifi.joinGuidance' : 'wifi.forgetGuidance';
 }
+// The relay reports its setup hotspot's name; the pattern stands in when it has not (the last four
+// characters come from its Wi-Fi address).
+export function setupHotspotName(status: Status | null): string {
+  return status?.wifiClient?.setupSsid ?? 'OpenXPlay-Linux-Setup-XXXX';
+}
 export function sortNetworks(networks: WifiNetwork[]): WifiNetwork[] {
   return [...networks].sort((a, b) => Number(b.known) - Number(a.known) || b.signal - a.signal || a.ssid.localeCompare(b.ssid));
 }

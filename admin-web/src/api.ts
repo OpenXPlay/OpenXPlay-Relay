@@ -10,7 +10,7 @@ export interface RuntimeStartup {
 }
 export interface Session { state: SessionState; defaultPassword: boolean; adminEnabled?: boolean; adminAccessAllowed?: boolean }
 export interface WifiNetwork { ssid: string; signal: number; secure: boolean; known: boolean }
-export interface WifiClient { ssid: string | null; ip: string | null; signal: number | null; setupHotspot?: boolean }
+export interface WifiClient { ssid: string | null; ip: string | null; signal: number | null; setupHotspot?: boolean; setupSsid?: string }
 export interface CarlinkStatus {
   generation?: number | null; appliedPicture?: { width: number; height: number } | null;
   pinRequest?: number | null; pinConfirmation?: boolean; pinClient?: string | null;

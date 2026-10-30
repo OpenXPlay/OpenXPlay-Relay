@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.presentation.*
+import org.openxplay.direlay.background.BackgroundDestination
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
@@ -73,6 +74,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     private val presentation by lazy {
         androidx.lifecycle.ViewModelProvider(this, RelayViewModel.Factory(applicationContext, runtime))[RelayViewModel::class.java]
     }
+    private val screenActions by lazy { presentation.actions(::openBackground) }
     private var settingsReady by androidx.compose.runtime.mutableStateOf(false)
     private var identityReady = false
     private var materialChecked = false
@@ -138,7 +140,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             org.openxplay.direlay.ui.RelayTheme {
                 content?.takeIf { settingsReady }?.let { value -> androidx.compose.runtime.CompositionLocalProvider(
                     org.openxplay.direlay.ui.LocalNetworkReadings provides value.networkReadings) {
-                    org.openxplay.direlay.ui.RelayApp(value, presentation.sources, presentation.actions, presentation.support, ::shareTrace,
+                    org.openxplay.direlay.ui.RelayApp(value, presentation.sources, screenActions, presentation.support, ::shareTrace,
                     onStartStop = {
                         val path = value.path
                         bootAutoStart = false
@@ -420,9 +422,19 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     }
 
     /** OEM-specific pages and denied intents always have a safe system-settings destination. */
-    private fun openActivity(intent: Intent, request: Int? = null, onFailure: (Throwable) -> Unit = {}): Boolean = runCatching {
-        if (request == null) startActivity(intent) else startActivityForResult(intent, request)
-    }.onFailure { failure -> runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) }; onFailure(failure) }.isSuccess
+    private fun openActivity(intent: Intent, request: Int? = null, onFailure: (Throwable) -> Unit = {},
+        alternatives: List<Intent> = emptyList()): Boolean {
+        val opened = (listOf(intent) + alternatives).any { candidate -> runCatching {
+            if (request == null) startActivity(candidate) else startActivityForResult(candidate, request)
+        }.onFailure(onFailure).isSuccess }
+        if (!opened) runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        return opened
+    }
+
+    private fun openBackground(destination: BackgroundDestination) { lifecycleScope.launch {
+        val intents = presentation.backgroundIntents(destination)
+        openActivity(intents.first(), alternatives = intents.drop(1))
+    } }
 
     private fun openBluetoothSettings(): Boolean = openActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
 
@@ -446,8 +458,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
             StepAction.OPEN_WIFI -> openActivity(Intent(if (Build.VERSION.SDK_INT >= 29) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS))
             StepAction.OPEN_HOTSPOT -> runCatching { org.openxplay.direlay.ui.NetworkSettingsLauncher(this).open(true) }
                 .onFailure { openActivity(Intent(Settings.ACTION_SETTINGS)) }
-            StepAction.KEEP_ALIVE_SETTINGS -> openActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:$packageName")))
+            StepAction.KEEP_ALIVE_SETTINGS -> openActivity(RelayActivity.intent(this, destination = "settings/background"),
+                alternatives = listOf(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))))
             StepAction.COPY_PAGE_ADDRESS -> {
                 val text = step?.evidence?.let { it.raw ?: it.res?.let { res -> getString(res, *it.args.toTypedArray()) } }
                 if (text != null) getSystemService(android.content.ClipboardManager::class.java)

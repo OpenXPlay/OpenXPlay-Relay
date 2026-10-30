@@ -5,6 +5,8 @@ package org.openxplay.direlay.presentation
 
 import kotlinx.coroutines.flow.StateFlow
 import org.openxplay.direlay.R
+import org.openxplay.direlay.background.BackgroundDestination
+import org.openxplay.direlay.background.BackgroundStatus
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.publicname.*
@@ -38,7 +40,8 @@ class ScreenSources(val motion: StateFlow<Boolean>, val settings: StateFlow<Sett
     val wirelessPicture: StateFlow<WirelessPictureView>, val areas: StateFlow<ViewAreasView>,
     val debug: StateFlow<CarlinkDebugView>, val developer: StateFlow<DeveloperView>,
     val identity: StateFlow<Int>, val admin: StateFlow<AdminView>, val name: StateFlow<NameView>,
-    val iphones: StateFlow<IphonePickerView>, val carlinkPicture: StateFlow<CarlinkPictureView>)
+    val iphones: StateFlow<IphonePickerView>, val carlinkPicture: StateFlow<CarlinkPictureView>,
+    val background: StateFlow<BackgroundStatus?>)
 
 /** The size tried for this connection, the canvas it produced and the size the running connection uses. */
 data class CarlinkPictureView(val trial: CarlinkPictureTrial? = null, val canvas: PictureSize? = null,
@@ -54,4 +57,5 @@ class ScreenActions(val save: suspend (RelaySettings) -> AppliedSettings?,
     val saveName: suspend (PublicNameEdit) -> List<ConfigError>?, val renewName: () -> Unit,
     val removeName: suspend () -> Boolean, val useSharedWifi: (String) -> Unit,
     val sampleVehicle: (Boolean) -> Unit, val clearVehicleHistory: () -> Unit,
-    val tryCarlinkPicture: (PictureSize?) -> Unit, val clearCarlinkPictureTrial: (restart: Boolean) -> Unit)
+    val tryCarlinkPicture: (PictureSize?) -> Unit, val clearCarlinkPictureTrial: (restart: Boolean) -> Unit,
+    val refreshBackground: () -> Unit, val openBackground: (BackgroundDestination) -> Unit)

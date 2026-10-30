@@ -46,6 +46,10 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
+import org.openxplay.direlay.background.BackgroundDestination
+import org.openxplay.direlay.background.presentBackground
+import org.openxplay.direlay.presentation.ScreenActions
+import org.openxplay.direlay.presentation.ScreenSources
 import org.openxplay.direlay.relay.CarModels
 import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.ui.design.*
@@ -59,7 +63,8 @@ import org.openxplay.direlay.ui.design.*
 @Composable fun SetupScreen(initial: RelaySettings, wireless: (RelaySettings) -> Boolean, home: HomeContent,
     startAt: SetupStep?, bondedDevices: suspend () -> org.openxplay.direlay.presentation.IphonePickerView, useSharedWifi: (String) -> Unit,
     persist: suspend (RelaySettings, RelaySettings) -> Boolean, onSetup: (SetupAction) -> Unit,
-    close: () -> Unit, carModels: CarModels? = null, onStepAction: (StepAction, PathStep) -> Unit = { _, _ -> },
+    close: () -> Unit, sources: ScreenSources, actions: ScreenActions,
+    carModels: CarModels? = null, onStepAction: (StepAction, PathStep) -> Unit = { _, _ -> },
     onStepChanged: (SetupStep) -> Unit = {}, finish: (changed: Boolean) -> Unit) {
     val entry by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(setupDraft(initial, wireless(initial))) }
@@ -231,7 +236,7 @@ import org.openxplay.direlay.ui.design.*
                                 else -> onSetup(action)
                             }
                         }
-                        SetupStep.START -> StartStep(draft, isWireless, ::go) { draft = it }
+                        SetupStep.START -> StartStep(draft, isWireless, ::go, sources, actions) { draft = it }
                     }
                     if (attempted && current != SetupStep.PREPARE && current != SetupStep.START) {
                         // Hotspot fields show their own errors; anything else is reported here.
@@ -590,7 +595,8 @@ import org.openxplay.direlay.ui.design.*
 }
 
 @Composable private fun StartStep(draft: RelaySettings, wireless: Boolean, go: (SetupStep) -> Unit,
-    change: (RelaySettings) -> Unit) {
+    sources: ScreenSources, actions: ScreenActions, change: (RelaySettings) -> Unit) {
+    val background by backgroundState(sources, actions)
     SetupEntrance(0) { InsetGroup { ModeSummary(modeRows(draft, wireless), go) } }
     SetupEntrance(1) {
         InsetGroup(footer = stringResource(R.string.settings_automatic_hint)) {
@@ -599,6 +605,12 @@ import org.openxplay.direlay.ui.design.*
             InsetDivider()
             InsetToggleRow(R.drawable.symbol_power, IconHue.DEVELOPER, stringResource(R.string.ui_boot), draft.autoStartOnBoot,
                 { change(draft.copy(autoStartOnBoot = it)) })
+        }
+    }
+    if (background?.let(::presentBackground)?.showBatteryRequest == true) SetupEntrance(2) {
+        InsetGroup {
+            InsetRow(R.drawable.symbol_battery_charging, IconHue.PERMISSIONS, stringResource(R.string.background_battery_title),
+                stringResource(R.string.background_battery_ask), onClick = { actions.openBackground(BackgroundDestination.BATTERY_OPTIMIZATION) })
         }
     }
 }
