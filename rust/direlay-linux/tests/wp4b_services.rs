@@ -713,6 +713,10 @@ fn provisioning_without_config_creates_open_24ghz_ap() {
     assert_eq!(p.setup_ssid(), "OpenXPlay-Linux-Setup-ABCD");
     assert!(p.status().setup_hotspot);
     assert_eq!(p.status().ip.as_deref(), Some("10.78.0.1"));
+    assert_eq!(
+        p.status().setup_ssid.as_deref(),
+        Some("OpenXPlay-Linux-Setup-ABCD")
+    );
     let state = nm.inner.lock().unwrap();
     let add = &state
         .calls
