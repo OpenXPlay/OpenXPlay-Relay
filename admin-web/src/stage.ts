@@ -9,7 +9,7 @@ import { arrivalCountdown, arrivalRemaining } from './startup';
 import { icon } from './icons';
 import { esc } from './html';
 import { patchMarkup, on } from './dom';
-import { normalizeInput, type PartialInput, type PathSection, type StepText } from './path/model';
+import { normalizeInput, type PartialInput, type PathSection, type PathStep, type StepText } from './path/model';
 import { countdownSeconds } from './path/time';
 import { presentPath, clockTime } from './path/present-path';
 import { presentStage, stageTapSettled, type StageAction, type StageView } from './path/present-stage';
@@ -22,6 +22,24 @@ export function stepText(value: StepText | null | undefined, t: Translate): stri
 export function elapsed(since: number | null, now: number): number { return since == null ? 0 : Math.max(0, Math.floor((now - since) / 1000)); }
 export function timer(seconds: number): string { return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`; }
 const glyphs = { OK: '✓', WORKING: '•', WAITING: '○', ACTION: '!', FAILED: '×', BLOCKED: '○' };
+/** A deadline step (the car-first wait) counts its seconds from the clock, as Android's StepDetail does. */
+export function stepDetail(step: PathStep, t: Translate, nowMillis: number): string {
+  return step.carWaitUntilMillis != null && step.detail?.res ? t(step.detail.res, { arg1: countdownSeconds(step.carWaitUntilMillis, nowMillis) }) : stepText(step.detail, t);
+}
+export function deadlineAttribute(step: PathStep): string { return step.carWaitUntilMillis != null ? ` data-deadline="${step.id}"` : ''; }
+/** The one-second tick rewrites only counted texts; drawer rows and the step sheet keep their nodes and listeners. */
+export function tickDeadlines(root: ParentNode | null | undefined, steps: readonly PathStep[], t: Translate, nowMillis: number): void {
+  root?.querySelectorAll<HTMLElement>('[data-deadline]').forEach(element => {
+    const step = steps.find(s => s.id === element.dataset.deadline);
+    if (step?.carWaitUntilMillis == null) return;
+    const value = stepDetail(step, t, nowMillis);
+    if (element.textContent !== value) element.textContent = value;
+  });
+}
+export function stepRow(s: PathStep, platform: 'android' | 'linux', t: Translate, nowMillis: number): string {
+  const command = s.action && stepCommand(s.action, platform);
+  return `<div class="step-row" data-step="${s.id}" data-state="${s.state}"><span class="glyph">${glyphs[s.state]}</span><button class="step-detail quiet" data-detail="${s.id}"><strong>${esc(t(s.title))}</strong><span class="muted"${deadlineAttribute(s)}>${esc(stepDetail(s, t, nowMillis))}</span><span class="mono muted">${esc(stepText(s.evidence, t))}</span></button>${command ? `<button class="step-action" data-step-action="${s.id}">${esc(t(s.actionLabel!))}</button>` : ''}</div>`;
+}
 export function mountStage(target: HTMLElement, options: { t: Translate; action: (action: StageAction) => void; copy: (text: string) => Promise<boolean>; details: () => string; bindDetails: (root: HTMLElement) => void; notice: (notice: string) => void; recheck: () => Promise<void>; addresses: () => string[]; opened: () => void }) {
   const t = options.t;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
@@ -60,6 +78,8 @@ export function mountStage(target: HTMLElement, options: { t: Translate; action:
     const supporting = s?.type === 'Evidence' ? stepText(s.text, t) : s?.type === 'Explanation' ? t(s.res) : s?.type === 'LiveTimer' ? timer(elapsed(s.sinceMillis, now())) : s?.type === 'Elapsed' ? t('design_seconds', { arg1: elapsed(s.sinceMillis, now()) }) : '';
     node('stage-supporting').textContent = s?.type === 'Evidence' && s.copy ? '' : supporting;
     node('stage-copy').hidden = !(s?.type === 'Evidence' && s.copy); node('stage-copy').textContent = `${supporting} ⧉`;
+    const steps = path.sections.flatMap(section => section.steps), at = now();
+    tickDeadlines(drawer?.querySelector('#path-sections'), steps, t, at); tickDeadlines(stepDialog, steps, t, at);
   };
   on(node('stage-copy'), 'click', () => { if (view.supporting?.type === 'Evidence') options.copy(stepText(view.supporting.text, t)); });
   on(node('stage-primary'), 'click', () => { const a = permitted(view.primary); if (a && stageTapSettled(actionChanged, performance.now())) options.action(a); });
@@ -68,11 +88,7 @@ export function mountStage(target: HTMLElement, options: { t: Translate; action:
   function drawDetails() {
     if (!drawer) return;
     const sectionMarkup = path.sections.map(section => `<details class="path-section" data-key="${section.section}" id="path-${section.section}" ${section.state !== 'OK' && section.state !== 'BLOCKED' ? 'open' : ''}><summary><span class="glyph" data-state="${section.state}">${glyphs[section.state]}</span><strong>${esc(t(section.section === 'RELAY' && input.platform === 'linux' ? 'stage.relay' : `path_section_${section.section.toLowerCase()}`))}</strong><span class="mono muted">${section.done}/${section.total}</span>${icon('chevron-down')}</summary><div class="path-steps">${section.done && section.done !== section.total ? `<details class="done-steps" data-key="done"><summary>${esc(t('design_done_count', { arg1: section.done }))} · ${esc(section.steps.filter(s => s.state === 'OK').map(s => t(s.title)).join(' · '))}</summary>${section.steps.filter(s => s.state === 'OK').map(row).join('')}</details>` : ''}${section.steps.filter(s => !section.done || section.done === section.total || s.state !== 'OK').map(row).join('')}</div></details>`).join('');
-    function row(s: typeof path.focus): string {
-      if (!s) return '';
-      const command = s.action && stepCommand(s.action, input.platform);
-      return `<div class="step-row" data-step="${s.id}" data-state="${s.state}"><span class="glyph">${glyphs[s.state]}</span><button class="step-detail quiet" data-detail="${s.id}"><strong>${esc(t(s.title))}</strong><span class="muted">${esc(stepText(s.detail, t))}</span><span class="mono muted">${esc(stepText(s.evidence, t))}</span></button>${command ? `<button class="step-action" data-step-action="${s.id}">${esc(t(s.actionLabel!))}</button>` : ''}</div>`;
-    }
+    function row(s: PathStep): string { return stepRow(s, input.platform, t, now()); }
     patchMarkup(drawer.querySelector('#path-sections')!, sectionMarkup);
     patchMarkup(drawer.querySelector('#drawer-details')!, options.details());
     drawer.querySelectorAll<HTMLButtonElement>('[data-step-action]').forEach(button => on(button, 'click', () => {
@@ -93,7 +109,7 @@ export function mountStage(target: HTMLElement, options: { t: Translate; action:
     if (!stepDialog) return;
     const s = path.sections.flatMap(section => section.steps).find(step => step.id === selectedStep);
     if (!s) { closeStep(); return; }
-    patchMarkup(stepDialog.querySelector('[data-step-content]')!, stepDetailsView(s, options.addresses(), input.platform, t));
+    patchMarkup(stepDialog.querySelector('[data-step-content]')!, stepDetailsView(s, options.addresses(), input.platform, t, now()));
     stepDialog.querySelectorAll<HTMLButtonElement>('[data-evidence]').forEach(button => on(button, 'click', async () => { if (await options.copy(button.dataset.evidence!)) button.textContent = t('design_copied'); }));
     on(stepDialog.querySelector('[data-close]'), 'click', closeStep);
     on(stepDialog.querySelector('[data-action]'), 'click', () => { closeStep(); closeDrawer(); if (s.action) options.action({ type: 'Step', action: s.action, step: s.id, label: s.actionLabel }); });
@@ -161,7 +177,7 @@ export function mountStage(target: HTMLElement, options: { t: Translate; action:
       patchMarkup(node('stage-notice'), view.notice ? `${icon(view.notice === 'CHOOSE_CAR' ? 'car-front' : view.notice === 'DISPLAY_CHANGED' ? 'refresh-cw' : 'settings')}${esc(noticeText)}${icon('chevron-left')}` : '');
       node('action-result').textContent = error ? t(error) : '';
       updateSegments(); if (drawer) drawDetails(); if (stepDialog) drawStep();
-      timerVisible = view.countdown || view.headlineDeadlineMillis != null || view.supporting?.type === 'LiveTimer' && view.supporting.sinceMillis != null || view.supporting?.type === 'Elapsed';
+      timerVisible = view.countdown || view.headlineDeadlineMillis != null || view.supporting?.type === 'LiveTimer' && view.supporting.sinceMillis != null || view.supporting?.type === 'Elapsed' || path.sections.some(section => section.steps.some(step => step.carWaitUntilMillis != null));
 
     },
     tick: updateTimers, get timerVisible() { return timerVisible; },
