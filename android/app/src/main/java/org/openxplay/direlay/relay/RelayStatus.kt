@@ -54,10 +54,10 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     val connectedWebPages: Int get() = synchronized(this) { webClients.size }
     @Synchronized fun clearWebClients() { webClients.clear(); webReports.clear() }
     @Synchronized private fun webClient(client: String, type: String) {
-        if (type == "relay-close") {
+        if (type == "relay-close" || type == "client-closed") {
             webClients.remove(client)
             webReports.keys.removeAll { it.clientId == client }
-        } else if (type == "receiver-info" || type == "stats") webClients.add(client)
+        } else if (type == "receiver-info" || type == "stats" || type == "client-opened") webClients.add(client)
     }
 
     private val measurements = ConcurrentHashMap<String, OutputStats>()
@@ -72,7 +72,7 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
     override fun receiverDiagnostics(outputId: String, origin: Origin, type: String, json: String) {
         if (outputId == "web") {
             webClient(origin.clientId, type)
-            runCatching { browser?.report(origin.clientId, type, json) }
+            if (type !in setOf("client-opened", "client-closed", "receiver-close")) runCatching { browser?.report(origin.clientId, type, json) }
         }
         receivers.report(origin.clientId, type, json)
         if (type == "fullscreen-exit") android.util.Log.i("OpenXPlay Relay", "Fullscreen exit ${origin.clientId}: $json")
@@ -83,6 +83,8 @@ class RelayStatus(private val redactFailure: (String) -> String = { redactFailur
         failures = (listOf(RelayFailure(outputId, text, wallClock())) + failures.filterNot { it.text == text }).take(10)
     }
     override fun outputFailed(outputId: String, failure: Throwable) {
+        if (outputId in setOf("web", "cast", "clink")) connectionLog?.detailEvent("relay", "output_failed",
+            "output=$outputId by=local cause=io_error", "${failure.javaClass.simpleName}: ${redactFailure(failure.message.orEmpty())}")
         rememberFailure(outputId, failure)
     }
     override fun inputFailed(failure: Throwable) {

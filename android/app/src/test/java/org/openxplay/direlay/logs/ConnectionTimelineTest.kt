@@ -43,7 +43,7 @@ class ConnectionTimelineTest {
     }
     @Test fun phoneFailureRetryAndUsbMissingPhases() {
         timeline.phoneStatus("DiscoveringMfi")
-        now = 120; assertTrue(timeline.phoneStatus("Failed", "reason=mfi_timeout").last().contains("phone failed attempt=1"))
+        now = 120; assertTrue(timeline.phoneStatus("Failed", "cause=\"mfi_timeout\"").any { it.contains("phone failed attempt=1") })
         now = 130; assertTrue(timeline.phoneStatus("DiscoveringIphone").single().contains("attempt=2 t=0 dt=0"))
         now = 140
         val summary = timeline.phone("session_active").last()
@@ -63,13 +63,13 @@ class ConnectionTimelineTest {
         assertTrue(timeline.carlink("state=PLAYING").isEmpty())
         now = 900; timeline.carlink("session failed reason=heartbeat_timeout exception=IOException")
         now = 1000
-        assertTrue(timeline.carlink("state=ENDED").last().endsWith("played=500 reason=heartbeat_timeout"))
+        assertTrue(timeline.carlink("state=ENDED").last().contains("played=500 reason=heartbeat_timeout by=timeout cause=health_timeout"))
     }
     @Test fun carlinkRetryCountsLinkStartsAndOmitsMissingPhases() {
         timeline.carlink("state=CONNECTING")
         assertTrue(timeline.carlink("link_start").single().contains("attempt=1"))
         now = 200; timeline.carlink("ble_scan failed reason=ble_timeout exception=IOException")
-        now = 300; assertTrue(timeline.carlink("state=ENDED").last().endsWith("played=0 reason=ble_timeout"))
+        now = 300; assertTrue(timeline.carlink("state=ENDED").last().contains("played=0 reason=ble_timeout by=timeout cause=read_timeout"))
         assertTrue(timeline.carlink("link_retry delayMs=1000").single().contains("attempt=1"))
         now = 1400; assertTrue(timeline.carlink("link_start").single().contains("attempt=2 t=0 dt=0"))
         now = 1450
