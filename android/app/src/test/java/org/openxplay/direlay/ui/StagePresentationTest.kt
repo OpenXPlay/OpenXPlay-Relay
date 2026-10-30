@@ -197,28 +197,46 @@ class StagePresentationTest {
         } }
     }
 
-    @Test fun nodeStatesAndLinksUseTheirSectionsAndCarUsesOnlyAnOkPictureOverride() {
+    @Test fun nodeStatesUseTheirSectionsAndCarCableIncludesPicture() {
         StepState.entries.forEach { car -> StepState.entries.forEach { picture ->
             val steps = listOf(step(StepState.OK, StepId.MODE), step(StepState.FAILED, StepId.IDENTITY),
                 step(StepState.OK, StepId.IPHONE_PAIRED), step(StepState.WAITING, StepId.SESSION),
                 step(StepState.OK, StepId.WEB_SERVER), step(car, StepId.CAR_PAGE), step(picture, StepId.PICTURE))
-            val nodes = presentStage(path(steps = steps)).nodes
+            val view = presentStage(path(steps = steps))
+            val nodes = view.nodes
             assertEquals(StepState.FAILED, nodes.relay)
             assertEquals(StepState.WAITING, nodes.iphone)
             assertEquals("$car $picture", if (picture == StepState.OK) StepState.OK else car, nodes.car)
             assertEquals(LinkFill(1, 2, StepState.WAITING), nodes.iphoneLink)
-            assertEquals(LinkFill(if (car == StepState.OK) 2 else 1, 2, car), nodes.carLink)
+            assertEquals(LinkFill(1, 2, StepState.FAILED), nodes.relayLink)
+            val done = 1 + (if (car == StepState.OK) 1 else 0) + (if (picture == StepState.OK) 1 else 0)
+            val cable = if (car != StepState.OK) car else if (picture == StepState.BLOCKED) StepState.OK else picture
+            assertEquals("$car $picture", LinkFill(done, 3, cable), nodes.carLink)
+            assertEquals(2 + done, view.done)
+            assertEquals(7, view.total)
         } }
         val carOnly = presentStage(path(steps = listOf(step(StepState.ACTION, StepId.CAR_PAGE)))).nodes
         assertEquals(StepState.ACTION, carOnly.car)
+        assertEquals(LinkFill(0, 1, StepState.ACTION), carOnly.carLink)
+        assertEquals(LinkFill(1, 1, StepState.OK),
+            presentStage(path(steps = listOf(step(StepState.OK, StepId.CAR_PAGE)))).nodes.carLink)
         val pictureOnly = presentStage(path(steps = listOf(step(StepState.OK, StepId.PICTURE)))).nodes
         assertEquals(StepState.OK, pictureOnly.car)
-        assertEquals(LinkFill(0, 0, StepState.BLOCKED), pictureOnly.carLink)
+        assertEquals(LinkFill(1, 1, StepState.OK), pictureOnly.carLink)
         val empty = presentStage(path()).nodes
         assertEquals(StepState.BLOCKED, empty.iphone)
         assertEquals(StepState.BLOCKED, empty.relay)
         assertEquals(StepState.BLOCKED, empty.car)
         assertEquals(LinkFill(0, 0, StepState.BLOCKED), empty.iphoneLink)
+        assertEquals(LinkFill(0, 0, StepState.BLOCKED), empty.carLink)
+        assertEquals(LinkFill(0, 0, StepState.BLOCKED), empty.relayLink)
+    }
+
+    @Test fun relayRingUsesRelaySectionCountsAndState() {
+        StepState.entries.forEach { state ->
+            val view = presentStage(path(steps = listOf(step(StepState.OK, StepId.MODE), step(state, StepId.IDENTITY))))
+            assertEquals(LinkFill(if (state == StepState.OK) 2 else 1, 2, state), view.nodes.relayLink)
+        }
     }
 
     @Test fun focusMapsEverySectionAndReusesStartNowPriorityFromFocusForPage() {
@@ -243,10 +261,16 @@ class StagePresentationTest {
     @Test fun handleSegmentsPreserveSectionOrderCountsAndState() {
         val sections = listOf(PathSectionView(PathSection.CAR, listOf(step(StepState.OK, StepId.WEB_SERVER), step(StepState.BLOCKED, StepId.CAR_PAGE))),
             PathSectionView(PathSection.RELAY, listOf(step(StepState.ACTION))), PathSectionView(PathSection.PICTURE, emptyList()))
+        val view = presentStage(ConnectionPath(sections = sections))
         assertEquals(listOf(SectionSegment(PathSection.CAR, StepState.BLOCKED, 1, 2),
             SectionSegment(PathSection.RELAY, StepState.ACTION, 0, 1), SectionSegment(PathSection.PICTURE, StepState.OK, 0, 0)),
-            presentStage(ConnectionPath(sections = sections)).segments)
-        assertTrue(presentStage(path()).segments.isEmpty())
+            view.segments)
+        assertEquals(1, view.done)
+        assertEquals(3, view.total)
+        val empty = presentStage(path())
+        assertTrue(empty.segments.isEmpty())
+        assertEquals(0, empty.done)
+        assertEquals(0, empty.total)
     }
 
     @Test fun overlayUsesExactlyTheSamePresentationAndActionTable() {

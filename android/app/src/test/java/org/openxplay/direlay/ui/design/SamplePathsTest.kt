@@ -11,10 +11,10 @@ import org.openxplay.direlay.ui.RelayBackStack
 import org.openxplay.direlay.ui.relayRouteParents
 
 class SamplePathsTest {
-    @Test fun allNineScenariosHaveConsistentSectionsAndFocus() {
+    @Test fun allTenScenariosHaveConsistentSectionsAndFocus() {
         val samples = samplePaths(1_000_000)
-        assertEquals(9, samples.size)
-        assertEquals(9, samples.map { it.title }.distinct().size)
+        assertEquals(10, samples.size)
+        assertEquals(10, samples.map { it.title }.distinct().size)
         samples.forEach { (_, path) ->
             assertEquals(PathSection.entries, path.sections.map { it.section })
             assertEquals(path.steps.size, path.steps.map { it.id }.distinct().size)
@@ -36,6 +36,11 @@ class SamplePathsTest {
         assertEquals(StepState.WORKING, paths.getValue(R.string.design_sample_retrying).focus?.state)
         assertFalse(paths.getValue(R.string.design_sample_retrying).diagnostic.contains(" | E "))
         assertEquals(StepAction.ENTER_PIN, paths.getValue(R.string.design_sample_pin).focus?.action)
+        val picture = paths.getValue(R.string.design_section_picture)
+        assertEquals(StepState.OK, picture.section(PathSection.CAR)?.state)
+        assertEquals(StepState.OK, picture.section(PathSection.IPHONE)?.state)
+        assertEquals(StepState.WORKING, picture.section(PathSection.PICTURE)?.state)
+        assertNull(picture.live)
         val live = paths.getValue(R.string.design_sample_live)
         assertNull(live.focus)
         assertEquals(249_000L, live.live?.sinceMillis)
