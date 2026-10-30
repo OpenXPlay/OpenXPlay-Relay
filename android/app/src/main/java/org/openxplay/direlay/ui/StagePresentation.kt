@@ -25,6 +25,8 @@ import org.openxplay.direlay.path.*
     val secondary: StageAction?,
     val notice: StageNotice?,
     val segments: List<SectionSegment>,
+    val done: Int,
+    val total: Int,
     val failureSinceMillis: Long? = null,
     val primaryEnabled: Boolean = true,
     val countdown: Boolean = false,
@@ -37,6 +39,7 @@ import org.openxplay.direlay.path.*
     val car: StepState,
     val iphoneLink: LinkFill,
     val carLink: LinkFill,
+    val relayLink: LinkFill,
     val focus: StageNode?,
     val live: Boolean,
 )
@@ -74,7 +77,13 @@ fun presentStage(path: ConnectionPath, flags: StageFlags = StageFlags()): StageV
         relay = relay?.state ?: StepState.BLOCKED,
         car = if (picture?.state == StepState.OK) StepState.OK else car?.state ?: StepState.BLOCKED,
         iphoneLink = iphone.link(),
-        carLink = car.link(),
+        // A picture that only waits for the iPhone does not dim the car steps already done.
+        carLink = LinkFill((car?.done ?: 0) + (picture?.done ?: 0), (car?.total ?: 0) + (picture?.total ?: 0), when {
+            car != null && car.state != StepState.OK -> car.state
+            picture == null || car != null && picture.state == StepState.BLOCKED -> car?.state ?: StepState.BLOCKED
+            else -> picture.state
+        }),
+        relayLink = relay.link(),
         focus = if (live != null) null else focus?.id?.section?.let { when (it) {
             PathSection.IPHONE -> StageNode.IPHONE
             PathSection.RELAY -> StageNode.RELAY
@@ -121,6 +130,7 @@ fun presentStage(path: ConnectionPath, flags: StageFlags = StageFlags()): StageV
     val failure = focus?.takeIf { it.state == StepState.FAILED && it.code != null }
     return StageView(nodes, headline, supporting, failure?.code, primary, secondary, notice,
         path.sections.map { SectionSegment(it.section, it.state, it.done, it.total) },
+        done = path.sections.sumOf { it.done }, total = path.sections.sumOf { it.total },
         failureSinceMillis = failure?.sinceMillis, primaryEnabled = !flags.busy, countdown = countdown,
         headlineDeadlineMillis = focus?.carWaitUntilMillis.takeIf { live == null })
 }

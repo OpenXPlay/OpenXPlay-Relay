@@ -48,15 +48,16 @@ import org.openxplay.direlay.ui.*
     val sample = samples[selected.coerceIn(samples.indices)]
     val flags = StageFlags(countdown = countdown, busy = busy, displayChanged = notice == 1,
         carIncomplete = notice == 2, setupCompleted = notice != 3)
+    val view = presentStage(sample.path, flags)
     val complete: () -> Unit = {
         if (countdown) { countdown = false; onPreview() }
     }
-    StageGalleryFrame(sample, flags, drawer, 360.dp, 640.dp, onCopy, onPreview, complete)
-    StageGalleryFrame(sample, flags, drawer, 760.dp, 340.dp, onCopy, onPreview, complete)
+    StageGalleryFrame(sample, view, drawer, 360.dp, 640.dp, onCopy, onPreview, complete)
+    StageGalleryFrame(sample, view, drawer, 760.dp, 340.dp, onCopy, onPreview, complete)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun StageGalleryFrame(sample: DesignSample, flags: StageFlags, drawerOpen: Boolean,
+@Composable private fun StageGalleryFrame(sample: DesignSample, view: StageView, drawerOpen: Boolean,
     width: Dp, height: Dp, onCopy: (String) -> Unit, onPreview: () -> Unit, onCountdownComplete: () -> Unit) {
     val state = rememberStagePageState()
     LaunchedEffect(drawerOpen) {
@@ -69,7 +70,6 @@ import org.openxplay.direlay.ui.*
     var fullyExpanded by rememberSaveable(sample.title) { mutableStateOf(emptyList<String>()) }
     val path = sample.path
     val mode = path.steps.firstOrNull { it.id == StepId.MODE }?.evidence?.let { stepText(it) }.orEmpty()
-    val view = presentStage(path, flags)
     val keys: List<Any> = listOf("mode") + path.sections.map { it.section } + "diagnostic"
     Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
         Surface(Modifier.requiredSize(width, height), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {

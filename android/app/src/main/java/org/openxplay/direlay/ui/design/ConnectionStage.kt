@@ -9,7 +9,6 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,8 +16,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalView
@@ -34,7 +35,6 @@ import org.openxplay.direlay.ui.*
 @Composable fun ConnectionStage(path: ConnectionPath, nodes: StageNodes,
     modifier: Modifier = Modifier, onNode: (PathSection) -> Unit) {
     val motion = LocalRelayMotion.current
-    val arrival = stageArrival(120)
     val pulse = remember { Animatable(-1f) }
     var pulsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(nodes.live, motion) {
@@ -49,46 +49,23 @@ import org.openxplay.direlay.ui.*
         }
         pulse.snapTo(-1f)
     }
-    val highlight = LocalStatusColors.current.ok
-    Row(modifier.fillMaxWidth().height(96.dp).drawWithContent {
-        drawContent()
-        if (pulse.value >= 0f) {
-            val x = 28.dp.toPx() + (size.width - 56.dp.toPx()) * pulse.value
-            val point = Offset(x, center.y)
-            drawCircle(Brush.radialGradient(listOf(highlight.copy(alpha = .3f), Color.Transparent),
-                center = point, radius = 12.dp.toPx()), 12.dp.toPx(), point)
-        }
-    }, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().heightIn(min = 112.dp), verticalAlignment = Alignment.CenterVertically) {
         StageTile(StageNode.IPHONE, nodes.iphone, path, nodes.focus, onNode)
-        StageLink(nodes.iphoneLink, true, nodes.live, arrival, Modifier.weight(1f))
-        StageTile(StageNode.RELAY, nodes.relay, path, nodes.focus, onNode)
-        StageLink(nodes.carLink, false, nodes.live, arrival, Modifier.weight(1f))
+        StageCable(nodes.iphoneLink, true, nodes.live, pulse.asState(), Modifier.weight(1f))
+        StageTile(StageNode.RELAY, nodes.relay, path, nodes.focus, onNode, nodes.relayLink)
+        StageCable(nodes.carLink, false, nodes.live, pulse.asState(), Modifier.weight(1f))
         StageTile(StageNode.CAR, nodes.car, path, nodes.focus, onNode)
     }
 }
 
-@Composable private fun StageLink(link: LinkFill, left: Boolean, live: Boolean, arrival: State<Float>, modifier: Modifier) {
-    val fraction = stageFloat(if (live) 1f else if (link.total > 0) link.done.toFloat() / link.total else 0f)
-    val colors = LocalStatusColors.current
-    val color = if (live) colors.ok else colors.color(link.state)
-    val track = MaterialTheme.colorScheme.outlineVariant
-    Canvas(modifier.height(4.dp)) {
-        val start = Offset(if (left) size.width else 0f, center.y)
-        val end = Offset(if (left) 0f else size.width, center.y)
-        val dash = if (!live && link.state == StepState.BLOCKED) PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx())) else null
-        drawLine(track, start, end, size.height, StrokeCap.Round, pathEffect = dash)
-        val fill = (fraction.value * arrival.value).coerceIn(0f, 1f)
-        if (fill > 0f) drawLine(color, start, Offset(start.x + (end.x - start.x) * fill, center.y),
-            size.height, StrokeCap.Round, pathEffect = dash)
-    }
-}
-
 @Composable private fun StageTile(node: StageNode, state: StepState, path: ConnectionPath,
-    focus: StageNode?, onNode: (PathSection) -> Unit) {
+    focus: StageNode?, onNode: (PathSection) -> Unit, relayLink: LinkFill? = null) {
     val motion = LocalRelayMotion.current
     val view = LocalView.current
     val centerNode = node == StageNode.RELAY
     val arrival = stageArrival(if (centerNode) 0 else if (node == StageNode.IPHONE) 60 else 120)
+    val progress = stageFloat(if (relayLink != null && relayLink.total > 0) relayLink.done.toFloat() / relayLink.total else 0f)
+    val progressColor = LocalStatusColors.current.color(relayLink?.state ?: StepState.BLOCKED)
     val strength = stageFloat(if (focus == null || focus == node) 1f else .55f)
     val scale = stageFloat(if (focus == null || focus == node) 1f else .92f)
     val ring = remember { Animatable(1f) }
@@ -147,6 +124,39 @@ import org.openxplay.direlay.ui.*
         fadeIn(tween(180)) + scaleIn(tween(220), initialScale = .6f),
         fadeOut(tween(160)) + scaleOut(tween(180), targetScale = .6f), sizeTransform = null)
         else ContentTransform(EnterTransition.None, ExitTransition.None, sizeTransform = null)
+    val ringTrack = MaterialTheme.colorScheme.outlineVariant
+    val progressRing = if (centerNode) Modifier.drawWithCache {
+        val outset = 4.dp.toPx()
+        // Concentric with the tile's corners, so the ring reads as progress rather than a bracket.
+        val radius = RelayTokens.group.topStart.toPx(size, this) + outset
+        val left = -outset
+        val top = -outset
+        val right = size.width + outset
+        val bottom = size.height + outset
+        val outline = Path().apply {
+            moveTo(size.width / 2f, top)
+            lineTo(right - radius, top)
+            arcTo(Rect(right - 2 * radius, top, right, top + 2 * radius), -90f, 90f, false)
+            lineTo(right, bottom - radius)
+            arcTo(Rect(right - 2 * radius, bottom - 2 * radius, right, bottom), 0f, 90f, false)
+            lineTo(left + radius, bottom)
+            arcTo(Rect(left, bottom - 2 * radius, left + 2 * radius, bottom), 90f, 90f, false)
+            lineTo(left, top + radius)
+            arcTo(Rect(left, top, left + 2 * radius, top + 2 * radius), 180f, 90f, false)
+            close()
+        }
+        val measure = PathMeasure().apply { setPath(outline, true) }
+        val length = measure.length
+        val segment = Path()
+        val stroke = Stroke(2.dp.toPx(), cap = StrokeCap.Round)
+        onDrawWithContent {
+            drawPath(outline, ringTrack.copy(alpha = .6f * arrival.value), style = stroke)
+            segment.reset()
+            measure.getSegment(0f, length * (progress.value * arrival.value).coerceIn(0f, 1f), segment)
+            drawPath(segment, progressColor.copy(alpha = if (relayLink?.state == StepState.OK) .5f else 1f), style = stroke)
+            drawContent()
+        }
+    } else Modifier
     Box(Modifier.size(if (centerNode) 64.dp else 56.dp).graphicsLayer {
         // Per-draw alpha: an offscreen layer would clip the badge and the completion ring to the tile.
         compositingStrategy = CompositingStrategy.ModulateAlpha
@@ -156,7 +166,7 @@ import org.openxplay.direlay.ui.*
         scaleY = scale.value * arrivingScale
         translationX = shake.value * density + if (centerNode) 0f else
             (if (node == StageNode.IPHONE) 24f else -24f) * density * (1f - arrival.value)
-    }.drawWithContent {
+    }.then(progressRing).drawWithContent {
         if (ring.value < 1f) drawRoundRect(ok.copy(alpha = .4f * (1f - ring.value)),
             topLeft = Offset(-20.dp.toPx() * ring.value, -20.dp.toPx() * ring.value),
             size = androidx.compose.ui.geometry.Size(size.width + 40.dp.toPx() * ring.value, size.height + 40.dp.toPx() * ring.value),

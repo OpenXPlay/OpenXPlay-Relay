@@ -206,7 +206,8 @@ import org.openxplay.direlay.ui.design.*
                                     })
                                 route.startsWith("setup") -> SetupScreen(initial, wireless, value,
                                     setupStep(route.substringAfter(':', "")), actions.readIphones, actions.useSharedWifi,
-                                    { _, after -> actions.save(after) != null }, onSetup, back, carModels = settings.models, onStepAction = ::stepAction,
+                                    { _, after -> actions.save(after) != null }, onSetup, back, sources, actions,
+                                    carModels = settings.models, onStepAction = ::stepAction,
                                     onStepChanged = { step ->
                                         if (relayPageKey(entries.last()) == "setup") entries = RelayBackStack(entries).open("setup:${step.key}").entries
                                     }) { changed ->

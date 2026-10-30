@@ -20,6 +20,17 @@ impl SharedWifiNetwork {
             && !self.password.contains('\0')
     }
 }
+/// Effective experimental choices. Connection owners capture a view at the next connection;
+/// prompt and watchdog observers read a fresh view when settings change. Raw choices stay saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExperimentalChoices {
+    pub iap_channel_when_offered: bool,
+    pub release_bluetooth_on_request: bool,
+    pub await_iphone_reconnect: bool,
+    pub radio_conflict_prompt: bool,
+    pub stall_watchdog: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -81,6 +92,11 @@ pub struct Settings {
     pub physical_width_enabled: bool,
     pub physical_width_override_mm: u32,
     pub experimental_active: bool,
+    pub experimental_iap_channel_when_offered: bool,
+    pub experimental_release_bluetooth_on_request: bool,
+    pub experimental_await_iphone_reconnect: bool,
+    pub experimental_radio_conflict_prompt: bool,
+    pub experimental_stall_watchdog: bool,
     pub experimental_screen_session_isolation: bool,
     pub experimental_screen_reconnect_reset: bool,
     pub experimental_screen_delivery_serialization: bool,
@@ -170,6 +186,11 @@ impl Default for Settings {
             physical_width_enabled: false,
             physical_width_override_mm: 0,
             experimental_active: true,
+            experimental_iap_channel_when_offered: true,
+            experimental_release_bluetooth_on_request: true,
+            experimental_await_iphone_reconnect: true,
+            experimental_radio_conflict_prompt: true,
+            experimental_stall_watchdog: true,
             experimental_screen_session_isolation: true,
             experimental_screen_reconnect_reset: true,
             experimental_screen_delivery_serialization: true,
@@ -210,6 +231,20 @@ fn persist_loaded_settings(dir: &Path, bytes: &[u8]) {
     }
 }
 impl Settings {
+    pub fn effective_experimental(&self) -> ExperimentalChoices {
+        ExperimentalChoices {
+            iap_channel_when_offered: self.experimental_active
+                && self.experimental_iap_channel_when_offered,
+            release_bluetooth_on_request: self.experimental_active
+                && self.experimental_release_bluetooth_on_request,
+            await_iphone_reconnect: self.experimental_active
+                && self.experimental_await_iphone_reconnect,
+            radio_conflict_prompt: self.experimental_active
+                && self.experimental_radio_conflict_prompt,
+            stall_watchdog: self.experimental_active && self.experimental_stall_watchdog,
+        }
+    }
+
     /// Resolve parked developer choices only on a runtime copy; never save this copy.
     pub fn effective_developer(&self) -> Self {
         let mut value = self.clone();
@@ -551,6 +586,109 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const EXPERIMENTS: [&str; 5] = [
+        "experimentalIapChannelWhenOffered",
+        "experimentalReleaseBluetoothOnRequest",
+        "experimentalAwaitIphoneReconnect",
+        "experimentalRadioConflictPrompt",
+        "experimentalStallWatchdog",
+    ];
+
+    #[test]
+    fn experiments_default_on_and_master_gates_each_parked_choice() {
+        let defaults = Settings::default();
+        for key in EXPERIMENTS {
+            assert_eq!(serde_json::to_value(&defaults).unwrap()[key], true);
+        }
+        for active in [false, true] {
+            for bits in 0..32 {
+                let raw = serde_json::json!({
+                    "experimentalActive": active,
+                    "experimentalIapChannelWhenOffered": bits & 1 != 0,
+                    "experimentalReleaseBluetoothOnRequest": bits & 2 != 0,
+                    "experimentalAwaitIphoneReconnect": bits & 4 != 0,
+                    "experimentalRadioConflictPrompt": bits & 8 != 0,
+                    "experimentalStallWatchdog": bits & 16 != 0,
+                });
+                let settings: Settings = serde_json::from_value(raw.clone()).unwrap();
+                let effective = settings.effective_experimental();
+                assert_eq!(
+                    effective,
+                    ExperimentalChoices {
+                        iap_channel_when_offered: active && bits & 1 != 0,
+                        release_bluetooth_on_request: active && bits & 2 != 0,
+                        await_iphone_reconnect: active && bits & 4 != 0,
+                        radio_conflict_prompt: active && bits & 8 != 0,
+                        stall_watchdog: active && bits & 16 != 0,
+                    }
+                );
+                // Reading the view must leave parked choices intact for the next master toggle.
+                let saved = serde_json::to_value(&settings).unwrap();
+                for (key, value) in raw.as_object().unwrap() {
+                    assert_eq!(&saved[key], value);
+                }
+                let mut restored = settings.clone();
+                restored.experimental_active = true;
+                assert_eq!(
+                    restored.effective_experimental(),
+                    ExperimentalChoices {
+                        iap_channel_when_offered: bits & 1 != 0,
+                        release_bluetooth_on_request: bits & 2 != 0,
+                        await_iphone_reconnect: bits & 4 != 0,
+                        radio_conflict_prompt: bits & 8 != 0,
+                        stall_watchdog: bits & 16 != 0,
+                    }
+                );
+                assert_eq!(settings.effective_experimental(), effective);
+            }
+        }
+    }
+
+    #[test]
+    fn experiments_load_missing_keys_on_and_persist_every_parked_choice() {
+        let dir = std::env::temp_dir().join(format!(
+            "experimental-settings-{}",
+            crate::admin::auth::random_hex(8).unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for active in [false, true] {
+            std::fs::write(
+                dir.join("settings.json"),
+                serde_json::to_vec(&serde_json::json!({"experimentalActive": active})).unwrap(),
+            )
+            .unwrap();
+            let loaded = Settings::load(&dir).unwrap();
+            assert_eq!(loaded.experimental_active, active);
+            for key in EXPERIMENTS {
+                assert_eq!(serde_json::to_value(&loaded).unwrap()[key], true);
+            }
+            for bits in 0..32 {
+                let mut raw = serde_json::to_value(&loaded).unwrap();
+                for (index, key) in EXPERIMENTS.iter().enumerate() {
+                    raw[key] = serde_json::json!(bits & (1 << index) != 0);
+                }
+                let chosen: Settings = serde_json::from_value(raw).unwrap();
+                chosen.save(&dir).unwrap();
+                assert_eq!(Settings::load(&dir).unwrap(), chosen);
+            }
+        }
+        for key in EXPERIMENTS {
+            for invalid in [
+                serde_json::json!("false"),
+                serde_json::json!(0),
+                serde_json::Value::Null,
+                serde_json::json!([]),
+                serde_json::json!({}),
+            ] {
+                assert!(
+                    serde_json::from_value::<Settings>(serde_json::json!({key: invalid})).is_err(),
+                    "{key}"
+                );
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn developer_master_parks_choices_and_round_trips_them() {
         let parked = Settings {

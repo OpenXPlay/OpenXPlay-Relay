@@ -23,6 +23,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import org.openxplay.direlay.R
+import org.openxplay.direlay.background.BackgroundPresentation
+import org.openxplay.direlay.background.BackgroundSummary
 import org.openxplay.direlay.settings.RelaySettings
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -79,6 +81,7 @@ fun settingsPageTitle(route: String) = when (route) {
     "settings/connection" -> R.string.ui_iphone_connection
     "settings/connection/network" -> R.string.ui_network
     "settings/startup" -> R.string.settings_startup
+    "settings/background" -> R.string.background_title
     "settings/access" -> R.string.menu_access
     "settings/identity" -> R.string.menu_identity
     "settings/configFiles" -> R.string.config_title
@@ -107,7 +110,7 @@ internal fun settingsMenuHue(title: Int) = when (title) {
     R.string.menu_identity -> IconHue.IDENTITY
     R.string.menu_access -> IconHue.PERMISSIONS
     R.string.public_name_title, R.string.menu_connection_outputs -> IconHue.NETWORK
-    R.string.settings_startup -> IconHue.PERMISSIONS
+    R.string.settings_startup, R.string.background_title -> IconHue.PERMISSIONS
     R.string.picture_title, R.string.menu_video -> IconHue.PICTURE
     R.string.logs_title, R.string.config_title -> IconHue.LOGS
     else -> IconHue.DEVELOPER
@@ -127,7 +130,8 @@ fun SettingsMenuRow(title: Int, summary: String?, icon: Int, error: Boolean = fa
 
 @Composable
 fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Boolean,
-    accessSummary: String, carSummary: String, identityStatus: Int, frameRate: Int, carComplete: Boolean, open: (String) -> Unit) {
+    accessSummary: String, carSummary: String, identityStatus: Int, frameRate: Int, carComplete: Boolean,
+    background: BackgroundPresentation?, open: (String) -> Unit) {
     val experimental = draft.experimental
     val context = LocalContext.current
     val version = LocalAppVersion.current
@@ -152,6 +156,10 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
         InsetDivider()
         SettingsMenuRow(R.string.settings_startup, stringResource(R.string.menu_startup_summary, menuToggleSummary(draft.autoStartWhenReady), menuToggleSummary(draft.autoStartOnBoot)),
             R.drawable.symbol_play) { open("settings/startup") }
+        InsetDivider()
+        SettingsMenuRow(R.string.background_title, background?.let { stringResource(if (it.summary == BackgroundSummary.ALLOWED)
+            R.string.background_summary_allowed else R.string.background_summary_limited) }, R.drawable.symbol_battery_charging,
+            background?.showRestriction == true) { open("settings/background") }
     }
     InsetGroup {
         SettingsMenuRow(R.string.menu_access, accessSummary, R.drawable.symbol_lock) { open("settings/access") }
