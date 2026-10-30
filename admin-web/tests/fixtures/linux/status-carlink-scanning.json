@@ -118,6 +118,7 @@
         "joinMethod": null,
         "phase": "SCANNING",
         "picture": null,
+        "pinConfirmation": false,
         "pinPending": false,
         "retrying": false,
         "sinceMillis": 1792999999000,

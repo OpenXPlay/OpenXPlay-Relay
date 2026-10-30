@@ -118,6 +118,7 @@
         "joinMethod": null,
         "phase": "PIN",
         "picture": null,
+        "pinConfirmation": true,
         "pinPending": true,
         "retrying": false,
         "sinceMillis": 1792999999000,
