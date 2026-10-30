@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
@@ -93,13 +94,44 @@ class StagePageState internal constructor(
     onDrawerOpened: () -> Unit = {},
     drawerItemKeys: List<Any> = view.segments.map { it.section },
     sectionKey: (PathSection) -> Any = { it },
+    highPerformance: Boolean = false, onTouch: () -> Unit = {}, manageWindow: Boolean = true,
     drawerContent: LazyListScope.() -> Unit,
 ) {
+    val minimal by rememberUpdatedState(highPerformance)
+    val touch by rememberUpdatedState(onTouch)
+    var arrived by rememberSaveable { mutableStateOf(highPerformance) }
+    LaunchedEffect(Unit) { arrived = true }
+    // Keep this input node through wake-up so the entire first gesture stays consumed.
+    Box(Modifier.fillMaxSize().pointerInput(Unit) {
+        awaitPointerEventScope {
+            var waking = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.any { it.pressed && !it.previousPressed }) {
+                    if (minimal) waking = true
+                    touch()
+                }
+                if (waking) event.changes.forEach { it.consume() }
+                if (event.changes.none { it.pressed }) waking = false
+            }
+        }
+    }) {
+        if (highPerformance) StageMinimal(onTouch, manageWindow)
+        else StagePageContent(path, view, onAction, onCopy, onNotice, onCountdownComplete, modifier, state,
+            !arrived, topBar, onNode, onDrawerOpened, drawerItemKeys, sectionKey, drawerContent)
+    }
+    BackHandler(highPerformance) { onTouch() }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun StagePageContent(path: ConnectionPath, view: StageView,
+    onAction: (StageAction) -> Unit, onCopy: (String) -> Unit, onNotice: (StageNotice) -> Unit,
+    onCountdownComplete: () -> Unit, modifier: Modifier, state: StagePageState, arrivalEnabled: Boolean,
+    topBar: @Composable RowScope.() -> Unit, onNode: (PathSection) -> Unit, onDrawerOpened: () -> Unit,
+    drawerItemKeys: List<Any>, sectionKey: (PathSection) -> Any, drawerContent: LazyListScope.() -> Unit) {
     val motion = LocalRelayMotion.current
     val scope = rememberCoroutineScope()
     val sheet = state.scaffoldState.bottomSheetState
-    var arrived by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { arrived = true }
     val countdownActive = view.countdown && view.primary == StageAction.Connect && view.primaryEnabled
     val deadline = rememberSaveable(countdownActive) {
         if (countdownActive) System.currentTimeMillis() + STAGE_COUNTDOWN_SECONDS * 1000L else 0L
@@ -125,7 +157,7 @@ class StagePageState internal constructor(
     val peek = 72.dp + navigation
     val background = MaterialTheme.colorScheme.background
     val scrim = MaterialTheme.colorScheme.scrim
-    CompositionLocalProvider(LocalStageArrivalEnabled provides !arrived,
+    CompositionLocalProvider(LocalStageArrivalEnabled provides arrivalEnabled,
         LocalStageCountdownDeadline provides deadline.takeIf { countdownActive }) {
         BoxWithConstraints(modifier.fillMaxSize().background(background)) {
             val height = maxHeight

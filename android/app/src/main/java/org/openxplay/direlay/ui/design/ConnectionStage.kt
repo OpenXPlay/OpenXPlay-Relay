@@ -36,7 +36,8 @@ import org.openxplay.direlay.ui.*
     modifier: Modifier = Modifier, onNode: (PathSection) -> Unit) {
     val motion = LocalRelayMotion.current
     val pulse = remember { Animatable(-1f) }
-    var pulsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val arrival = LocalStageArrivalEnabled.current
+    var pulsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(nodes.live && !arrival) }
     LaunchedEffect(nodes.live, motion) {
         pulse.snapTo(-1f)
         if (!nodes.live) pulsed = false
@@ -176,7 +177,11 @@ import org.openxplay.direlay.ui.*
     }.background(tile, RelayTokens.group).semantics(mergeDescendants = true) { contentDescription = description }
         .clickable(role = Role.Button) { onNode(section) }, contentAlignment = Alignment.Center) {
         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides tint) {
-            Symbol(if (node == StageNode.CAR) R.drawable.symbol_car_front else R.drawable.symbol_smartphone,
+            Symbol(when (node) {
+                StageNode.IPHONE -> R.drawable.symbol_stage_iphone
+                StageNode.RELAY -> R.drawable.symbol_stage_relay
+                StageNode.CAR -> R.drawable.symbol_car_front
+            },
                 null, Modifier.size(if (centerNode) 32.dp else 28.dp))
         }
         AnimatedContent(state, Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp),
