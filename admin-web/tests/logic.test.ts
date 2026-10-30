@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-15
 
 import { expect, it } from 'vitest';
-import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkDetail, canConnectCarlink, validCarlinkPin } from '../src/logic';
+import { sessionRoute, wifiGuidance, setupHotspotName, sortNetworks, wifiJoinCredentials, carlinkView, carlinkDetail, canConnectCarlink, validCarlinkPin } from '../src/logic';
 import { translate } from '../src/i18n';
 import type { Status } from '../src/api';
 it.each([true, false])('routes sessions independently of default password (%s)', defaultPassword => {
@@ -14,7 +14,9 @@ it('selects join guidance with the destination SSID and Linux admin address', ()
   expect(translate('en', wifiGuidance('join'), { ssid: 'Home' })).toBe('This relay will close its setup hotspot and join Home. Reconnect this phone or computer to Home, then open https://openxplay-linux.local:6975.');
 });
 it('selects setup hotspot guidance when forgetting Wi-Fi', () => {
-  expect(translate('en', wifiGuidance('forget'))).toContain('OpenXPlay-Setup-XXXX');
+  const status = { wifiClient: { ssid: 'Home', ip: null, signal: null, setupSsid: 'OpenXPlay-Linux-Setup-A1B2' } } as Status;
+  expect(translate('en', wifiGuidance('forget'), { ssid: setupHotspotName(status) })).toBe('This relay will forget its saved Wi-Fi and open its setup hotspot. Reconnect this phone or computer to OpenXPlay-Linux-Setup-A1B2, then open https://10.78.0.1:6975.');
+  expect(translate('zh-CN', wifiGuidance('forget'), { ssid: setupHotspotName(null) })).toContain('OpenXPlay-Linux-Setup-XXXX');
   expect(translate('zh-CN', wifiGuidance('join'), { ssid: 'Home' })).toContain('Home');
 });
 it('sorts known networks first, then by descending signal without mutating the scan', () => {

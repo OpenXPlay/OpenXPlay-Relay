@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-16
 
 import { afterEach, expect, it, vi } from 'vitest';
-import { anchorPairing, createCountdown, formatRemaining, pairingPanelView, pairingView } from '../src/pairing';
+import { anchorPairing, createCountdown, formatRemaining, pairingPanelView, pairingView, relayBluetoothName } from '../src/pairing';
 import { statusView } from '../src/views';
 import { translate } from '../src/i18n';
 import { previewStatus } from '../dev-server';
@@ -54,6 +54,16 @@ it('renders the open Linux window with the countdown and a cancel button', () =>
   expect(html).toContain('id="pairing-cancel"');
   expect(html).not.toContain('pairing-open');
   expect(pairingPanelView(status, false, '', zh, 1000)).toContain('配对已开放 · 剩余 9:41');
+});
+it('names the relay as the iPhone lists it under Bluetooth', () => {
+  const linux = { ...fixture(), name: 'OpenXPlay Linux', pathInput: { relay: { bluetoothName: 'OpenXPlay Linux' } }, pairingDeadline: 1581 } as Status;
+  expect(pairingPanelView(linux, false, '', en, 1000)).toContain('Bluetooth and choose OpenXPlay Linux.');
+  vi.useFakeTimers(); vi.setSystemTime(1_000_000);
+  expect(statusView(linux, en)).toContain('choose OpenXPlay Linux. Pairing closes in 9:41.');
+  expect(pairingPanelView(linux, false, '', zh, 1000)).toContain('选择 OpenXPlay Linux。');
+  const android = { ...fixture('working', 'android'), pathInput: { relay: { bluetoothName: 'Riko <Pixel>' } }, pairingDeadline: 1300 } as Status;
+  expect(pairingPanelView(android, false, '', en, 1000)).toContain('choose Riko &lt;Pixel&gt;.');
+  expect(relayBluetoothName({ ...linux, pathInput: undefined })).toBe('OpenXPlay Linux');
 });
 it('explains Android windows that cannot be cancelled and the confirmation on the relay screen', () => {
   const status = fixture('working', 'android'); status.pairingDeadline = 1300;

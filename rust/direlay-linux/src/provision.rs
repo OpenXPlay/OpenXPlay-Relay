@@ -722,6 +722,7 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             ip: Some("10.78.0.1".into()),
             signal: None,
             setup_hotspot: true,
+            ..WifiClient::default()
         };
         Ok(())
     }
@@ -743,6 +744,7 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
             ip,
             signal: None,
             setup_hotspot: false,
+            ..WifiClient::default()
         };
     }
     pub fn scan(&mut self) -> io::Result<Vec<WifiNetwork>> {
@@ -863,6 +865,7 @@ impl<C: NetworkManagerCli> WifiProvisioner<C> {
     }
     pub fn status(&self) -> WifiClient {
         let mut status = self.status.clone();
+        status.setup_ssid = Some(self.setup_ssid.clone());
         if !status.setup_hotspot && status.ssid.is_some() {
             let current = self.current_ssid();
             if current != status.ssid {
