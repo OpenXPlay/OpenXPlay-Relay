@@ -6,6 +6,10 @@ use crate::bluetooth_wake::{BluetoothChange, BluetoothListener, BluetoothSubscri
 use crate::boot_timing::Milestone;
 use crate::Result;
 use crate::*;
+use carplay_airplay::wireless_handoff_policy::{
+    HandoffAction, HandoffDeadline, WirelessHandoffOptions, WirelessHandoffPolicy,
+    WirelessSessionEvent,
+};
 use carplay_iap2::{mfi::MfiAuthenticator, DuplexStream, Iap2WirelessCarPlayEndpoint};
 use std::{
     collections::BTreeSet,
@@ -68,6 +72,10 @@ pub trait BluetoothConnection: DuplexStream {
 }
 /// Platform interface for `WirelessPlatform`. Implementations must support bounded shutdown.
 pub trait WirelessPlatform: Send + Sync {
+    /// The handoff experiments for the next attempt; off unless the platform enables them.
+    fn handoff_options(&self) -> WirelessHandoffOptions {
+        WirelessHandoffOptions::default()
+    }
     fn car_ready(&self) -> Result<bool> {
         Ok(true)
     }
@@ -148,7 +156,12 @@ pub struct NetworkCallbacks {
     pub on_tunnel_ready: Arc<dyn Fn() + Send + Sync>,
 
     pub on_failure: Arc<dyn Fn(std::io::Error) + Send + Sync>,
+    /// The attempt's AirPlay session events, when the controller follows its sessions.
+    pub on_session: Option<SessionObserver>,
 }
+/// Takes one session event; true when the controller keeps it to itself, which for
+/// [`WirelessSessionEvent::Failed`] means the failure ends only that session.
+pub type SessionObserver = Arc<dyn Fn(WirelessSessionEvent) -> bool + Send + Sync>;
 
 type Cleanup = Box<dyn Fn() -> Result<()> + Send + Sync>;
 /// The order in which an attempt releases its resources: the Bluetooth link first, the access
@@ -278,6 +291,8 @@ struct ControllerState {
     airplay: bool,
     tunnel: bool,
     active: bool,
+    /// The attempt's handoff experiments: the Bluetooth release and the reconnect wait.
+    handoff: WirelessHandoffPolicy,
     bootstrap: Option<Arc<dyn BluetoothConnection>>,
     resources: Vec<(Layer, Cleanup)>,
     pairing: Option<Arc<dyn CloseResource>>,
@@ -329,6 +344,7 @@ impl LinuxCarPlayController {
                     airplay: false,
                     tunnel: false,
                     active: false,
+                    handoff: WirelessHandoffPolicy::new(Default::default()),
                     bootstrap: None,
                     resources: Vec::new(),
                     pairing: None,
@@ -655,6 +671,7 @@ impl LinuxCarPlayController {
             let generation = {
                 let mut s = self.state.0.lock().unwrap();
                 s.generation += 1;
+                s.handoff = WirelessHandoffPolicy::new(self.platform.handoff_options());
                 s.generation
             };
             let result = std::thread::scope(|scope| {
@@ -847,34 +864,25 @@ impl LinuxCarPlayController {
                             .network
                             .as_ref()
                             .is_some_and(|n| n.uses_startup_watchdog());
-                        let slice = if uses_watchdog {
+                        let now = Instant::now();
+                        let mut slice = if uses_watchdog {
                             STATION_POLL
                         } else {
-                            deadline
-                                .saturating_duration_since(Instant::now())
-                                .min(STATION_POLL)
+                            deadline.saturating_duration_since(now).min(STATION_POLL)
                         };
+                        if let Some(due) = s.handoff.next_due() {
+                            slice = slice.min(due.saturating_duration_since(now));
+                        }
                         let (s, _) = c
                             .wait_timeout_while(s, slice, |s| handing_off(s, generation))
                             .unwrap();
                         if !handing_off(&s, generation) {
                             return;
                         }
-                        let network = s.network.clone();
-                        let uses_watchdog =
-                            network.as_ref().is_some_and(|n| n.uses_startup_watchdog());
                         drop(s);
-                        if let Some(e) = network.and_then(|n| n.poll_startup(Instant::now()).err())
+                        if check_handoff(&state, &events, generation, Instant::now(), deadline)
+                            .is_err()
                         {
-                            abort(&state, generation, crate::failure_text::error_text(&e));
-                            return;
-                        }
-                        if !uses_watchdog && Instant::now() >= deadline {
-                            abort(
-                                &state,
-                                generation,
-                                "No established AirPlay/iAP2 tunnel after StartSession".into(),
-                            );
                             return;
                         }
                     }
@@ -894,16 +902,36 @@ impl LinuxCarPlayController {
         if !self.state.0.lock().unwrap().active {
             // A failed AP or session explains why the bootstrap ended.
             self.check()?;
-            result?;
+            if let Err(e) = result {
+                if !released_bootstrap_ended(&self.state, generation) {
+                    return Err(e);
+                }
+                self.events.log(&format!(
+                    "bluetooth-release ended generation={generation} error={}",
+                    crate::failure_text::error_text(&e)
+                ));
+            }
         }
         self.check()?;
         let (m, c) = &*self.state;
-        let s = m.lock().unwrap();
-        let (s, _) = c
-            .wait_timeout_while(s, self.timeout, |s| {
-                !s.closed && s.failure.is_none() && !s.active
-            })
-            .unwrap();
+        let mut deadline = Instant::now() + self.timeout;
+        let mut s = m.lock().unwrap();
+        loop {
+            s = c
+                .wait_timeout_while(s, deadline.saturating_duration_since(Instant::now()), |s| {
+                    !s.closed && s.failure.is_none() && !s.active
+                })
+                .unwrap()
+                .0;
+            if s.active || s.closed || s.failure.is_some() {
+                break;
+            }
+            match handoff_deadline(&mut s, &self.events, generation, Instant::now()) {
+                Some(later) => deadline = later,
+                None => break,
+            }
+        }
+        c.notify_all();
         if !s.active {
             drop(s);
             self.check()?;
@@ -976,6 +1004,10 @@ impl LinuxCarPlayController {
         let failure = Arc::new(move |e: std::io::Error| {
             abort(&state, generation, crate::failure_text::error_text(&e))
         });
+        let state = self.state.clone();
+        let e = self.events.clone();
+        let session: SessionObserver =
+            Arc::new(move |event| session_event(&state, &e, generation, event, Instant::now()));
         let network = self.platform.create_network(
             info,
             mfi,
@@ -983,6 +1015,7 @@ impl LinuxCarPlayController {
                 on_air_play: a,
                 on_tunnel_ready: t,
                 on_failure: failure,
+                on_session: Some(session),
             },
         )?;
         // Owned once started: a close that comes meanwhile then finds it complete.
@@ -1256,6 +1289,151 @@ fn abort(state: &(Mutex<ControllerState>, Condvar), generation: u64, error: Stri
         let _ = b.close();
     }
 }
+/// Logs what the attempt's handoff policy decided and takes the Bluetooth bootstrap it releases,
+/// which the caller closes once it let go of the state.
+fn handoff_actions(
+    s: &mut ControllerState,
+    events: &JsonEvents,
+    generation: u64,
+    actions: &[HandoffAction],
+) -> Option<Arc<dyn BluetoothConnection>> {
+    let mut release = None;
+    for action in actions {
+        let line = match *action {
+            HandoffAction::ReleaseScheduled { session } => format!(
+                "bluetooth-release scheduled generation={generation} session={session} graceMs={}",
+                carplay_airplay::wireless_handoff_policy::BLUETOOTH_RELEASE_GRACE.as_millis()
+            ),
+            HandoffAction::Release { session } => {
+                release = s.bootstrap.take();
+                format!("bluetooth-release closing generation={generation} session={session}")
+            }
+            HandoffAction::ReleaseSkipped { session, reason } => format!(
+                "bluetooth-release skipped generation={generation} session={session} reason={reason}"
+            ),
+            HandoffAction::FailureKept { session } => format!(
+                "airplay-reconnect session-failure generation={generation} session={session} kept=receiver"
+            ),
+            HandoffAction::ReconnectWait { session, wait } => format!(
+                "airplay-reconnect waiting generation={generation} session={session} waitMs={}",
+                wait.as_millis()
+            ),
+            HandoffAction::ReconnectCancelled { session } => {
+                format!("airplay-reconnect cancelled generation={generation} session={session}")
+            }
+            HandoffAction::ReconnectEnded { reason } => {
+                format!("airplay-reconnect ended generation={generation} reason={reason}")
+            }
+        };
+        events.log(&line);
+    }
+    release
+}
+/// Feeds a session event to the handoff policy of the attempt `generation`; true when the
+/// controller keeps it to itself.
+fn session_event(
+    state: &(Mutex<ControllerState>, Condvar),
+    events: &JsonEvents,
+    generation: u64,
+    event: WirelessSessionEvent,
+    now: Instant,
+) -> bool {
+    let mut s = state.0.lock().unwrap();
+    if attempt_check(&s, generation).is_err() {
+        return false;
+    }
+    let actions = s.handoff.observe(event, now);
+    // Events never release the bootstrap; only the policy's timers do.
+    let _ = handoff_actions(&mut s, events, generation, &actions);
+    state.1.notify_all();
+    actions
+        .iter()
+        .any(|a| matches!(a, HandoffAction::FailureKept { .. }))
+}
+/// Runs the due handoff timers of the attempt `generation` and closes a released bootstrap
+/// outside the state's lock.
+fn poll_handoff(
+    state: &(Mutex<ControllerState>, Condvar),
+    events: &JsonEvents,
+    generation: u64,
+    now: Instant,
+) {
+    let release = {
+        let mut s = state.0.lock().unwrap();
+        if attempt_check(&s, generation).is_err() {
+            return;
+        }
+        let (tunnel, active) = (s.tunnel, s.active);
+        let actions = s.handoff.poll(now, tunnel, active);
+        let release = handoff_actions(&mut s, events, generation, &actions);
+        state.1.notify_all();
+        release
+    };
+    if let Some(bootstrap) = release {
+        let _ = bootstrap.close();
+    }
+}
+/// One round of the StartSession watch at `now`: the due handoff timers, then the startup
+/// deadlines, which a reconnect wait holds until it ends. An error once the attempt failed.
+fn check_handoff(
+    state: &(Mutex<ControllerState>, Condvar),
+    events: &JsonEvents,
+    generation: u64,
+    now: Instant,
+    deadline: Instant,
+) -> Result<()> {
+    poll_handoff(state, events, generation, now);
+    let network = {
+        let s = state.0.lock().unwrap();
+        attempt_check(&s, generation)?;
+        if s.handoff.startup_deferred(now) {
+            return Ok(());
+        }
+        s.network.clone()
+    };
+    let uses_watchdog = network.as_ref().is_some_and(|n| n.uses_startup_watchdog());
+    let error = match network.and_then(|n| n.poll_startup(now).err()) {
+        Some(e) => e,
+        None if !uses_watchdog && now >= deadline => {
+            std::io::Error::other("No established AirPlay/iAP2 tunnel after StartSession")
+        }
+        None => return Ok(()),
+    };
+    abort(state, generation, crate::failure_text::error_text(&error));
+    Err(error)
+}
+/// Whether the bootstrap of the attempt `generation` ended because the controller released it.
+fn released_bootstrap_ended(state: &(Mutex<ControllerState>, Condvar), generation: u64) -> bool {
+    let s = state.0.lock().unwrap();
+    attempt_check(&s, generation).is_ok() && s.handoff.tolerates_bootstrap_error()
+}
+/// The attempt `generation` reached its handoff deadline at `now` without an active handoff.
+/// Returns the instant a reconnect wait moves the deadline to, or `None` once decided: a
+/// released bootstrap whose session shows video goes on without tunnel iAP2, anything else
+/// fails as before.
+fn handoff_deadline(
+    s: &mut ControllerState,
+    events: &JsonEvents,
+    generation: u64,
+    now: Instant,
+) -> Option<Instant> {
+    if attempt_check(s, generation).is_err() {
+        return None;
+    }
+    match s.handoff.deadline(now) {
+        HandoffDeadline::Wait(until) => Some(until),
+        HandoffDeadline::Fallback => {
+            s.active = true;
+            s.stage = "WirelessActive".into();
+            events.log(&format!(
+                "bluetooth-release video generation={generation} tunnel=none bluetooth=released"
+            ));
+            events.emit("stage", &serde_json::json!({"stage":"WirelessActive"}));
+            None
+        }
+        HandoffDeadline::Fail => None,
+    }
+}
 fn proof(
     state: &(Mutex<ControllerState>, Condvar),
     events: &JsonEvents,
@@ -1348,5 +1526,605 @@ mod station_tests {
         fresh.begin(list(&[HEAD_UNIT]));
         fresh.observe(list(&[HEAD_UNIT]));
         assert_eq!(fresh.missing_iphone(), Some("no-iphone-station"));
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    //! The handoff experiments wired through a real session listener and real AirPlay sessions;
+    //! time is the test's, so each check runs at an exact instant.
+    use super::*;
+    use crate::linux_receiver::SessionListener;
+    use crate::Result;
+    use carplay_airplay::{first_tcp_watchdog::FirstTcpWatchdog, *};
+    use carplay_iap2::{mfi::BaaCertificatePair, Receive};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    const GENERATION: u64 = 1;
+    /// The receiver's fixed budget from the first accepted TCP connection to RECORD.
+    const SESSION_BUDGET: u64 = 45_000;
+
+    struct UnusedPlatform;
+    impl WirelessPlatform for UnusedPlatform {
+        fn check_bluetooth_radio(&self) -> Result<()> {
+            unreachable!()
+        }
+        fn prepare_mfi(&self) -> Result<MfiResource> {
+            unreachable!()
+        }
+        fn create_hotspot(&self) -> Result<Arc<dyn WirelessHotspotManager>> {
+            unreachable!()
+        }
+        fn start_pairing(&self) -> Result<Option<Arc<dyn CloseResource>>> {
+            unreachable!()
+        }
+        fn select_iphone(&self) -> Result<BondedDevice> {
+            unreachable!()
+        }
+        fn create_bluetooth(&self, _: &BondedDevice) -> Result<Arc<dyn BluetoothConnection>> {
+            unreachable!()
+        }
+        fn create_network(
+            &self,
+            _: WirelessHotspotInfo,
+            _: Arc<dyn MfiAuthenticator>,
+            _: NetworkCallbacks,
+        ) -> Result<Arc<dyn NetworkAttachment>> {
+            unreachable!()
+        }
+        fn run_bootstrap(
+            &self,
+            _: Arc<dyn BluetoothConnection>,
+            _: Arc<dyn PendingNetwork>,
+            _: Arc<dyn MfiAuthenticator>,
+            _: BootstrapCallbacks,
+        ) -> Result<()> {
+            unreachable!()
+        }
+    }
+    /// Counts closes; a Bluetooth link also checks that nobody holds the controller's state.
+    struct Link {
+        closes: AtomicUsize,
+        state: Option<SharedState>,
+    }
+    impl DuplexStream for Link {
+        fn send(&self, _: &[u8]) -> Result<()> {
+            Ok(())
+        }
+        fn recv(&self, _: usize, _: Duration) -> Result<Receive> {
+            Ok(Receive::Timeout)
+        }
+        fn close(&self) -> Result<()> {
+            if let Some(state) = &self.state {
+                assert!(state.0.try_lock().is_ok(), "closed under the state's lock");
+            }
+            self.closes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    impl BluetoothConnection for Link {
+        fn connect(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+    struct Auth;
+    impl MfiAuthenticator for Auth {
+        fn protocol_major(&self) -> Result<u8> {
+            Ok(3)
+        }
+        fn read_certificate(&self, _: usize) -> Result<Vec<u8>> {
+            Ok(vec![1])
+        }
+        fn sign_challenge(&self, _: &[u8]) -> Result<Vec<u8>> {
+            Ok(vec![2])
+        }
+        fn baa_certificates(&self) -> Result<BaaCertificatePair> {
+            unreachable!()
+        }
+    }
+    struct Store;
+    impl PairingStore for Store {
+        fn save(&self, _: &str, _: &[u8; 32]) -> Result<()> {
+            Ok(())
+        }
+        fn get(&self, _: &str) -> Result<Option<[u8; 32]>> {
+            Ok(None)
+        }
+        fn clear(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+    struct Network {
+        watchdog: crate::linux_receiver::Watchdog,
+        closes: Arc<AtomicUsize>,
+    }
+    impl NetworkAttachment for Network {
+        fn uses_startup_watchdog(&self) -> bool {
+            true
+        }
+        fn poll_startup(&self, now: Instant) -> Result<()> {
+            match self.watchdog.lock().unwrap().as_mut().unwrap().poll(now) {
+                Some(_) => Err(std::io::Error::other(
+                    "AirPlay session timeout after TCP accept",
+                )),
+                None => Ok(()),
+            }
+        }
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+        fn endpoint(&self) -> Result<Iap2WirelessCarPlayEndpoint> {
+            unreachable!()
+        }
+        fn close(&self) -> Result<()> {
+            self.closes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    /// One wireless attempt after StartSession: its first TCP connection came at `start`.
+    struct Fixture {
+        controller: LinuxCarPlayController,
+        listener: Arc<SessionListener>,
+        start: Instant,
+        now: Arc<Mutex<Instant>>,
+        bluetooth: Arc<Link>,
+        /// Network and access point closes.
+        teardown: Arc<AtomicUsize>,
+        logs: Arc<Mutex<Vec<String>>>,
+    }
+    impl Fixture {
+        fn new(release: bool, reconnect: bool) -> Self {
+            let start = Instant::now();
+            let now = Arc::new(Mutex::new(start));
+            let logs = Arc::new(Mutex::new(Vec::new()));
+            let lines = logs.clone();
+            let events = Arc::new(JsonEvents::new(Arc::new(move |line| {
+                lines.lock().unwrap().push(line)
+            })));
+            let controller = LinuxCarPlayController::new(
+                Arc::new(UnusedPlatform),
+                events.clone(),
+                Duration::from_secs(45),
+            );
+            let state = controller.state.clone();
+            let bluetooth = Arc::new(Link {
+                closes: AtomicUsize::new(0),
+                state: Some(state.clone()),
+            });
+            let identity = AirPlayListenerIdentity::new(1);
+            let mut watchdog = FirstTcpWatchdog::new(identity.clone())
+                .with_session_timeout(Duration::from_millis(SESSION_BUDGET));
+            watchdog.start_session_sent(start);
+            watchdog.accepted(
+                &AirPlayTcpAccepted {
+                    listener: identity,
+                    internal: false,
+                    accepted_at_nanos: 0,
+                },
+                start,
+            );
+            let watchdog = Arc::new(Mutex::new(Some(watchdog)));
+            let teardown = Arc::new(AtomicUsize::new(0));
+            let network = Arc::new(Network {
+                watchdog: watchdog.clone(),
+                closes: teardown.clone(),
+            });
+            {
+                let mut s = state.0.lock().unwrap();
+                s.generation = GENERATION;
+                s.start_session = true;
+                s.handoff = WirelessHandoffPolicy::new(WirelessHandoffOptions {
+                    release_bluetooth_on_request: release,
+                    await_iphone_reconnect: reconnect,
+                });
+                s.bootstrap = Some(bluetooth.clone());
+                s.network = Some(network.clone());
+                let link = bluetooth.clone();
+                s.resources
+                    .push((Layer::Bluetooth, Box::new(move || link.close())));
+                s.resources
+                    .push((Layer::Network, Box::new(move || network.close())));
+                let closes = teardown.clone();
+                s.resources.push((
+                    Layer::Hotspot,
+                    Box::new(move || {
+                        closes.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    }),
+                ));
+            }
+            let (st, e, clock) = (state.clone(), events.clone(), now.clone());
+            let on_session: SessionObserver = Arc::new(move |event| {
+                session_event(&st, &e, GENERATION, event, *clock.lock().unwrap())
+            });
+            let (st, e) = (state.clone(), events.clone());
+            let on_air_play = Arc::new(move || proof(&st, &e, GENERATION, false));
+            let (st, e) = (state.clone(), events.clone());
+            let on_tunnel_ready = Arc::new(move || proof(&st, &e, GENERATION, true));
+            let st = state.clone();
+            let on_failure =
+                Arc::new(move |e: std::io::Error| abort(&st, GENERATION, e.to_string()));
+            let st = state.clone();
+            let listener = Arc::new(SessionListener {
+                current: Some(Arc::new(move || {
+                    attempt_check(&st.0.lock().unwrap(), GENERATION).is_ok()
+                })),
+                input: None,
+                callbacks: NetworkCallbacks {
+                    on_air_play,
+                    on_tunnel_ready,
+                    on_failure,
+                    on_session: Some(on_session),
+                },
+                closed: Arc::new(AtomicBool::new(false)),
+                events,
+                active: Mutex::default(),
+                watchdog,
+            });
+            Self {
+                controller,
+                listener,
+                start,
+                now,
+                bluetooth,
+                teardown,
+                logs,
+            }
+        }
+        fn state(&self) -> std::sync::MutexGuard<'_, ControllerState> {
+            self.controller.state.0.lock().unwrap()
+        }
+        fn session(&self) -> Arc<AirPlaySession> {
+            let transport = Arc::new(LinuxStreamTransport::new(
+                "127.0.0.1".parse::<std::net::IpAddr>().unwrap().into(),
+            ));
+            AirPlaySession::new(
+                Arc::new(Link {
+                    closes: AtomicUsize::new(0),
+                    state: None,
+                }),
+                AirPlayConfig::linux_receiver("test".into(), "".into()),
+                Arc::new(AirPlayIdentity::generate().unwrap()),
+                Arc::new(Store),
+                Arc::new(Auth),
+                Arc::new(CarPlayMediaEngine::new(
+                    Arc::new(RecordingMediaSink::discard(self.controller.events.clone())),
+                    transport,
+                    false,
+                )),
+                self.listener.clone(),
+            )
+            .unwrap()
+        }
+        fn at(&self, millis: u64) {
+            *self.now.lock().unwrap() = self.start + Duration::from_millis(millis);
+        }
+        fn now(&self) -> Instant {
+            *self.now.lock().unwrap()
+        }
+        /// One round of the StartSession watch at the current time.
+        fn check(&self) -> Result<()> {
+            check_handoff(
+                &self.controller.state,
+                &self.controller.events,
+                GENERATION,
+                self.now(),
+                self.start + Duration::from_millis(SESSION_BUDGET),
+            )
+        }
+        /// The handoff deadline passed without tunnel iAP2: true when the attempt goes on.
+        fn deadline(&self) -> Option<Instant> {
+            let mut s = self.state();
+            handoff_deadline(&mut s, &self.controller.events, GENERATION, self.now())
+        }
+        fn send(&self, session: &AirPlaySession, method: &str, path: &str, body: Vec<u8>) {
+            session
+                .handle_request(&RtspRequest {
+                    method: method.into(),
+                    path: path.into(),
+                    protocol: "RTSP/1.0".into(),
+                    headers: Default::default(),
+                    body,
+                })
+                .unwrap();
+        }
+        fn record(&self, session: &AirPlaySession) {
+            self.send(session, "RECORD", "/", vec![]);
+        }
+        fn request_handoff(&self, session: &AirPlaySession) {
+            let body = BplistValue::dict([("type", "disableBluetooth".into())]);
+            self.send(
+                session,
+                "POST",
+                "/command",
+                BplistCodec::encode(&body).unwrap(),
+            );
+        }
+        /// A pair-setup step the receiver rejects.
+        fn fail_pairing(&self, session: &AirPlaySession) {
+            let body = Tlv8Codec::encode(&[Tlv8Item {
+                kind: 6,
+                value: vec![3],
+            }])
+            .unwrap();
+            self.send(session, "POST", "/pair-setup", body);
+        }
+        /// The session's control connection fails, as its control worker reports it.
+        fn fail_control(&self, session: &AirPlaySession) {
+            self.listener
+                .on_session_error(session, "control I/O failed: Connection reset by peer");
+            session.close().unwrap();
+        }
+        fn failure(&self) -> Option<String> {
+            self.state().failure.clone()
+        }
+        fn bluetooth_closes(&self) -> usize {
+            self.bluetooth.closes.load(Ordering::SeqCst)
+        }
+        fn kept_network(&self) {
+            assert_eq!(self.teardown.load(Ordering::SeqCst), 0);
+            assert_eq!(self.failure(), None);
+        }
+        fn logged(&self, needle: &str) -> bool {
+            self.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.contains(needle))
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.controller.close().unwrap();
+        }
+    }
+
+    #[test]
+    fn release_closes_only_this_attempts_bootstrap_once_five_seconds_after_the_request() {
+        let f = Fixture::new(true, false);
+        let s = f.session();
+        f.record(&s);
+        f.request_handoff(&s);
+        assert!(f.logged("bluetooth-release scheduled"));
+        f.at(4_999);
+        f.check().unwrap();
+        assert_eq!(f.bluetooth_closes(), 0);
+        assert!(!released_bootstrap_ended(&f.controller.state, GENERATION));
+        // A repeated request does not move the release.
+        f.request_handoff(&s);
+        f.at(5_000);
+        f.check().unwrap();
+        assert_eq!(f.bluetooth_closes(), 1);
+        assert!(f.state().bootstrap.is_none());
+        assert!(f.logged("bluetooth-release closing"));
+        f.kept_network();
+        // The bootstrap's end is expected now, for this attempt only.
+        assert!(released_bootstrap_ended(&f.controller.state, GENERATION));
+        assert!(!released_bootstrap_ended(
+            &f.controller.state,
+            GENERATION + 1
+        ));
+        f.at(10_000);
+        f.check().unwrap();
+        assert_eq!(f.bluetooth_closes(), 1);
+    }
+    #[test]
+    fn tunnel_video_a_newer_session_or_the_option_off_keep_the_bootstrap() {
+        let f = Fixture::new(true, false);
+        let s = f.session();
+        f.record(&s);
+        f.request_handoff(&s);
+        f.listener.on_video_frame_rendered(&s);
+        f.at(5_000);
+        f.check().unwrap();
+        assert_eq!(f.bluetooth_closes(), 0);
+        assert!(f.logged("reason=video-rendered"));
+
+        let f = Fixture::new(true, false);
+        let old = f.session();
+        f.record(&old);
+        f.request_handoff(&old);
+        f.record(&f.session());
+        f.at(5_000);
+        f.check().unwrap();
+        assert_eq!(f.bluetooth_closes(), 0);
+        assert!(f.logged("reason=stale-session"));
+
+        // The tunnel completes the handoff, which closes the bootstrap as before; only once.
+        let f = Fixture::new(true, false);
+        let s = f.session();
+        f.record(&s);
+        f.request_handoff(&s);
+        (f.listener.callbacks.on_tunnel_ready)();
+        assert_eq!(f.bluetooth_closes(), 1);
+        f.at(5_000);
+        f.check().unwrap();
+        assert!(f.logged("reason=tunnel-ready"));
+        assert_eq!(f.bluetooth_closes(), 1);
+
+        let f = Fixture::new(false, true);
+        let s = f.session();
+        f.record(&s);
+        f.request_handoff(&s);
+        f.at(5_000);
+        f.check().unwrap();
+        assert_eq!(f.bluetooth_closes(), 0);
+        assert!(!f.logged("bluetooth-release"));
+    }
+    #[test]
+    fn a_queued_release_cannot_close_the_next_attempts_bootstrap() {
+        let f = Fixture::new(true, false);
+        let s = f.session();
+        f.record(&s);
+        f.request_handoff(&s);
+        f.state().generation += 1;
+        f.at(5_000);
+        assert!(f.check().is_err());
+        assert_eq!(f.bluetooth_closes(), 0);
+        assert!(!f.logged("bluetooth-release closing"));
+    }
+    #[test]
+    fn after_the_release_video_carries_the_attempt_and_its_absence_still_fails() {
+        for video in [false, true] {
+            let f = Fixture::new(true, false);
+            let s = f.session();
+            f.record(&s);
+            f.request_handoff(&s);
+            f.at(5_000);
+            f.check().unwrap();
+            if video {
+                f.listener.on_video_frame_rendered(&s);
+            }
+            f.at(50_000);
+            assert_eq!(f.deadline(), None);
+            assert_eq!(f.state().active, video);
+            assert_eq!(f.logged("bluetooth-release video"), video);
+            if video {
+                assert_eq!(f.controller.stage(), "WirelessActive");
+                f.kept_network();
+            }
+        }
+        // Without a release, video does not change how the deadline ends.
+        let f = Fixture::new(false, false);
+        let s = f.session();
+        f.record(&s);
+        f.request_handoff(&s);
+        f.listener.on_video_frame_rendered(&s);
+        f.at(50_000);
+        assert_eq!(f.deadline(), None);
+        assert!(!f.state().active);
+    }
+    #[test]
+    fn an_iphone_that_leaves_before_record_gets_25_seconds_past_the_startup_deadline() {
+        let f = Fixture::new(false, true);
+        f.at(44_000);
+        f.session().close().unwrap();
+        assert!(f.logged("airplay-reconnect waiting"));
+        f.at(SESSION_BUDGET);
+        f.check().unwrap();
+        f.at(68_999);
+        f.check().unwrap();
+        assert_eq!(f.deadline(), Some(f.start + Duration::from_millis(69_000)));
+        f.kept_network();
+        f.at(69_000);
+        assert!(f.check().is_err());
+        assert!(f.logged("airplay-reconnect ended generation=1 reason=expired"));
+        assert_eq!(
+            f.failure().as_deref(),
+            Some("AirPlay session timeout after TCP accept")
+        );
+    }
+    #[test]
+    fn the_wait_never_shortens_the_startup_budget_or_extends_itself() {
+        let f = Fixture::new(false, true);
+        f.at(1_000);
+        f.session().close().unwrap();
+        f.at(26_000);
+        f.check().unwrap();
+        f.at(SESSION_BUDGET - 1);
+        f.check().unwrap();
+        f.at(SESSION_BUDGET);
+        assert!(f.check().is_err());
+
+        let f = Fixture::new(false, true);
+        f.at(30_000);
+        f.session().close().unwrap();
+        for second in 31..55 {
+            f.at(second * 1_000);
+            f.fail_control(&f.session());
+            f.check().unwrap();
+        }
+        f.at(54_999);
+        f.check().unwrap();
+        f.at(55_000);
+        assert!(f.check().is_err());
+    }
+    #[test]
+    fn without_the_option_the_startup_budget_and_control_failures_stay_as_they_were() {
+        let f = Fixture::new(true, false);
+        f.at(44_000);
+        f.session().close().unwrap();
+        assert!(!f.logged("airplay-reconnect"));
+        f.at(SESSION_BUDGET);
+        assert!(f.check().is_err());
+
+        let f = Fixture::new(true, false);
+        f.fail_control(&f.session());
+        assert_eq!(
+            f.failure().as_deref(),
+            Some("control I/O failed: Connection reset by peer")
+        );
+    }
+    #[test]
+    fn a_control_failure_before_record_waits_like_a_close() {
+        let f = Fixture::new(false, true);
+        f.fail_control(&f.session());
+        assert!(f.logged("airplay-reconnect session-failure"));
+        assert!(f.logged("airplay-reconnect waiting"));
+        f.at(24_999);
+        f.check().unwrap();
+        f.kept_network();
+    }
+    #[test]
+    fn a_newer_record_cancels_the_wait_and_older_sessions_cannot_end_it() {
+        let f = Fixture::new(false, true);
+        let old = f.session();
+        old.close().unwrap();
+        f.at(10_000);
+        let newer = f.session();
+        f.record(&newer);
+        assert!(f.logged("airplay-reconnect cancelled generation=1"));
+        // A probe that fails or closes while the newer session runs ends only itself.
+        f.fail_control(&f.session());
+        f.listener.on_session_ended(old);
+        f.at(60_000);
+        f.check().unwrap();
+        f.kept_network();
+        assert!(f.state().airplay);
+        // The active session's own failure still ends the attempt.
+        f.fail_control(&newer);
+        assert!(f.failure().is_some());
+    }
+    #[test]
+    fn stop_a_new_attempt_network_loss_and_failed_authentication_win_over_the_wait() {
+        let f = Fixture::new(false, true);
+        f.session().close().unwrap();
+        f.controller.close().unwrap();
+        assert!(f.check().is_err());
+        assert_eq!(f.teardown.load(Ordering::SeqCst), 2);
+
+        let f = Fixture::new(false, true);
+        f.session().close().unwrap();
+        f.state().generation += 1;
+        assert!(f.check().is_err());
+        f.fail_control(&f.session());
+        assert!(!f.logged("airplay-reconnect session-failure"));
+
+        let f = Fixture::new(false, true);
+        f.session().close().unwrap();
+        // What the network watch does when the iPhone leaves the access point.
+        abort(
+            &f.controller.state,
+            GENERATION,
+            "iPhone association was lost".into(),
+        );
+        assert!(f.check().is_err());
+
+        let f = Fixture::new(false, true);
+        f.at(30_000);
+        f.session().close().unwrap();
+        f.at(31_000);
+        let rejected = f.session();
+        f.fail_pairing(&rejected);
+        assert!(f.logged("airplay-reconnect ended generation=1 reason=authentication"));
+        f.check().unwrap();
+        f.at(SESSION_BUDGET);
+        assert!(f.check().is_err());
+        // The rejected session's failure is not held either.
+        let f = Fixture::new(false, true);
+        let rejected = f.session();
+        f.fail_pairing(&rejected);
+        f.fail_control(&rejected);
+        assert!(f.failure().is_some());
     }
 }
