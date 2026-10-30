@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
+import { openSurface, closeSurface } from './dom';
 import { request } from './api';
 import { esc } from './html';
 import { readIdentitySelection } from './identity-archive';
@@ -100,14 +101,14 @@ export function mountIdentity(container: HTMLElement, selection: IdentitySelecti
   };
   let dialog: HTMLDialogElement | null = null;
   const confirmRemove = (kind: 'identity' | 'tls') => {
-    dialog?.remove(); dialog = document.createElement('dialog');
+    if (dialog) closeSurface(dialog); dialog = document.createElement('dialog');
     dialog.innerHTML = `<h2>${t(kind === 'identity' ? 'dev_remove_identity_question' : 'dev_remove_tls_question')}</h2><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm">${t('direlay_remove')}</button></div>`;
-    const close = () => { dialog?.close(); dialog?.remove(); dialog = null; };
+    const close = () => { if (dialog) closeSurface(dialog); dialog = null; };
     dialog.querySelector('.cancel')!.addEventListener('click', close);
     dialog.addEventListener('cancel', close);
     dialog.querySelector('.confirm')!.addEventListener('click', () => { close(); void run(async () => { status = await identityApi.remove(kind); if (kind === 'identity') selection.clear(); }); });
-    document.body.append(dialog); dialog.showModal();
+    document.body.append(dialog); openSurface(dialog);
   };
   show(); void run(async () => { status = await identityApi.status(); });
-  return () => { disposed = true; dialog?.remove(); };
+  return () => { disposed = true; if (dialog) closeSurface(dialog); };
 }

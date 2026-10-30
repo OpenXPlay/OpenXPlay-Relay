@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
+import { openSurface, closeSurface } from './dom';
 import { stepDetailsView } from './step-details';
 import { arrivalCountdown, arrivalRemaining } from './startup';
 import { icon } from './icons';
@@ -72,12 +73,12 @@ export function mountStage(target: HTMLElement, options: { t: Translate; action:
       const s = path.sections.flatMap(s => s.steps).find(s => s.id === button.dataset.detail)!;
       selectedStep = s.id;
       stepDialog = document.createElement('dialog'); stepDialog.setAttribute('aria-label', t(s.title));
-      stepDialog.innerHTML = '<div data-step-content></div>'; document.body.append(stepDialog); drawStep(); stepDialog.showModal();
+      stepDialog.innerHTML = '<div data-step-content></div>'; document.body.append(stepDialog); drawStep(); openSurface(stepDialog, { parent: drawer });
       on(stepDialog, 'cancel', e => { e.preventDefault(); closeStep(); button.focus(); });
     }));
     options.bindDetails(drawer);
   }
-  function closeStep() { stepDialog?.close(); stepDialog?.remove(); stepDialog = null; selectedStep = ''; }
+  function closeStep() { if (stepDialog) closeSurface(stepDialog); stepDialog = null; selectedStep = ''; }
   function drawStep() {
     if (!stepDialog) return;
     const s = path.sections.flatMap(section => section.steps).find(step => step.id === selectedStep);
@@ -88,13 +89,13 @@ export function mountStage(target: HTMLElement, options: { t: Translate; action:
     on(stepDialog.querySelector('[data-action]'), 'click', () => { closeStep(); closeDrawer(); if (s.action) options.action({ type: 'Step', action: s.action, step: s.id, label: s.actionLabel }); });
     on(stepDialog.querySelector('[data-recheck]'), 'click', async () => { await options.recheck(); if (stepDialog) stepDialog.querySelector('[data-recheck-result]')!.textContent = t('ui.saved'); });
   }
-  function closeDrawer() { if (!drawer) return; closeStep(); drawer.close(); drawer.remove(); drawer = null; node('drawer-open').setAttribute('aria-expanded', 'false'); node('drawer-open').focus(); }
+  function closeDrawer() { if (!drawer) return; closeStep(); closeSurface(drawer); drawer = null; node('drawer-open').setAttribute('aria-expanded', 'false'); node('drawer-open').focus(); }
   function openDrawer(section?: PathSection) {
     if (!drawer) {
       options.opened();
       drawer = document.createElement('dialog'); drawer.id = 'stage-drawer'; drawer.setAttribute('aria-label', t('stage_steps'));
       drawer.innerHTML = `<button class="drawer-handle" id="drawer-close" aria-label="${esc(t('ui.close'))}"><span class="drawer-segments"></span>${icon('chevron-down')}</button><div class="drawer-body"><div id="path-sections"></div><div id="drawer-details"></div><button class="mono muted quiet" id="path-diagnostic" aria-label="${esc(t('design_copy_diagnostic'))}"></button></div>`;
-      document.body.append(drawer); drawer.showModal(); on(drawer.querySelector('#path-diagnostic'), 'click', async () => { if (await options.copy(`${path.diagnostic} | ${path.version}`) && drawer) drawer.querySelector('#path-diagnostic')!.textContent = t('design_copied'); }); node('drawer-open').setAttribute('aria-expanded', 'true'); on(drawer, 'cancel', e => { e.preventDefault(); closeDrawer(); }); on(drawer.querySelector('#drawer-close'), 'click', closeDrawer);
+      document.body.append(drawer); openSurface(drawer); on(drawer.querySelector('#path-diagnostic'), 'click', async () => { if (await options.copy(`${path.diagnostic} | ${path.version}`) && drawer) drawer.querySelector('#path-diagnostic')!.textContent = t('design_copied'); }); node('drawer-open').setAttribute('aria-expanded', 'true'); on(drawer, 'cancel', e => { e.preventDefault(); closeDrawer(); }); on(drawer.querySelector('#drawer-close'), 'click', closeDrawer);
       let dragY = 0; const handle = drawer.querySelector<HTMLElement>('#drawer-close')!;
       on(handle, 'pointerdown', e => { dragY = e.clientY; handle.setPointerCapture(e.pointerId); });
       on(handle, 'pointerup', e => { if (e.clientY - dragY > 40) closeDrawer(); }); drawDetails(); updateSegments();

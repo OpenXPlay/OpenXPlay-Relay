@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-15
 
+import { openSurface, closeSurface } from './dom';
 import { mountIdentity, IdentitySelection } from './identity';
 import { setupSteps, setupFields, guideBack, setupBlocked, setupBlocker, preparationView, type SetupStep } from './setup-guide';
 import { restartPending } from './startup';
@@ -13,7 +14,7 @@ import { pluginList, togglePlugin } from './plugins';
 import { mfiSubmission, mfiError, mfiReadiness } from './mfi';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
-import { patchMarkup, on, enhanceSheets, confirmSheet } from './dom';
+import { patchMarkup, on, enhanceSheets, confirmSheet, setSurfaceOwner, cancelSurfaces, refreshSurfaces } from './dom';
 import { mountStage, timer, stepText } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
@@ -59,7 +60,7 @@ let currentView = route === 'home' ? 'home' : 'settings';
 let stage: ReturnType<typeof mountStage> | null = null;
 let visibleTimer: ReturnType<typeof setInterval> | undefined;
 const drafts = new Map<string, string>();
-on(window, 'hashchange', () => { if (route === 'home' && normalizeRoute(location.hash) !== 'home') void cancelArrival(); videoStats.reset(); const next = normalizeRoute(location.hash); if (route.startsWith('setup') && next.startsWith('settings')) guideReturn = route; else if (next === 'home' || next.startsWith('setup')) guideReturn = null; route = next; currentView = route === 'home' ? 'home' : 'settings'; render(); });
+on(window, 'hashchange', () => { if (route === 'home' && normalizeRoute(location.hash) !== 'home') void cancelArrival(); videoStats.reset(); const next = normalizeRoute(location.hash); if (route.startsWith('setup') && next.startsWith('settings')) guideReturn = route; else if (next === 'home' || next.startsWith('setup')) guideReturn = null; setSurfaceOwner(next); route = next; currentView = route === 'home' ? 'home' : 'settings'; render(); });
 function showSettings(target?: string) {
   const next = target?.startsWith('settings') ? target : target === 'current-password' ? 'settings/access/admin' : target?.startsWith('field-') ? fieldRoute(decodeURIComponent(target.slice(6))) : 'settings';
   location.hash = next;
@@ -120,7 +121,7 @@ function resetSession(next: SessionState) {
   videoStats.reset();
   identitySelection.clear(); needsRestart = false; drafts.clear(); pending.clear(); feedback.clear(); networks = []; switching = null; networkError = ''; networkAnnouncement = ''; status = null; settings = null; carlinkError = ''; connectPin = ''; connectBusy = false; dismissedPin = null; pairingBusy = false; pairingError = ''; reportCopied = null; publicNameBusy = false; publicNameMessage = '';
   publicNameDrafts = new PublicNameDrafts(); publicNameWrite = null;
-  document.querySelectorAll('dialog').forEach(dialog => { dialog.close(); dialog.remove(); });
+  cancelSurfaces();
   session = next; actionBusy = false; render();
 }
 on(events, 'unauthorized', () => { if (session === 'ready' && !handoff) resetSession('login'); });
@@ -499,8 +500,8 @@ async function importPublicName(file: File) {
 function confirmRemovePublicName() {
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'public-name-remove-title');
   patchMarkup(dialog, `<h2 id="public-name-remove-title">${t('publicName.remove')}</h2><p>${t('publicName.removeHint')}</p><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm">${t('publicName.remove')}</button></div>`);
-  document.body.append(dialog); dialog.showModal();
-  const close = () => { dialog.close(); dialog.remove(); document.getElementById('public-name-remove')?.focus(); };
+  document.body.append(dialog); openSurface(dialog);
+  const close = () => { closeSurface(dialog); document.getElementById('public-name-remove')?.focus(); };
   on(dialog.querySelector('.cancel')!, 'click', close);
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
   on(dialog.querySelector('.confirm')!, 'click', () => { close(); void publicNameAction('public-name-remove'); });
@@ -606,6 +607,7 @@ function renderCarlink() {
   syncPinDialog();
 }
 function syncPinDialog() {
+  refreshSurfaces();
   let dialog = document.querySelector<HTMLDialogElement>('#carlink-pin-dialog');
   const view = status && carlinkView(status);
   const deadline = status?.carlink?.pinRequest ?? status?.carlink?.pinDeadline ?? null;
@@ -614,20 +616,20 @@ function syncPinDialog() {
   const confirmation = status?.carlink?.pinConfirmation === true;
   if (session !== 'ready' || switching || !view?.pinRequested || dismissedPin === prompt) {
     if (!view?.pinRequested) dismissedPin = null;
-    if (dialog) { dialog.close(); dialog.remove(); }
+    if (dialog) { closeSurface(dialog); }
     return;
   }
   if (dialog && (dialog.dataset.deadline !== prompt || dialog.dataset.language !== language)) {
-    dialog.close(); dialog.remove(); dialog = null;
+    closeSurface(dialog); dialog = null;
   }
   if (!dialog) {
     dialog = document.createElement('dialog'); dialog.id = 'carlink-pin-dialog';
     dialog.dataset.deadline = prompt; dialog.dataset.language = language;
     dialog.setAttribute('aria-labelledby', 'carlink-pin-title');
     patchMarkup(dialog, `<form><h2 id="carlink-pin-title">${t(confirmation ? 'carlink.confirm' : 'carlink.enterPin')}</h2><p>${esc(confirmation ? t('carlink.confirmHint', { client: status?.carlink?.pinClient ?? '' }) : t('carlink.pinHint'))}</p>${confirmation ? '' : `<label for="carlink-pin">${t('carlink.pin')}</label><input id="carlink-pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="off" required aria-describedby="carlink-countdown carlink-pin-error">`}<p id="carlink-countdown" role="timer"></p><p id="carlink-pin-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="cancel">${t('ui.cancel')}</button><button type="submit" class="primary">${t(confirmation ? 'carlink.approve' : 'carlink.submitPin')}</button></div></form>`);
-    document.body.append(dialog); dialog.showModal();
+    document.body.append(dialog); openSurface(dialog, { owner: 'carlink-prompt', parent: null, expiresAt: (status!.carlink!.pinDeadline ?? 0) * 1000, isValid: () => session === 'ready' && !!status && carlinkView(status).pinRequested && `${status.carlink?.generation ?? 0}:${status.carlink?.pinRequest ?? status.carlink?.pinDeadline}` === prompt });
     const currentDialog = dialog;
-    const close = () => { dismissedPin = prompt; currentDialog.close(); currentDialog.remove(); document.getElementById('carlink-enter-pin')?.focus(); };
+    const close = () => { dismissedPin = prompt; closeSurface(currentDialog); document.getElementById('carlink-enter-pin')?.focus(); };
     const answer = async (action: 'approve' | 'pin' | 'cancel', pin?: string) => {
       if (status?.platform === 'linux') await request('/carlink/pairing', 'POST', { request: deadline, generation, action, ...(pin ? { pin } : {}) });
       else if (action === 'pin') await api.carlinkPin(pin!);
@@ -660,8 +662,8 @@ function syncPinDialog() {
 function confirmForgetCarlink() {
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'carlink-forget-title');
   patchMarkup(dialog, `<h2 id="carlink-forget-title">${t('carlink.forget')}</h2><p>${t('carlink.forgetHint')}</p><p class="error" role="alert"></p><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm">${t('carlink.forget')}</button></div>`);
-  document.body.append(dialog); dialog.showModal();
-  const close = () => { dialog.close(); dialog.remove(); document.getElementById('carlink-forget')?.focus(); };
+  document.body.append(dialog); openSurface(dialog);
+  const close = () => { closeSurface(dialog); document.getElementById('carlink-forget')?.focus(); };
   on(dialog.querySelector('.cancel')!, 'click', close);
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
   on(dialog.querySelector('.confirm')!, 'click', async event => {
@@ -773,15 +775,15 @@ function bindField(field: Field) {
     const button = event.currentTarget as HTMLButtonElement; button.setAttribute('aria-pressed', String(reveal)); button.setAttribute('aria-label', t(reveal ? 'ui.hide' : 'ui.reveal')); patchMarkup(button, icon(reveal ? 'eye-off' : 'eye'));
   });
 }
-function networkDialog(title: string, body: string) {
+function networkDialog(title: string, body: string, parent?: HTMLDialogElement) {
   const trigger = document.activeElement as HTMLElement | null;
   const triggerId = trigger?.id;
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'network-dialog-title');
   patchMarkup(dialog, `<h2 id="network-dialog-title">${esc(title)}</h2>${body}`);
-  document.body.append(dialog); dialog.showModal();
+  document.body.append(dialog); openSurface(dialog, { parent });
   const close = () => {
-    dialog.close(); dialog.remove();
-    (trigger?.isConnected ? trigger : triggerId ? document.getElementById(triggerId) : null)?.focus();
+    closeSurface(dialog);
+
     if (!document.activeElement || document.activeElement === document.body) document.getElementById('network-add')?.focus();
   };
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
@@ -827,7 +829,7 @@ function editHotspot() {
     const security = dialog.querySelector<HTMLSelectElement>('#hotspot-security')!.value as HotspotSecurity;
     const active = status!.network.mode === 'device-hotspot';
     // Keep the form open underneath so Cancel returns to the entered values.
-    const confirmation = networkDialog(t('hotspot.confirm'), `<p>${esc(t(active ? 'hotspot.warning' : 'hotspot.later'))}</p><p>${esc(ssid)}</p><p class="error" role="alert"></p><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button data-confirm class="primary">${t('hotspot.apply')}</button></div>`);
+    const confirmation = networkDialog(t('hotspot.confirm'), `<p>${esc(t(active ? 'hotspot.warning' : 'hotspot.later'))}</p><p>${esc(ssid)}</p><p class="error" role="alert"></p><div class="dialog-actions"><button data-close>${t('ui.cancel')}</button><button data-confirm class="primary">${t('hotspot.apply')}</button></div>`, dialog);
     on(confirmation.dialog.querySelector<HTMLButtonElement>('[data-confirm]')!, 'click', async event => {
       const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
       try {
@@ -1049,10 +1051,10 @@ async function pickPhone(field: Field) {
   const trigger = document.getElementById(fieldId(field.key)) ?? document.getElementById('stage-primary')!;
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'phone-title');
   patchMarkup(dialog, `<div class="sheet-header"><h2 id="phone-title">${t('ui.choosePhone')}</h2><button class="icon-button close" aria-label="${t('ui.close')}">${icon('x')}</button></div><div id="phone-list" role="status">${t('ui.loading')}</div><p id="phone-refresh-error" class="error" role="status"></p><button id="phone-refresh">${t('design_check_again')}</button><button id="phone-pair">${t('iphone_pair_new')}</button><p class="muted">${esc(t('iphone_pair_hint', { arg1: status?.pathInput?.relay?.bluetoothName ?? status?.name ?? t('stage.relay') }))}</p><p id="phone-pairing-state" role="status"></p><button type="button" class="quiet full-width" data-phone-cancel>${t('ui.cancel')}</button>`);
-  document.body.append(dialog); dialog.showModal();
+  document.body.append(dialog); openSurface(dialog);
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let refreshing = false;
-  const close = () => { clearInterval(refreshTimer); dialog.close(); dialog.remove(); if (trigger.isConnected) trigger.focus(); };
+  const close = () => { clearInterval(refreshTimer); closeSurface(dialog); if (trigger.isConnected) trigger.focus(); };
   on(dialog.querySelector('.close')!, 'click', close);
   on(dialog.querySelector('[data-phone-cancel]'), 'click', close);
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
@@ -1108,8 +1110,8 @@ async function forgetAllWifi() {
   if (status?.platform === 'android') {
     const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'forget-wifi-title');
     patchMarkup(dialog, `<h2 id="forget-wifi-title">${t('net.forgetAll')}</h2><p>${t('home.forgetSavedWifi')}</p><p class="error" role="alert"></p><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm">${t('net.forgetAll')}</button></div>`);
-    document.body.append(dialog); dialog.showModal();
-    const close = () => { dialog.close(); dialog.remove(); trigger?.focus(); };
+    document.body.append(dialog); openSurface(dialog);
+    const close = () => { closeSurface(dialog); trigger?.focus(); };
     on(dialog.querySelector('.cancel')!, 'click', close);
     on(dialog, 'cancel', event => { event.preventDefault(); close(); });
     on(dialog.querySelector('.confirm')!, 'click', async event => {
@@ -1122,8 +1124,8 @@ async function forgetAllWifi() {
   }
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'wifi-confirm-title');
   patchMarkup(dialog, `<h2 id="wifi-confirm-title">${t('net.forgetAll')}</h2><p>${esc(t(wifiGuidance('forget'), { ssid: setupHotspotName(status) }))}</p><div class="dialog-actions"><button id="wifi-confirm" class="primary">${t('net.forgetAll')}</button><button id="wifi-cancel" class="quiet">${t('ui.cancel')}</button></div>`);
-  document.body.append(dialog); dialog.showModal();
-  const close = () => { dialog.close(); dialog.remove(); trigger?.focus(); };
+  document.body.append(dialog); openSurface(dialog);
+  const close = () => { closeSurface(dialog); trigger?.focus(); };
   on(dialog.querySelector('#wifi-cancel')!, 'click', close);
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
   on(dialog.querySelector('#wifi-confirm')!, 'click', async () => {

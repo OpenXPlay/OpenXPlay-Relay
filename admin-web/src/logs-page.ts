@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
+import { openSurface, closeSurface } from './dom';
 import { api, ApiError } from './api';
 import { qrSvg } from './qr';
 import { esc } from './html';
@@ -71,8 +72,8 @@ export function mountLogsPage(container: HTMLElement, options: Options) {
   on(container.querySelector('#logs-privacy'), 'click', () => {
     const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', t('logs_privacy_title'));
     dialog.innerHTML = `<h2>${esc(t('logs_privacy_title'))}</h2>${privacyMarkup(t, options.platform)}<button data-close>${esc(t('ui.close'))}</button>`;
-    document.body.append(dialog); dialog.showModal();
-    const close = () => { dialog.close(); dialog.remove(); container.querySelector<HTMLElement>('#logs-privacy')?.focus(); };
+    document.body.append(dialog); openSurface(dialog);
+    const close = () => { closeSurface(dialog); container.querySelector<HTMLElement>('#logs-privacy')?.focus(); };
     on(dialog, 'cancel', close); on(dialog.querySelector('[data-close]'), 'click', close);
   });
   container.querySelectorAll<HTMLButtonElement>('[data-range]').forEach(button => on(button, 'click', () => {
@@ -117,8 +118,8 @@ export function mountLogsPage(container: HTMLElement, options: Options) {
   on(container.querySelector('#logs-upload'), 'click', () => {
     const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', t('logs_consent_title'));
     dialog.innerHTML = `<h2>${esc(t('logs_consent_title'))}</h2>${['logs_consent_destination', 'logs_privacy_server', 'logs_consent_retention', `logs_consent_alternative${linux ? '.linux' : ''}`].map(key => `<p>${esc(t(key))}</p>`).join('')}<button data-consent class="primary">${esc(t('logs_consent_agree'))}</button><button data-close>${esc(t('ui.cancel'))}</button>`;
-    document.body.append(dialog); dialog.showModal();
-    const close = () => { dialog.close(); dialog.remove(); container.querySelector<HTMLElement>('#logs-upload')?.focus(); };
+    document.body.append(dialog); openSurface(dialog);
+    const close = () => { closeSurface(dialog); container.querySelector<HTMLElement>('#logs-upload')?.focus(); };
     on(dialog.querySelector('[data-close]'), 'click', close); on(dialog, 'cancel', close);
     on(dialog.querySelector('[data-consent]'), 'click', () => {
       close(); void (async () => {

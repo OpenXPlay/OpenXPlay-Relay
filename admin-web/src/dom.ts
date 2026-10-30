@@ -41,62 +41,140 @@ export function patchMarkup(target: Element, markup: string) {
   const range = document.createRange(); range.selectNodeContents(target);
   patchChildren(target, range.createContextualFragment(markup));
 }
-export function enhanceSheets(label: () => string) {
-  let sequence = 0, dismissingHistory = false;
-  const dismiss = (dialog: HTMLDialogElement) => { const event = new Event('cancel', { cancelable: true }); if (dialog.dispatchEvent(event)) { dialog.close(); dialog.remove(); } };
-  window.addEventListener('popstate', () => {
-    if (dismissingHistory) { dismissingHistory = false; return; }
-    const dialog = [...document.querySelectorAll<HTMLDialogElement>('dialog[open]')].at(-1);
-    if (dialog && history.state?.oxpSheet !== dialog.dataset.historySheet) dismiss(dialog);
-  });
-  const enhance = (dialog: HTMLDialogElement) => {
-    if (dialog.dataset.sheetReady) return;
-    dialog.querySelectorAll<HTMLElement>('.dialog-actions').forEach(actions => {
-      const primary = actions.querySelector('.primary, .confirm, button[type="submit"]');
-      if (primary) actions.prepend(primary);
-    });
-    dialog.dataset.sheetReady = '1'; dialog.classList.add('sheet');
-    const historySheet = String(++sequence); dialog.dataset.historySheet = historySheet;
-    history.pushState({ ...history.state, oxpSheet: historySheet }, '', location.href);
-    dialog.addEventListener('close', () => { if (history.state?.oxpSheet === historySheet) { dismissingHistory = true; history.back(); } });
-    const handle = document.createElement('button'); handle.type = 'button'; handle.className = 'sheet-handle'; handle.setAttribute('aria-label', label());
-    const close = () => dismiss(dialog);
-    handle.addEventListener('click', close); dialog.prepend(handle);
-    let down = 0;
-    handle.addEventListener('pointerdown', e => { down = e.clientY; handle.setPointerCapture(e.pointerId); });
-    handle.addEventListener('pointerup', e => { if (e.clientY - down > 40) close(); });
-    dialog.addEventListener('click', e => { if (e.target === dialog) { const r = dialog.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) close(); } });
-    dialog.addEventListener('keydown', e => {
-      if (e.key !== 'Tab') return;
-      const nodes = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select, textarea, [tabindex="0"]')].filter(n => n.getClientRects().length);
-      const first = nodes[0], last = nodes.at(-1);
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
-      if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
-    });
-  };
-  new MutationObserver(() => document.querySelectorAll<HTMLDialogElement>('dialog').forEach(enhance)).observe(document.body, { childList: true, subtree: true });
+export interface SurfaceRequest {
+  owner: unknown;
+  parent?: SurfaceHandle;
+  expiresAt?: number;
+  isValid?: () => boolean;
+  show: () => void;
+  hide: () => void;
+  restoreFocus: () => void;
+  onClose?: () => void;
 }
+export interface SurfaceHandle { close(): void; readonly visible: boolean; readonly closed: boolean }
+/** FIFO decisions, with explicit child surfaces temporarily replacing their parent. No timers are needed to test expiry. */
+export class SurfaceQueue {
+  private waiting: Entry[] = [];
+  private stack: Entry[] = [];
+  private paused = 0;
+  constructor(private now = () => Date.now()) {}
+  private valid(entry: Entry) { return !entry.closed && (entry.request.expiresAt === undefined || entry.request.expiresAt > this.now()) && (entry.request.isValid?.() ?? true); }
+  enqueue(request: SurfaceRequest): SurfaceHandle {
+    const entry: Entry = { request, closed: false, visible: false, close: () => this.close(entry) };
+    const parent = this.stack.at(-1);
+    if (request.parent && request.parent === parent) {
+      parent.visible = false; parent.request.hide(); this.stack.push(entry);
+    } else this.waiting.push(entry);
+    this.refresh(); return entry;
+  }
+  /** Polling owners call refresh when a generation or deadline changes. */
+  refresh() {
+    for (const entry of [...this.waiting, ...this.stack]) if (!this.valid(entry)) this.close(entry);
+    if (this.paused) return;
+    if (!this.stack.length) { const next = this.waiting.shift(); if (next) this.stack.push(next); }
+    const top = this.stack.at(-1);
+    if (top && !top.visible) { top.visible = true; top.request.show(); }
+  }
+  pause() { this.paused++; return () => { this.paused--; this.refresh(); }; }
+  cancelOwner(owner: unknown) { const resume = this.pause(); for (const entry of [...this.waiting, ...this.stack].reverse()) if (entry.request.owner === owner) this.close(entry); resume(); }
+  cancelAll() { const resume = this.pause(); for (const entry of [...this.waiting, ...this.stack].reverse()) this.close(entry); resume(); }
+  private close(entry: Entry) {
+    if (entry.closed) return;
+    const wasVisible = entry.visible;
+    entry.closed = true; entry.visible = false;
+    this.waiting = this.waiting.filter(item => item !== entry); this.stack = this.stack.filter(item => item !== entry);
+    if (wasVisible) entry.request.hide();
+    entry.request.onClose?.();
+    if (wasVisible) entry.request.restoreFocus();
+    this.refresh();
+  }
+}
+interface Entry extends SurfaceHandle { request: SurfaceRequest; closed: boolean; visible: boolean }
 
-/** A shared confirmation sheet keeps primary and quiet actions in reading and focus order. */
+const surfaces = new SurfaceQueue();
+const handles = new Map<HTMLDialogElement, SurfaceHandle>();
+const restoreTargets = new WeakMap<HTMLDialogElement, HTMLElement | null>();
+let surfaceOwner: unknown = 'page', sheetLabel = () => 'Close', sequence = 0;
+let historyResume: (() => void) | undefined;
+/** Dispose a page's surfaces before switching route. Polling prompts use their own owner. */
+export function setSurfaceOwner(owner: unknown) { const previous = surfaceOwner; surfaceOwner = owner; surfaces.cancelOwner(previous); }
+export function cancelSurfaces(owner?: unknown) { if (owner === undefined) surfaces.cancelAll(); else surfaces.cancelOwner(owner); }
+export function refreshSurfaces() { surfaces.refresh(); }
+export function closeSurface(dialog: HTMLDialogElement) { const handle = handles.get(dialog); if (handle) handle.close(); else { dialog.close(); dialog.remove(); } }
+export interface SurfaceOptions { owner?: unknown; expiresAt?: number; isValid?: () => boolean; parent?: HTMLDialogElement | null }
+/**
+ * Open any decision or info sheet through this coordinator. FIFO by default. Pass parent: null for
+ * unsolicited polling prompts (e.g. radio/Carlink), plus owner and isValid/expiry to drop stale work.
+ * User-triggered children inherit the focused sheet as parent, suspending it until the child closes.
+ * closeSurface ends a request; cancelSurfaces(owner) disposes a flow. Back dismisses only the visible sheet.
+ */
+export function openSurface(dialog: HTMLDialogElement, options: SurfaceOptions = {}): SurfaceHandle {
+  const existing = handles.get(dialog); if (existing) return existing;
+  let trigger = document.activeElement as HTMLElement | null;
+  const focusedSheet = trigger?.closest('dialog');
+  const parent = options.parent === undefined ? focusedSheet : options.parent;
+  if (options.parent === null && focusedSheet) trigger = restoreTargets.get(focusedSheet) ?? null;
+  const triggerId = trigger?.id; restoreTargets.set(dialog, trigger);
+  const token = String(++sequence);
+  let pushed = false;
+  dialog.dataset.historySheet = token; dialog.classList.add('sheet'); dialog.tabIndex = -1; dialog.setAttribute('autofocus', '');
+  const dismiss = () => { const event = new Event('cancel', { cancelable: true }); if (dialog.dispatchEvent(event)) closeSurface(dialog); };
+  const handleButton = document.createElement('button'); handleButton.type = 'button'; handleButton.className = 'sheet-handle'; handleButton.setAttribute('aria-label', sheetLabel());
+  handleButton.addEventListener('click', dismiss); dialog.prepend(handleButton);
+  let down = 0;
+  handleButton.addEventListener('pointerdown', event => { down = event.clientY; handleButton.setPointerCapture(event.pointerId); });
+  handleButton.addEventListener('pointerup', event => { if (event.clientY - down > 40) dismiss(); });
+  dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dismiss(); } });
+  dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Tab') return;
+    const nodes = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select, textarea, [tabindex="0"]')].filter(node => node.getClientRects().length);
+    const first = nodes[0], last = nodes.at(-1);
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) { event.preventDefault(); first?.focus(); }
+  });
+  if (!dialog.isConnected) document.body.append(dialog);
+  const handle = surfaces.enqueue({ owner: options.owner ?? surfaceOwner, parent: parent ? handles.get(parent) : undefined,
+    expiresAt: options.expiresAt, isValid: options.isValid,
+    show: () => {
+      if (!dialog.isConnected) document.body.append(dialog);
+      if (!pushed) { history.pushState({ ...history.state, oxpSheet: token }, '', location.href); pushed = true; }
+      dialog.showModal(); dialog.focus();
+    },
+    hide: () => {
+      if (dialog.open) dialog.close();
+      // A suspended parent keeps its entry; only finished decisions consume history.
+      if (handles.get(dialog)?.closed && history.state?.oxpSheet === token && !historyResume) { historyResume = surfaces.pause(); history.back(); }
+    },
+    restoreFocus: () => (trigger?.isConnected ? trigger : triggerId ? document.getElementById(triggerId) : null)?.focus(),
+    onClose: () => { handles.delete(dialog); dialog.remove(); },
+  });
+  if (!handle.closed) handles.set(dialog, handle);
+  dialog.addEventListener('close', () => { if (!dialog.open && handle.visible) handle.close(); });
+  return handle;
+}
+export function enhanceSheets(label: () => string) {
+  sheetLabel = label;
+  window.addEventListener('popstate', () => {
+    if (historyResume && history.state?.oxpSheet && ![...handles.keys()].some(dialog => dialog.dataset.historySheet === history.state.oxpSheet)) { history.back(); return; }
+    if (historyResume) { const resume = historyResume; historyResume = undefined; resume(); return; }
+    const current = [...handles].find(([, handle]) => handle.visible);
+    if (current && history.state?.oxpSheet !== current[0].dataset.historySheet) {
+      const event = new Event('cancel', { cancelable: true }); if (current[0].dispatchEvent(event)) current[1].close();
+    }
+  });
+  new MutationObserver(() => { for (const [dialog, handle] of handles) if (!dialog.isConnected) handle.close(); }).observe(document.body, { childList: true, subtree: true });
+}
+/** A destructive decision gives Cancel the primary treatment. */
 export function confirmSheet(message: string, primary: string, cancel: string, tone: 'default' | 'destructive' = 'default'): Promise<boolean> {
-  const trigger = document.activeElement as HTMLElement | null;
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', primary);
-  patchMarkup(dialog, `<h2>${esc(primary)}</h2><p>${esc(message)}</p><div class="dialog-actions"><button class="${tone === 'destructive' ? 'quiet destructive' : 'primary'}" data-confirm>${esc(primary)}</button><button class="${tone === 'destructive' ? 'primary' : 'quiet'}" data-close>${esc(cancel)}</button></div>`);
+  patchMarkup(dialog, `<h2>${esc(primary)}</h2><p>${esc(message)}</p><div class="dialog-actions"><button class="${tone === 'destructive' ? 'primary' : 'quiet'}" data-close>${esc(cancel)}</button><button class="${tone === 'destructive' ? 'quiet destructive' : 'primary'}" data-confirm>${esc(primary)}</button></div>`);
   return new Promise(resolve => {
-    let closed = false;
-    const close = (accepted: boolean) => {
-      if (closed) return;
-      closed = true;
-      // Finish removing this history entry before a caller closes its parent choice sheet.
-      const historySheet = dialog.dataset.historySheet;
-      const waitForBack = historySheet && history.state?.oxpSheet === historySheet;
-      if (waitForBack) window.addEventListener('popstate', () => resolve(accepted), { once: true });
-      dialog.close(); dialog.remove(); trigger?.focus();
-      if (!waitForBack) resolve(accepted);
-    };
-    on(dialog.querySelector('[data-confirm]'), 'click', () => close(true));
-    on(dialog.querySelector('[data-close]'), 'click', () => close(false));
-    on(dialog, 'cancel', event => { event.preventDefault(); close(false); });
-    document.body.append(dialog); dialog.showModal();
+    let accepted = false;
+    on(dialog.querySelector('[data-confirm]'), 'click', () => { accepted = true; closeSurface(dialog); });
+    on(dialog.querySelector('[data-close]'), 'click', () => closeSurface(dialog));
+    on(dialog, 'cancel', event => { event.preventDefault(); closeSurface(dialog); });
+    const handle = openSurface(dialog);
+    const observer = new MutationObserver(() => { if (handle.closed) { observer.disconnect(); if (history.state?.oxpSheet === dialog.dataset.historySheet) window.addEventListener('popstate', () => resolve(accepted), { once: true }); else resolve(accepted); } });
+    observer.observe(document.body, { childList: true, subtree: true });
   });
 }

@@ -124,7 +124,7 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     }
   }, 30000);
 
-  it('keeps text within a 360 px phone at 130% and closes nested save sheets', async () => {
+  it('keeps text within a 360 px phone at 130% and saves Linux pictures without a confirmation', async () => {
     await showFixture(linuxStatusFixtures['live-browser'], 'settings/picture', linuxSettings);
     await cdp.js(`document.documentElement.style.fontSize='130%'`);
     await cdp.call('Emulation.setDeviceMetricsOverride', { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
@@ -135,8 +135,7 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     await cdp.js(`location.hash='settings/picture'; new Promise(r=>setTimeout(r,30))`);
     await cdp.js(`document.querySelector('#field-resolution').click(); new Promise(r=>setTimeout(r,30))`);
     await cdp.js(`document.querySelector('dialog [data-option="3"]').click(); new Promise(r=>setTimeout(r,30))`);
-    expect(await cdp.js('document.querySelectorAll("dialog[open]").length')).toBe(2);
-    await cdp.js(`document.querySelector('dialog [data-confirm]').click(); new Promise(r=>setTimeout(r,100))`);
+    await until(`document.querySelectorAll('dialog[open]').length === 0`);
     expect(await cdp.js('document.querySelectorAll("dialog[open]").length')).toBe(0);
     expect(await cdp.js('history.state?.oxpSheet ?? null')).toBeNull();
     expect(await cdp.js('window.renderErrors')).toEqual([]);
@@ -213,5 +212,29 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     await cdp.js(`document.querySelector('[data-phone-cancel]').click()`);
     expect(await cdp.js(`document.querySelector('#phone-list')`)).toBeNull();
   }, 10000);
+
+  it('coordinates FIFO, stale prompts, owner disposal, focus, children and browser Back', async () => {
+    await showFixture(linuxStatusFixtures.ready, 'settings/access/admin');
+    await cdp.js(`(async()=>{window.surfaces = await import('/src/dom.ts'); window.queueTest = {}; const trigger=document.querySelector('#admin-reset');trigger.focus(); window.addSheet=(name, options={})=>{const d=document.createElement('dialog');d.id='test-'+name;d.innerHTML='<input><button>Close</button>';document.body.append(d);queueTest[name]={d,h:surfaces.openSurface(d,{parent:null,...options})};}; addSheet('first',{owner:'test'}); addSheet('expired',{owner:'test',expiresAt:Date.now()-1});addSheet('second',{owner:'test'});})()`);
+    expect(await cdp.js(`document.querySelectorAll('dialog[open]').length`)).toBe(1);
+    expect(await cdp.js(`document.activeElement.id`)).toBe('test-first');
+    expect(await cdp.js(`queueTest.expired.h.closed`)).toBe(true);
+    await cdp.js(`surfaces.closeSurface(queueTest.first.d)`);
+    await until(`queueTest.second.h.visible`);
+    expect(await cdp.js(`document.querySelectorAll('dialog[open]').length`)).toBe(1);
+    await cdp.js(`addSheet('child',{owner:'test',parent:queueTest.second.d});`);
+    expect(await cdp.js(`queueTest.second.h.visible`)).toBe(false);
+    await cdp.js('history.back()'); await until('queueTest.child.h.closed && queueTest.second.h.visible');
+    expect(await cdp.js(`document.activeElement.id`)).toBe('test-second');
+    await cdp.js('history.back()'); await until('queueTest.second.h.closed');
+    expect(await cdp.js(`document.activeElement.id`)).toBe('admin-reset');
+    await cdp.js(`addSheet('owner',{owner:'route-test'});addSheet('queued',{owner:'route-test'});surfaces.cancelSurfaces('route-test')`);
+    await until(`queueTest.owner.h.closed && queueTest.queued.h.closed && !history.state?.oxpSheet`);
+    expect(await cdp.js(`document.querySelectorAll('dialog[open]').length`)).toBe(0);
+    expect(await cdp.js('window.renderErrors')).toEqual([]);
+  });
+  async function until(condition: string) {
+    expect(await cdp.js(`new Promise(resolve=>{const end=performance.now()+4000;function check(){if(${condition})resolve(true);else if(performance.now()>end)resolve(false);else requestAnimationFrame(check)}check()})`), condition).toBe(true);
+  }
 
 });
