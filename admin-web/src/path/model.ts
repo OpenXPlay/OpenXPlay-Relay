@@ -134,6 +134,7 @@ export interface PathStep {
 }
 export interface SectionView { section: PathSection; steps: PathStep[]; done: number; total: number; state: StepState }
 export interface ConnectionPath {
+  platform?: 'linux'; armed?: boolean;
   sections: SectionView[]; focus: PathStep | null; tone: 'IDLE' | 'READY' | 'PROGRESS' | 'ACTION' | 'ERROR' | 'LIVE';
   canStart: boolean; running: boolean; live: { sinceMillis: number | null; chips: string[] } | null;
   nodes: { iphone: string | null; relay: string | null; car: string | null }; diagnostic: string; version: string;
@@ -142,7 +143,7 @@ export interface OutputInput { phase: 'OFF' | 'WAITING_USER' | 'SEARCHING' | 'RE
 export interface CarlinkInput {
   phase: 'OFF' | 'UNSUPPORTED' | 'NEEDS_PERMISSIONS' | 'BLOCKED' | 'SCANNING' | 'EXCHANGING' | 'JOINING' | 'AUTHENTICATING' | 'PIN' | 'NEGOTIATING' | 'PLAYING' | 'ENDED';
   sinceMillis: number | null; code: string | null; error: string | null; retrying: boolean; carName: string | null;
-  joinMethod: string | null; trusted: boolean; pinPending: boolean; picture: string | null; trail: string[];
+  joinMethod: string | null; trusted: boolean; pinPending: boolean; pinConfirmation?: boolean; picture: string | null; trail: string[];
 }
 export type LinkStep = 'IDLE' | 'STARTING' | 'WAITING_IPHONE' | 'BLUETOOTH' | 'AUTH' | 'WIFI_SENT' | 'JOINING' | 'USB_DETECT' | 'USB_PERMISSION' | 'USB_TRUST' | 'USB_CONTROL' | 'SESSION' | 'VIDEO' | 'ENDED';
 export interface LinkFailure { step: LinkStep; code: string; text: string; atMillis: number; retrying: boolean; trail: string[] }

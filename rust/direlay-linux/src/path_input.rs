@@ -113,7 +113,7 @@ pub fn build(
             "carlink":{"phase":if carlink {if clink.pin_pending {"PIN"} else {&clink.phase}} else {"OFF"},
                 "sinceMillis":carlink_failure.map(|f| f.at_millis).or(clink.since_millis), "code":clink.code, "error":clink.error,
                 "retrying":clink.retrying, "carName":clink.car_name, "joinMethod":clink.join_method,
-                "trusted":clink.trusted, "pinPending":clink.pin_pending, "picture":clink.picture, "trail":carlink_failure.map(|f| &f.trail).unwrap_or(&clink.trail)},
+                "trusted":clink.trusted, "pinPending":clink.pin_pending, "pinConfirmation":status.carlink.as_ref().is_some_and(|c| c.pin_confirmation), "picture":clink.picture, "trail":carlink_failure.map(|f| &f.trail).unwrap_or(&clink.trail)},
             "dlna":output_off, "miracast":output_off, "tesla":{
                 "phase":if !tesla_enabled {"OFF"} else if tesla.failure.is_some() {"FAILED"} else if tesla.url.is_some() {"READY"} else {"STARTING"},
                 "name":tesla.url.as_ref().filter(|_| tesla_enabled), "code":tesla.failure.as_ref().filter(|_| tesla_enabled),
@@ -126,4 +126,35 @@ pub fn build(
             "trail":facts.phone_trail(), "runtimeIap2Frames":phone.runtime_iap2_frames},
         "live":{"pictureOnCar":facts.picture_on_car, "sessionSinceMillis":phone.session_since_millis, "chips":facts.chips},
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn carlink_pin_input_distinguishes_code_entry_from_approval() {
+        let mut status: AdminStatus = serde_json::from_str(include_str!(
+            "../../../admin-web/tests/fixtures/linux/status-carlink-confirm.json"
+        ))
+        .unwrap();
+        let settings = Settings {
+            output: "carlink".into(),
+            ..Settings::default()
+        };
+        let mut facts = RuntimePathFacts::default();
+        facts.carlink.pin_pending = true;
+        for confirmation in [false, true] {
+            status.carlink.as_mut().unwrap().pin_confirmation = confirmation;
+            let input = build(&facts, &settings, &status, 1000, true, true);
+            assert_eq!(input["car"]["carlink"]["pinPending"], true);
+            assert_eq!(input["car"]["carlink"]["pinConfirmation"], confirmation);
+        }
+        status.carlink = None;
+        assert_eq!(
+            build(&facts, &settings, &status, 1000, true, true)["car"]["carlink"]
+                ["pinConfirmation"],
+            false
+        );
+    }
 }

@@ -4,6 +4,7 @@
 
 import type { Status, NetworkCheck } from './api';
 type Translate = (key: string, params?: Record<string, string | number>) => string;
+import { relativeTimestamp } from './diagnostics';
 import { esc } from './html';
 export const NETWORK_CHECK_CODES = ['admin-hotspot-password', 'country-not-applied', 'interface-busy', 'interface-missing', 'no-ap-mode', 'no-station-mode', 'no-ap-channel', 'roles-conflict', 'time-shared', 'follow-over', 'carlink-band-gap', 'carlink-no-5ghz', 'ap-spacing', 'admin-hotspot-nat'];
 export function networkCheckMessage(check: NetworkCheck, t: Translate): string {
@@ -27,7 +28,7 @@ export function networkView(status: Status, t: Translate): string {
   }).join('');
   const country = network.country;
   const countries = [country?.global ? `global: ${country.global}` : '', ...(country?.phys ?? []).map(p => `${p.phy}: ${p.country || '—'}${p.selfManaged ? ` (${t('roles.selfManaged')})` : ''}`)].filter(Boolean).join(' · ') || t('host.unknown');
-  return `<section class="network-diagnostics"><h3>${t('roles.interfaces')}</h3><p>${esc(t('roles.probedAt', { time: network.probedAt ? new Date(network.probedAt * 1000).toISOString() : t('roles.pending') }))}</p>`
+  return `<section class="network-diagnostics"><h3>${t('roles.interfaces')}</h3><p>${esc(t('roles.probedAt', { time: network.probedAt ? relativeTimestamp(network.probedAt, t) : t('roles.pending') }))}</p>`
     + `<p>${esc(t('roles.country', { configured: country?.configured || 'system', effective: countries }))}</p>`
     + `<div class="network-table"><table><thead><tr>${headers.map(h => `<th scope="col">${t(`roles.column.${h}`)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`
     + '</section>';

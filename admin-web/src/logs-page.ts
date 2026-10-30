@@ -116,7 +116,7 @@ export function mountLogsPage(container: HTMLElement, options: Options) {
   });
   on(container.querySelector('#logs-upload'), 'click', () => {
     const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', t('logs_consent_title'));
-    dialog.innerHTML = `<h2>${esc(t('logs_consent_title'))}</h2>${['logs_consent_destination', 'logs_privacy_server', 'logs_consent_retention', `logs_consent_alternative${linux ? '.linux' : ''}`].map(key => `<p>${esc(t(key))}</p>`).join('')}<button data-consent class="primary">${esc(t('logs_consent_agree'))}</button><button data-close>${esc(t('ui.cancel'))}</button>`;
+    dialog.innerHTML = `<h2>${esc(t('logs_consent_title'))}</h2>${['logs_consent_destination', 'logs_privacy_server', `logs_consent_retention${linux ? '.linux' : ''}`, `logs_consent_alternative${linux ? '.linux' : ''}`].map(key => `<p>${esc(t(key))}</p>`).join('')}<button data-consent class="primary">${esc(t('logs_consent_agree'))}</button><button data-close>${esc(t('ui.cancel'))}</button>`;
     document.body.append(dialog); dialog.showModal();
     const close = () => { dialog.close(); dialog.remove(); container.querySelector<HTMLElement>('#logs-upload')?.focus(); };
     on(dialog.querySelector('[data-close]'), 'click', close); on(dialog, 'cancel', close);

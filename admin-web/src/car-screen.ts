@@ -30,7 +30,7 @@ export function trustedHttpsRecommended(v: Values): boolean {
   return v.carBrand === 'zeekr' && !(v.publicNameEnabled === true && !!v.publicName && !!v.publicNameProvider && v.publicNameTokenSet === true && v.publicNameAgreeTerms === true);
 }
 export function carNotes(v: Values, t: Translate): string {
-  return Object.values(carSelectionErrors(v)).map(key => `<p class="error">${esc(t(key))}</p>`).join('') + (trustedHttpsRecommended(v) ? `<p class="notice">${esc(t('car.zeekrHttps'))} <a href="#settings/access/public-name">${esc(t('car.openHttps'))}</a></p>` : '');
+  return (trustedHttpsRecommended(v) ? `<p class="notice">${esc(t('car.zeekrHttps'))} <a href="#settings/access/public-name">${esc(t('car.openHttps'))}</a></p>` : '');
 }
 function sameScreen(a: Screen, b: Screen): boolean { return a.width === b.width && a.height === b.height && a.densityDpi === b.densityDpi; }
 export function screenRecords(data: ScreenData, full: boolean): ScreenRecord[] {

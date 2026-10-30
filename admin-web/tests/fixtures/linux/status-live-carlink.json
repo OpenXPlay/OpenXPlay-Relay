@@ -155,6 +155,7 @@
         "joinMethod": null,
         "phase": "PLAYING",
         "picture": "1920x720 H265",
+        "pinConfirmation": false,
         "pinPending": false,
         "retrying": false,
         "sinceMillis": 1792999999000,

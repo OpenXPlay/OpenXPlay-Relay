@@ -211,3 +211,12 @@ export async function copyText(text: string, clipboard: ClipboardLike | undefine
   }
   try { return fallback(text); } catch { return false; }
 }
+
+/** Relay wall-clock seconds as an age; older than a day reads as the date. */
+export function relativeTimestamp(seconds: number, t: Translate, now = Date.now() / 1000): string {
+  const age = Math.max(0, Math.floor(now - seconds));
+  if (age < 60) return t('diag.secondsAgo', { seconds: age });
+  if (age < 3600) return t('diag.minutesAgo', { minutes: Math.floor(age / 60) });
+  if (age < 86400) return t('diag.hoursAgo', { hours: Math.floor(age / 3600) });
+  return new Date(seconds * 1000).toLocaleString();
+}

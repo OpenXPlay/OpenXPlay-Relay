@@ -80,6 +80,7 @@
         "joinMethod": null,
         "phase": "OFF",
         "picture": null,
+        "pinConfirmation": false,
         "pinPending": false,
         "retrying": false,
         "sinceMillis": null,
