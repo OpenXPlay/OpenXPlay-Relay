@@ -17,6 +17,17 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class AdminSettingsMappingTest {
+    @Test fun highPerformanceStaysNativeAndSurvivesAdminUpdates() {
+        assertFalse(AdminSettingsMapping.schema.flatMap { it.fields }.any { it.key == "highPerformance" })
+        for (highPerformance in listOf(false, true)) {
+            val before = initial().copy(highPerformance = highPerformance)
+            assertFalse(AdminSettingsMapping.values(before).containsKey("highPerformance"))
+            assertEquals(before.copy(autoStartOnBoot = true),
+                AdminSettingsMapping.update(before, mapOf("bootStart" to true), true).settings)
+            assertNull(AdminSettingsMapping.update(before, mapOf("highPerformance" to true), true).settings)
+        }
+    }
+
     private fun initial(): RelaySettings {
         val context = RuntimeEnvironment.getApplication()
         listOf("direlay", "diplay", "xcertplay_airplay").forEach { context.getSharedPreferences(it, 0).edit().clear().commit() }

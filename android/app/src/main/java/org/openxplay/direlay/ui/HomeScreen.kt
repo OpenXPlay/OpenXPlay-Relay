@@ -30,7 +30,8 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val pending: PendingPin?, val busy: Boolean = false, val vehicle: VehicleView = VehicleView(),
     val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false,
     val currentWifi: String? = null, val networkReadings: NetworkReadings = NetworkReadings(),
-    val pathInput: PathInput? = null, val path: ConnectionPath = presentPath(pathInput ?: PathInput()), val stepProblems: List<HomeProblem> = emptyList())
+    val pathInput: PathInput? = null, val path: ConnectionPath = presentPath(pathInput ?: PathInput()), val stepProblems: List<HomeProblem> = emptyList(),
+    val highPerformance: Boolean = true)
 
 @Composable fun HomeScreen(value: HomeContent, onSettings: (String) -> Unit, onStartStop: () -> Unit,
     onAutomatic: (Boolean) -> Unit, onCopy: (String) -> Unit, onStepAction: (StepAction, PathStep) -> Unit,
@@ -46,7 +47,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
         onCancelCountdown = onCancelCountdown, onCountdownComplete = onCountdownComplete,
         automatic = value.automatic, onAutomatic = onAutomatic,
         vehicle = value.vehicle.takeIf { value.carlink || it.sample }, onVehicle = onVehicle,
-        vehicleModifier = vehicleModifier, vehicleContentModifier = vehicleContentModifier)
+        vehicleModifier = vehicleModifier, vehicleContentModifier = vehicleContentModifier, highPerformance = value.highPerformance)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

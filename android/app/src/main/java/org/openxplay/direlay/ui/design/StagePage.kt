@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
@@ -93,13 +94,44 @@ class StagePageState internal constructor(
     onDrawerOpened: () -> Unit = {},
     drawerItemKeys: List<Any> = view.segments.map { it.section },
     sectionKey: (PathSection) -> Any = { it },
+    highPerformance: Boolean = false, onTouch: () -> Unit = {}, manageWindow: Boolean = true,
     drawerContent: LazyListScope.() -> Unit,
 ) {
+    val minimal by rememberUpdatedState(highPerformance)
+    val touch by rememberUpdatedState(onTouch)
+    var arrived by rememberSaveable { mutableStateOf(highPerformance) }
+    LaunchedEffect(Unit) { arrived = true }
+    // Keep this input node through wake-up so the entire first gesture stays consumed.
+    Box(Modifier.fillMaxSize().pointerInput(Unit) {
+        awaitPointerEventScope {
+            var waking = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.any { it.pressed && !it.previousPressed }) {
+                    if (minimal) waking = true
+                    touch()
+                }
+                if (waking) event.changes.forEach { it.consume() }
+                if (event.changes.none { it.pressed }) waking = false
+            }
+        }
+    }) {
+        if (highPerformance) StageMinimal(onTouch, manageWindow)
+        else StagePageContent(path, view, onAction, onCopy, onNotice, onCountdownComplete, modifier, state,
+            !arrived, topBar, onNode, onDrawerOpened, drawerItemKeys, sectionKey, drawerContent)
+    }
+    BackHandler(highPerformance) { onTouch() }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun StagePageContent(path: ConnectionPath, view: StageView,
+    onAction: (StageAction) -> Unit, onCopy: (String) -> Unit, onNotice: (StageNotice) -> Unit,
+    onCountdownComplete: () -> Unit, modifier: Modifier, state: StagePageState, arrivalEnabled: Boolean,
+    topBar: @Composable RowScope.() -> Unit, onNode: (PathSection) -> Unit, onDrawerOpened: () -> Unit,
+    drawerItemKeys: List<Any>, sectionKey: (PathSection) -> Any, drawerContent: LazyListScope.() -> Unit) {
     val motion = LocalRelayMotion.current
     val scope = rememberCoroutineScope()
     val sheet = state.scaffoldState.bottomSheetState
-    var arrived by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { arrived = true }
     val countdownActive = view.countdown && view.primary == StageAction.Connect && view.primaryEnabled
     val deadline = rememberSaveable(countdownActive) {
         if (countdownActive) System.currentTimeMillis() + STAGE_COUNTDOWN_SECONDS * 1000L else 0L
@@ -125,7 +157,7 @@ class StagePageState internal constructor(
     val peek = 72.dp + navigation
     val background = MaterialTheme.colorScheme.background
     val scrim = MaterialTheme.colorScheme.scrim
-    CompositionLocalProvider(LocalStageArrivalEnabled provides !arrived,
+    CompositionLocalProvider(LocalStageArrivalEnabled provides arrivalEnabled,
         LocalStageCountdownDeadline provides deadline.takeIf { countdownActive }) {
         BoxWithConstraints(modifier.fillMaxSize().background(background)) {
             val height = maxHeight
@@ -139,12 +171,12 @@ class StagePageState internal constructor(
                 onNode(section)
                 scope.launch { state.openSection(section, drawerItemKeys, sectionKey) }
             }
-            val stage: @Composable () -> Unit = {
+            val stage: @Composable (StageLayout) -> Unit = { layout ->
                 ConnectionStage(path, view.nodes, Modifier.graphicsLayer {
                     val scale = 1f - .06f * progress()
                     scaleX = scale
                     scaleY = scale
-                }, node)
+                }, layout, node)
             }
             BottomSheetScaffold(scaffoldState = state.scaffoldState, sheetPeekHeight = peek,
                 sheetMaxWidth = 720.dp, sheetShape = RelayTokens.sheet,
@@ -188,10 +220,11 @@ class StagePageState internal constructor(
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically, content = topBar)
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp)) {
+                        val layout = stageLayout(height, maxHeight)
                         if (height < 480.dp) {
                             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { stage() }
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { stage(layout) }
                                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
                                     verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.Start) {
                                     StageHeadline(view, onCopy, textAlign = TextAlign.Start)
@@ -199,7 +232,7 @@ class StagePageState internal constructor(
                                     StageActions(view, onAction, onCountdownComplete, sideBySide = true)
                                 }
                             }
-                        } else StagePortrait(maxHeight, stage, {
+                        } else StagePortrait(maxHeight, { stage(layout) }, {
                             StageHeadline(view, onCopy)
                             NoticeChip(view.notice, onNotice)
                         }, { StageActions(view, onAction, onCountdownComplete) })

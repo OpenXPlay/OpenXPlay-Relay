@@ -223,6 +223,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             "settings/audio" -> {
                 SettingsToggleGroup(stringResource(R.string.audio_car_bluetooth), draft.carBluetoothAudio, R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
                     footer = stringResource(R.string.audio_car_bluetooth_hint)) { draft = draft.copy(carBluetoothAudio = it) }
+                AnimatedVisibility(draft.carBluetoothAudio, enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)),
+                    exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
+                    InsetTip(stringResource(R.string.audio_bluetooth_tip))
+                }
             }
             "settings/connection" -> {
                 SettingsGroup("connection", R.drawable.symbol_phone, IconHue.IPHONE, stringResource(R.string.ui_iphone_connection), stringResource(if (wireless(draft)) R.string.direlay_wireless else R.string.ui_usb),
@@ -283,6 +287,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             "settings/background" -> {
                 val background by backgroundState(sources, actions)
                 BackgroundSettings(background, actions.openBackground)
+            }
+            "settings/display" -> {
+                SettingsToggleGroup(stringResource(R.string.display_high_performance), draft.highPerformance, R.drawable.symbol_monitor, IconHue.PICTURE,
+                    footer = stringResource(R.string.display_high_performance_hint)) { draft = draft.copy(highPerformance = it) }
             }
             "settings/access" -> {
                 val access by sources.admin.screenState()

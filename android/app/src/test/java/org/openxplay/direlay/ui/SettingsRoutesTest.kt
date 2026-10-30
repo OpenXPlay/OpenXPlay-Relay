@@ -14,7 +14,7 @@ class SettingsRoutesTest {
             "picture" to "settings/picture", "audio" to "settings/audio",
             "connection" to "settings/connection#connection", "iphone" to "settings/connection#iphone",
             "network" to "settings/connection/network", "sharedWifi" to "settings/connection/network#sharedWifi",
-            "startup" to "settings/startup", "admin" to "settings/access", "access" to "settings/access",
+            "startup" to "settings/startup", "display" to "settings/display", "admin" to "settings/access", "access" to "settings/access",
             "publicName" to "settings/access/publicName", "identity" to "settings/identity",
             "about" to "settings/about", "developer" to "developer")
         routes.forEach { (key, expected) ->
@@ -74,7 +74,7 @@ class SettingsRoutesTest {
     @Test fun diagnosticsAndIdentityStatusPollingFollowTheDestination() {
         val diagnostics = setOf("developer", "developer/diagnostics", "developer/carlink", "settings/identity")
         val routes = diagnostics + listOf("home", "setup", "vehicle", "settings", "settings/output", "settings/car", "settings/tesla",
-            "settings/picture", "settings/audio", "settings/connection", "settings/connection/network", "settings/startup",
+            "settings/picture", "settings/audio", "settings/connection", "settings/connection/network", "settings/startup", "settings/display",
             "settings/access", "settings/access/publicName", "settings/about", "developer/video",
             "developer/connection", "developer/identity")
         for (route in routes) {
