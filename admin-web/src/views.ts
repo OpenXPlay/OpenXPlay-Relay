@@ -26,11 +26,15 @@ export function addressesView(s: Status, _developer: boolean, t: Translate) {
 export function devicesView(s: Status, _developer: boolean, t: Translate) {
   const v = homeView(s);
   const reason = iphoneReason(s.iphone.reason);
+  const paired = s.pairedDevices?.find(device => device.iphone && device.name === s.iphone.name);
+  // One state per iPhone: the paired-device row wins when it names the selected iPhone.
+  const connected = paired?.connected ?? v.phoneConnected;
   const state = (connected: boolean, unpaired: boolean) => {
     const name = connected ? 'connected' : unpaired ? 'unpaired' : 'disconnected';
     return `<span class="device-state ${name}"><span class="status-dot" aria-hidden="true">${connected ? '✓' : unpaired ? '?' : '−'}</span>${t(connected ? 'ui.connected' : unpaired ? 'carlink.unpaired' : 'home.disconnected')}</span>`;
   };
-  return `<article class="card devices"><h2>${t('home.devices')}</h2><details><summary>${icon('smartphone')}<span>${esc(s.iphone.name || t('ui.iphone'))}</span>${state(v.phoneConnected, ['none', 'unpaired'].includes(reason))}</summary><p>${esc(t(`reason.${iphoneReason(s.iphone.reason)}`))}</p><a href="#settings">${t('ui.choosePhone')}</a></details><details><summary>${icon('monitor')}<span>${esc(s.carlink?.headUnit?.name || t('ui.screen'))}</span>${state(v.carConnected, ['carlink', 'both'].includes(s.output) && (s.carlink?.trusted === false || s.carlink?.state === 'unpaired'))}</summary><p>${t(v.carConnected ? 'ui.connected' : 'home.disconnected')}</p>${s.platform === 'linux' ? carlinkStatsView(s.carlink, t) : ''}${s.carlink?.lastError ? `<p class="error">${esc(t(s.carlink.lastError))} ${t('home.retryCar')}</p>` : ''}</details>${v.active && s.video ? `<p class="muted video-line">${esc(videoLine(s, t))}</p>` : ''}</article>`;
+  const others = (s.pairedDevices ?? []).filter(device => device.iphone && device.name !== s.iphone.name).map(device => `<details><summary>${icon('smartphone')}<span>${esc(device.name || t('pairing.unnamed'))}</span>${state(device.connected, false)}</summary><a href="#settings/connection" data-pick-iphone>${t('ui.choosePhone')}</a></details>`).join('');
+  return `<article class="card devices"><h2>${t('home.devices')}</h2><details><summary>${icon('smartphone')}<span>${esc(s.iphone.name || t('ui.iphone'))}</span>${state(connected, !paired && ['none', 'unpaired'].includes(reason))}</summary><p>${esc(t(connected ? 'reason.connected' : ['none', 'unpaired', 'selected', 'onlyCandidate', 'multiple'].includes(reason) ? `reason.${reason}` : 'home.disconnected'))}</p><a href="#settings/connection" data-pick-iphone>${t('ui.choosePhone')}</a></details>${others}<details><summary>${icon('monitor')}<span>${esc(s.carlink?.headUnit?.name || t('ui.screen'))}</span>${state(v.carConnected, ['carlink', 'both'].includes(s.output) && (s.carlink?.trusted === false || s.carlink?.state === 'unpaired'))}</summary><p>${t(v.carConnected ? 'ui.connected' : 'home.disconnected')}</p>${s.platform === 'linux' ? carlinkStatsView(s.carlink, t) : ''}${s.carlink?.lastError ? `<p class="error">${esc(t(s.carlink.lastError))} ${t('home.retryCar')}</p>` : ''}</details>${v.active && s.video ? `<p class="muted video-line">${esc(videoLine(s, t))}</p>` : ''}</article>`;
 }
 
 export function hotspotDetails(s: Status, t: Translate): string {

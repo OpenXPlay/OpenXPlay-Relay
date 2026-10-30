@@ -81,3 +81,12 @@ it('places view areas in Car, Carlink sizes in Picture, and calibration in Devel
   expect(fieldRoute('physicalWidthOverrideMm')).toBe('settings/developer/carlink');
   expect(displayPresets).toEqual([[800, 480, 160], [1024, 600, 160], [1280, 720, 160], [1920, 720, 240], [1920, 1080, 240]]);
 });
+
+it('keeps first-open car notes free of required-field errors, including incomplete ZEEKR choices', () => {
+  const t = (key: string) => translate('en', key);
+  expect(carNotes({}, t)).toBe('');
+  expect(carNotes({ carBrand: 'zeekr' }, t)).toContain(esc(t('car.zeekrHttps')));
+  expect(carNotes({ carBrand: 'zeekr' }, t)).not.toContain(t('car.modelRequired'));
+  expect(carNotes({ carBrand: 'tesla' }, t)).toBe('');
+  expect(carNotes({ carBrand: 'zeekr', publicNameEnabled: true, publicName: 'relay.example.org', publicNameProvider: 'dynv6', publicNameTokenSet: true, publicNameAgreeTerms: true }, t)).toBe('');
+});

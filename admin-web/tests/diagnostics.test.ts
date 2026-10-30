@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-16
 
 import { expect, it, vi } from 'vitest';
-import { browserLabel, codecSupport, copyText, diagnosticsView, gpuLabel, liveLine, liveStats, receiverReport, receiverSummary, videoLine, videoView, windowLine } from '../src/diagnostics';
+import { browserLabel, codecSupport, copyText, diagnosticsView, gpuLabel, liveLine, liveStats, receiverReport, receiverSummary, relativeTimestamp, videoLine, videoView, windowLine } from '../src/diagnostics';
 import { addressesView, devicesView, statusView } from '../src/views';
 import { homeView } from '../src/logic';
 import { translate } from '../src/i18n';
@@ -211,4 +211,13 @@ it('shows host AP restrictions and Bluetooth capability unknowns only when suppl
   expect(html).not.toContain('<wlan1>');
   expect(diagnosticsView(status, zh)).toContain('本机能力');
   expect(diagnosticsView(status, zh)).toContain('监管国家代码');
+});
+
+it('formats Linux interface observation times relative to the current snapshot', () => {
+  expect(relativeTimestamp(1000, en, 1059)).toBe('59 seconds ago');
+  expect(relativeTimestamp(1061, en, 1060)).toBe('0 seconds ago');
+  expect(relativeTimestamp(1000, en, 1000 + 150)).toBe('2 min ago');
+  expect(relativeTimestamp(1000, en, 1000 + 7300)).toBe('2 h ago');
+  expect(relativeTimestamp(1000, (key, args) => translate('zh-CN', key, args), 1059)).toBe('59 秒前');
+  expect(relativeTimestamp(1000, (key, args) => translate('zh-CN', key, args), 1000 + 150)).toBe('2 分钟前');
 });

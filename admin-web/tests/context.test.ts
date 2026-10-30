@@ -134,7 +134,7 @@ it('uses a network selector to keep the button budget constant with several addr
 });
 
 it('shows device states in collapsed summaries with text and distinct dot symbols', () => {
-  const state = fixture('working');
+  const state = fixture('working'); state.pairedDevices = [];
   const summaries = () => [...devicesView(state, false, key => translate('en', key)).matchAll(/<summary>(.*?)<\/summary>/gs)].map(match => match[1]);
   expect(summaries().every(row => row.includes('Connected') && row.includes('✓'))).toBe(true);
   state.iphone.reason = 'Selected'; state.carlink!.state = 'idle';
@@ -143,8 +143,8 @@ it('shows device states in collapsed summaries with text and distinct dot symbol
   expect(summaries().every(row => row.includes('Not paired') && row.includes('?'))).toBe(true);
   const html = devicesView(state, false, key => translate('zh-CN', key));
   expect(html).toContain('未配对');
-  expect(html).toContain('href="#settings"');
-  expect(html).toContain('所选 iPhone 已取消配对。');
+  expect(html).toContain('href="#settings/connection"');
+  expect(html).toContain('data-pick-iphone');
 });
 
 it('places hotspot instructions and masked copyable credentials before car-screen addresses', () => {
@@ -215,4 +215,17 @@ it('renders nearby signal levels and accessible security icons with escaped name
     });
     expect(nearbyNetworksView([], t)).toBe('');
   }
+});
+
+it('uses the paired-device connection state once when the selected-phone summary disagrees', () => {
+  const state = fixture('working'); state.iphone.reason = 'Selected';
+  state.pairedDevices = [{ name: state.iphone.name!, iphone: true, connected: true }];
+  const html = devicesView(state, false, key => translate('en', key));
+  expect(html).toContain('device-state connected'); expect(html.split('<details>')[1]).not.toContain('Not connected');
+});
+it('explains why the selected iPhone is not connected instead of repeating its state', () => {
+  const state = fixture('working'); state.iphone.reason = 'MultipleCandidates';
+  state.pairedDevices = [{ name: state.iphone.name!, iphone: true, connected: false }];
+  const phone = devicesView(state, false, key => translate('en', key)).split('<details>')[1];
+  expect(phone).toContain(translate('en', 'reason.multiple')); expect(phone).toContain('data-pick-iphone');
 });

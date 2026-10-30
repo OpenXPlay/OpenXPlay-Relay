@@ -19,7 +19,7 @@ export function vehiclePanel(view: VehicleView, t: Translate, now = Date.now(), 
   };
   const signals = (reports: VehicleReport[], at: number) => reports.slice(0, 8).map(report => `<section class="inset-group" data-key="${esc(report.kind)}"><h2>${esc(t(`vehicle.${labels[report.kind] ?? report.kind}`))}</h2>${Object.entries(report.fields).slice(0, 16).map(([key, raw]) => `<div class="inset-row"><span>${esc(t(`vehicle.${labels[key] ?? key}`))}</span><span class="copy-text">${esc(value(raw))}</span></div>`).join('')}<p class="muted">${esc(t('vehicle.updated', { seconds: Math.max(0, Math.floor((at - report.receivedAt) / 1000)) }))}</p></section>`).join('');
   const state = vehicleState(view);
-  return `${view.sample ? `<p>${esc(t('vehicle.sample'))}</p>` : ''}<p>${esc(t(state === 'data' ? 'vehicle.title' : `vehicle.${state}`))}</p><p class="muted">${esc(t('vehicle.privacy'))}</p>${state === 'off' ? `<button data-vehicle-enable>${esc(t('vehicle.enable'))}</button>` : ''}${state === 'data' ? `<p class="muted">${esc(t('vehicle.units'))}</p>${signals(view.reports, now)}` : ''}${view.storageFailed ? `<p class="error">${esc(t('vehicle.storage_error'))}</p>` : ''}<section class="inset-group"><h2>${esc(t('vehicle.history'))}</h2><p class="muted">${esc(t('vehicle.history_hint'))}</p>${view.history.length || view.storageFailed ? `<button data-vehicle-clear>${esc(t('vehicle.clear'))}</button>` : `<p>${esc(t('vehicle.history_empty'))}</p>`}${view.history.slice(0, 30).map(snapshot => `<details data-snapshot="${snapshot.id}" ${open.has(String(snapshot.id)) ? 'open' : ''}><summary>${esc(new Date(snapshot.time).toLocaleString())}</summary>${signals(snapshot.reports, snapshot.time)}</details>`).join('')}</section>`;
+  return `${view.sample ? `<p>${esc(t('vehicle.sample'))}</p>` : ''}<p>${esc(t(state === 'data' ? 'vehicle.title' : `vehicle.${state}`))}</p><p class="muted">${esc(t('vehicle.privacy'))}</p>${state === 'data' ? `<p class="muted">${esc(t('vehicle.units'))}</p>${signals(view.reports, now)}` : ''}${view.storageFailed ? `<p class="error">${esc(t('vehicle.storage_error'))}</p>` : ''}<section class="inset-group"><h2>${esc(t('vehicle.history'))}</h2><p class="muted">${esc(t('vehicle.history_hint'))}</p>${view.history.length || view.storageFailed ? `<button data-vehicle-clear>${esc(t('vehicle.clear'))}</button>` : `<p>${esc(t('vehicle.history_empty'))}</p>`}${view.history.slice(0, 30).map(snapshot => `<details data-snapshot="${snapshot.id}" ${open.has(String(snapshot.id)) ? 'open' : ''}><summary>${esc(new Date(snapshot.time).toLocaleString())}</summary>${signals(snapshot.reports, snapshot.time)}</details>`).join('')}</section>`;
 }
 export function mountVehicle(container: HTMLElement, t: Translate, errorKey: (error: unknown) => string): () => void {
   container.insertAdjacentHTML('beforeend', '<div data-vehicle-content></div><p role="alert" class="error" data-vehicle-error></p>');
@@ -39,12 +39,11 @@ export function mountVehicle(container: HTMLElement, t: Translate, errorKey: (er
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
     if (busy || !button) return;
     const clear = button.hasAttribute('data-vehicle-clear');
-    if (!clear && !button.hasAttribute('data-vehicle-enable')) return;
+    if (!clear) return;
     if (clear && !await confirmSheet(`${t('vehicle.clear_question')} ${t('vehicle.clear_hint')}`, t('vehicle.clear'), t('ui.cancel'))) return;
     busy = true; button.disabled = true; error.textContent = '';
     try {
-      if (clear) await request('/actions/clear-vehicle-history', 'POST', {});
-      else await request('/settings', 'PUT', { vehicleInformation: true });
+      await request('/actions/clear-vehicle-history', 'POST', {});
     } catch (e) { if (!disposed) error.textContent = t(errorKey(e)); }
     finally { busy = false; if (!disposed) void poller.refresh(); }
   });
@@ -54,7 +53,7 @@ export function mountVehicle(container: HTMLElement, t: Translate, errorKey: (er
 
 /** A session-only developer preview; it never changes the collection preference. */
 export function mountVehicleSample(container: HTMLElement, t: Translate, errorKey: (error: unknown) => string): () => void {
-  container.insertAdjacentHTML('beforeend', `<label><input type="checkbox" data-vehicle-sample>${esc(t('vehicle.sampleControl'))}</label><p class="muted">${esc(t('vehicle.sampleHint'))}</p><a href="#settings/vehicle">${esc(t('vehicle.sampleOpen'))}</a><p class="error" role="alert" data-sample-error></p>`);
+  container.insertAdjacentHTML('beforeend', `<label class="switch-row"><span>${esc(t('vehicle.sampleControl'))}</span><input type="checkbox" role="switch" data-vehicle-sample><span class="switch-track" aria-hidden="true"></span></label><p class="muted">${esc(t('vehicle.sampleHint'))}</p><a href="#settings/vehicle">${esc(t('vehicle.sampleOpen'))}</a><p class="error" role="alert" data-sample-error></p>`);
   const toggle = container.querySelector<HTMLInputElement>('[data-vehicle-sample]')!;
   const error = container.querySelector<HTMLElement>('[data-sample-error]')!;
   let disposed = false, busy = false;

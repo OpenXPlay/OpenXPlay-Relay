@@ -113,3 +113,50 @@ it('parks physical-width calibration under the shared developer master without p
   values.developerActive = true;
   expect(fieldEnabled('physicalWidthOverrideMm', values)).toBe(true);
 });
+
+import { setupBlocker } from '../src/setup-guide';
+it('names the actual guide blocker rather than a generic Next error', () => {
+  const settings = mockSettings(true), status = previewStatus({ platform: 'linux', host: 'relay.local', receiverUrls: [] } as unknown as Status, 'ready');
+  settings.values.carBrand = ''; settings.values.carModel = '';
+  expect(setupBlocker('car', settings, status)).toMatchObject({ row: 'field-carBrand', field: 'carBrand', reason: { res: 'car.brandRequired' } });
+  settings.values.carBrand = 'other'; settings.values.carBrandText = 'My car';
+  expect(setupBlocker('car', settings, status)).toMatchObject({ row: 'field-carModel', field: 'carModel' });
+  settings.values.carModel = 'other';
+  expect(setupBlocker('car', settings, status)).toMatchObject({ row: 'field-carModelText', field: 'carModelText' });
+  settings.values.networkMode = 'shared-wifi'; settings.values.sharedWifiNetworks = [];
+  expect(setupBlocker('network', settings, status)).toMatchObject({ row: 'setup-blocker-network' });
+  expect(setupBlocker('network', settings, status)?.field).toBeUndefined();
+  status.pathInput!.iphone!.pick = 'NONE'; status.running = false;
+  expect(setupBlocker('prepare', settings, status)?.row).toBe('prepare-IPHONE_PAIRED');
+});
+
+import { guideBack, preparationView } from '../src/setup-guide';
+it('returns to the previous guide step and Home from its first step', () => {
+  expect(guideBack('car')).toBe('home'); expect(guideBack('prepare')).toBe('setup/network'); expect(guideBack('start')).toBe('setup/prepare');
+});
+it('folds ready preparation rows and shows the active pairing countdown with Stop', () => {
+  const status = previewStatus({ platform: 'linux', host: 'relay.local', receiverUrls: [] } as unknown as Status, 'ready');
+  status.pathInput!.iphone!.pick = 'NONE'; status.pairingDeadline = Date.now() / 1000 + 600; status.pairingCancelable = true;
+  const html = preparationView(status, key => key);
+  expect(html).toContain('guide-pairing-remaining'); expect(html).toContain('home.pairCountdown'); expect(html).toContain('data-prepare-cancel');
+  expect(html).toContain('prepare-ready'); expect(html).toContain('setup.readyCount'); expect(html).not.toContain('data-prepare-action="IPHONE_PAIRED"');
+});
+it('keeps the refused step marked across refreshes and shows only it on the start step', () => {
+  const status = previewStatus({ platform: 'linux', host: 'relay.local', receiverUrls: [] } as unknown as Status, 'ready');
+  status.pathInput!.iphone!.pick = 'NONE'; status.running = false;
+  const marked = preparationView(status, key => key, { marked: true });
+  expect(marked.match(/guide-blocker/g)).toHaveLength(1); expect(marked).toContain('id="prepare-IPHONE_PAIRED"');
+  expect(preparationView(status, key => key)).not.toContain('guide-blocker');
+  const compact = preparationView(status, key => key, { compact: true });
+  expect(compact).toContain('id="prepare-IPHONE_PAIRED"'); expect(compact).not.toContain('prepare-ready'); expect(compact).not.toContain('setup-recheck');
+});
+
+it('meets AA text contrast with the light action tokens and preserves the dark palette', () => {
+  const css = readFileSync(new URL('src/style.css', root), 'utf8');
+  const luminance = (hex: string) => hex.match(/../g)!.map(v => parseInt(v,16)/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4).reduce((v,c,i) => v+c*[.2126,.7152,.0722][i],0);
+  const ratio = (a:string,b:string) => { const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); };
+  const ok = css.match(/--ok: #([a-f0-9]+)/)![1], action=css.match(/--action: #([a-f0-9]+)/)![1];
+  const tint = action.match(/../g)!.map(v => Math.round(parseInt(v,16)*.14+255*.86).toString(16).padStart(2,'0')).join('');
+  expect(ratio(ok,'ffffff')).toBeGreaterThanOrEqual(4.5); expect(ratio(ok,'f2f2f7')).toBeGreaterThanOrEqual(4.5); expect(ratio(action,tint)).toBeGreaterThanOrEqual(4.5);
+  expect(css).toContain('--ok: #54e8a0'); expect(css).toContain('--action: #ffb547');
+});
