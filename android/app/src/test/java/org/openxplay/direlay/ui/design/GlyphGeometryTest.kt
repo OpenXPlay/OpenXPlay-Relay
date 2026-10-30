@@ -8,6 +8,12 @@ import org.junit.Test
 import org.openxplay.direlay.path.StepState
 
 class GlyphGeometryTest {
+    @Test fun stageBadgesAppearOnlyForActionAndFailure() {
+        StepState.entries.forEach { state ->
+            assertEquals(state.name, state == StepState.ACTION || state == StepState.FAILED, stageBadgeVisible(state))
+        }
+    }
+
     @Test fun everyContourHas96FinitePositiveSamples() {
         StepState.entries.forEach { state ->
             val radii = glyphRadii(state)

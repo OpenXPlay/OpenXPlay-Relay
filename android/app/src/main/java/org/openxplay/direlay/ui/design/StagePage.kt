@@ -171,12 +171,12 @@ class StagePageState internal constructor(
                 onNode(section)
                 scope.launch { state.openSection(section, drawerItemKeys, sectionKey) }
             }
-            val stage: @Composable () -> Unit = {
+            val stage: @Composable (StageLayout) -> Unit = { layout ->
                 ConnectionStage(path, view.nodes, Modifier.graphicsLayer {
                     val scale = 1f - .06f * progress()
                     scaleX = scale
                     scaleY = scale
-                }, node)
+                }, layout, node)
             }
             BottomSheetScaffold(scaffoldState = state.scaffoldState, sheetPeekHeight = peek,
                 sheetMaxWidth = 720.dp, sheetShape = RelayTokens.sheet,
@@ -220,10 +220,11 @@ class StagePageState internal constructor(
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically, content = topBar)
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp)) {
+                        val layout = stageLayout(height, maxHeight)
                         if (height < 480.dp) {
                             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { stage() }
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { stage(layout) }
                                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
                                     verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.Start) {
                                     StageHeadline(view, onCopy, textAlign = TextAlign.Start)
@@ -231,7 +232,7 @@ class StagePageState internal constructor(
                                     StageActions(view, onAction, onCountdownComplete, sideBySide = true)
                                 }
                             }
-                        } else StagePortrait(maxHeight, stage, {
+                        } else StagePortrait(maxHeight, { stage(layout) }, {
                             StageHeadline(view, onCopy)
                             NoticeChip(view.notice, onNotice)
                         }, { StageActions(view, onAction, onCountdownComplete) })
