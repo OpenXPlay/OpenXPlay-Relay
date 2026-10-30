@@ -1121,6 +1121,36 @@
           "type": "bool"
         },
         {
+          "hintKey": "hint.field.experimentalIapChannelWhenOffered",
+          "key": "experimentalIapChannelWhenOffered",
+          "labelKey": "field.experimentalIapChannelWhenOffered",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalReleaseBluetoothOnRequest",
+          "key": "experimentalReleaseBluetoothOnRequest",
+          "labelKey": "field.experimentalReleaseBluetoothOnRequest",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalAwaitIphoneReconnect",
+          "key": "experimentalAwaitIphoneReconnect",
+          "labelKey": "field.experimentalAwaitIphoneReconnect",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalRadioConflictPrompt",
+          "key": "experimentalRadioConflictPrompt",
+          "labelKey": "field.experimentalRadioConflictPrompt",
+          "type": "bool"
+        },
+        {
+          "hintKey": "hint.field.experimentalStallWatchdog",
+          "key": "experimentalStallWatchdog",
+          "labelKey": "field.experimentalStallWatchdog",
+          "type": "bool"
+        },
+        {
           "hintKey": "hint.field.experimentalScreenSessionIsolation",
           "key": "experimentalScreenSessionIsolation",
           "labelKey": "field.experimentalScreenSessionIsolation",
@@ -1372,12 +1402,17 @@
     "displayMode": "automatic",
     "displayWidth": 1280,
     "experimentalActive": true,
+    "experimentalAwaitIphoneReconnect": true,
     "experimentalBluetoothAddress": "",
+    "experimentalIapChannelWhenOffered": true,
+    "experimentalRadioConflictPrompt": true,
+    "experimentalReleaseBluetoothOnRequest": true,
     "experimentalRemotePlaybackProof": true,
     "experimentalScreenDeliverySerialization": true,
     "experimentalScreenReconnectReset": true,
     "experimentalScreenSessionIsolation": true,
     "experimentalSendBluetoothAddress": true,
+    "experimentalStallWatchdog": true,
     "experimentalStartupDiagnostics": true,
     "experimentalStartupStatus": true,
     "frameRate": "auto",
