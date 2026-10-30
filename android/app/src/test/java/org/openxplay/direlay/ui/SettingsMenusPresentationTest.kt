@@ -53,6 +53,11 @@ class SettingsMenusPresentationTest {
         assertEquals(R.string.dev_invalid_identity, identityStatusKey(MaterialStatus.Invalid("Invalid files")))
     }
 
+    @Test fun backgroundPageUsesItsMenuTitleAndPermissionHue() {
+        assertEquals(R.string.background_title, settingsPageTitle("settings/background"))
+        assertEquals(IconHue.PERMISSIONS, settingsMenuHue(R.string.background_title))
+    }
+
     @Test fun summariesResolveCatalogIdsInTheCurrentLocale() {
         val car = CarSelection("xpeng", model = "g6", year = "g6-2023")
         assertEquals("XPeng · G6 · 2023", carSelectionSummary(car, models, Locale.ENGLISH, "None", "Other"))

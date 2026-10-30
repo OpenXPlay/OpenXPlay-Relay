@@ -12,6 +12,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.openxplay.direlay.background.*
 import org.openxplay.direlay.miracast.MiracastSystem
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
@@ -31,6 +32,8 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
     private val producer = HomeProducer(this.context, runtime, ::action)
     private val store get() = runtime.settingsStore
     private val saveLock = Mutex()
+    private val backgroundAccess = AndroidBackgroundAccess(this.context)
+    private val background = MutableStateFlow<BackgroundStatus?>(null)
     private val packageInfo by lazy { this.context.packageManager.getPackageInfo(this.context.packageName, 0) }
     private val version get() = packageInfo.versionName.orEmpty()
     private val environment by lazy {
@@ -96,7 +99,11 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
             IphonePickerView(runtime.bondedDevices.read(), runtime.bondedDevices.localName())
         },
         carlinkPicture = combine(runtime.carlinkPictureTrial, runtime.carlinkPictureCanvas, runtime.carlinkPictureEffective,
-            ::CarlinkPictureView).stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), CarlinkPictureView()))
+            ::CarlinkPictureView).stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), CarlinkPictureView()),
+        background = background.asStateFlow())
+
+    private fun refreshBackground() { viewModelScope.launch(worker) { background.value = backgroundAccess.read() } }
+    suspend fun backgroundIntents(destination: BackgroundDestination) = withContext(worker) { backgroundAccess.intents(destination) }
 
     fun refresh() { revision.update { it + 1 } }
     fun action(block: () -> Unit) { viewModelScope.launch(commands) { try { block() } finally { refresh() } } }
@@ -117,7 +124,7 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
             } finally { refresh() }
         }
     }
-    val actions = ScreenActions(
+    fun actions(openBackground: (BackgroundDestination) -> Unit) = ScreenActions(
         save = { after -> persist { SettingsAutoSave(store.awaitSnapshot(), store::save).apply(after, store.wireless(after)) } },
         saveDeveloper = { after, choices -> persist { store.save(after, choices) } },
         readIphones = { withContext(Dispatchers.IO) { IphonePickerView(runtime.bondedDevices.read(), runtime.bondedDevices.localName()) } },
@@ -136,7 +143,8 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
         sampleVehicle = { enabled -> action { runtime.setSampleVehicleData(enabled) } },
         clearVehicleHistory = { action { runtime.clearVehicleHistory() } },
         tryCarlinkPicture = { size -> action { runtime.tryCarlinkPicture(size) } },
-        clearCarlinkPictureTrial = { restart -> action { runtime.clearCarlinkPictureTrial(restart) } })
+        clearCarlinkPictureTrial = { restart -> action { runtime.clearCarlinkPictureTrial(restart) } },
+        refreshBackground = ::refreshBackground, openBackground = openBackground)
 
     private val configFiles by lazy {
         org.openxplay.direlay.config.ConfigFiles(this.context, store, runtime.publicName, runtime.tlsStore)

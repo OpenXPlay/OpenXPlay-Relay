@@ -110,4 +110,15 @@ class RelayBackStackTest {
         }
     }
 
+    @Test fun backgroundBackReturnsThroughSettingsAndKeepsTheGuideOrigin() {
+        val origin = RelayBackStack().open("setup:start")
+        for (entry in listOf("settings/background", "settings:background")) {
+            val stack = origin.open("settings/startup").open(entry)
+            assertEquals(origin.entries + listOf("settings", "settings/background"), stack.entries)
+            assertEquals("settings", stack.back().current)
+            assertEquals(origin, stack.back().back())
+            assertEquals(stack, stack.open(entry))
+        }
+    }
+
 }

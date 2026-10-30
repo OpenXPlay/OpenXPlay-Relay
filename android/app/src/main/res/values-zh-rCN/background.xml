@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-29 -->
+<resources>
+    <string name="background_title">后台运行</string>
+    <string name="background_summary_allowed">不受限制</string>
+    <string name="background_summary_limited">受限制</string>
+    <string name="background_system">系统</string>
+    <string name="background_battery_title">电池优化</string>
+    <string name="background_battery_ask">允许不受限制</string>
+    <string name="background_allowed">已允许</string>
+    <string name="background_restricted_title">后台使用受限</string>
+    <string name="background_restricted_hint">在应用的电池设置中允许后台使用。</string>
+    <string name="background_footer">熄屏或切到其他应用时，手机可能暂停 OpenXPlay Relay，Carlink 和车机网页会停止工作。</string>
+    <string name="background_maker">手机厂商</string>
+    <string name="background_autostart_title">自启动</string>
+    <string name="background_autostart_hint">允许 OpenXPlay Relay 自启动</string>
+    <string name="background_vendor_battery_title">省电策略</string>
+    <string name="background_vendor_battery_hint">选择无限制</string>
+    <string name="background_recents_hint">也可以在最近任务中锁定 OpenXPlay Relay，避免被一键清理关闭。</string>
+</resources>

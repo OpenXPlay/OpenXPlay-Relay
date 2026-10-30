@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-29 -->
+<resources>
+    <string name="background_title">Background</string>
+    <string name="background_summary_allowed">Unrestricted</string>
+    <string name="background_summary_limited">Restricted</string>
+    <string name="background_system">System</string>
+    <string name="background_battery_title">Battery optimization</string>
+    <string name="background_battery_ask">Allow unrestricted</string>
+    <string name="background_allowed">Allowed</string>
+    <string name="background_restricted_title">Background use is restricted</string>
+    <string name="background_restricted_hint">Allow it in the app\'s battery settings.</string>
+    <string name="background_footer">When the screen is off or another app is open, the phone may pause OpenXPlay Relay, and Carlink or the car\'s page stops working.</string>
+    <string name="background_maker">This phone\'s maker</string>
+    <string name="background_autostart_title">Autostart</string>
+    <string name="background_autostart_hint">Allow OpenXPlay Relay</string>
+    <string name="background_vendor_battery_title">Battery saver</string>
+    <string name="background_vendor_battery_hint">Choose No restrictions</string>
+    <string name="background_recents_hint">Also lock OpenXPlay Relay in Recents so cleaning does not close it.</string>
+</resources>
