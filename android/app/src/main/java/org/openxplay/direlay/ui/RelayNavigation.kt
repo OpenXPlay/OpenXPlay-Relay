@@ -65,6 +65,7 @@ fun relayRoute(entry: String): String = when {
         "sharedWifi" -> "settings/connection/network#sharedWifi"
         "startup" -> "settings/startup"
         "background" -> "settings/background"
+        "display" -> "settings/display"
         "admin", "access" -> "settings/access"
         "publicName" -> "settings/access/publicName"
         "identity" -> "settings/identity"

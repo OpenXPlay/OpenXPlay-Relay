@@ -74,6 +74,22 @@ class RelaySettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val store get() = RelaySettingsStore(context)
 
+    @Test fun displaySettingsDefaultAndRoundTripIndependently() {
+        store.use { store ->
+            val initial = store.load()
+            assertFalse(initial.stage3d)
+            assertTrue(initial.highPerformance)
+            for (stage3d in listOf(false, true)) for (highPerformance in listOf(false, true)) {
+                val chosen = initial.copy(stage3d = stage3d, highPerformance = highPerformance)
+                store.save(chosen)
+                RelaySettingsStore(context).use { assertEquals(chosen, it.load()) }
+                val prefs = context.getSharedPreferences("direlay", 0)
+                assertEquals(stage3d, prefs.getBoolean("stage3d", !stage3d))
+                assertEquals(highPerformance, prefs.getBoolean("highPerformance", !highPerformance))
+            }
+        }
+    }
+
     @Test fun wirelessPictureDefaultsAndParkedCustomSizeRoundTripAndInvalidSizesAreRejected() {
         store.use { store ->
             val initial = store.load()

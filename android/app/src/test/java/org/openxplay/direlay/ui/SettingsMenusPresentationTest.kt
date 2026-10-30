@@ -3,8 +3,14 @@
 // Created by riko chen on 2026-10-21
 package org.openxplay.direlay.ui
 
+import android.app.Application
+import android.content.res.Configuration
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.CarBrand
 import org.openxplay.direlay.relay.CarModel
@@ -16,7 +22,28 @@ import org.openxplay.direlay.storage.MaterialStatus
 import org.openxplay.direlay.ui.design.IconHue
 import java.util.Locale
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class SettingsMenusPresentationTest {
+    @Test fun displayPageUsesItsMenuTitleAndPictureHue() {
+        assertEquals(R.string.display_title, settingsPageTitle("settings/display"))
+        assertEquals(IconHue.PICTURE, settingsMenuHue(R.string.display_title))
+    }
+
+    @Test fun displaySummaryNamesBothSwitchesInEnglishAndChinese() {
+        val application = RuntimeEnvironment.getApplication()
+        for (locale in listOf(Locale.ENGLISH, Locale.SIMPLIFIED_CHINESE)) {
+            val context = application.createConfigurationContext(Configuration(application.resources.configuration).apply { setLocale(locale) })
+            for (stage3d in listOf(false, true)) for (highPerformance in listOf(false, true)) {
+                val stage = context.getString(if (stage3d) R.string.menu_on else R.string.menu_off)
+                val performance = context.getString(if (highPerformance) R.string.menu_on else R.string.menu_off)
+                val expected = if (locale == Locale.ENGLISH) "3D: $stage · High performance: $performance"
+                    else "3D：$stage · 高性能：$performance"
+                assertEquals(expected, context.getString(R.string.menu_display_summary, stage, performance))
+            }
+        }
+    }
+
     @Test fun teslaIsAlwaysInTheFirstMenuGroupDirectlyAfterCarAndScreen() {
         assertEquals(listOf("settings/output", "settings/car", "settings/tesla", "settings/picture", "settings/audio"),
             settingsMainPages.map { it.route })

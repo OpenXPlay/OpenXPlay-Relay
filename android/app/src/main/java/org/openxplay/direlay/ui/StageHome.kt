@@ -28,9 +28,10 @@ import org.openxplay.direlay.vehicle.VehicleView
     onGuide: () -> Unit = {}, onRestart: () -> Unit = {}, onCancelCountdown: (ArrivalEnd) -> Unit = {},
     onCountdownComplete: () -> Unit = {}, automatic: Boolean = false, onAutomatic: (Boolean) -> Unit = {},
     vehicle: VehicleView? = null, onVehicle: () -> Unit = {}, vehicleModifier: Modifier = Modifier,
-    vehicleContentModifier: Modifier = Modifier) {
+    vehicleContentModifier: Modifier = Modifier, highPerformance: Boolean = true) {
+    val performance = rememberHighPerformance(highPerformance, path.live)
     val view = presentStage(path, flags)
-    val pageState = rememberStagePageState()
+    val pageState = key(performance.active) { rememberStagePageState() }
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -39,8 +40,11 @@ import org.openxplay.direlay.vehicle.VehicleView
     var stateKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var pulsed by remember { mutableStateOf<StepId?>(null) }
     var pulse by remember { mutableIntStateOf(0) }
-    LaunchedEffect(pulse) {
-        if (pulse > 0) { delay(700); pulsed = null }
+    LaunchedEffect(performance.active) {
+        if (performance.active) { selected = null; pulsed = null }
+    }
+    LaunchedEffect(pulse, performance.active) {
+        if (pulse > 0 && !performance.active) { delay(700); pulsed = null }
     }
     val keys = path.sections.map { section -> section.steps.joinToString { "${it.id}:${it.state}" } }
     LaunchedEffect(keys, path.running) {
@@ -97,7 +101,8 @@ import org.openxplay.direlay.vehicle.VehicleView
             fullyExpanded = (fullyExpanded + section.name).distinct()
             pulsed = focusForPage(path)?.takeIf { it.id.section == section }?.id
             pulse++
-        }, onDrawerOpened = { onCancelCountdown(ArrivalEnd.DRAWER) }, drawerItemKeys = drawerKeys, sectionKey = { it.name }) {
+        }, onDrawerOpened = { onCancelCountdown(ArrivalEnd.DRAWER) }, drawerItemKeys = drawerKeys, sectionKey = { it.name },
+        highPerformance = performance.active, onTouch = performance.touch) {
         if (!flags.overlay) item("mode") {
             InsetGroup {
                 InsetRow(R.drawable.symbol_settings_2, IconHue.DEVELOPER,
@@ -132,7 +137,7 @@ import org.openxplay.direlay.vehicle.VehicleView
         }
         item("diagnostic") { DiagnosticLine(path.diagnostic, onCopy, path.version, active = pageState.isExpanded) }
     }
-    selected?.let { id -> path.steps.firstOrNull { it.id.name == id }?.let { step ->
+    if (!performance.active) selected?.let { id -> path.steps.firstOrNull { it.id.name == id }?.let { step ->
         StepSheet(stepDetails(step, addresses, problems), { action -> selected = null; stepAction(action, step) },
             onRecheck, onDismiss = { selected = null })
     } }

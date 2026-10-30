@@ -1,0 +1,14 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-30 -->
+<resources>
+    <string name="display_title">Display</string>
+    <string name="menu_display_summary">3D: %1$s · High performance: %2$s</string>
+    <string name="display_3d">3D effect</string>
+    <string name="display_3d_hint">Draws the connection on Home in 3D. Turn it off if this phone stutters; Home goes back to 2D.</string>
+    <string name="display_high_performance">High performance mode</string>
+    <string name="display_high_performance_hint">20 s after CarPlay connects, the screen dims and every animation stops; only “CarPlay connected” stays. Tap the screen to bring Home back.</string>
+    <string name="stage_live_minimal">CarPlay connected</string>
+    <string name="stage_live_minimal_wake">Show Home</string>
+    <string name="stage_high_performance">High performance</string>
+</resources>

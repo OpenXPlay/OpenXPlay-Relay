@@ -66,6 +66,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBooleanArray("flags", booleanArrayOf(value.autoStartOnBoot, value.autoStartWhenReady,
             value.localPreview, false, value.playCarPlayAudio, false, value.vehicleInformation))
         putString("frameRate", value.frameRate.name)
+        putBoolean("stage3d", value.stage3d)
+        putBoolean("highPerformance", value.highPerformance)
         putIntArray("numbers", intArrayOf(0, value.webPort ?: 0, value.wirelessNetwork.channel))
         putStringArray("outputs", RelayOutput.entries.filter { it in value.outputs }.map { it.wire }.toTypedArray())
         putString("dlnaRendererUdn", value.dlnaRenderer?.udn)
@@ -153,6 +155,8 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         autoStartOnBoot = flags[0], autoStartWhenReady = flags[1], localPreview = flags[2],
         playCarPlayAudio = flags[4], vehicleInformation = flags.getOrElse(6) { false }, carlinkAutoReconnect = bundle.getBoolean("carlinkAutoReconnect", flags.getOrElse(8) { true }), webPort = numbers[1].takeIf { it != 0 },
         frameRate = FrameRatePreference.entries.firstOrNull { it.name == bundle.getString("frameRate") } ?: base.frameRate,
+        stage3d = bundle.getBoolean("stage3d", base.stage3d),
+        highPerformance = bundle.getBoolean("highPerformance", base.highPerformance),
         videoStats = if (bundle.containsKey("videoStats")) VideoStatsWindow.fromStored(bundle.getString("videoStats")) else base.videoStats,
         teslaBrowser = TeslaBrowserMode.entries.firstOrNull { it.name == bundle.getString("teslaBrowser") } ?: base.teslaBrowser,
         teslaVirtualAddress = bundle.getString("teslaVirtualAddress") ?: base.teslaVirtualAddress,

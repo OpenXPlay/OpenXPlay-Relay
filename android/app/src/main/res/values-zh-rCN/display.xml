@@ -1,0 +1,14 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-License-Identifier: AGPL-3.0-only
+     Created by riko chen on 2026-10-30 -->
+<resources>
+    <string name="display_title">显示</string>
+    <string name="menu_display_summary">3D：%1$s · 高性能：%2$s</string>
+    <string name="display_3d">3D 效果</string>
+    <string name="display_3d_hint">首页用 3D 画出连接。手机卡顿时关闭，首页恢复 2D。</string>
+    <string name="display_high_performance">高性能模式</string>
+    <string name="display_high_performance_hint">CarPlay 连接成功 20 秒后，屏幕调暗、停止所有动画，只显示「CarPlay 已连接」。轻点屏幕恢复。</string>
+    <string name="stage_live_minimal">CarPlay 已连接</string>
+    <string name="stage_live_minimal_wake">显示首页</string>
+    <string name="stage_high_performance">高性能</string>
+</resources>

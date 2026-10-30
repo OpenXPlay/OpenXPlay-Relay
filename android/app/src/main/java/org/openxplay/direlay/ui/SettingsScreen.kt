@@ -284,6 +284,12 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 val background by backgroundState(sources, actions)
                 BackgroundSettings(background, actions.openBackground)
             }
+            "settings/display" -> {
+                SettingsToggleGroup(stringResource(R.string.display_3d), draft.stage3d, R.drawable.symbol_monitor, IconHue.PICTURE,
+                    footer = stringResource(R.string.display_3d_hint)) { draft = draft.copy(stage3d = it) }
+                SettingsToggleGroup(stringResource(R.string.display_high_performance), draft.highPerformance, R.drawable.symbol_monitor, IconHue.PICTURE,
+                    footer = stringResource(R.string.display_high_performance_hint)) { draft = draft.copy(highPerformance = it) }
+            }
             "settings/access" -> {
                 val access by sources.admin.screenState()
                 val nameView by sources.name.screenState()

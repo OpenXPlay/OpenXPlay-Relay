@@ -15,5 +15,5 @@ import org.openxplay.direlay.path.*
         setupCompleted = value.setupCompleted), value.receiverUrls, value.problems, onStepAction, onRecheck, onCopy,
         onStartStop = onStartStop, onStop = { onAction(HostOverlayAction.STOP) },
         onBack = { onAction(HostOverlayAction.BACK) }, onRestart = onRestart,
-        onSettings = onSettings, onGuide = onGuide)
+        onSettings = onSettings, onGuide = onGuide, highPerformance = value.highPerformance)
 }
