@@ -34,7 +34,7 @@ import type { SavedNetwork } from './schema';
 import { request, api, ApiError, NetworkError, events, type HotspotBand, type HotspotSecurity, type SessionState, type Status, type Phone, type WifiNetwork } from './api';
 import { isVisible, optionLabel, coerceValue, validatePassword, type Field, type Settings, type Value, type Illustration } from './schema';
 import { defaultLanguage, relayTranslate, type Language } from './i18n';
-import { sessionRoute, wifiGuidance, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
+import { sessionRoute, wifiGuidance, setupHotspotName, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
 import { icon } from './icons';
 import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
 import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-stats';
@@ -1084,13 +1084,13 @@ async function forgetAllWifi() {
     return;
   }
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'wifi-confirm-title');
-  patchMarkup(dialog, `<h2 id="wifi-confirm-title">${t('net.forgetAll')}</h2><p>${esc(t(wifiGuidance('forget')))}</p><div class="dialog-actions"><button id="wifi-confirm" class="primary">${t('net.forgetAll')}</button><button id="wifi-cancel" class="quiet">${t('ui.cancel')}</button></div>`);
+  patchMarkup(dialog, `<h2 id="wifi-confirm-title">${t('net.forgetAll')}</h2><p>${esc(t(wifiGuidance('forget'), { ssid: setupHotspotName(status) }))}</p><div class="dialog-actions"><button id="wifi-confirm" class="primary">${t('net.forgetAll')}</button><button id="wifi-cancel" class="quiet">${t('ui.cancel')}</button></div>`);
   document.body.append(dialog); dialog.showModal();
   const close = () => { dialog.close(); dialog.remove(); trigger?.focus(); };
   on(dialog.querySelector('#wifi-cancel')!, 'click', close);
   on(dialog, 'cancel', event => { event.preventDefault(); close(); });
   on(dialog.querySelector('#wifi-confirm')!, 'click', async () => {
-    handoff = { action: 'forget', ssid: '' }; epoch++;
+    handoff = { action: 'forget', ssid: setupHotspotName(status) }; epoch++;
     for (const item of pending.values()) clearTimeout(item.timer);
     pending.clear(); close(); render();
     try { await api.action('forget-wifi'); }
