@@ -83,6 +83,11 @@ Distributed builds combine this project with:
   the ISC License; icons derived from Feather are Copyright (c) 2013-present
   Cole Bemis, licensed under the MIT License.
   Source: https://github.com/lucide-icons/lucide.
+- The Android robot (the head drawn for this phone on Home's connection stage)
+  is reproduced or modified from work created and shared by Google and used
+  according to terms described in the Creative Commons 3.0 Attribution License
+  (https://creativecommons.org/licenses/by/3.0/). Android is a trademark of
+  Google LLC.
 
 - mdns-sd 0.13.11, Copyright (c) 2021-2022 Han Xu, licensed under the
   Apache License 2.0 or the MIT License, at your option; vendored in

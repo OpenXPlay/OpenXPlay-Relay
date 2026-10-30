@@ -98,9 +98,17 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         runtime.carPlayStage.reset()
         runtime.iphoneLink.reset()
         runtime.connectionLog.event("relay", "carplay_stop", "source=$source")
+        runtime.connectionLog.phoneDecision(org.openxplay.direlay.logs.LinkEnd(
+            if (runtime.settingsStore.wireless()) "wireless_run" else "usb", "starting", "local",
+            if (restarting) "rebuild" else "stopped"), if (restarting) "retry" else "stop")
         runtime.stopTeslaAddress()
         runtime.input.expectStop()
-        context.startService(Intent(context, DiPlaySessionService::class.java).setAction(DiPlaySessionService.ACTION_STOP))
+        try { context.startService(Intent(context, DiPlaySessionService::class.java).setAction(DiPlaySessionService.ACTION_STOP)) }
+        catch (failure: RuntimeException) {
+            runtime.connectionLog.detailEvent("relay", "carplay_stop_failed", "by=local cause=io_error",
+                "${failure.javaClass.simpleName}: ${failure.message.orEmpty()}")
+            throw failure
+        }
     }
     private fun awaitStopped(deadline: Long) {
         worker.schedule({ synchronized(this) {
@@ -113,6 +121,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             } else if (System.nanoTime() < deadline) { waits.tick("restart"); awaitStopped(deadline) }
             else {
                 waits.end("restart", "timeout")
+                runtime.connectionLog.event("relay", "carplay_stop_timeout", "by=timeout cause=stop_timeout detail=\"restart limitMs=15000\"")
                 restarting = false; runtime.carlinkPictureStopped(); runtime.status.inputFailed(IllegalStateException("Restart timed out"))
             }
         } }, 250, TimeUnit.MILLISECONDS)
@@ -138,6 +147,8 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
 
     @Synchronized fun cancelNetworkStart() {
         waits.end("network", "cancelled")
+        runtime.connectionLog.phoneDecision(org.openxplay.direlay.logs.LinkEnd(
+            if (runtime.settingsStore.wireless()) "wireless_run" else "usb", "starting", "local", "stopped"), "stop")
         networkStart.cancel()
         userStopped = true
         runtime.autoStartSessions.pause("Start cancelled")
@@ -146,6 +157,9 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
     @Synchronized fun observeNetworkSession(running: Boolean, active: Boolean) = networkStart.observeSession(running, active)
 
     @Synchronized private fun startFailed(failure: Throwable) {
+        val link = if (runtime.settingsStore.wireless()) "wireless_run" else "usb"
+        runtime.connectionLog.linkEnded("phone", org.openxplay.direlay.logs.LinkEnd(link, "starting", "local", "connect_failed",
+            "${failure.javaClass.simpleName}: ${redactFailureText(failure.message.orEmpty())}"))
         endWaits("failed exception=${failure.javaClass.simpleName}")
         carFirst.cancel()
         carlinkFirst.cancel()
@@ -232,6 +246,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         val source = if (manual) "manual" else if (bootStart) "boot" else "auto"
         bootStart = false
         val launchGeneration = ++generation
+        runtime.connectionLog.phone("attempt_started", "source=$source link=${if (wireless) "wireless_run" else "usb"}")
         // A transition on the refusal key, so the same refusal after this start is logged again.
         runtime.connectionLog.transition("relay", "start", "carplay_start_requested", "source=$source launch=$launchGeneration")
         runtime.carPlayStage.reset()

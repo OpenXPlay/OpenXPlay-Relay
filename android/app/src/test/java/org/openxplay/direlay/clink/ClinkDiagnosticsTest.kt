@@ -131,7 +131,7 @@ class ClinkDiagnosticsTest {
     }
     @Test fun stepFactsExposeOnlyStructuredValues() {
         val lines = listOf(
-            ClinkDiagnostic.GattConnection(133, false) to "gatt_connection status=133 state=disconnected",
+            ClinkDiagnostic.GattConnection(133, false) to "gatt_connection status=133 state=disconnected by=os cause=io_error reached=gatt_connect",
             ClinkDiagnostic.GattConnection(0, true) to "gatt_connection status=0 state=connected",
             ClinkDiagnostic.GattServices(5) to "gatt_services status=5",
             ClinkDiagnostic.Mtu(512, 0) to "ble_mtu mtu=512 status=0",
@@ -159,6 +159,15 @@ class ClinkDiagnosticsTest {
             try { ClinkDiagnostic.ReplyInvalid(text); fail("Accepted free text") }
             catch (_: IllegalArgumentException) { }
         }
+    }
+
+    @Test fun platformFailureLinesCarryTheEndClassificationAndStage() {
+        val cases = listOf(
+            ClinkDiagnostic.Failure(ClinkStage.WIFI_JOIN, "wifi_off", "IllegalStateException") to "by=os cause=radio_off reached=wifi_join",
+            ClinkDiagnostic.Failure(ClinkStage.LINK_LOST, "wifi_link_lost", "IllegalStateException") to "by=os cause=network_lost reached=link_lost",
+            ClinkDiagnostic.Failure(ClinkStage.BLE_SCAN, "ble_timeout", "TimeoutException") to "by=timeout cause=read_timeout reached=ble_scan",
+            ClinkDiagnostic.Failure(ClinkStage.SESSION, "vehicle_channel_closed", "EOFException") to "by=peer cause=peer_eof reached=session")
+        cases.forEach { (failure, fields) -> assertTrue(failure.line().endsWith(fields)) }
     }
 
     @Test fun publishedPeerAndTrustFactsContainOnlyPresentationValues() {

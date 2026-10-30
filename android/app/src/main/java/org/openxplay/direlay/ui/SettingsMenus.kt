@@ -82,6 +82,7 @@ fun settingsPageTitle(route: String) = when (route) {
     "settings/connection/network" -> R.string.ui_network
     "settings/startup" -> R.string.settings_startup
     "settings/background" -> R.string.background_title
+    "settings/display" -> R.string.display_title
     "settings/access" -> R.string.menu_access
     "settings/identity" -> R.string.menu_identity
     "settings/configFiles" -> R.string.config_title
@@ -111,7 +112,7 @@ internal fun settingsMenuHue(title: Int) = when (title) {
     R.string.menu_access -> IconHue.PERMISSIONS
     R.string.public_name_title, R.string.menu_connection_outputs -> IconHue.NETWORK
     R.string.settings_startup, R.string.background_title -> IconHue.PERMISSIONS
-    R.string.picture_title, R.string.menu_video -> IconHue.PICTURE
+    R.string.picture_title, R.string.menu_video, R.string.display_title -> IconHue.PICTURE
     R.string.logs_title, R.string.config_title -> IconHue.LOGS
     else -> IconHue.DEVELOPER
 }
@@ -160,6 +161,10 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
         SettingsMenuRow(R.string.background_title, background?.let { stringResource(if (it.summary == BackgroundSummary.ALLOWED)
             R.string.background_summary_allowed else R.string.background_summary_limited) }, R.drawable.symbol_battery_charging,
             background?.showRestriction == true) { open("settings/background") }
+        InsetDivider()
+        SettingsMenuRow(R.string.display_title, stringResource(R.string.menu_display_summary,
+            menuToggleSummary(draft.highPerformance)),
+            R.drawable.symbol_monitor) { open("settings/display") }
     }
     InsetGroup {
         SettingsMenuRow(R.string.menu_access, accessSummary, R.drawable.symbol_lock) { open("settings/access") }

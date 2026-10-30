@@ -20,23 +20,29 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.ui.*
+import kotlin.math.roundToInt
 
 @Composable fun ConnectionStage(path: ConnectionPath, nodes: StageNodes,
-    modifier: Modifier = Modifier, onNode: (PathSection) -> Unit) {
+    modifier: Modifier = Modifier, layout: StageLayout = StageLayout.HORIZONTAL, onNode: (PathSection) -> Unit) {
     val motion = LocalRelayMotion.current
     val pulse = remember { Animatable(-1f) }
-    var pulsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val arrival = LocalStageArrivalEnabled.current
+    var pulsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(nodes.live && !arrival) }
     LaunchedEffect(nodes.live, motion) {
         pulse.snapTo(-1f)
         if (!nodes.live) pulsed = false
@@ -49,17 +55,46 @@ import org.openxplay.direlay.ui.*
         }
         pulse.snapTo(-1f)
     }
-    Row(modifier.fillMaxWidth().heightIn(min = 112.dp), verticalAlignment = Alignment.CenterVertically) {
-        StageTile(StageNode.IPHONE, nodes.iphone, path, nodes.focus, onNode)
-        StageCable(nodes.iphoneLink, true, nodes.live, pulse.asState(), Modifier.weight(1f))
-        StageTile(StageNode.RELAY, nodes.relay, path, nodes.focus, onNode, nodes.relayLink)
-        StageCable(nodes.carLink, false, nodes.live, pulse.asState(), Modifier.weight(1f))
-        StageTile(StageNode.CAR, nodes.car, path, nodes.focus, onNode)
+    if (layout == StageLayout.HORIZONTAL) {
+        Row(modifier.fillMaxWidth().heightIn(min = 112.dp), verticalAlignment = Alignment.CenterVertically) {
+            StageTile(StageNode.IPHONE, nodes.iphone, path, nodes.focus, onNode, layout)
+            StageCable(nodes.iphoneLink, true, nodes.live, pulse.asState(), Modifier.weight(1f))
+            StageTile(StageNode.RELAY, nodes.relay, path, nodes.focus, onNode, layout, nodes.relayLink)
+            StageCable(nodes.carLink, false, nodes.live, pulse.asState(), Modifier.weight(1f))
+            StageTile(StageNode.CAR, nodes.car, path, nodes.focus, onNode, layout)
+        }
+    } else BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        val density = LocalDensity.current
+        val width = maxWidth.coerceAtMost(360.dp)
+        val geometry = remember(width, layout, density) {
+            with(density) { stageGeometry(Size(width.roundToPx().toFloat(), layout.height.roundToPx().toFloat()), layout, this.density) }
+        }
+        Layout(modifier = Modifier.width(width).height(layout.height), content = {
+            StageCable(nodes.iphoneLink, true, nodes.live, pulse.asState(), Modifier.fillMaxSize(), geometry.iphoneCable)
+            StageCable(nodes.carLink, false, nodes.live, pulse.asState(), Modifier.fillMaxSize(), geometry.carCable)
+            StageTile(StageNode.IPHONE, nodes.iphone, path, nodes.focus, onNode, layout)
+            StageTile(StageNode.RELAY, nodes.relay, path, nodes.focus, onNode, layout, nodes.relayLink)
+            StageTile(StageNode.CAR, nodes.car, path, nodes.focus, onNode, layout)
+        }) { measurables, constraints ->
+            val cables = measurables.take(2).map { it.measure(Constraints.fixed(constraints.maxWidth, constraints.maxHeight)) }
+            val rectangles = listOf(geometry.iphone, geometry.relay, geometry.car)
+            val tiles = measurables.drop(2).mapIndexed { index, measurable ->
+                val rect = rectangles[index]
+                measurable.measure(Constraints.fixed(rect.width.roundToInt(), rect.height.roundToInt()))
+            }
+            this.layout(constraints.maxWidth, constraints.maxHeight) {
+                cables.forEach { it.place(0, 0) }
+                tiles.forEachIndexed { index, tile ->
+                    val rect = rectangles[index]
+                    tile.place(rect.left.roundToInt(), rect.top.roundToInt())
+                }
+            }
+        }
     }
 }
 
 @Composable private fun StageTile(node: StageNode, state: StepState, path: ConnectionPath,
-    focus: StageNode?, onNode: (PathSection) -> Unit, relayLink: LinkFill? = null) {
+    focus: StageNode?, onNode: (PathSection) -> Unit, layout: StageLayout, relayLink: LinkFill? = null) {
     val motion = LocalRelayMotion.current
     val view = LocalView.current
     val centerNode = node == StageNode.RELAY
@@ -157,7 +192,7 @@ import org.openxplay.direlay.ui.*
             drawContent()
         }
     } else Modifier
-    Box(Modifier.size(if (centerNode) 64.dp else 56.dp).graphicsLayer {
+    Box(Modifier.size(if (centerNode) layout.relayTile else layout.outerTile).graphicsLayer {
         // Per-draw alpha: an offscreen layer would clip the badge and the completion ring to the tile.
         compositingStrategy = CompositingStrategy.ModulateAlpha
         alpha = strength.value * arrival.value
@@ -165,7 +200,7 @@ import org.openxplay.direlay.ui.*
         scaleX = scale.value * arrivingScale
         scaleY = scale.value * arrivingScale
         translationX = shake.value * density + if (centerNode) 0f else
-            (if (node == StageNode.IPHONE) 24f else -24f) * density * (1f - arrival.value)
+            (if (layout == StageLayout.HORIZONTAL && node == StageNode.IPHONE) 24f else -24f) * density * (1f - arrival.value)
     }.then(progressRing).drawWithContent {
         if (ring.value < 1f) drawRoundRect(ok.copy(alpha = .4f * (1f - ring.value)),
             topLeft = Offset(-20.dp.toPx() * ring.value, -20.dp.toPx() * ring.value),
@@ -176,12 +211,18 @@ import org.openxplay.direlay.ui.*
     }.background(tile, RelayTokens.group).semantics(mergeDescendants = true) { contentDescription = description }
         .clickable(role = Role.Button) { onNode(section) }, contentAlignment = Alignment.Center) {
         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides tint) {
-            Symbol(if (node == StageNode.CAR) R.drawable.symbol_car_front else R.drawable.symbol_smartphone,
-                null, Modifier.size(if (centerNode) 32.dp else 28.dp))
+            Symbol(when (node) {
+                StageNode.IPHONE -> R.drawable.symbol_stage_iphone
+                StageNode.RELAY -> R.drawable.symbol_stage_relay
+                StageNode.CAR -> R.drawable.symbol_car_front
+            },
+                null, Modifier.size(if (centerNode) layout.relayIcon else layout.outerIcon))
         }
-        AnimatedContent(state, Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp),
+        AnimatedContent(state.takeIf { stageBadgeVisible(it) }, Modifier.align(Alignment.TopEnd)
+            // This phone's badge clears the progress ring, which sits 4 dp outside the tile.
+            .offset(x = if (centerNode) 12.dp else 6.dp, y = if (centerNode) (-12).dp else (-6).dp),
             transitionSpec = { transform }, label = "stage badge") { badge ->
-            if (badge != StepState.OK) {
+            if (badge != null) {
                 // The stage owns all bounded motion and feedback, including on older glyph implementations.
                 CompositionLocalProvider(LocalRelayMotion provides false) { StatusGlyph(badge, 20.dp, announce = false) }
             } else Spacer(Modifier.size(20.dp))

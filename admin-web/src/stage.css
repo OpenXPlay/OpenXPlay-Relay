@@ -1,0 +1,35 @@
+/* SPDX-FileCopyrightText: 2026 OpenXPlay.org
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Created by riko chen on 2026-10-30 */
+.connection-stage .stage-link { height: 64px; min-width: 0; background: none; border-radius: 0; }
+.connection-stage .stage-link[data-state=BLOCKED] { background: none; }
+.connection-stage.live .stage-link::after { content: none; animation: none; }
+.stage-link > svg { width: 100%; height: 32px; position: absolute; top: 26px; overflow: visible; }
+.stage-link path { fill: none; stroke-width: 4; stroke-linecap: butt; vector-effect: non-scaling-stroke; }
+.cable-track { stroke: var(--outline); }
+.cable-fill { stroke: var(--state); transition: stroke-dasharray var(--spatial), stroke var(--effects); }
+.stage-link .cable-plug { stroke-width: 6; stroke: var(--state); }
+.stage-link .cable-plug.far[data-complete=false] { stroke: var(--outline); }
+.cable-count { position: absolute; inset: 2px 0 auto; text-align: center; font: var(--footnote); font-variant-numeric: tabular-nums; color: var(--secondary); transition: opacity var(--effects); }
+.cable-count[data-live] { opacity: 0; }
+.cable-spark, .cable-pulse { fill: var(--state); pointer-events: none; }
+.stage-tile.relay > .relay-progress { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); overflow: visible; pointer-events: none; transform: rotate(-90deg); }
+.relay-progress circle { fill: none; stroke: var(--outline); stroke-width: 2; }
+.relay-progress .relay-fill { stroke: var(--state); transition: stroke-dasharray var(--spatial); }
+.stage-page .drawer-handle { flex-direction: column; gap: 10px; min-height: 72px; padding: 12px 24px; }
+.drawer-handle .drawer-segments { width: 100%; }
+.drawer-hint { display: flex; align-items: center; width: 100%; gap: 12px; color: var(--secondary); font: var(--footnote); }
+.drawer-hint > span:first-child { flex: 1; text-align: start; }
+.drawer-count { font-variant-numeric: tabular-nums; }
+#stage-notice { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: color-mix(in srgb, var(--ok) 12%, var(--surface)); border-radius: 999px; }
+#stage-notice > svg:last-child { transform: rotate(180deg); }
+#stage-notice[hidden] { display: none; }
+#stage-notice svg { width: 18px; height: 18px; flex-shrink: 0; }
+.identity-file { display: grid; gap: 8px; margin-block: 12px; }
+.identity-file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.identity-file:focus-within .pill { outline: 2px solid var(--text); outline-offset: 3px; }
+.identity-file .pill { justify-self: start; cursor: pointer; }
+.identity-file-name { overflow-wrap: anywhere; font: var(--footnote); color: var(--secondary); }
+@media (prefers-reduced-motion: reduce) {
+  .stage-link *, .relay-progress *, .drawer-hint { animation: none !important; transition: none !important; }
+}

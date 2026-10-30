@@ -14,7 +14,7 @@ import { presentPath } from '../src/path/present-path';
 it.each(['en', 'zh-CN'] as const)('offers the five modes in a top-level Tesla page with formatted hints (%s)', language => {
   const t = (key: string, params?: Record<string, string | number>) => translate(language, key, params);
   expect(normalizeRoute('#settings/tesla')).toBe('settings/tesla');
-  expect(pageAvailable(linuxSettings, linuxStatusFixtures.ready, 'settings/tesla')).toBe(true);
+  expect(pageAvailable({ ...linuxSettings, values: { ...linuxSettings.values, carBrand: 'tesla' } }, linuxStatusFixtures.ready, 'settings/tesla')).toBe(true);
   const fields = pageFields(linuxSettings, 'settings/tesla');
   const mode = fields.find(f => f.key === 'teslaBrowser')!;
   expect(mode.options?.map(o => o.value)).toEqual(['teslamirror', 'virtual-name', 'public-address', 'tesla-android', 'off']);

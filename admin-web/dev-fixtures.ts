@@ -2,8 +2,60 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
-import type { Status } from './src/api';
+import { readFileSync, readdirSync } from 'node:fs';
+import type { Phone, Status } from './src/api';
+import type { Option, Settings, Values } from './src/schema';
 import { normalizeInput, type PathInput } from './src/path/model';
+const fixtureRoot = new URL('./tests/fixtures/linux/', import.meta.url);
+const readSettings = (name: string): Settings => JSON.parse(readFileSync(new URL(name, fixtureRoot), 'utf8'));
+export const linuxSettings = readSettings('settings.json');
+const linuxCarlinkSettings = readSettings('settings-carlink.json');
+const linuxUsbSettings = readSettings('settings-usb.json');
+export const linuxStatusFixtures: Record<string, Status> = Object.fromEntries(readdirSync(fixtureRoot).filter(name => name.startsWith('status-') && name.endsWith('.json')).sort().map(name => [name.slice(7, -5), JSON.parse(readFileSync(new URL(name, fixtureRoot), 'utf8')) as Status]));
+export function linuxFixtureStatus(state: string, now = Date.now()): Status {
+  const alias: Record<string, string> = { live: 'live-browser', working: 'shared-wifi', failure: 'iphone-failure', error: 'iphone-failure', fresh: 'idle', 'no-iphone': 'pairing', 'feature-empty': 'ready', 'feature-error': 'ready' };
+  const status = structuredClone(linuxStatusFixtures[alias[state] ?? state] ?? linuxStatusFixtures.ready);
+  const old = status.pathInput!.nowMillis!;
+  const shift = (value: unknown): void => { if (!value || typeof value !== 'object') return; for (const [key, child] of Object.entries(value)) { if (key.endsWith('Millis') && typeof child === 'number' && !['remainingMillis', 'elapsedMillis'].includes(key)) (value as Record<string, unknown>)[key] = child + now - old; else shift(child); } };
+  shift(status.pathInput);
+  if (status.pairingDeadline != null) status.pairingDeadline += (now - old) / 1000;
+  if (status.carlink?.pinDeadline != null) status.carlink.pinDeadline += (now - old) / 1000;
+  return status;
+}
+export function linuxFixtureSettings(status: Status): Settings {
+  const input = normalizeInput(status.pathInput);
+  const settings = structuredClone(input.setup.network === 'USB' ? linuxUsbSettings : input.setup.outputs.includes('CARLINK') ? linuxCarlinkSettings : linuxSettings);
+  Object.assign(settings.values, { output: status.output, transport: input.setup.network === 'USB' ? 'usb' : 'wireless', networkMode: status.network.mode,
+    autoStart: input.startup?.automatic, bootStart: input.startup?.bootStart, teslaBrowser: input.setup.outputs.includes('TESLA') ? 'public' : 'off' });
+  return settings;
+}
+// Use the same embedded catalog as Rust; model/year options depend on the saved selection.
+interface CarRow { id: string; names: NonNullable<Option['labels']> }
+const carModels = JSON.parse(readFileSync(new URL('../android/app/src/main/assets/car-models.json', import.meta.url), 'utf8')) as { brands: (CarRow & { models: (CarRow & { years: CarRow[] })[] })[] };
+export function linuxCarSettings(settings: Settings, changes: Values = {}): Settings {
+  const next = structuredClone(settings);
+  for (const [key, descendants] of [['carBrand', ['carBrandText', 'carModel', 'carModelText', 'carYear', 'carYearText']], ['carModel', ['carModelText', 'carYear', 'carYearText']], ['carYear', ['carYearText']]] as const) {
+    if (key in changes && changes[key] !== settings.values[key]) for (const child of descendants) if (!(child in changes)) next.values[child] = '';
+  }
+  Object.assign(next.values, changes);
+  if (next.values.carBrand === 'other') next.values.carModel = next.values.carYear = 'other';
+  if (next.values.carModel === 'other') next.values.carYear = 'other';
+  const brand = carModels.brands.find(row => row.id === next.values.carBrand);
+  const model = brand?.models.find(row => row.id === next.values.carModel);
+  const rows: Record<string, CarRow[]> = { carBrand: carModels.brands, carModel: brand?.models ?? [], carYear: model?.years ?? [] };
+  for (const field of next.schema.flatMap(section => section.fields)) if (rows[field.key]) field.options = [
+    { value: '', labelKey: `option.${field.key}.` }, ...rows[field.key].map(row => ({ value: row.id, labelKey: '', labels: row.names })), { value: 'other', labelKey: `option.${field.key}.other` },
+  ];
+  return next;
+}
+export function mockPhones(status?: Status): Phone[] {
+  const phone: Phone = { id: 'iphone-riko', name: "Riko's iPhone", kind: 'phone', connected: true, likelyIphone: true, selected: false };
+  if (!status) return [phone, { id: 'car', name: 'Car audio', kind: 'car', connected: false, likelyIphone: false, selected: false }, { id: 'headphones', name: 'Headphones', kind: 'other', connected: false, likelyIphone: false, selected: false }];
+  const input = normalizeInput(status.pathInput);
+  if (['NONE', 'UNPAIRED'].includes(input.iphone.pick)) return [];
+  phone.name = input.iphone.name ?? status.iphone.name ?? 'iPhone'; phone.connected = input.live.pictureOnCar;
+  return input.iphone.pick === 'MULTIPLE' ? [phone, { ...phone, id: 'iphone-second', name: 'Second iPhone', connected: false }] : [phone];
+}
 const previewEpoch = Date.now();
 export const STAGE_STATES = ['idle', 'ready', 'pairing', 'carlink-scanning', 'carlink-pin', 'failure', 'car-first-wait', 'live', 'arrival', 'armed', 'identity-missing', 'bluetooth-off', 'wifi-off', 'multiple-iphones', 'unpaired-iphone', 'carlink-confirm', 'carlink-pin-rejected', 'startup-bluetooth', 'startup-auth', 'startup-wifi', 'startup-session', 'display-changed', 'feature-empty', 'feature-error'] as const;
 /** The same facts contract is used for Android and Linux previews. */

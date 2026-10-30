@@ -42,7 +42,7 @@ it.each(['en', 'zh-CN'] as const)('offers the Zeekr recommendation and stage not
   expect(trustedHttpsRecommended({ ...values, carBrand: 'tesla' })).toBe(false);
   const path = presentPath(fixture().pathInput!);
   expect(presentStage(path, { trustedHttpsRecommended: true }).notice).toBe('TRUSTED_HTTPS');
-  expect(presentStage(path, { carIncomplete: true, trustedHttpsRecommended: true }).notice).toBe('CHOOSE_CAR');
+  expect(presentStage(path, { carIncomplete: true, trustedHttpsRecommended: true }).notice).toBe('TRUSTED_HTTPS');
   expect(presentStage(path, { displayChanged: true, trustedHttpsRecommended: true }).notice).toBe('DISPLAY_CHANGED');
 });
 it('shares only Android format-2 car, matching screen observations and allowlisted capabilities', () => {

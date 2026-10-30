@@ -8,7 +8,7 @@ import type { Status } from '../src/api';
 import { linuxStatusFixtures, mockSettings } from '../dev-server';
 import { translate } from '../src/i18n';
 import { diagnosticsView } from '../src/diagnostics';
-import { menuSummary } from '../src/settings-tree';
+import { autoFrameRateSummary, menuSummary } from '../src/settings-tree';
 const t = (key: string, parameters?: Record<string, string | number>) => translate('en', key, parameters);
 const counters = (frames = 0, bytes = 0, dropped = 0, placeholders = 0, stalls = 0, relayDropped = 0): VideoCounters => ({ frames, bytes, dropped, placeholders, stalls, relayDropped });
 const fixture = (): Status => ({ ...structuredClone(linuxStatusFixtures['live-browser']), output: 'both',
@@ -113,7 +113,9 @@ it('presents retained diagnostics without turning them into live browsers and re
   expect(html).toContain('Detected screen data'); expect(html).toContain('Recent involuntary fullscreen exits');
   expect(html).toContain('&lt;script&gt;'); expect(html).toContain('denied');
   const settings = mockSettings(true); settings.values.frameRate = 'auto';
-  expect(menuSummary(settings, status, 'settings/picture', 'en', t)).toContain('Auto · 60 fps');
+  expect(autoFrameRateSummary(status, t)).toBe('Auto · 60 fps');
+  expect(menuSummary(settings, status, 'settings/picture', 'en', t)).toBe('');
   status.running = false; status.video!.active = false;
-  expect(menuSummary(settings, status, 'settings/picture', 'en', t)).toContain('Auto · 55 fps');
+  expect(autoFrameRateSummary(status, t)).toBe('Auto · 55 fps');
+  expect(menuSummary(settings, status, 'settings/picture', 'en', t)).toBe('');
 });

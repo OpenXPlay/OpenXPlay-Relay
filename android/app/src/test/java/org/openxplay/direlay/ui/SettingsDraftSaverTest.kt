@@ -42,6 +42,21 @@ class SettingsDraftSaverTest {
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
 
+    @Test fun highPerformanceSurvivesParcelRoundTripAndOlderDraftsKeepTheBaseChoice() {
+        for (highPerformance in listOf(false, true)) {
+            val chosen = base.copy(highPerformance = highPerformance)
+            val saved = bundle(chosen)
+            assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
+            val parcel = Parcel.obtain()
+            try {
+                parcel.writeBundle(saved); parcel.setDataPosition(0)
+                assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
+            } finally { parcel.recycle() }
+            val old = bundle(base).apply { remove("highPerformance") }
+            assertEquals(chosen, relaySettingsSaver(chosen).restore(old))
+        }
+    }
+
     @Test fun wirelessPictureChoicesUseOwnKeysAndSurviveParcelRoundTrip() {
         for (mode in WirelessPictureMode.entries) for (stretch in listOf(false, true)) {
             val chosen = base.copy(wirelessPicture = mode, wirelessPictureSize = WirelessPictureSize(1920, 720), miracastStretch = stretch)

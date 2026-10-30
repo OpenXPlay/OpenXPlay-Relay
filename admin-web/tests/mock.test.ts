@@ -6,7 +6,12 @@ import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Connect, ViteDevServer } from 'vite';
 import { expect, it, vi } from 'vitest';
-import { mockApi } from '../dev-server';
+import { readFileSync, readdirSync } from 'node:fs';
+import { mockApi, linuxFixtureStatus, linuxStatusFixtures } from '../dev-server';
+import { presentPath } from '../src/path/present-path';
+import { presentStage } from '../src/path/present-stage';
+import { stepDetailsView } from '../src/step-details';
+import { relayTranslate } from '../src/i18n';
 
 function relay(linux = false, state?: string, peer = '127.0.0.1') {
   let handler: Connect.NextHandleFunction;
@@ -14,10 +19,11 @@ function relay(linux = false, state?: string, peer = '127.0.0.1') {
   const configure = plugin.configureServer as (server: ViteDevServer) => void;
   configure({ middlewares: { use: (callback: Connect.NextHandleFunction) => { handler = callback; } } } as unknown as ViteDevServer);
   let cookie = '';
-  return async (path: string, method = 'GET', body: unknown = {}, guard = true) => {
+  let platform = linux ? 'linux' : 'android';
+  const call = async (path: string, method = 'GET', body: unknown = {}, guard = true) => {
     const req = Readable.from([JSON.stringify(body)]) as IncomingMessage;
-    req.url = `/api/v0${path}`; req.method = method;
-    req.headers = { cookie, ...(state ? { referer: `http://localhost/?state=${state}` } : {}), ...(guard ? { 'content-type': 'application/json', 'x-openxplay-admin': '1' } : {}) };
+    req.url = path === '/states' ? path : `/api/v0${path}`; req.method = method;
+    req.headers = { cookie, ...(state ? { referer: `http://localhost/?platform=${platform}&state=${state}` } : {}), ...(guard ? { 'content-type': 'application/json', 'x-openxplay-admin': '1' } : {}) };
     Object.defineProperty(req, 'socket', { value: { remoteAddress: peer } });
     const headers: Record<string, string> = {};
     return new Promise<{ status: number; data: any; headers: Record<string, string> }>((resolve, reject) => {
@@ -28,6 +34,7 @@ function relay(linux = false, state?: string, peer = '127.0.0.1') {
       handler(req, res as unknown as ServerResponse, error => reject(error ?? new Error('unhandled route')));
     });
   };
+  return Object.assign(call, { preview: (next: string, nextPlatform = 'linux') => { state = next; platform = nextPlatform; } });
 }
 it('walks password login, change, logout and login with the new password', async () => {
   const call = relay();
@@ -178,7 +185,7 @@ it.each(['working', 'hotspot'])('keeps the %s preview settings aligned with stat
   vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
   try {
     const call = relay(true, state); const settings = (await call('/settings')).data;
-    expect(settings.values.sharedWifiNetworks).toHaveLength(2);
+    expect(settings.values.sharedWifiNetworks).toEqual(state === 'working' ? [{ ssid: 'Car Wi-Fi', hasPassword: false, current: true }] : []);
     expect(settings.values.sharedWifiNetworks.filter((entry: { current: boolean }) => entry.current)).toHaveLength(state === 'working' ? 1 : 0);
     expect((await call('/status')).data).toMatchObject(state === 'working' ? { network: { mode: 'shared-wifi', wifi: 'Car Wi-Fi' } } : { platform: 'linux', wifiControl: true, network: { mode: 'device-hotspot', wifi: null }, hotspot: { ip: '10.42.0.1', active: true } });
   } finally { vi.unstubAllEnvs(); }
@@ -308,7 +315,8 @@ it.each([false, true])('exports valid log ZIPs, retains a receipt and previews b
   expect(privacy.format).toBe('openxplay-privacy-config'); expect(privacy).not.toHaveProperty('settings');
   const preview = await call('/config/import?dryRun=1', 'POST', privacy); expect(preview.data).toMatchObject({ applied: ['providers'], ignored: ['futurePrivate'] }); expect((await call('/config/privacy')).data).not.toHaveProperty('providers');
   await call('/config/import', 'POST', privacy); expect((await call('/config/privacy')).data.providers).toEqual(privacy.providers);
-  expect((await call('/update?channel=stable')).data).toMatchObject({ current: '0.2.1', latest: '0.2.1', channel: 'stable' }); expect((await call('/update?channel=beta')).data.latest).toContain('beta');
+  const version = linux ? linuxStatusFixtures.ready.version : '0.2.1';
+  expect((await call('/update?channel=stable')).data).toMatchObject({ current: version, latest: version, channel: 'stable' }); expect((await call('/update?channel=beta')).data.latest).toContain('beta');
 });
 it('caps log exports at two files and rejects invalid import envelopes and oversized files', async () => {
   const call = relay(true); await call('/login', 'POST', { password: 'openxplay' });
@@ -458,4 +466,130 @@ it.each(['pairing', 'fresh'])('reports %s with no paired phones without breaking
   vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
   try { const call = relay(true, state); const status = (await call('/status')).data; expect(status.iphone.name).toBeNull(); expect(status.pathInput.iphone.pick).toBe('NONE'); expect((await call('/phones')).data).toEqual([]); }
   finally { vi.unstubAllEnvs(); }
+});
+
+const fixtureRoot = new URL('./fixtures/linux/', import.meta.url);
+const fixtureStates = readdirSync(fixtureRoot).filter(name => name.startsWith('status-') && name.endsWith('.json')).sort().map(name => name.slice(7, -5));
+it.each(fixtureStates)('renders the complete Linux %s fixture through the preview', async state => {
+  const fixture = JSON.parse(readFileSync(new URL(`status-${state}.json`, fixtureRoot), 'utf8'));
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(fixture.pathInput.nowMillis);
+  try {
+    const call = relay(true, state);
+    const response = await call('/status');
+    expect(response.status).toBe(200);
+    expect(response.data).toMatchObject(fixture);
+    const path = presentPath(response.data.pathInput), original = presentPath(fixture.pathInput);
+    expect(presentStage(path)).toEqual(presentStage(original));
+    for (const language of ['en', 'zh-CN'] as const) {
+      const t = (key: string, args?: Record<string, string | number>) => relayTranslate(language, key, args);
+      const render = (value: typeof path) => value.sections.flatMap(section => section.steps).map(step => stepDetailsView(step, response.data.receiverUrls, 'linux', t));
+      expect(render(path)).toEqual(render(original));
+    }
+    const settings = (await call('/settings')).data;
+    expect(settings.values.transport).toBe(fixture.pathInput.setup.network === 'USB' ? 'usb' : 'wireless');
+    expect(settings.values.networkMode).toBe(fixture.network.mode);
+    expect(settings.values.output).toBe(fixture.output);
+    expect(settings.values.teslaBrowser === 'off').toBe(!fixture.pathInput.setup.outputs.includes('TESLA'));
+    const phones = (await call('/phones')).data;
+    expect(phones).toHaveLength(['NONE', 'UNPAIRED'].includes(fixture.pathInput.iphone.pick) ? 0 : fixture.pathInput.iphone.pick === 'MULTIPLE' ? 2 : 1);
+    if (fixture.pathInput.iphone.pick === 'PICKED' && fixture.pathInput.iphone.name) expect(phones[0].name).toBe(fixture.pathInput.iphone.name);
+    expect((await call('/status')).data).toMatchObject(fixture);
+    if (state === 'pairing') { clock.mockReturnValue(fixture.pathInput.nowMillis + 2000); expect((await call('/status')).data.pairingRemaining).toBe(598); }
+  } finally { clock.mockRestore(); vi.unstubAllEnvs(); }
+});
+it('links every generated Linux status in the gallery and retains Android stage links', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try {
+    const gallery = String((await relay(true)('/states')).data);
+    for (const state of fixtureStates) expect(gallery).toContain(`href="/?platform=linux&state=${state}"`);
+    expect(gallery).toContain('href="/?platform=android&state=live"');
+  } finally { vi.unstubAllEnvs(); }
+});
+it('resets phones, pairing, edits and platform facts when switching preview states', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(1793000000000);
+  try {
+    const call = relay(true, 'multiple-iphones');
+    await call('/settings', 'PUT', { iphone: 'iphone-second', output: 'carlink' });
+    await call('/actions/pair-iphone', 'POST'); clock.mockReturnValue(1793000002100);
+    expect((await call('/phones')).data).toHaveLength(3);
+    call.preview('pairing'); expect((await call('/phones')).data).toEqual([]);
+    call.preview('ready');
+    expect((await call('/phones')).data.map((phone: { name: string }) => phone.name)).toEqual(['iPhone']);
+    const ready = (await call('/status')).data;
+    expect(ready.pathInput.iphone).toMatchObject({ pick: 'PICKED', name: 'iPhone' });
+    expect(ready.pathInput.setup.outputs).toEqual(['BROWSER']); expect(ready.pairingDeadline).toBeNull();
+    call.preview('ready', 'android');
+    expect((await call('/phones')).data.map((phone: { kind: string }) => phone.kind)).toEqual(['phone', 'car', 'other']);
+    expect((await call('/status')).data).toMatchObject({ platform: 'android', version: '0.2.1' });
+    call.preview('ready'); expect((await call('/phones')).data).toHaveLength(1);
+  } finally { clock.mockRestore(); vi.unstubAllEnvs(); }
+});
+it.each(['usb', 'carlink'])('seeds the %s settings from the generated Linux fixture', async kind => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try {
+    const call = relay(true, kind === 'usb' ? 'usb-video' : 'live-carlink');
+    const fixture = JSON.parse(readFileSync(new URL(`settings-${kind}.json`, fixtureRoot), 'utf8'));
+    const settings = (await call('/settings')).data;
+    expect(settings.schema).toEqual(fixture.schema);
+    for (const key of ['carBrand', 'carModel', 'carYear', 'transport']) expect(settings.values[key]).toBe(fixture.values[key]);
+  } finally { vi.unstubAllEnvs(); }
+});
+it('refreshes Linux model/year choices, clears descendants and rejects invalid choices atomically', async () => {
+  const call = relay(true); await call('/login', 'POST', { password: 'openxplay' });
+  const options = (settings: any, key: string) => settings.schema.flatMap((section: any) => section.fields).find((field: any) => field.key === key).options;
+  const selectedFixture = JSON.parse(readFileSync(new URL('settings-carlink.json', fixtureRoot), 'utf8'));
+  expect((await call('/settings', 'PUT', { carBrand: 'xpeng', carModel: 'g6', carYear: 'g6-2023' })).status).toBe(200);
+  let settings = (await call('/settings')).data;
+  for (const key of ['carBrand', 'carModel', 'carYear']) expect(options(settings, key)).toEqual(options(selectedFixture, key));
+  expect((await call('/settings', 'PUT', { carBrand: 'zeekr' })).status).toBe(200);
+  settings = (await call('/settings')).data;
+  expect(settings.values).toMatchObject({ carBrand: 'zeekr', carModel: '', carYear: '' });
+  expect(options(settings, 'carModel').some((option: any) => option.value === '001' && option.labels.en === '001')).toBe(true);
+  expect(options(settings, 'carModel').some((option: any) => option.value === 'g6')).toBe(false);
+  expect((await call('/settings', 'PUT', { carModel: 'g6', autoStart: false })).status).toBe(422);
+  expect((await call('/settings')).data).toEqual(settings);
+  expect((await call('/settings', 'PUT', { carModel: '001', carYear: '001-2021' })).status).toBe(200);
+  expect((await call('/settings', 'PUT', { carBrand: 'tesla' })).status).toBe(200);
+  settings = (await call('/settings')).data;
+  expect(settings.values.carYear).toBe(''); expect(options(settings, 'carModel').some((option: any) => option.value === 'model-3')).toBe(true);
+  expect((await call('/settings', 'PUT', { carBrand: 'other', carBrandText: 'Example', carModelText: 'Custom' })).status).toBe(200);
+  expect((await call('/settings')).data.values).toMatchObject({ carBrand: 'other', carModel: 'other', carYear: 'other', carBrandText: 'Example', carModelText: 'Custom' });
+  await call('/config/import', 'POST', { format: 'openxplay-user-config', version: 1, settings: { carBrand: 'xpeng', carModel: 'g6', carYear: 'g6-2023' } });
+  expect(options((await call('/settings')).data, 'carYear')).toEqual(options(selectedFixture, 'carYear'));
+  await call('/config/import', 'POST', { format: 'openxplay-user-config', version: 1, settings: { carBrand: 'tesla' } });
+  expect((await call('/settings')).data.values).toMatchObject({ carBrand: 'tesla', carModel: '', carYear: '' });
+});
+it('preserves USB and Tesla facts during unrelated preview saves and output changes', async () => {
+  vi.stubEnv('DIRELAY_PREVIEW_STATES', '1');
+  try {
+    const call = relay(true, 'usb-trust');
+    await call('/settings', 'PUT', { frameRate: '30' });
+    expect((await call('/status')).data.pathInput.setup.network).toBe('USB');
+    call.preview('tesla-ready');
+    await call('/settings', 'PUT', { frameRate: '30', output: 'carlink' });
+    expect((await call('/status')).data.pathInput.setup.outputs).toEqual(['CARLINK', 'TESLA']);
+    await call('/settings', 'PUT', { teslaBrowser: 'off' });
+    expect((await call('/status')).data.pathInput.setup.outputs).toEqual(['CARLINK']);
+  } finally { vi.unstubAllEnvs(); }
+});
+it('rebases fixture timestamps without shifting durations or mutating the source', () => {
+  const source = structuredClone(linuxStatusFixtures.arrival), old = source.pathInput!.nowMillis!;
+  const status = linuxFixtureStatus('arrival', old + 60000);
+  expect(status.pathInput!.nowMillis).toBe(old + 60000);
+  expect(status.pathInput!.startup!.arrival.deadlineMillis).toBe(old + 65000);
+  expect(status.pathInput!.startup!.arrival.remainingMillis).toBe(5000);
+  const pin = linuxStatusFixtures['carlink-pin'];
+  expect(linuxFixtureStatus('carlink-pin', pin.pathInput!.nowMillis! + 60000).carlink!.pinDeadline).toBe(pin.carlink!.pinDeadline! + 60);
+  expect(linuxStatusFixtures.arrival).toEqual(source);
+});
+it.each([true, false])('uses platform versions consistently in status, updates and exports (Linux %s)', async linux => {
+  const call = relay(linux); await call('/login', 'POST', { password: 'openxplay' });
+  const version = linux ? linuxStatusFixtures.idle.version : '0.2.1';
+  expect((await call('/status')).data.version).toBe(version);
+  expect((await call('/config/user')).data.appVersion).toBe(version);
+  expect((await call('/update?channel=stable')).data.current).toBe(version);
+  const file = (await call('/logs/export', 'POST', { range: '10m' })).data;
+  expect(String((await call('/logs/export/' + file.id)).data)).toContain(`version=${version}`);
 });

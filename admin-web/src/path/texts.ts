@@ -111,3 +111,18 @@ const failures: Record<string, string> = {
   "display_lost": "miracast_error_display"
 };
 export function failureExplanation(code: string | null): string | null { return code ? failures[code] ?? (code.startsWith('wifi_join_') ? 'path_explain_wifi_join' : null) : null; }
+
+const linuxFailures: Record<string, string> = {
+  carlink_not_ready: 'path_explain_carlink_not_ready',
+  iphone_unplugged: 'path_explain_iphone_unplugged',
+  usb_interface_busy: 'path_explain_usb_interface_busy',
+};
+export function linuxFailureExplanation(code: string): string | null { return linuxFailures[code] ?? failureExplanation(code); }
+export function failureHeadline(code: string): string {
+  if (code === 'carlink_not_ready') return 'path_failed_carlink_not_ready';
+  if (code === 'iphone_unplugged') return 'path_failed_iphone_unplugged';
+  if (code === 'usb_interface_busy') return 'path_failed_usb_interface_busy';
+  if (code === 'first_tcp_timeout') return 'path_iphone_did_not_join';
+  if (code.startsWith('ble_') || code.startsWith('gatt_') || ['carlink_blocked', 'projection_timeout', 'auth_rejected', 'auth_timeout', 'peer_key_changed', 'pin_cancelled'].includes(code)) return 'path_link_failed';
+  return 'path_failed_unknown';
+}

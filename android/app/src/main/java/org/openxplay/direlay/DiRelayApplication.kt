@@ -52,15 +52,21 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
 
     private var networkTimeline: org.openxplay.direlay.logs.NetworkTimeline? = null
     private var watchdog: org.openxplay.direlay.logs.RelayWatchdog? = null
+    @Volatile private var connectionContext: org.openxplay.direlay.logs.AndroidConnectionContext? = null
     @Volatile private var startedActivities = 0
     override fun onCreate() {
-        val connectionLog = org.openxplay.direlay.logs.ConnectionLog()
+        val connectionLog = org.openxplay.direlay.logs.ConnectionLog(context = {
+            connectionContext?.snapshot()?.line() ?: org.openxplay.direlay.logs.ConnectionContext().line()
+        })
         connectionLog.event("relay", "process_start")
         super.onCreate()
         installOutOfMemoryDump()
         keepAlive = AndroidRelayKeepAlive(this)
         runtime = RelayRuntime(this, pairing = PairingWindow(AndroidBluetoothVisibility(this, ::showRelayScreen)),
             keepAlive = keepAlive, connectionLog = connectionLog)
+        connectionContext = org.openxplay.direlay.logs.AndroidConnectionContext(this,
+            target = { runtime.iphoneSelection().address },
+            active = { runtime.autoStartSessions.tracker.running }).also { it.start() }
         // Log recording must never stop the relay itself.
         if (android.os.Build.VERSION.SDK_INT < 28 || Application.getProcessName() == packageName) runCatching {
             runtime.logs.start()
@@ -167,6 +173,7 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
         if (android.os.Build.VERSION.SDK_INT < 28 || Application.getProcessName() == packageName) runCatching { runtime.logs.recorder.close() }
         runCatching { networkTimeline?.close() }
         runCatching { watchdog?.close() }
+        runCatching { connectionContext?.close() }
         runtime.close()
         super.onTerminate()
     }
