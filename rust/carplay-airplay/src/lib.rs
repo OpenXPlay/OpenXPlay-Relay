@@ -76,6 +76,8 @@ pub mod srp6a;
 pub mod stream_receive_stats;
 /// tlv8 codec protocol module.
 pub mod tlv8_codec;
+/// Host-polled Bluetooth handoff and bounded session recovery policies.
+pub mod wireless_handoff_policy;
 
 pub use air_play_config::AirPlayConfig;
 pub use air_play_config::AirPlayDisplayConfig;

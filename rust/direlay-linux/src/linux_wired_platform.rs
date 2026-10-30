@@ -181,6 +181,7 @@ impl WiredPlatform for LinuxWiredPlatform {
             String::new(),
             self.input.configure_session(),
             self.options.settings.car_bluetooth_audio,
+            crate::carplay_policy::iap_channel_only_when_offered(&self.input.connection_settings()),
         );
         self.input.configure_display(&mut config.main);
         config.port = 7000;
@@ -198,6 +199,7 @@ impl WiredPlatform for LinuxWiredPlatform {
                 on_air_play: callbacks.on_air_play,
                 on_tunnel_ready: Arc::new(|| {}),
                 on_failure: callbacks.on_failure,
+                on_session: None,
             },
             closed: closed.clone(),
             input: Some((self.input.clone(), self.sink.clone(), self.events.clone())),
