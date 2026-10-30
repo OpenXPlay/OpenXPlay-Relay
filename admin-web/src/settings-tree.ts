@@ -26,7 +26,7 @@ export const pageKeys: Record<string, string[]> = {
   'developer/connection': ['carlinkModel', 'receiverPort', 'rfcommChannel', 'hotspotChannel', 'hotspotSecurity', 'wifiChannel', 'devicePreset', 'playCarPlayAudio', 'microphoneSourceEnabled', 'microphoneSource'],
   'identity': ['identity', 'identitySource', 'tlsCertificate', 'mfiTarget', 'mfiI2cPath', 'mfiRemoteServer', 'mfiRemoteToken'],
   developer: ['developerActive'],
-  'experimental': ['experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
+  'experimental': ['experimentalIapChannelWhenOffered', 'experimentalReleaseBluetoothOnRequest', 'experimentalAwaitIphoneReconnect', 'experimentalRadioConflictPrompt', 'experimentalStallWatchdog', 'experimentalScreenSessionIsolation', 'experimentalScreenReconnectReset', 'experimentalScreenDeliverySerialization', 'experimentalRemotePlaybackProof', 'experimentalStartupStatus', 'experimentalStartupDiagnostics', 'experimentalActive', 'experimentalSendBluetoothAddress', 'experimentalBluetoothAddress'],
 };
 export function fieldEnabled(key: string, values: Settings['values']): boolean {
   if (key === 'microphoneSource' && values.microphoneSourceEnabled === false) return false;
