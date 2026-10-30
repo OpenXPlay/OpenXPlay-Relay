@@ -19,12 +19,11 @@ import org.openxplay.stream.clink.ClinkPictureSize
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class UserConfigCodecTest {
-    @Test fun displaySettingsRoundTripAndMissingKeysLoadDefaults() {
-        for (stage3d in listOf(false, true)) for (highPerformance in listOf(false, true)) {
-            val chosen = base.copy(stage3d = stage3d, highPerformance = highPerformance)
+    @Test fun highPerformanceRoundTripsAndMissingKeyDefaultsTrue() {
+        for (highPerformance in listOf(false, true)) {
+            val chosen = base.copy(highPerformance = highPerformance)
             val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
             val json = JSONObject(text).getJSONObject("settings")
-            assertEquals(stage3d, json.getBoolean("stage3d"))
             assertEquals(highPerformance, json.getBoolean("highPerformance"))
             val imported = UserConfigCodec.decode(text, base)
             assertTrue(imported.errors.toString(), imported.errors.isEmpty())
@@ -32,18 +31,16 @@ class UserConfigCodecTest {
             assertEquals(chosen, imported.settings)
             assertEquals(0, UserConfigCodec.decode(text, chosen).changedCount)
         }
-        val missing = UserConfigCodec.decode(wrapped(JSONObject()), base.copy(stage3d = true, highPerformance = false))
+        val missing = UserConfigCodec.decode(wrapped(JSONObject()), base.copy(highPerformance = false))
         assertTrue(missing.errors.toString(), missing.errors.isEmpty())
         assertEquals(base, missing.settings)
-        assertEquals(2, missing.changedCount)
-        assertTrue(decode(JSONObject().put("stage3d", true)).settings.highPerformance)
-        assertFalse(decode(JSONObject().put("highPerformance", false)).settings.stage3d)
+        assertEquals(1, missing.changedCount)
     }
 
-    @Test fun displaySettingsRequireBooleansAndRejectInvalidImportsAtomically() {
-        for (key in listOf("stage3d", "highPerformance")) for (bad in listOf<Any>("true", 1, JSONObject.NULL)) {
-            val result = decode(JSONObject().put(key, bad).put("autoStartOnBoot", true))
-            assertEquals(mapOf(key to "invalid"), result.errors)
+    @Test fun highPerformanceRequiresABooleanAndRejectsInvalidImportsAtomically() {
+        for (bad in listOf<Any>("true", 1, JSONObject.NULL)) {
+            val result = decode(JSONObject().put("highPerformance", bad).put("autoStartOnBoot", true))
+            assertEquals(mapOf("highPerformance" to "invalid"), result.errors)
             assertEquals(base, result.settings)
             assertEquals(0, result.changedCount)
         }
@@ -307,7 +304,7 @@ class UserConfigCodecTest {
     @Test fun populatedRoundTripIncludesAllChoicesWithoutSecrets() {
         val settings = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.CARLINK), connectionMode = ConnectionMode.WIRELESS, mfiTarget = MfiTarget.REMOTE,
             i2cPath = "/dev/i2c-1", remoteServer = "https://mfi.example.org", display = DisplayProfile(1920, 1080, 240),
-            frameRate = FrameRatePreference.FPS_60, autoStartOnBoot = true, autoStartWhenReady = true, stage3d = true, highPerformance = false,
+            frameRate = FrameRatePreference.FPS_60, autoStartOnBoot = true, autoStartWhenReady = true, highPerformance = false,
             localPreview = true, webPort = 8443, carlinkDeviceName = "Relay test", carlinkDeviceModel = "Test model",
             wirelessNetwork = WirelessNetworkSettings(WirelessNetworkChoice.PHONE_HOTSPOT, "Phone", "password1",
                 ManualHotspotBand.GHZ_5, 36, ManualHotspotSecurity.WPA2, listOf(SharedWifiNetwork("Home", "password2"))),

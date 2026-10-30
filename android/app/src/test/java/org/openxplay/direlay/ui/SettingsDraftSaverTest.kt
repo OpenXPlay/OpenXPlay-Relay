@@ -42,9 +42,9 @@ class SettingsDraftSaverTest {
     private val scope = object : SaverScope { override fun canBeSaved(value: Any) = true }
     private fun bundle(value: RelaySettings): Bundle = with(relaySettingsSaver(base)) { requireNotNull(scope.save(value)) }
 
-    @Test fun displaySettingsSurviveParcelRoundTripAndOlderDraftsKeepTheBaseChoices() {
-        for (stage3d in listOf(false, true)) for (highPerformance in listOf(false, true)) {
-            val chosen = base.copy(stage3d = stage3d, highPerformance = highPerformance)
+    @Test fun highPerformanceSurvivesParcelRoundTripAndOlderDraftsKeepTheBaseChoice() {
+        for (highPerformance in listOf(false, true)) {
+            val chosen = base.copy(highPerformance = highPerformance)
             val saved = bundle(chosen)
             assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
             val parcel = Parcel.obtain()
@@ -52,7 +52,7 @@ class SettingsDraftSaverTest {
                 parcel.writeBundle(saved); parcel.setDataPosition(0)
                 assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
             } finally { parcel.recycle() }
-            val old = bundle(base).apply { remove("stage3d"); remove("highPerformance") }
+            val old = bundle(base).apply { remove("highPerformance") }
             assertEquals(chosen, relaySettingsSaver(chosen).restore(old))
         }
     }

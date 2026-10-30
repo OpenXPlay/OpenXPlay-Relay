@@ -163,7 +163,7 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
             background?.showRestriction == true) { open("settings/background") }
         InsetDivider()
         SettingsMenuRow(R.string.display_title, stringResource(R.string.menu_display_summary,
-            menuToggleSummary(draft.stage3d), menuToggleSummary(draft.highPerformance)),
+            menuToggleSummary(draft.highPerformance)),
             R.drawable.symbol_monitor) { open("settings/display") }
     }
     InsetGroup {
