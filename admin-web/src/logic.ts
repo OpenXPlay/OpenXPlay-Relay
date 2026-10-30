@@ -159,9 +159,14 @@ export function switchConsequences(status: Status, settings: Settings, target: s
   const parameters = { wifi: shared ? savedNetworks(settings)[0]?.ssid ?? '' : status.network.wifi ?? '',
     ssid: status.hotspot?.ssid ?? String(settings.values.hotspotSsid ?? '—'),
     password: status.hotspot?.password ?? String(settings.values.hotspotPassword ?? '—'),
-    url: `https://${status.hotspot?.ip || status.host}:${status.adminPort || 6975}` };
+    url: `https://${shared && status.platform === 'linux' ? status.host : status.hotspot?.ip || status.host}:${status.adminPort || 6975}` };
   return { shared, parameters, title: shared ? 'net.confirmShared' : 'net.confirmHotspot',
     action: shared ? 'net.switchShared' : 'net.confirmAction',
     change: shared ? 'net.closeHotspot' : status.network.wifi ? 'net.leaveWifi' : 'net.startHotspot',
     car: shared ? 'net.carShared' : 'net.carPassword', comeback: shared ? 'net.returnShared' : 'net.returnHotspot' };
+}
+
+/** Linux picture updates wait for the next session; only a measured mismatch is a Home notice. */
+export function displayChanged(status: Status, pending: boolean): boolean {
+  return !!status.pathInput?.car?.displayMismatch || status.platform !== 'linux' && pending;
 }

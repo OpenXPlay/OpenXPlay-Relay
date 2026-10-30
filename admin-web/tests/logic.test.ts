@@ -162,3 +162,21 @@ it('keeps the mode-switch car instruction free of plaintext passwords in both la
   expect(translate('en', consequences.car, consequences.parameters)).toBe('The car screen must join this hotspot (name and password below).');
   expect(translate('zh-CN', consequences.car, consequences.parameters)).toBe('车机需要连接这个热点（名称和密码见下方）。');
 });
+
+import { displayChanged } from '../src/logic';
+it('returns to the stable Linux host after shared Wi-Fi replaces the hotspot', () => {
+  const status = networkStatus('hotspot'), settings = mockSettings(true);
+  status.host = 'my-relay.local'; status.adminPort = 7001;
+  expect(switchConsequences(status, settings, 'shared-wifi').parameters.url).toBe('https://my-relay.local:7001');
+  expect(switchConsequences(status, settings, 'device-hotspot').parameters.url).toContain('10.42.0.1');
+  status.platform = 'android';
+  expect(switchConsequences(status, settings, 'shared-wifi').parameters.url).toContain('10.42.0.1');
+});
+it('shows a Linux display notice only for a measured mismatch, preserving Android pending notices', () => {
+  const status = networkStatus();
+  expect(displayChanged(status, true)).toBe(false);
+  status.pathInput!.car!.displayMismatch = true;
+  expect(displayChanged(status, false)).toBe(true);
+  status.pathInput!.car!.displayMismatch = false; status.platform = 'android';
+  expect(displayChanged(status, true)).toBe(true);
+});
