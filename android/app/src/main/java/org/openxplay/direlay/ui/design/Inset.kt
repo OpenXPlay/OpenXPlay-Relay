@@ -44,6 +44,17 @@ import org.openxplay.direlay.ui.Symbol
     }
 }
 
+@Composable fun InsetTip(text: String, modifier: Modifier = Modifier) {
+    Surface(modifier.fillMaxWidth(), shape = RelayTokens.group, color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
+        Row(Modifier.padding(16.dp).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Symbol(R.drawable.symbol_info, null, Modifier.size(20.dp))
+            Text(text, Modifier.weight(1f), style = RelayTokens.callout)
+        }
+    }
+}
+
 /** True when title and value both fit on one line, whole, beside each other. */
 internal fun valueFitsInline(titleWidth: Int, valueWidth: Int, gap: Int, available: Int): Boolean =
     titleWidth.toLong() + valueWidth + gap <= available
