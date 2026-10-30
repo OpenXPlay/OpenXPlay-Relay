@@ -26,6 +26,7 @@ import org.openxplay.direlay.ui.*
     var busy by rememberSaveable { mutableStateOf(false) }
     var notice by rememberSaveable { mutableIntStateOf(0) }
     var drawer by rememberSaveable { mutableStateOf(false) }
+    var highPerformance by rememberSaveable { mutableStateOf(false) }
     Text(stringResource(R.string.stage_gallery), style = RelayTokens.title)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         samples.forEachIndexed { index, sample ->
@@ -39,6 +40,8 @@ import org.openxplay.direlay.ui.*
         InsetToggleRow(title = stringResource(R.string.stage_busy), checked = busy, onChange = { busy = it })
         InsetDivider()
         InsetToggleRow(title = stringResource(R.string.stage_drawer_open), checked = drawer, onChange = { drawer = it })
+        InsetDivider()
+        InsetToggleRow(title = stringResource(R.string.stage_high_performance), checked = highPerformance, onChange = { highPerformance = it })
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         listOf(R.string.car_none, R.string.stage_notice_display, R.string.stage_notice_car, R.string.home2_setup).forEachIndexed { index, label ->
@@ -52,15 +55,17 @@ import org.openxplay.direlay.ui.*
     val complete: () -> Unit = {
         if (countdown) { countdown = false; onPreview() }
     }
-    StageGalleryFrame(sample, view, drawer, 360.dp, 640.dp, onCopy, onPreview, complete)
-    StageGalleryFrame(sample, view, drawer, 760.dp, 340.dp, onCopy, onPreview, complete)
+    StageGalleryFrame(sample, view, drawer, 360.dp, 640.dp, onCopy, onPreview, complete, highPerformance) { highPerformance = false }
+    StageGalleryFrame(sample, view, drawer, 760.dp, 340.dp, onCopy, onPreview, complete, highPerformance) { highPerformance = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun StageGalleryFrame(sample: DesignSample, view: StageView, drawerOpen: Boolean,
-    width: Dp, height: Dp, onCopy: (String) -> Unit, onPreview: () -> Unit, onCountdownComplete: () -> Unit) {
+    width: Dp, height: Dp, onCopy: (String) -> Unit, onPreview: () -> Unit, onCountdownComplete: () -> Unit,
+    highPerformance: Boolean, onWake: () -> Unit) {
     val state = rememberStagePageState()
-    LaunchedEffect(drawerOpen) {
+    LaunchedEffect(drawerOpen, highPerformance) {
+        if (highPerformance) return@LaunchedEffect
         if (drawerOpen) {
             snapshotFlow { state.scaffoldState.bottomSheetState.hasExpandedState }.first { it }
             state.expand()
@@ -83,7 +88,9 @@ import org.openxplay.direlay.ui.*
                 }, onNode = { section ->
                     expanded = (expanded + section.name).distinct()
                     fullyExpanded = (fullyExpanded + section.name).distinct()
-                }, drawerItemKeys = keys) {
+                }, drawerItemKeys = keys, highPerformance = highPerformance, onTouch = {
+                    if (highPerformance) onWake()
+                }, manageWindow = false) {
                 item(key = "mode") {
                     InsetRow(R.drawable.symbol_settings_2, IconHue.DEVELOPER, stringResource(R.string.setup2_set_up_again), mode, onPreview)
                 }

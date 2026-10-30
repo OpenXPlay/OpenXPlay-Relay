@@ -1,0 +1,15 @@
+<!-- SPDX-FileCopyrightText: 2026 OpenXPlay.org
+     SPDX-FileCopyrightText: Google LLC
+     SPDX-License-Identifier: AGPL-3.0-only AND CC-BY-3.0
+     Created by riko chen on 2026-10-30
+     This (Android) phone on the connection stage: the Android robot head. The Android robot is reproduced or
+     modified from work created and shared by Google and used according to terms described in the Creative
+     Commons 3.0 Attribution License; see NOTICE. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M3,18 A9,9 0 0,1 21,18 Z"
+        android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    <path android:pathData="M7.5,10.2 L5.8,7.3 M16.5,10.2 L18.2,7.3" android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    <path android:pathData="M8.5,14.5 h0.01 M15.5,14.5 h0.01" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.4"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+</vector>

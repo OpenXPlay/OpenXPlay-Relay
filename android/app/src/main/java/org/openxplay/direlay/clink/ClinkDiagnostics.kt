@@ -65,7 +65,8 @@ sealed interface ClinkDiagnostic {
         override fun line() = "ble_cccd result=${result.name.lowercase()}" + (status?.let { " status=$it" } ?: "")
     }
     data class GattConnection(val status: Int, val connected: Boolean) : ClinkDiagnostic {
-        override fun line() = "gatt_connection status=$status state=${if (connected) "connected" else "disconnected"}"
+        override fun line() = "gatt_connection status=$status state=${if (connected) "connected" else "disconnected"}" +
+            if (connected && status == 0) "" else " by=${if (status == 0) "peer" else "os"} cause=${if (status == 0) "peer_close" else "io_error"} reached=gatt_connect"
     }
     data class GattServices(val status: Int) : ClinkDiagnostic {
         override fun line() = "gatt_services status=$status"
@@ -101,7 +102,18 @@ sealed interface ClinkDiagnostic {
         override fun line() = "state=${state.name}"
     }
     data class Failure(val stage: ClinkStage, val code: String, val exceptionClass: String) : ClinkDiagnostic {
-        override fun line() = "${stage.name.lowercase()} failed reason=$code exception=$exceptionClass"
+        val cause: String get() = when {
+            code == "wifi_off" -> "radio_off"
+            code == "gatt_close_failed" -> "io_error"
+            code in setOf("wifi_link_lost", "link_lost") -> "network_lost"
+            code.endsWith("timeout") -> if (code == "heartbeat_timeout") "health_timeout" else "read_timeout"
+            code in setOf("auth_closed", "vehicle_channel_closed") || exceptionClass == "EOFException" -> "peer_eof"
+            else -> "connect_failed"
+        }
+        val by: String get() = when (cause) {
+            "radio_off", "network_lost" -> "os"; "read_timeout", "health_timeout" -> "timeout"; "peer_eof" -> "peer"; else -> "local"
+        }
+        override fun line() = "${stage.name.lowercase()} failed reason=$code exception=$exceptionClass by=$by cause=$cause reached=${stage.name.lowercase()}"
     }
 }
 

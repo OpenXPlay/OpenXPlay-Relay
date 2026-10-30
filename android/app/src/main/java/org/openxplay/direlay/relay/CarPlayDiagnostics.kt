@@ -5,6 +5,9 @@ package org.openxplay.direlay.relay
 
 import com.shilapi.xcertplay.orchestration.CarPlayEventObserver
 import com.shilapi.xcertplay.orchestration.CarPlayStatus
+import com.shilapi.xcertplay.orchestration.CarPlayLinkEnd
+import org.openxplay.direlay.logs.LinkEnd
+import org.openxplay.direlay.logs.connectionDetail
 import java.util.Locale
 
 data class CarPlayError(val text: String, val code: String?, val trail: List<String>, val atMillis: Long)
@@ -22,7 +25,8 @@ class CarPlayDiagnostics(private val secrets: () -> Collection<String> = { empty
         if (status == CarPlayStatus.DiscoveringMfi) { milestones.clear(); runtimeFrames = 0 }
         val wall = wallClock()
         val line = when (status) {
-            is CarPlayStatus.Failed -> "status=Failed reason=${status.startupFailure?.name ?: "none"} wifiResetRequired=${status.wifiResetRequired}"
+            is CarPlayStatus.Failed -> "status=Failed cause=\"${connectionDetail(redactFailureText(status.message, secrets()))}\"" +
+                (status.startupFailure?.let { " startupFailure=${it.name}" } ?: "") + " wifiResetRequired=${status.wifiResetRequired}"
             is CarPlayStatus.HotspotReady -> "status=HotspotReady backend=${fact(status.backend)} band=${fact(status.band)} channel=${status.channel}"
             else -> "status=${status.javaClass.simpleName}"
         }
@@ -35,9 +39,13 @@ class CarPlayDiagnostics(private val secrets: () -> Collection<String> = { empty
     private val milestones = linkedSetOf<String>()
     private var runtimeFrames = 0L
     @Synchronized override fun onStartupMilestone(name: String) {
-        if (!startupEnabled() || name.length > 64 || name.any { it !in 'a'..'z' && it != '_' } || !milestones.add(name)) return
-        record("milestone=$name")
+        if (name.length > 64 || name.any { it !in 'a'..'z' && it != '_' } || !milestones.add(name)) return
+        if (startupEnabled()) record("milestone=$name")
         runCatching { timeline?.phone("startup_milestone", "stage=$name") }
+    }
+    override fun onLinkEnded(end: CarPlayLinkEnd) {
+        runCatching { timeline?.linkEnded("phone", LinkEnd(end.link, end.reached, end.by, end.cause,
+            connectionDetail(redactFailureText(end.detail, secrets())), end.ageMillis, end.idleMillis, end.facts.toMap())) }
     }
     @Synchronized override fun onIap2Frame(frame: com.shilapi.xcertplay.iap2.wire.Iap2Frame) {
         if (!startupEnabled()) return

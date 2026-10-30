@@ -16,9 +16,10 @@ class HostOverlayPresentationTest {
             pageUrl = "https://192.168.43.1:9443/"), iphone = IphoneInput(pick = IphonePick.PICKED))
 
     @Test fun overlayUsesTheSamePathWithoutLosingItsVersion() {
-        val result = presentHostOverlay(HostOverlaySnapshot(ready))
+        val result = presentHostOverlay(HostOverlaySnapshot(ready, highPerformance = false))
         assertEquals(presentPath(ready), result.path)
         assertEquals(ready.version, result.path.version)
+        assertFalse(result.highPerformance)
     }
 
     @Test fun waitingForTheCarOffersStartNowOnTheFocusStep() {

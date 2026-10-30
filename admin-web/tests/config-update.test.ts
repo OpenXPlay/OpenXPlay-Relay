@@ -100,3 +100,17 @@ it.each(['en', 'zh-CN'] as const)('includes Android project, NOTICE, mixed licen
   expect(host.innerHTML).toContain('https://openxplay.org'); expect(host.innerHTML).toContain('/blob/main/NOTICE');
   for (const key of ['files.licence', 'files.acknowledgementText', 'files.trademark']) expect(host.innerHTML).toContain(tr(key));
 });
+it.each(['en', 'zh-CN'] as const)('aligns About label/value and link rows and keeps language selection working (%s)', language => {
+  const host = new Host(), setLanguage = vi.fn(), tr = language === 'en' ? t : zh;
+  const dispose = mountFeaturePage(host as unknown as HTMLElement, 'settings/about', { t: tr, language, version: '<test>', platform: 'linux', adminFeatures: ['update-check'], setLanguage, error: () => '', reload: async () => {} });
+  expect(host.innerHTML).toContain('<strong class="row-copy">OpenXPlay Relay</strong><span>&lt;test&gt;</span>');
+  for (const key of ['files.project', 'files.source', 'files.licence']) expect(host.innerHTML).toContain(`<span class="row-copy">${tr(key)}</span>`);
+  expect(host.innerHTML.match(/class="lucide lucide-external-link"/g)).toHaveLength(3);
+  expect(host.innerHTML).toContain('<div class="inset-row"><label class="row-copy" for="language">');
+  expect(host.innerHTML).toContain('<div class="input-row"><label class="row-copy" for="update-channel">');
+  expect(host.querySelector('#language').value).toBe(language);
+  host.querySelector('#language').value = 'auto';
+  host.querySelector('#language').dispatchEvent(new Event('change'));
+  expect(setLanguage).toHaveBeenCalledWith('auto');
+  dispose?.();
+});

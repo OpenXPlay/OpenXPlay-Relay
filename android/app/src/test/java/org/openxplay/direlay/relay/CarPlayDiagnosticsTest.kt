@@ -30,7 +30,7 @@ class CarPlayDiagnosticsTest {
         assertEquals("first_tcp_timeout", error.code)
         assertEquals(123L, error.atMillis)
         assertEquals(listOf("00:00:00.123 status=DiscoveringMfi", "+0.000s progress new attempt",
-            "+0.000s status=Failed reason=FIRST_TCP_TIMEOUT wifiResetRequired=true"), error.trail)
+            "+0.000s status=Failed cause=\"second\" startupFailure=FIRST_TCP_TIMEOUT wifiResetRequired=true"), error.trail)
         observer.onSessionEnded()
         assertEquals(3, error.trail.size)
         observer.onSessionActive()
