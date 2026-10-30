@@ -54,7 +54,8 @@ class RelayActivityIntentTest {
 
     @Test fun destinationsAndActionsAreConsumedOnceWithoutARuntime() {
         for (destination in listOf("home", "setup:network", "settings:", "settings:car", "settings:iphone",
-                "developer/video", "experimental", "vehicle", "snapshot:12", "publicName", "about", "settings/tesla")) {
+                "developer/video", "experimental", "vehicle", "snapshot:12", "publicName", "about", "settings/tesla",
+                "settings/background", "settings:background")) {
             val intent = RelayActivity.intent(context, destination, StepAction.CHOOSE_RENDERER)
             val request = RelayLaunchRequest.take(intent)
             assertNotNull(destination, request.destination)
