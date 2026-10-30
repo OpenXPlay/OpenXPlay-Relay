@@ -25,9 +25,14 @@ describe('identity settings', () => {
       expect(menuSummary(mockSettings(true), current, 'settings/identity', 'en', t)).toBe(t(materialKey(state)));
     }
   });
-  it('keeps TLS first, fingerprints visible, and automatic TLS removal disabled', () => {
+  it('opens CarPlay first, keeps TLS collapsed and explains automatic TLS removal', () => {
     const markup = identityMarkup(status, new IdentitySelection(), false, '', t);
-    expect(markup.indexOf('TLS certificate')).toBeLessThan(markup.indexOf('CarPlay identity'));
+    expect(markup.indexOf('CarPlay identity')).toBeLessThan(markup.indexOf('TLS certificate'));
+    expect(markup).toContain('id="carplay-identity" open');
+    expect(markup).toContain(t('identity_tls_automatic'));
+    expect(markup).not.toContain(t('direlay_installed'));
+    expect(markup).toContain('class="button pill"');
+    expect(markup).toContain('data-file-name="identity-files"');
     expect(markup).toContain('AA:BB'); expect(markup).toMatch(/id="tls-remove" disabled/);
     expect(markup).toContain('type="password"'); expect(markup).not.toContain('text-overflow');
   });
@@ -68,4 +73,46 @@ it('bounds PEM files, rejects invalid UTF-8 and clears the loaded bytes', async 
   expect(await filePem(file, 1024)).toBe('certificate'); expect([...bytes].every(byte => byte === 0)).toBe(true);
   await expect(filePem({ size: 1025 } as File, 1024)).rejects.toThrow('identity_error_pem');
   await expect(filePem({ size: 1, arrayBuffer: async () => new Uint8Array([255]).buffer } as File, 1024)).rejects.toThrow('identity_error_pem');
+});
+
+it('escapes selected file names beside the single file-choice pill', () => {
+  const markup = identityMarkup(status, new IdentitySelection(), false, '', t, { 'identity-files': '<key.pem>, certificate.p7b' });
+  expect(markup).toContain('&lt;key.pem&gt;, certificate.p7b');
+  expect(markup).not.toContain('<key.pem>');
+  expect(markup.match(/id="identity-files"/g)).toHaveLength(1);
+});
+it('focuses CarPlay once, preserves the expanded TLS form and clears stale selected names after import', async () => {
+  const { mountIdentity } = await import('../src/identity');
+  const focused: string[] = [];
+  class Host extends EventTarget {
+    textContent = ''; value = ''; open = false; files: File[] = []; dataset: Record<string, string> = {};
+    markup = ''; nodes = new Map<string, Host>(); id = '';
+    get innerHTML() { return this.markup; }
+    set innerHTML(value: string) { this.markup = value; this.nodes.clear(); }
+    querySelector(selector: string): Host | null {
+      if (!this.markup) return null;
+      if (!this.nodes.has(selector)) { const node = new Host(); node.id = selector.slice(1); this.nodes.set(selector, node); }
+      return this.nodes.get(selector)!;
+    }
+    querySelectorAll(selector: string) { return selector === 'input[type="file"]' ? ['identity-files', 'tls-file', 'tls-pem-chain', 'tls-pem-key'].map(id => this.querySelector('#' + id)!) : []; }
+    focus() { focused.push(this.id); } scrollIntoView() {}
+  }
+  vi.spyOn(identityApi, 'status').mockResolvedValue(status);
+  const importTls = vi.spyOn(identityApi, 'tls').mockResolvedValue(status);
+  const root = new Host();
+  const dispose = mountIdentity(root as unknown as HTMLElement, new IdentitySelection(), t, () => 'error.request', async () => {});
+  try {
+    await vi.waitFor(() => expect(focused).toEqual(['carplay-identity summary']));
+    root.querySelector('#identity-tls')!.open = true;
+    const file = root.querySelector('#tls-file')!;
+    file.files = [{ name: 'selected.p12', size: 1, arrayBuffer: async () => new Uint8Array([1]).buffer } as File];
+    file.dispatchEvent(new Event('change'));
+    expect(root.querySelector('[data-file-name="tls-file"]')!.textContent).toBe('selected.p12');
+    root.querySelector('#tls-password')!.value = 'test-password';
+    root.querySelector('#tls-import')!.dispatchEvent(new Event('click'));
+    await vi.waitFor(() => expect(importTls).toHaveBeenCalledWith('AQ==', 'test-password'));
+    await vi.waitFor(() => expect(root.innerHTML).not.toContain('selected.p12'));
+    expect(root.querySelector('#identity-tls')!.open).toBe(true);
+    expect(focused).toHaveLength(1);
+  } finally { dispose(); vi.restoreAllMocks(); }
 });
