@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
-import { openSurface, closeSurface } from './dom';
+import './stage.css';
 import { request } from './api';
 import { esc } from './html';
 import { readIdentitySelection } from './identity-archive';
@@ -26,24 +26,25 @@ export class IdentitySelection {
   accept(result: ImportResult) { this.followUp = result.followUp; this.recognized = result.recognized ?? 'unknown'; }
   clear() { this.followUp = undefined; this.recognized = 'unknown'; }
 }
-export function identityMarkup(status: IdentityStatus | null, selection: IdentitySelection, busy: boolean, message: string, t: (key: string) => string): string {
-  const fingerprint = (value?: string | null) => value ? `<p class="selectable fingerprint">${esc(value)}</p><button data-copy="${esc(value)}">${t('identity_copy_fingerprint')}</button>` : `<p>${t('direlay_missing')}</p>`;
-  return `<section class="inset-group"><h2>${t('direlay_tls')}</h2><p>${t('dev_fingerprint')}</p>${fingerprint(status?.tls.fingerprint)}
+export function identityMarkup(status: IdentityStatus | null, selection: IdentitySelection, busy: boolean, message: string, t: (key: string) => string, fileNames: Record<string, string> = {}): string {
+  const fingerprint = (value?: string | null) => value ? `<p class="selectable fingerprint">${esc(value)}</p><button data-copy="${esc(value)}">${t('identity_copy_fingerprint')}</button>` : '';
+  const picker = (id: string, label: string, attributes = '') => `<label class="identity-file"><span>${esc(t(label))}</span><input id="${id}" type="file" ${attributes} ${busy ? 'disabled' : ''}><span class="button pill" aria-hidden="true">${esc(t('identity_choose_file'))}</span><span class="identity-file-name" data-file-name="${id}">${esc(fileNames[id] ?? t('identity_no_file'))}</span></label>`;
+  const tls = `<details class="inset-group" id="identity-tls"><summary>${t('direlay_tls')}</summary><p>${t('dev_fingerprint')}</p>${fingerprint(status?.tls.fingerprint)}
     ${status?.tls.pending ? `<p role="status">${t('identity_tls_pending')}</p>` : ''}
-    <label>${t('dev_import_tls')}<input id="tls-file" type="file" accept=".p12,.pfx,application/x-pkcs12" ${busy ? 'disabled' : ''}></label>
+    ${picker('tls-file', 'dev_import_tls', 'accept=".p12,.pfx,application/x-pkcs12"')}
     <label>${t('direlay_tls_password')}<input id="tls-password" type="password" maxlength="4096" autocomplete="off" ${busy ? 'disabled' : ''}></label>
     <button id="tls-import" ${busy ? 'disabled' : ''}>${t('dev_import_tls')}</button>
-    <details><summary>${t('identity_import_pem')}</summary>
-    <label>${t('identity_pem_chain')}<input id="tls-pem-chain" type="file" accept=".pem,.crt,.cer" ${busy ? 'disabled' : ''}></label>
-    <label>${t('identity_pem_key')}<input id="tls-pem-key" type="file" accept=".pem,.key" ${busy ? 'disabled' : ''}></label>
+    <details id="identity-pem"><summary>${t('identity_import_pem')}</summary>
+    ${picker('tls-pem-chain', 'identity_pem_chain', 'accept=".pem,.crt,.cer"')}
+    ${picker('tls-pem-key', 'identity_pem_key', 'accept=".pem,.key"')}
     <button id="tls-pem-import" ${busy ? 'disabled' : ''}>${t('identity_import_pem')}</button></details>
-    <button id="tls-remove" ${busy || !status?.tls.imported ? 'disabled' : ''}>${t('dev_remove_tls')}</button><p class="muted">${t('dev_tls_hint')}</p></section>
-    <details class="inset-group" ${selection.followUp ? 'open' : ''}><summary>${t('direlay_identity')} · ${status ? t(materialKey(status.mfi.state)) : ''}</summary>
+    <button id="tls-remove" ${busy || !status?.tls.imported ? 'disabled' : ''}>${t('dev_remove_tls')}</button>${!status?.tls.imported ? `<p class="muted">${t('identity_tls_automatic')}</p>` : ''}<p class="muted">${t('dev_tls_hint')}</p></details>`;
+  return `<details class="inset-group" id="carplay-identity" open><summary>${t('direlay_identity')}</summary>
     <p>${t('direlay_identity_hint')}</p><p>${t('dev_fingerprint')}</p>${fingerprint(status?.mfi.fingerprint)}
     ${selection.followUp ? `<p role="status">${t('identity_follow_' + selection.recognized)}</p>` : ''}
-    <label>${t(selection.followUp ? 'identity_choose_other' : 'direlay_manage_identity')}<input id="identity-files" type="file" ${selection.followUp ? '' : 'multiple'} ${busy ? 'disabled' : ''}></label>
+    ${picker('identity-files', selection.followUp ? 'identity_choose_other' : 'direlay_manage_identity', selection.followUp ? '' : 'multiple')}
     ${selection.followUp ? `<button id="identity-cancel" ${busy ? 'disabled' : ''}>${t('ui.cancel')}</button>` : ''}
-    <button id="identity-remove" ${busy || !status || status.mfi.state === 'MISSING' ? 'disabled' : ''}>${t('dev_remove_identity')}</button></details>
+    <button id="identity-remove" ${busy || !status || status.mfi.state === 'MISSING' ? 'disabled' : ''}>${t('dev_remove_identity')}</button></details>${tls}
     <p role="${message ? 'alert' : 'status'}">${esc(message ? t(message) : busy ? t('identity_working') : '')}</p>`;
 }
 export async function fileBase64(file: File, max: number): Promise<string> {
@@ -63,10 +64,21 @@ export async function filePem(file: File, max: number): Promise<string> {
   finally { bytes.fill(0); }
 }
 export function mountIdentity(container: HTMLElement, selection: IdentitySelection, t: (key: string) => string, error: (e: unknown) => string, reload: () => Promise<void>): () => void {
-  let status: IdentityStatus | null = null, busy = false, message = '', disposed = false;
+  let status: IdentityStatus | null = null, busy = false, message = '', disposed = false, focused = false;
+  const fileNames: Record<string, string> = {};
   const show = () => {
     if (disposed) return;
-    container.innerHTML = identityMarkup(status, selection, busy, message, t);
+    const expanded = ['identity-tls', 'identity-pem'].filter(id => container.querySelector<HTMLDetailsElement>('#' + id)?.open);
+    container.innerHTML = identityMarkup(status, selection, busy, message, t, fileNames);
+    for (const id of expanded) container.querySelector<HTMLDetailsElement>('#' + id)!.open = true;
+    if (!focused && !busy && status) {
+      const summary = container.querySelector<HTMLElement>('#carplay-identity summary');
+      summary?.scrollIntoView({ block: 'start', behavior: 'instant' }); summary?.focus({ preventScroll: true }); focused = true;
+    }
+    container.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach(input => input.addEventListener('change', () => {
+      fileNames[input.id] = [...(input.files ?? [])].map(file => file.name).join(', ') || t('identity_no_file');
+      const line = container.querySelector<HTMLElement>(`[data-file-name="${input.id}"]`); if (line) line.textContent = fileNames[input.id];
+    }));
     container.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach(button => button.addEventListener('click', () => void navigator.clipboard.writeText(button.dataset.copy!)));
     container.querySelector('#identity-files')?.addEventListener('change', event => {
       const input = event.target as HTMLInputElement, files = [...(input.files ?? [])]; input.value = '';
@@ -97,18 +109,18 @@ export function mountIdentity(container: HTMLElement, selection: IdentitySelecti
     busy = true; message = ''; show();
     try { await work(); status = await identityApi.status(); await reload(); }
     catch (e) { message = e instanceof Error && e.message.startsWith('identity_') ? e.message : error(e); }
-    finally { busy = false; show(); }
+    finally { for (const id of Object.keys(fileNames)) delete fileNames[id]; busy = false; show(); }
   };
   let dialog: HTMLDialogElement | null = null;
   const confirmRemove = (kind: 'identity' | 'tls') => {
-    if (dialog) closeSurface(dialog); dialog = document.createElement('dialog');
+    dialog?.remove(); dialog = document.createElement('dialog');
     dialog.innerHTML = `<h2>${t(kind === 'identity' ? 'dev_remove_identity_question' : 'dev_remove_tls_question')}</h2><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm">${t('direlay_remove')}</button></div>`;
-    const close = () => { if (dialog) closeSurface(dialog); dialog = null; };
+    const close = () => { dialog?.close(); dialog?.remove(); dialog = null; };
     dialog.querySelector('.cancel')!.addEventListener('click', close);
     dialog.addEventListener('cancel', close);
     dialog.querySelector('.confirm')!.addEventListener('click', () => { close(); void run(async () => { status = await identityApi.remove(kind); if (kind === 'identity') selection.clear(); }); });
-    document.body.append(dialog); openSurface(dialog);
+    document.body.append(dialog); dialog.showModal();
   };
   show(); void run(async () => { status = await identityApi.status(); });
-  return () => { disposed = true; if (dialog) closeSurface(dialog); };
+  return () => { disposed = true; dialog?.remove(); };
 }

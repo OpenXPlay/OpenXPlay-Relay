@@ -4,7 +4,7 @@
 
 import { stepInfo, sectionView, type ConnectionPath, type StepText, type StepAction, type StepId, type StepState } from './model';
 export interface StageFlags { countdown?: boolean; busy?: boolean; displayChanged?: boolean; carIncomplete?: boolean; trustedHttpsRecommended?: boolean; setupCompleted?: boolean; overlay?: boolean }
-export type StageAction = { type: 'Connect' | 'Stop' | 'NotNow' } | { type: 'Step'; action: StepAction; step: StepId; label: string | null };
+export type StageAction = { type: 'Connect' | 'Stop' | 'NotNow' | 'PauseAutomatic' } | { type: 'Step'; action: StepAction; step: StepId; label: string | null };
 export type Supporting = { type: 'LiveTimer'; sinceMillis: number | null } | { type: 'Elapsed'; sinceMillis: number } | { type: 'Evidence'; text: StepText; copy: boolean } | { type: 'Explanation'; res: string };
 export function focusForPage(path: ConnectionPath) {
   return path.focus && ['FAILED', 'ACTION'].includes(path.focus.state) ? path.focus : path.sections.flatMap(s => s.steps).find(s => s.action === 'START_NOW') ?? path.focus;
@@ -15,16 +15,26 @@ export function presentStage(path: ConnectionPath, flags: StageFlags = {}) {
   const iphone = section('IPHONE'), relay = section('RELAY'), car = section('CAR'), picture = section('PICTURE');
   const link = (s: typeof car) => ({ done: s?.done ?? 0, total: s?.total ?? 0, state: s?.state ?? 'BLOCKED' as StepState });
   const focusSection = focus ? stepInfo[focus.id].section : null;
-  const nodes = { iphone: iphone?.state ?? 'BLOCKED', relay: relay?.state ?? 'BLOCKED', car: picture?.state === 'OK' ? 'OK' : car?.state ?? 'BLOCKED', iphoneLink: link(iphone), carLink: link(car), focus: live ? null : focusSection === 'IPHONE' ? 'IPHONE' : focusSection === 'RELAY' ? 'RELAY' : focusSection ? 'CAR' : null, live: live != null };
-  const headline: StepText = live ? { res: 'design_live', args: [] } : focus ? focus.detail ?? { res: focus.title, args: [] } : { res: !path.running && path.canStart ? 'design_ready' : 'design_idle', args: [] };
-  const supporting: Supporting | null = live ? { type: 'LiveTimer', sinceMillis: live.sinceMillis } : focus?.state === 'FAILED' && focus.explanation ? { type: 'Explanation', res: focus.explanation } : focus?.evidence ? { type: 'Evidence', text: focus.evidence, copy: focus.id === 'CAR_PAGE' } : focus && ['WORKING', 'WAITING'].includes(focus.state) && focus.sinceMillis != null && focus.carWaitUntilMillis == null ? { type: 'Elapsed', sinceMillis: focus.sinceMillis } : null;
+  const carLink = {
+    done: (car?.done ?? 0) + (picture?.done ?? 0), total: (car?.total ?? 0) + (picture?.total ?? 0),
+    // Waiting for the iPhone leaves completed car steps green.
+    state: car && car.state !== 'OK' ? car.state : !picture || car && picture.state === 'BLOCKED' ? car?.state ?? 'BLOCKED' : picture.state,
+  };
+  const nodes = { iphone: iphone?.state ?? 'BLOCKED', relay: relay?.state ?? 'BLOCKED', car: picture?.state === 'OK' ? 'OK' : car?.state ?? 'BLOCKED', iphoneLink: link(iphone), carLink, relayLink: link(relay), focus: live ? null : focusSection === 'IPHONE' ? 'IPHONE' : focusSection === 'RELAY' ? 'RELAY' : focusSection ? 'CAR' : null, live: live != null };
+  const linux = path.platform === 'linux';
+  const retrying = linux && focus?.state === 'WORKING' && focus.code != null;
+  const armed = linux && path.armed && !live && !retrying;
+  const headline: StepText = live ? { res: 'design_live', args: [] } : armed && (!focus || !['ACTION', 'FAILED'].includes(focus.state)) ? { res: !focus || ['CARPLAY_START', 'IPHONE_BLUETOOTH'].includes(focus.id) ? 'path_start_when_iphone' : 'path_start_when', args: focus ? [focus.title] : [] } : focus ? focus.detail ?? { res: focus.title, args: [] } : { res: !path.running && path.canStart ? 'design_ready' : 'design_idle', args: [] };
+  const supporting: Supporting | null = live ? { type: 'LiveTimer', sinceMillis: live.sinceMillis } : (focus?.state === 'FAILED' || retrying) && focus?.explanation ? { type: 'Explanation', res: focus.explanation } : linux && (focus?.state === 'FAILED' || retrying || armed || focus?.detail?.res === 'path_carlink_disconnected') ? null : focus?.evidence ? { type: 'Evidence', text: focus.evidence, copy: focus.id === 'CAR_PAGE' } : focus && ['WORKING', 'WAITING'].includes(focus.state) && focus.sinceMillis != null && focus.carWaitUntilMillis == null ? { type: 'Elapsed', sinceMillis: focus.sinceMillis } : null;
   const fix: StageAction | null = focus?.action && focus.action !== 'COPY_PAGE_ADDRESS' ? { type: 'Step', action: focus.action, step: focus.id, label: focus.actionLabel } : null;
   const countdown = !path.running && !!flags.countdown && path.canStart;
   const connect: StageAction = { type: 'Connect' }, stop: StageAction = { type: 'Stop' };
-  const [primary, secondary]: [StageAction | null, StageAction | null] = countdown ? [connect, { type: 'NotNow' }] : !path.running && focus && ['ACTION', 'FAILED'].includes(focus.state) && fix ? [fix, path.canStart ? connect : null] : !path.running && path.canStart ? [connect, null] : !path.running ? [null, null] : live ? [null, stop] : [fix, stop];
-  const notice = path.running && flags.displayChanged ? 'DISPLAY_CHANGED' : flags.carIncomplete ? 'CHOOSE_CAR' : flags.trustedHttpsRecommended ? 'TRUSTED_HTTPS' : flags.setupCompleted === false && !path.running ? 'SET_UP' : null;
+  let [primary, secondary]: [StageAction | null, StageAction | null] = countdown ? [connect, { type: 'NotNow' }] : !path.running && focus && ['ACTION', 'FAILED'].includes(focus.state) && fix ? [fix, path.canStart ? connect : null] : !path.running && path.canStart ? [connect, null] : !path.running ? [null, null] : live ? [null, stop] : [fix, stop];
+  if (retrying) { primary = null; secondary = stop; }
+  if (armed) { primary = fix; secondary = { type: 'PauseAutomatic' }; }
+  const notice = path.running && flags.displayChanged ? 'DISPLAY_CHANGED' : flags.carIncomplete && (!linux || !path.running) ? 'CHOOSE_CAR' : flags.trustedHttpsRecommended ? 'TRUSTED_HTTPS' : flags.setupCompleted === false && !path.running ? 'SET_UP' : null;
   const failure = focus?.state === 'FAILED' && focus.code != null ? focus : null;
-  return { nodes, headline, supporting, failure: failure?.code ?? null, primary, secondary, notice, segments: path.sections.map(s => ({ section: s.section, ...link(sectionView(s.section, s.steps)) })), failureSinceMillis: failure?.sinceMillis ?? null, primaryEnabled: !flags.busy, countdown, headlineDeadlineMillis: live ? null : focus?.carWaitUntilMillis ?? null };
+  return { done: path.sections.reduce((n, s) => n + s.done, 0), total: path.sections.reduce((n, s) => n + s.total, 0), nodes, headline, supporting, failure: failure?.code ?? null, primary, secondary, notice, segments: path.sections.map(s => ({ section: s.section, ...link(sectionView(s.section, s.steps)) })), failureSinceMillis: failure?.sinceMillis ?? null, primaryEnabled: !flags.busy, countdown, headlineDeadlineMillis: live ? null : focus?.carWaitUntilMillis ?? null };
 }
 export type StageView = ReturnType<typeof presentStage>;
 export function stageTapSettled(changedAtMillis: number, nowMillis: number): boolean { return nowMillis - changedAtMillis >= 500; }

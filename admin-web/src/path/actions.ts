@@ -24,6 +24,7 @@ export function stepCommand(action: StepAction, platform: 'linux' | 'android'): 
   }
 }
 export function stageCommand(action: StageAction, platform: 'linux' | 'android', running: boolean): Command | null {
+  if (action.type === 'PauseAutomatic') return platform === 'linux' ? { kind: 'api', endpoint: 'actions/stop' } : null;
   if (action.type === 'Step') return stepCommand(action.action, platform);
   if (action.type === 'NotNow') return { kind: 'cancel' };
   if (action.type === 'Connect') return running ? null : { kind: 'api', endpoint: 'actions/start' };

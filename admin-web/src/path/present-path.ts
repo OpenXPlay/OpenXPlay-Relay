@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-27
 
 import { normalizeInput, sections, sectionView, stepInfo, type PartialInput, type PathInput, type PathStep, type StepId, type StepState, type StepText, type StepAction, type LinkStep, type LinkFailure, type ConnectionPath } from './model';
-import { titles, explanations, actionLabels, failureExplanation } from './texts';
+import { titles, explanations, actionLabels, failureExplanation, linuxFailureExplanation, failureHeadline } from './texts';
 const text = (res: string, ...args: string[]): StepText => ({ res, args });
 const raw = (value: string | null | undefined): StepText | null => value == null ? null : { raw: value };
 const has = <T>(values: readonly T[], value: T) => values.includes(value);
@@ -15,7 +15,8 @@ function step(id: StepId, state: StepState = 'BLOCKED', detail: StepText | null 
 }
 export function stepIds(input: PathInput): StepId[] {
   const { setup: s, relay: r } = input;
-  const out: StepId[] = ['MODE', 'IDENTITY', 'PERMISSIONS'];
+  const out: StepId[] = ['MODE', 'IDENTITY'];
+  if (input.platform !== 'linux') out.push('PERMISSIONS');
   if (has(['PENDING', 'REFUSED'], r.keepAlive)) out.push('KEEP_ALIVE');
   if (s.network !== 'USB' || s.outputs.includes('CARLINK')) out.push('BLUETOOTH');
   if (has(['WIFI_DIRECT', 'SHARED_WIFI'], s.network) || s.outputs.some(o => o === 'CARLINK' || o === 'MIRACAST')) out.push('WIFI');
@@ -36,7 +37,7 @@ function prerequisites(ids: StepId[], input: PathInput): Partial<Record<StepId, 
     IDENTITY: ['MODE'], PERMISSIONS: ['MODE'], CAR_NETWORK: input.setup.network === 'PHONE_HOTSPOT' ? ['HOTSPOT'] : input.setup.network === 'SHARED_WIFI' ? ['SHARED_WIFI'] : [],
     CAR_PAGE: ['CAR_NETWORK', 'WEB_SERVER'], CARLINK_FIND: ['BLUETOOTH', 'WIFI'], CARLINK_LINK: ['CARLINK_FIND'], CARLINK_PIN: ['CARLINK_LINK'], CARLINK_READY: ['CARLINK_PIN'], DLNA: ['CAR_NETWORK'], MIRACAST: ['WIFI'], IPHONE_PAIRED: ['BLUETOOTH'], TESLA: ['SESSION'], PICTURE: ['SESSION'],
   };
-  for (const id of ['BLUETOOTH', 'WIFI', 'HOTSPOT', 'SHARED_WIFI'] as StepId[]) p[id] = ['PERMISSIONS'];
+  for (const id of ['BLUETOOTH', 'WIFI', 'HOTSPOT', 'SHARED_WIFI'] as StepId[]) p[id] = ids.includes('PERMISSIONS') ? ['PERMISSIONS'] : [];
   iphone.slice(1).forEach((id, index) => { p[id] = [iphone[index]]; });
   p.CARPLAY_START = [...ids.filter(id => stepInfo[id].section === 'RELAY'), iphone[0]];
   return p;
@@ -69,7 +70,7 @@ function presentStep(id: StepId, input: PathInput, canStart: boolean, running: b
   const clink = (state: StepState, detail: StepText | null = null, evidence: StepText | null = null, action: StepAction | null = null) => {
     const failed = failedLink === id;
     return step(id, failed ? link.retrying ? 'WORKING' : 'FAILED' : state,
-      failed && link.retrying ? text('path_retrying', link.code!) : failed && !failureExplanation(link.code) && link.error != null ? raw(link.error) : detail,
+      failed && link.retrying ? text(input.platform === 'linux' ? 'path_trying_again' : 'path_retrying', link.code!) : failed && !failureExplanation(link.code) && link.error != null ? raw(link.error) : detail,
       evidence, failed ? link.code : null, failed ? link.code === 'carlink_blocked' ? 'FIX_SETTINGS' : 'RECONNECT_CARLINK' : action, link.sinceMillis, link.trail);
   };
   const progress = (state: StepState, detail: StepText | null = null, evidence: StepText | null = null) => {
@@ -100,14 +101,14 @@ function presentStep(id: StepId, input: PathInput, canStart: boolean, running: b
     case 'CAR_PAGE': own = c.pages > 0 ? step(id, 'OK', text('path_connected'), raw(c.screen)) : step(id, 'WAITING', text('path_open_car_page'), raw(c.pageUrl), null, 'COPY_PAGE_ADDRESS'); break;
     case 'CARLINK_FIND':
       own = link.phase === 'UNSUPPORTED' ? step(id, 'FAILED', text('path_carlink_unsupported'), null, null, null, link.sinceMillis)
-        : link.phase === 'BLOCKED' ? { ...clink(link.retrying ? 'WORKING' : 'FAILED', link.retrying ? text('path_retrying', 'carlink_blocked') : text('path_carlink_blocked'), null, 'FIX_SETTINGS'), code: 'carlink_blocked', explanation: 'path_explain_carlink_blocked' }
+        : link.phase === 'BLOCKED' ? { ...clink(link.retrying ? 'WORKING' : 'FAILED', link.retrying ? text(input.platform === 'linux' ? 'path_trying_again' : 'path_retrying', 'carlink_blocked') : text('path_carlink_blocked'), null, 'FIX_SETTINGS'), code: 'carlink_blocked', explanation: 'path_explain_carlink_blocked' }
         : link.phase === 'NEEDS_PERMISSIONS' ? step(id, 'BLOCKED', text('path_after_step'))
         : failedLink === id ? clink('FAILED', text('path_car_not_found')) : passed(id) ? clink('OK', null, raw(link.carName)) : clink('WAITING', text('path_open_carlink')); break;
     case 'CARLINK_LINK': {
       const detail = ({ EXCHANGING: 'path_exchanging', JOINING: 'path_joining_car_wifi', AUTHENTICATING: 'path_verifying' } as Record<string, string>)[link.phase];
       own = failedLink === id ? clink('FAILED', text('path_link_failed')) : passed(id) ? clink('OK', null, raw(link.joinMethod)) : detail ? clink('WORKING', text(detail)) : clink('BLOCKED'); break;
     }
-    case 'CARLINK_PIN': own = link.pinPending ? clink('ACTION', text('path_enter_pin'), null, 'ENTER_PIN') : link.trusted || passed(id) ? clink('OK', text('path_trusted')) : clink('BLOCKED'); break;
+    case 'CARLINK_PIN': own = link.pinPending ? { ...clink('ACTION', text(input.platform === 'linux' && link.pinConfirmation ? 'path_approve_car' : 'path_enter_pin'), null, 'ENTER_PIN'), actionLabel: input.platform === 'linux' && link.pinConfirmation ? 'path_action_approve' : actionLabels.ENTER_PIN } : link.trusted || passed(id) ? clink('OK', text('path_trusted')) : clink('BLOCKED'); break;
     case 'CARLINK_READY': own = failedLink === id ? clink('FAILED', raw(link.code)) : link.phase === 'NEGOTIATING' ? clink('WORKING', text('path_negotiating')) : link.phase === 'PLAYING' ? clink('OK', null, raw(link.picture)) : link.phase === 'ENDED' ? clink('WAITING', text('path_carlink_disconnected'), null, 'RECONNECT_CARLINK') : clink('BLOCKED'); break;
     case 'DLNA': {
       const o = c.dlna;
@@ -118,7 +119,7 @@ function presentStep(id: StepId, input: PathInput, canStart: boolean, running: b
     case 'USB_HOST': own = i.usb === 'HOST' ? step(id, 'OK', text('path_usb_host_mode')) : i.usb === 'DEVICE' ? step(id, 'FAILED', text('path_usb_device_mode'), null, 'usb_role') : step(id, 'WAITING', text('path_plug_iphone')); break;
     case 'CARPLAY_START': own = i.carWaitUntilMillis != null ? { ...step(id, 'WAITING', text('path_car_screen_wait'), null, null, 'START_NOW', i.stepSinceMillis), carWaitUntilMillis: i.carWaitUntilMillis } : i.armed ? step(id, 'BLOCKED', text('path_start_armed')) : i.step === 'IDLE' && !i.started && !i.failure ? step(id, 'BLOCKED', canStart ? text('path_tap_connect') : null) : progress('WORKING', text('path_preparing')); break;
     case 'IPHONE_BLUETOOTH': own = progress(i.step === 'WAITING_IPHONE' ? 'WAITING' : 'WORKING', i.step === 'WAITING_IPHONE' ? text(input.platform === 'linux' ? 'state.waiting' : 'path_iphone_near') : text('path_connecting_iphone', i.name ?? '')); break;
-    case 'IPHONE_AUTH': own = progress('WORKING', null, raw(i.stepDetail)); break;
+    case 'IPHONE_AUTH': own = progress('WORKING', input.platform === 'linux' ? text('path_checking_iphone') : null, raw(i.stepDetail)); break;
     case 'IPHONE_WIFI': own = progress('WORKING', setup.network === 'PHONE_HOTSPOT' ? text('path_iphone_joining_wifi', r.hotspotSsid ?? '') : setup.network === 'SHARED_WIFI' ? r.sharedWifiSsid != null ? text('path_iphone_joining_wifi', r.sharedWifiSsid) : text('path_iphone_joining_car_hotspot') : text('path_iphone_joining_wifi', 'Wi-Fi Direct')); break;
     case 'USB_IPHONE': own = progress(i.step === 'USB_PERMISSION' ? 'ACTION' : 'WAITING', text(i.step === 'USB_PERMISSION' ? 'path_allow_usb' : 'path_plug_unlock_iphone')); break;
     case 'USB_TRUST': own = progress('WAITING', text('path_trust_iphone')); break;
@@ -130,7 +131,7 @@ function presentStep(id: StepId, input: PathInput, canStart: boolean, running: b
   const f = i.failure;
   if (!f || failureStep(f, wireless) !== id) return own;
   const action = id === 'CARPLAY_START' && f.code.startsWith('hotspot_') && r.hotspotOn === false ? 'OPEN_HOTSPOT' : 'RETRY';
-  return step(id, f.retrying ? 'WORKING' : 'FAILED', f.retrying ? text('path_retrying', f.code) : f.code === 'first_tcp_timeout' ? text('path_iphone_did_not_join') : raw(f.text), own.evidence, f.code, action, f.atMillis, f.trail);
+  return step(id, f.retrying ? 'WORKING' : 'FAILED', f.retrying ? text(input.platform === 'linux' ? 'path_trying_again' : 'path_retrying', f.code) : f.code === 'first_tcp_timeout' ? text('path_iphone_did_not_join') : raw(f.text), own.evidence, f.code, action, f.atMillis, f.trail);
 }
 export function clockTime(millis: number, zone?: string): string {
   return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', ...(zone ? { timeZone: zone } : {}) }).format(millis);
@@ -143,7 +144,12 @@ export function presentPath(partial: PartialInput, zone?: string): ConnectionPat
   const ids = stepIds(input), p = prerequisites(ids, input), checked = new Map<StepId, PathStep>();
   const unreadable = (s: PathStep) => s.state === 'WAITING' && (s.id === 'BLUETOOTH' && r.bluetoothOn == null || s.id === 'WIFI' && r.wifiOn == null || s.id === 'HOTSPOT' && r.hotspotOn == null);
   for (const id of ids) {
-    const own = presentStep(id, input, canStart, running);
+    let own = presentStep(id, input, canStart, running);
+    if (input.platform === 'linux' && own.code) {
+      const explanation = linuxFailureExplanation(own.code);
+      if (own.state === 'FAILED') own = { ...own, detail: text(failureHeadline(own.code)), explanation };
+      else if (own.state === 'WORKING') own = { ...own, detail: text('path_trying_again'), explanation };
+    }
     const blocked = (p[id] ?? []).some(id => { const previous = checked.get(id); return previous && previous.state !== 'OK' && !unreadable(previous); });
     checked.set(id, blocked && has(['WAITING', 'ACTION', 'BLOCKED'], own.state) ? { ...own, state: 'BLOCKED', detail: own.detail ?? text('path_after_step') } : own);
   }
@@ -156,6 +162,6 @@ export function presentPath(partial: PartialInput, zone?: string): ConnectionPat
   const parts = views.map(s => `${s.section[0]} ${s.steps.map(s => stepInfo[s.id].code + glyph[s.state]).join(' ')}`);
   const failure = steps.find(s => s.state === 'FAILED' && s.code != null);
   if (failure) parts.push(`E ${failure.code} ${clockTime(failure.sinceMillis ?? 0, zone)}`);
-  return { sections: views, focus, tone, canStart, running, live: live ? { sinceMillis: input.live.sessionSinceMillis, chips: [...input.live.chips] } : null,
+  return { ...(input.platform === 'linux' ? { platform: 'linux' as const, armed: i.armed } : {}), sections: views, focus, tone, canStart, running, live: live ? { sinceMillis: input.live.sessionSinceMillis, chips: [...input.live.chips] } : null,
     nodes: { iphone: i.name, relay: r.bluetoothName, car: input.car.carlink.carName ?? input.car.screen ?? (input.setup.outputs.includes('BROWSER') ? input.car.address : null) ?? input.car.dlna.name ?? input.car.miracast.name }, diagnostic: parts.join(' | '), version: input.version };
 }

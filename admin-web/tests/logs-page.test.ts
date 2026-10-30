@@ -56,6 +56,8 @@ it('cancels a job, refreshes the last receipt and saves the same retained ZIP', 
   const container = new Host();
   mountLogsPage(container as unknown as HTMLElement, { t: (key, args) => translate('en', key, args), platform: 'linux', error: () => 'error.request' });
   container.querySelector('#logs-upload').click(); expect(upload).not.toHaveBeenCalled();
+  expect(dialogs[0].innerHTML).toContain(translate('en', 'logs_consent_retention.linux'));
+  expect(dialogs[0].innerHTML).not.toContain('this app');
   dialogs[0].querySelector('[data-consent]').click();
   await vi.advanceTimersByTimeAsync(0); expect(upload).toHaveBeenCalledOnce();
   status.mockResolvedValue({ ...job, state: 'cancelled' });
@@ -82,4 +84,9 @@ it('explains an empty period without offering a metadata-only ZIP for download o
   container.querySelector('#logs-save').click(); await vi.advanceTimersByTimeAsync(0);
   expect(container.querySelector('#feature-feedback').textContent).toBe(translate('en', 'logs_empty'));
   expect(downloads).toHaveLength(0); expect(upload).not.toHaveBeenCalled();
+});
+
+it.each(['en', 'zh-CN'] as const)('names the browser device for offline log downloads (%s)', language => {
+  const text = translate(language, 'files.offline');
+  expect(text).toContain(language === 'en' ? 'device you’re using' : '你正在使用的设备');
 });

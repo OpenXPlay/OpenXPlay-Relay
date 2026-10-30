@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-27
 
-import { openSurface, closeSurface } from './dom';
 import { updates, releaseMarkup, updateFailureText } from './update-check';
 import { mountLogsPage } from './logs-page';
 export { privacyMarkup } from './logs-page';
@@ -63,8 +62,8 @@ export function mountFeaturePage(container: HTMLElement, route: string, options:
     on(container.querySelector('#privacy-export'), 'click', () => {
       const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', t('files.export.privacy'));
       dialog.innerHTML = `<h2>${esc(t('files.export.privacy'))}</h2>${publicNamePrivateAvailable ? `<p>${esc(t('files.privacyWarning'))}</p>` : ''}${mfiTokenAvailable ? `<p>${esc(t('files.mfiPrivacyWarning'))}</p>` : ''}<button data-export class="primary">${esc(t('files.exportConfirm'))}</button><button data-close>${esc(t('ui.cancel'))}</button>`;
-      document.body.append(dialog); openSurface(dialog);
-      const close = () => { closeSurface(dialog); container.querySelector<HTMLButtonElement>('#privacy-export')?.focus(); };
+      document.body.append(dialog); dialog.showModal();
+      const close = () => { dialog.close(); dialog.remove(); container.querySelector<HTMLButtonElement>('#privacy-export')?.focus(); };
       on(dialog.querySelector('[data-close]'), 'click', close); on(dialog, 'cancel', close);
       on(dialog.querySelector('[data-export]'), 'click', () => {
         close(); const link = document.createElement('a'); link.href = '/api/v0/config/privacy'; link.download = 'openxplay-privacy-config.json'; link.click();

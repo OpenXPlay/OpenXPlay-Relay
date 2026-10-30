@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-23
 
-import { openSurface, closeSurface } from './dom';
 import { patchMarkup } from './dom';
 import { api, ApiError, NetworkError, type Status, type NetworkInterface, type NetworkPlan, type NetworkProposal, type PlannedRole } from './api';
 import { COUNTRY_CODES } from './wifi-countries';
@@ -103,8 +102,8 @@ export function editConnections(s: Status, saved: NetworkRolesSetting | undefine
   const extra = () => ({ wifiCountry, ...(password ? { adminHotspotPassword: password } : {}) });
   const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'connections-title');
   dialog.innerHTML = connectionsForm(s, draft, t);
-  document.body.append(dialog); openSurface(dialog);
-  const close = () => { generation++; closeSurface(dialog); trigger.focus(); };
+  document.body.append(dialog); dialog.showModal();
+  const close = () => { generation++; dialog.close(); dialog.remove(); trigger.focus(); };
   dialog.querySelector('[data-close]')!.addEventListener('click', close);
   dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
   const save = dialog.querySelector<HTMLButtonElement>('#roles-save')!;

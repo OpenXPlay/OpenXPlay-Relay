@@ -38,3 +38,17 @@ it('translates every pairing, video, Bluetooth guard and diagnostics key in Engl
   expect(translate('en', 'pairing.when')).toBe('Use this when pairing a new iPhone or after the iPhone forgot this relay.');
   expect(translate('zh-CN', 'home.pairCountdown', { time: '9:41' })).toContain('9:41');
 });
+it('covers the stage, identity, Linux log consent and password-sheet hand-offs in both languages', () => {
+  const keys = ['path_failed_unknown', 'files.pictureNextConnection', 'stage_swipe_hint', 'stage_steps_progress', 'stage_progress_count', 'stage_link_progress', 'stage_dont_auto', 'path_trying_again', 'path_checking_iphone', 'path_approve_car', 'path_action_approve', 'path_start_when', 'path_start_when_iphone', 'path_failed_carlink_not_ready', 'path_failed_iphone_unplugged', 'path_failed_usb_interface_busy', 'path_explain_carlink_not_ready', 'path_explain_iphone_unplugged', 'path_explain_usb_interface_busy', 'identity_choose_file', 'identity_no_file', 'identity_tls_automatic', 'ui.setPasswordTitle', 'ui.setPasswordBody', 'ui.setPasswordSkip', 'logs_consent_retention.linux'];
+  for (const language of ['en', 'zh-CN'] as const) for (const key of keys) expect(translate(language, key), `${language}: ${key}`).not.toBe(key);
+  expect(translate('en', 'ui.login')).toBe('This relay'); expect(translate('zh-CN', 'ui.login')).toBe('这台中继');
+  for (const key of ['files.pictureRestart', 'ui.restartRequired', 'ui.restartNow', 'home.restart', 'stage_notice_display']) {
+    expect(translate('en', key)).toMatch(/reconnect/i); expect(translate('zh-CN', key)).toContain('重新连接');
+  }
+});
+
+it.each(['en', 'zh-CN'] as const)('uses one automatic-connection name (%s)', language => {
+  expect(translate(language, 'field.autoStart')).toBe(translate(language, 'stage.automatic'));
+  expect(translate(language, 'hint.autoStart')).toBe(translate(language, 'hint.field.autoStart'));
+  expect(translate(language, 'net.hotspot')).toBe(translate(language, 'option.networkMode.device-hotspot'));
+});
