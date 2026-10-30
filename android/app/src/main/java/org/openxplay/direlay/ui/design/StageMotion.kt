@@ -6,6 +6,7 @@ package org.openxplay.direlay.ui.design
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -42,6 +43,26 @@ internal suspend fun Animatable<Float, AnimationVector1D>.stageTo(target: Float,
             delay(delayMillis)
             value.stageTo(1f, true, 550)
         } else value.snapTo(1f)
+    }
+    return value.asState()
+}
+
+@Composable internal fun stageDrawerNudge(closed: Boolean): State<Float> {
+    val motion = LocalRelayMotion.current
+    val allowed = LocalStageArrivalEnabled.current
+    var nudged by rememberSaveable { mutableStateOf(!allowed) }
+    val value = remember { Animatable(0f) }
+    LaunchedEffect(motion, closed) {
+        val play = !nudged && motion && allowed && closed
+        nudged = true
+        value.snapTo(0f)
+        if (play) {
+            delay(600)
+            repeat(2) {
+                value.animateTo(-6f, tween(180, easing = LinearOutSlowInEasing))
+                value.animateTo(0f, tween(270))
+            }
+        }
     }
     return value.asState()
 }

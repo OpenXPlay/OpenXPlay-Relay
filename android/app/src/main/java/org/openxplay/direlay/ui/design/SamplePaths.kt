@@ -69,6 +69,9 @@ fun samplePaths(nowMillis: Long, pagesLabel: String = "1"): List<DesignSample> {
         build(R.string.design_sample_pin, PathTone.ACTION, true, false, StepId.CARLINK_PIN,
             PathStep(StepId.CARLINK_PIN, StepState.ACTION, sampleStepTitle(StepId.CARLINK_PIN), StepText.of(R.string.design_enter_pin),
                 action = StepAction.ENTER_PIN, actionLabel = R.string.design_enter), prepared + setOf(StepId.CARLINK_FIND, StepId.CARLINK_LINK), pin = true),
+        build(R.string.design_section_picture, PathTone.PROGRESS, true, false, StepId.PICTURE,
+            PathStep(StepId.PICTURE, StepState.WORKING, sampleStepTitle(StepId.PICTURE), sinceMillis = nowMillis - 1500),
+            (relay + car + iphone).toSet()),
         build(R.string.design_sample_live, PathTone.LIVE, true, false, null, live = true),
     )
 }

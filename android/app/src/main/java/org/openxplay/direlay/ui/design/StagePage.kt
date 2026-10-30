@@ -122,7 +122,7 @@ class StagePageState internal constructor(
         }
     } else BackHandler(expanded) { scope.launch { state.collapse() } }
     val navigation = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val peek = 56.dp + navigation
+    val peek = 72.dp + navigation
     val background = MaterialTheme.colorScheme.background
     val scrim = MaterialTheme.colorScheme.scrim
     CompositionLocalProvider(LocalStageArrivalEnabled provides !arrived,
@@ -160,9 +160,9 @@ class StagePageState internal constructor(
                             }
                         }) { change, amount -> change.consume(); distance += amount }
                     }
-                    DrawerHandle(view.segments, progress, {
+                    DrawerHandle(view, progress, {
                         scope.launch { if (expanded) state.collapse() else state.expand() }
-                    }, Modifier.padding(bottom = navigation).then(snapDrag))
+                    }, Modifier.padding(bottom = navigation).then(snapDrag), expanded)
                 }, sheetContent = {
                     // Dark grouped cards sit one tone above the sheet, as on iOS; light cards keep their outline.
                     val scheme = MaterialTheme.colorScheme
@@ -233,16 +233,20 @@ class StagePageState internal constructor(
     }
 }
 
-@Composable fun DrawerHandle(segments: List<SectionSegment>, progress: () -> Float, onClick: () -> Unit,
-    modifier: Modifier = Modifier) {
+@Composable fun DrawerHandle(view: StageView, progress: () -> Float, onClick: () -> Unit,
+    modifier: Modifier = Modifier, expanded: Boolean = false) {
     val label = stringResource(R.string.stage_steps)
+    val description = stringResource(R.string.stage_steps_progress, view.done, view.total)
     val colors = LocalStatusColors.current
     val track = MaterialTheme.colorScheme.outlineVariant
-    Row(modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { contentDescription = label }
-        .clickable(role = Role.Button, onClickLabel = label, onClick = onClick).padding(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            segments.forEach { segment ->
+    val motion = LocalRelayMotion.current
+    val closed by remember(progress, expanded) { derivedStateOf { !expanded && progress() <= 0f } }
+    val nudge = stageDrawerNudge(closed)
+    Column(modifier.fillMaxWidth().heightIn(min = 72.dp).semantics(mergeDescendants = true) { contentDescription = description }
+        .clickable(role = Role.Button, onClickLabel = label, onClick = onClick).padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            view.segments.forEach { segment ->
                 val fill = stageFloat(if (segment.total > 0) segment.done.toFloat() / segment.total else 0f)
                 Canvas(Modifier.weight(segment.total.coerceAtLeast(1).toFloat()).height(4.dp)) {
                     drawLine(track, Offset(0f, center.y), Offset(size.width, center.y), size.height, StrokeCap.Round)
@@ -251,6 +255,15 @@ class StagePageState internal constructor(
                 }
             }
         }
-        Symbol(R.drawable.symbol_chevron_down, null, Modifier.size(20.dp).graphicsLayer { rotationZ = 180f * (1f - progress()) })
+        Row(Modifier.fillMaxWidth().graphicsLayer { translationY = if (motion && closed) nudge.value * density else 0f },
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.stage_swipe_hint), Modifier.weight(1f).graphicsLayer {
+                alpha = (1f - 2f * progress()).coerceIn(0f, 1f)
+            }.clearAndSetSemantics {}, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.stage_progress_count, view.done, view.total), Modifier.clearAndSetSemantics {},
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"))
+            Symbol(R.drawable.symbol_chevron_down, null, Modifier.size(20.dp).graphicsLayer { rotationZ = 180f * (1f - progress()) })
+        }
     }
 }

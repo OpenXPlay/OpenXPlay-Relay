@@ -5,6 +5,10 @@
 <resources>
     <string name="stage_not_now">暂不</string>
     <string name="stage_steps">全部步骤</string>
+    <string name="stage_link_progress">%1$s，已完成 %2$d / %3$d 步</string>
+    <string name="stage_progress_count">%1$d/%2$d</string>
+    <string name="stage_swipe_hint">上滑查看全部步骤</string>
+    <string name="stage_steps_progress">全部步骤，已完成 %1$d / %2$d</string>
     <string name="stage_auto_in">%1$d 秒后自动连接</string>
     <string name="stage_notice_display">车机屏幕变了 · 重新连接</string>
     <string name="stage_notice_car">选择你的车型</string>
