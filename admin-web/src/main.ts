@@ -18,7 +18,7 @@ import { mountStage, timer } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
 import type { StageAction } from './path/present-stage';
-import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons, fieldEnabled } from './settings-tree';
+import { autoFrameRateSummary, fieldRoute, pageFields, pages, developerPages, routeTitle, parentRoute, normalizeRoute, restartsPicture, menuSummary, pageAvailable, developerIcons, accessIcons, experimentalMarkup, fieldEnabled } from './settings-tree';
 import { mountVehicle, mountVehicleSample } from './vehicle';
 import { mountPictureField } from './picture-sizes';
 import { COUNTRY_CODES } from './wifi-countries';
@@ -238,7 +238,7 @@ function renderReady() {
     if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
     const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry'].includes(f.key)).map(editorField);
-    container.insertAdjacentHTML('beforeend', `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
+    container.insertAdjacentHTML('beforeend', route === 'settings/experimental' ? experimentalMarkup(list, status!.platform, fieldMarkup) : `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
     list.forEach(bindField);
     if (route === 'settings/connection') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/connection/network', 'menu.connection/network', pageSummary('settings/connection/network'), 'wifi')}</div><div id="pairing-panel"></div>`);
     if (route === 'settings/connection/network') container.insertAdjacentHTML('beforeend', `<div id="network-panel" class="inset-group"></div>${status!.platform === 'linux' ? `<div class="inset-group">${menuRow('settings/connection/network/interfaces', 'menu.connection/network/interfaces', '', 'router')}</div>` : ''}`);
@@ -249,7 +249,7 @@ function renderReady() {
     if (route === 'settings/tesla') { container.insertAdjacentHTML('beforeend', '<div id="tesla-notes"></div>'); renderTesla(); }
     if (route === 'settings/access/public-name') container.insertAdjacentHTML('beforeend', '<div id="public-name-panel" class="inset-group"></div>');
     if (route === 'settings/access') {
-      container.insertAdjacentHTML('beforeend', addressesView(status!, true, t) + `<div class="inset-group">${fields().some(f => f.key === 'publicNameEnabled') ? menuRow('settings/access/public-name', 'publicName.title', status!.publicName ? t(`publicName.state.${status!.publicName.state}`) : '', 'lock') : ''}${menuRow('settings/access/admin', 'menu.access/admin', defaultPassword ? t('home.passwordNote') : '', 'lock')}</div>`); bindCopies(container);
+      container.insertAdjacentHTML('beforeend', addressesView(status!, true, t) + `<div class="inset-group">${fields().some(f => f.key === 'publicNameEnabled') ? menuRow('settings/access/public-name', 'publicName.title', status!.publicName ? t(`publicName.state.${status!.publicName.state}`) : '', accessIcons.publicName) : ''}${menuRow('settings/access/admin', 'menu.access/admin', defaultPassword ? t('home.passwordNote') : '', accessIcons.admin)}</div>`); bindCopies(container);
     }
     if (route === 'settings/access/admin') {
       if (status!.platform === 'linux') { container.insertAdjacentHTML('beforeend', `<section class="inset-group"><label class="switch-row"><span>${esc(t('admin.enabled'))}</span><input id="admin-enabled" type="checkbox" role="switch" ${status!.adminEnabled === false ? '' : 'checked'}></label><p class="muted">${esc(t('admin.recovery'))}</p><button id="admin-reset">${esc(t('admin.reset'))}</button><p id="admin-result" role="status"></p></section>`); bindAdminAccess(); }
