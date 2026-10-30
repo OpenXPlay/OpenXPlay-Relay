@@ -545,7 +545,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
                     if (run.ready && intent.action == WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION &&
-                        intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1) == WifiP2pManager.WIFI_P2P_STATE_DISABLED) lost(run)
+                        intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1) == WifiP2pManager.WIFI_P2P_STATE_DISABLED) lost(run, radioOff = true)
                 }
             }
             run.receiver = receiver
@@ -666,10 +666,11 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             try { Thread.sleep(350) } catch (_: InterruptedException) { return }
         }
     }
-    private fun lost(run: Run) {
+    private fun lost(run: Run, radioOff: Boolean = false) {
         if (run.cancelled) return
         val failure = ClinkFailure(ClinkFailureReason.LINK_LOST)
-        if (run.failure == null) diagnostics.emit(ClinkFailures.describe(ClinkStage.LINK_LOST, failure))
+        if (run.failure == null) diagnostics.emit(ClinkFailures.describe(ClinkStage.LINK_LOST,
+            if (radioOff) ClinkFailure(ClinkFailureReason.WIFI_OFF) else failure))
         run.failure = failure
         if (run.ready && !run.lossReported) {
             run.lossReported = true
@@ -794,6 +795,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             diagnostics.emit(ClinkStage.GATT_CLOSED)
         } catch (failure: Exception) {
             cleanupFailure(failure)
+            diagnostics.emit(ClinkDiagnostic.Failure(ClinkStage.GATT_DISCONNECT, "gatt_close_failed", failure.javaClass.simpleName))
             run.bleClosed.completeExceptionally(failure)
         }
     }
