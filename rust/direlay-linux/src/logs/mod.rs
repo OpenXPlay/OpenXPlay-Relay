@@ -3,13 +3,17 @@
 // Created by riko chen on 2026-10-27
 
 //! Private, short-lived journal exports and explicit, single-attempt uploads.
+pub mod diagnostics;
 pub(crate) mod http;
 pub mod jobs;
 pub mod journal;
+pub mod process;
 pub mod redactor;
 pub mod timeline;
 mod traces;
 pub mod upload;
+pub mod waits;
+pub mod watchdog;
 mod zip;
 
 use self::http::Http;
@@ -164,6 +168,11 @@ fn bounded_command(
     result
 }
 
+/// The entries of an export, for tests outside this module.
+#[cfg(test)]
+pub(crate) fn unzip(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    zip::unzip(bytes)
+}
 pub struct Service {
     state: PathBuf,
     journal: Arc<dyn Journal>,
@@ -625,7 +634,7 @@ mod tests {
         let export = service
             .export(
                 Range::TenMinutes,
-                "model=Test",
+                "model=Test\nPrevious process: {\"state\":{\"note\":\"password=topsecret\"}}",
                 &[],
                 &format!("{} runtime stage=ready", now_millis()),
             )
@@ -654,6 +663,7 @@ mod tests {
             assert!(!text.contains(private));
         }
         assert!(text.contains("runtime stage=ready"));
+        assert!(text.contains("Previous process: {\"state\""));
         assert!(text.contains("h264"));
         assert!(text.contains("PrivateWifi"));
         assert!(text.contains("8.8.8.8"));

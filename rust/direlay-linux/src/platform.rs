@@ -103,6 +103,7 @@ impl CommandRunner for ProcessCommandRunner {
 }
 type StartupListener = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct JsonEvents {
+    pub diagnostics: Arc<crate::logs::diagnostics::Diagnostics>,
     failure_secrets: Mutex<Vec<String>>,
     startup_diagnostics: std::sync::atomic::AtomicBool,
     output: Arc<dyn Fn(String) + Send + Sync>,
@@ -116,6 +117,7 @@ pub struct JsonEvents {
 impl JsonEvents {
     pub fn new(output: Arc<dyn Fn(String) + Send + Sync>) -> Self {
         Self {
+            diagnostics: Arc::default(),
             failure_secrets: Mutex::default(),
             startup_diagnostics: std::sync::atomic::AtomicBool::new(true),
             output,
@@ -265,6 +267,7 @@ impl JsonEvents {
         }
         let observed_at = Instant::now();
         let fields = self.filtered(fields);
+        crate::logs::diagnostics::observe(self, event, &fields);
         if event == "stage" && fields["stage"] == "WirelessActive" {
             self.follow_over("iphone-connected");
         }

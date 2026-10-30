@@ -256,6 +256,7 @@ impl LinuxWiredController {
         s.stage = stage.into();
         let mut fields = fields;
         fields["stage"] = stage.into();
+        fields["generation"] = generation.into();
         self.events.emit("stage", &fields);
         Ok(())
     }

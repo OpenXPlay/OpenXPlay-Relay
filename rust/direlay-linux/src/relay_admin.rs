@@ -56,6 +56,30 @@ enum Operation {
         reconnect: bool,
     },
 }
+impl Operation {
+    /// The name the stall watchdog reports for a blocked admin worker.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+            Self::Forget => "forget_wifi",
+            Self::ForgetCarlink => "forget_carlink",
+            Self::ClearSavedHeadUnit => "clear_head_unit",
+            Self::RegeneratePairingCode => "pairing_code",
+            Self::ConnectCarlink(_) => "connect_carlink",
+            Self::Join(..) => "join_wifi",
+            Self::Startup => "startup",
+            Self::Initialize => "initialize",
+            Self::Outputs(_) => "outputs",
+            Self::ReceiverTls => "receiver_tls",
+            Self::Carlink => "carlink",
+            Self::Hotspot(_) => "hotspot",
+            Self::Roles(_) => "network_roles",
+            Self::Network { .. } => "network",
+        }
+    }
+}
 struct ArmedPin {
     pin: String,
     expires: std::time::Instant,
@@ -389,6 +413,9 @@ impl LinuxRelayAdmin {
             crate::start_policy::AutoStartGate::load(&options.state_dir, &runtime.root)?;
         let desired = settings.boot_start && !auto_start_gate.paused();
         events.failure_secrets(failure_secrets(&settings, &options.state_dir));
+        events
+            .diagnostics
+            .set_enabled(settings.effective_experimental().stall_watchdog);
         Ok(Self {
             auto_start_gate: Mutex::new(auto_start_gate),
             arrival: Mutex::default(),
@@ -728,6 +755,10 @@ impl LinuxRelayAdmin {
                     if op.is_none() && !shell.follow.lock().unwrap().ready() {
                         continue;
                     }
+                    let _progress = shell.events.diagnostics.admin.enter(
+                        op.as_ref().map_or("follow_over", Operation::name),
+                        crate::logs::diagnostics::OPERATION_BUDGET,
+                    );
                     shell.busy.store(true, Ordering::Release);
                     let lifecycle = shell.lifecycle.lock().unwrap();
                     if let Err(e) = shell.reconcile_carlink_network() {
@@ -1121,7 +1152,40 @@ impl LinuxRelayAdmin {
         let _ = self.input.stop();
     }
     fn operation(&self, op: Operation) -> Result<()> {
+        use crate::logs::diagnostics::{self, WaitGuard};
+        let name = op.name();
+        let _progress = diagnostics::nested(name, diagnostics::OPERATION_BUDGET);
+        let d = &self.events.diagnostics;
+        // Start while the Carlink or car-screen budget runs is "Start now", not a new start.
+        let start_now =
+            matches!(op, Operation::Start) && self.start_policy.lock().unwrap().waiting();
+        let request = matches!(op, Operation::Stop | Operation::Restart)
+            || matches!(op, Operation::Start) && !start_now;
+        if request {
+            d.new_request();
+            let outcome = if matches!(op, Operation::Stop) {
+                "stopped"
+            } else {
+                "restarted"
+            };
+            d.start_ended(&self.events, outcome);
+        }
+        let mut wait = match op {
+            Operation::Restart => Some(WaitGuard::new(&self.events, "restart")),
+            Operation::Stop => Some(WaitGuard::new(&self.events, "stop")),
+            _ => None,
+        };
         let result = self.perform_operation(op);
+        match (&result, wait.as_mut()) {
+            (Ok(()), Some(wait)) => wait.finish("done"),
+            (Err(error), _) if request && name != "stop" => {
+                d.start_ended(&self.events, "failed");
+                let reason = diagnostics::start_failure_reason(error);
+                d.refuse(&self.events, reason, serde_json::json!({"action":name}));
+            }
+            _ => {}
+        }
+        drop(wait);
         self.inventory.refresh_now();
         result
     }
@@ -1134,6 +1198,11 @@ impl LinuxRelayAdmin {
             Operation::Start => {
                 if self.start_policy.lock().unwrap().waiting() {
                     self.start_policy.lock().unwrap().skip();
+                    self.events.diagnostics.end_each(
+                        &self.events,
+                        &["carlink", "car_screen"],
+                        "start_now",
+                    );
                     self.desired.store(true, Ordering::Release);
                     return Ok(());
                 }
@@ -1381,8 +1450,10 @@ impl LinuxRelayAdmin {
         if self.network_override.lock().unwrap().is_some() {
             return Ok(());
         }
+        let mut wait = crate::logs::diagnostics::WaitGuard::new(&self.events, "provisioning");
         let options = self.effective_options()?;
         if !self.prepare_wifi()? {
+            wait.finish("no_wifi");
             return Ok(());
         }
         let mut provision_guard = self.provision.lock().unwrap();
@@ -1393,6 +1464,7 @@ impl LinuxRelayAdmin {
         } else {
             provision.stop()?;
         }
+        wait.finish("ready");
         Ok(())
     }
     fn change_network(&self, mode_changed: bool, reconnect: bool) -> Result<()> {
@@ -1889,6 +1961,12 @@ impl LinuxRelayAdmin {
         Ok(())
     }
     fn fail_start(&self, error: &std::io::Error) {
+        let d = &self.events.diagnostics;
+        d.start_ended(&self.events, "failed");
+        if self.desired.load(Ordering::Acquire) && self.controller.lock().unwrap().is_none() {
+            let reason = crate::logs::diagnostics::start_failure_reason(error);
+            d.refuse(&self.events, reason, serde_json::json!({}));
+        }
         self.events.facts.lock().unwrap().failure(
             &error.to_string(),
             false,
@@ -1978,6 +2056,7 @@ impl LinuxRelayAdmin {
         }
         if !self.wifi_present(&self.effective_options()?.wifi_interface) {
             self.stop_controller();
+            self.hold_start("radio_unavailable", serde_json::json!({"wifi":"absent"}));
             return Ok(());
         }
         if *self.provision_interface.lock().unwrap() != self.effective_options()?.wifi_interface {
@@ -2094,6 +2173,32 @@ impl LinuxRelayAdmin {
             && wifi != Some(false)
             && (options.settings.network_mode != "shared-wifi"
                 || self.wifi_status().ssid.is_some());
+        let selected = matches!(
+            selection.reason(),
+            "Selected" | "Connected" | "OnlyCandidate"
+        );
+        let refused = if !identity {
+            Some("identity")
+        } else if !network_ready
+            && options.settings.network_mode == "shared-wifi"
+            && self.wifi_present(&options.wifi_interface)
+            && wifi != Some(false)
+        {
+            Some("shared_network")
+        } else if !network_ready || !usb && bluetooth == Some(false) {
+            Some("radio_unavailable")
+        } else if !usb && !selected {
+            Some("iphone_selection")
+        } else {
+            None
+        };
+        if let Some(reason) = refused {
+            self.events.diagnostics.refuse(
+                &self.events,
+                reason,
+                serde_json::json!({"source":"auto"}),
+            );
+        }
         let ready = identity
             && network_ready
             && (usb
@@ -2115,6 +2220,12 @@ impl LinuxRelayAdmin {
         }
         Ok(())
     }
+    /// A requested start that waits for its network or radios; a running session is no start.
+    fn hold_start(&self, reason: &'static str, detail: serde_json::Value) {
+        if self.controller.lock().unwrap().is_none() {
+            self.events.diagnostics.hold(&self.events, reason, detail);
+        }
+    }
     /// Runs the CarPlay controller: starts one unless it runs, Carlink or the setup hotspot owns
     /// the radio, and applies a requested session restart. The caller holds `lifecycle`.
     fn ensure_controller(&self) -> Result<()> {
@@ -2128,21 +2239,25 @@ impl LinuxRelayAdmin {
         {
             return Ok(());
         }
-        if self.provision.lock().unwrap().is_none()
-            || !self.wifi_present(&self.effective_options()?.wifi_interface)
-        {
+        if self.provision.lock().unwrap().is_none() {
+            self.hold_start("provisioning", serde_json::json!({}));
             return Ok(());
         }
-        if self.effective_options()?.shared_carlink_radio() {
+        if !self.wifi_present(&self.effective_options()?.wifi_interface) {
+            self.hold_start("radio_unavailable", serde_json::json!({"wifi":"absent"}));
+            return Ok(());
+        }
+        let following = self.effective_options()?.shared_carlink_radio() && {
             let follow = self.follow.lock().unwrap();
             let current = self.network_override.lock().unwrap();
-            if follow
+            follow
                 .target
                 .as_deref()
                 .is_some_and(|ssid| current.as_ref().map(|n| n.ssid.as_str()) != Some(ssid))
-            {
-                return Ok(());
-            }
+        };
+        if following {
+            self.hold_start("follow_over", serde_json::json!({}));
+            return Ok(());
         }
         if self.network_override.lock().unwrap().is_none()
             && self
@@ -2152,6 +2267,7 @@ impl LinuxRelayAdmin {
                 .as_ref()
                 .is_some_and(|p| p.status().setup_hotspot)
         {
+            self.hold_start("shared_network", serde_json::json!({}));
             return Ok(());
         }
         let controller_running = self.controller.lock().unwrap().is_some();
@@ -2176,8 +2292,8 @@ impl LinuxRelayAdmin {
                         "bluetooth_off" | "bluetooth_unusable"
                     )
                 });
-        if bluetooth_problem
-            || crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface)
+        let wifi_off =
+            crate::start_policy::wifi_enabled(&self.runtime.root, &options.wifi_interface)
                 == Some(false)
                 && self
                     .runtime
@@ -2185,23 +2301,41 @@ impl LinuxRelayAdmin {
                     .join("sys/class/net")
                     .join(&options.wifi_interface)
                     .join("address")
-                    .exists()
-        {
+                    .exists();
+        if bluetooth_problem || wifi_off {
+            let state = |off: bool| if off { "off" } else { "on" };
+            self.hold_start(
+                "radio_unavailable",
+                serde_json::json!({"bluetooth":state(bluetooth_problem),"wifi":state(wifi_off)}),
+            );
             return Ok(());
         }
         self.events
             .failure_secrets(failure_secrets(&options.settings, &options.state_dir));
         self.input.configure_runtime_settings(&options.settings)?;
         self.input.configure_connection_experiments();
-        {
+        let (carlink_budget, screen_budget) = {
             let mut policy = self.start_policy.lock().unwrap();
-            if !policy.requested() {
-                policy.request(
-                    std::time::Instant::now(),
-                    options.settings.output != "web",
-                    self.input.screen_known(),
-                );
+            let carlink = options.settings.output != "web";
+            let screen = !self.input.screen_known();
+            let requested = !policy.requested();
+            if requested {
+                policy.request(std::time::Instant::now(), carlink, !screen);
             }
+            (requested && carlink, requested && screen)
+        };
+        // The budgets of start_policy: 60 s for Carlink, 20 s for the real car screen.
+        if carlink_budget {
+            let detail = serde_json::json!({"maxMillis":60_000});
+            self.events
+                .diagnostics
+                .begin(&self.events, "carlink", detail);
+        }
+        if screen_budget {
+            let detail = serde_json::json!({"maxMillis":20_000});
+            self.events
+                .diagnostics
+                .begin(&self.events, "car_screen", detail);
         }
         let start_gate: crate::start_policy::StartGate = {
             let (policy, carlink, input, settings, desired, events) = (
@@ -2224,12 +2358,15 @@ impl LinuxRelayAdmin {
                     let c = carlink.lock().unwrap();
                     (c.ready_for_carplay(), c.view_size.is_some())
                 };
-                let result = policy.lock().unwrap().ready(
-                    std::time::Instant::now(),
-                    enabled,
-                    ready,
-                    input.screen_reported() || reported,
-                );
+                let screen = input.screen_reported() || reported;
+                let result =
+                    policy
+                        .lock()
+                        .unwrap()
+                        .ready(std::time::Instant::now(), enabled, ready, screen);
+                events
+                    .diagnostics
+                    .start_gate(&events, &result, ready, screen);
                 if let Err(e) = &result {
                     policy.lock().unwrap().fail();
                     events.facts.lock().unwrap().failure(
@@ -2258,6 +2395,7 @@ impl LinuxRelayAdmin {
         {
             options.pair_seconds = None;
         }
+        self.events.diagnostics.admitted(&self.events);
         self.events.follow_over("controller-start");
         self.tesla.lock().unwrap().prepare(
             &options.settings,
@@ -3473,6 +3611,11 @@ impl LinuxRelayAdmin {
             "wifiCapabilities":status.wireless.map(|w| w.summary),
             "settings":safe,"savedWifiNetworkCount":count
         }).to_string();
+        // Process, watchdog and wait facts; the export redacts them like every other line.
+        let info = format!(
+            "{info}\n{}",
+            self.events.diagnostics.export_details().trim_end()
+        );
         self.log_exports.export(
             range,
             &info,
@@ -4444,6 +4587,10 @@ impl RelayAdmin for LinuxRelayAdmin {
                         crate::platform::wall_clock().as_millis() as u64,
                     );
                 }
+                // The stall watchdog applies at once.
+                self.events
+                    .diagnostics
+                    .set_enabled(next.effective_experimental().stall_watchdog);
                 *current = next;
                 if outputs_changed {
                     self.apply_pending.store(true, Ordering::Release);
@@ -4501,9 +4648,15 @@ impl RelayAdmin for LinuxRelayAdmin {
             )
             .map(|_| ())
             .map_err(|_| "error.radioWifi".into()),
-            "start" => self.defer(Operation::Start),
+            "start" => self.defer(Operation::Start).inspect_err(|_| {
+                let detail = serde_json::json!({"action":"start"});
+                self.events.diagnostics.refuse(&self.events, "busy", detail);
+            }),
             "stop" | "cancel-arrival" => self.defer(Operation::Stop),
-            "restart" => self.defer(Operation::Restart),
+            "restart" => self.defer(Operation::Restart).inspect_err(|_| {
+                let detail = serde_json::json!({"action":"restart"});
+                self.events.diagnostics.refuse(&self.events, "busy", detail);
+            }),
             "forget-wifi" => self.defer(Operation::Forget),
             "forget-carlink" => self.defer(Operation::ForgetCarlink),
             "clear-saved-head-unit" => self.defer(Operation::ClearSavedHeadUnit),
@@ -7326,6 +7479,213 @@ mod tests {
         let saved = Settings::load(&dir).unwrap();
         assert_eq!(saved.hotspot_band, "2.4");
         assert_eq!(saved.device_preset, "msm8916");
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    fn record_events(a: &mut Arc<LinuxRelayAdmin>) -> Arc<Mutex<Vec<serde_json::Value>>> {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let copy = lines.clone();
+        Arc::get_mut(a).unwrap().events = Arc::new(JsonEvents::new(Arc::new(move |line| {
+            copy.lock()
+                .unwrap()
+                .push(serde_json::from_str(&line).unwrap())
+        })));
+        lines
+    }
+    /// `event for/reason outcome` of the named-wait and refused-start lines.
+    fn start_lines(lines: &Mutex<Vec<serde_json::Value>>) -> Vec<String> {
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| {
+                l["event"]
+                    .as_str()
+                    .is_some_and(|e| e.starts_with("carplay_"))
+            })
+            .map(|l| {
+                let name = l["for"].as_str().or(l["reason"].as_str()).unwrap_or("");
+                let outcome = l["outcome"].as_str().unwrap_or("");
+                format!("{} {name} {outcome}", l["event"].as_str().unwrap())
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+    #[test]
+    fn a_held_start_waits_for_its_network_once_and_a_running_session_holds_nothing() {
+        let (mut a, dir) = fake();
+        let lines = record_events(&mut a);
+        {
+            let a = Arc::get_mut(&mut a).unwrap();
+            a.child_factory = Arc::new(OutputFake::default());
+            a.net_root = dir.join("net");
+            a.backends.station = crate::host_backends::station_with_cli(
+                a.runtime.runner.clone(),
+                "/usr/bin/true".into(),
+                a.runtime.clone(),
+            );
+            *a.provision.lock().unwrap() = None;
+        }
+        a.inventory.set(crate::net_inventory::Inventory {
+            probed_at: Some(1),
+            ..Default::default()
+        });
+        a.operation(Operation::Startup).unwrap();
+        for _ in 0..3 {
+            a.tick().unwrap();
+        }
+        assert!(a.controller.lock().unwrap().is_none());
+        let held = lines
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|l| l["event"] == "carplay_wait")
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            (
+                held["for"].as_str(),
+                held["reason"].as_str(),
+                held["wifi"].as_str()
+            ),
+            (Some("network"), Some("radio_unavailable"), Some("absent"))
+        );
+        std::fs::create_dir_all(dir.join("net/wlan0")).unwrap();
+        std::fs::write(dir.join("net/wlan0/address"), "AA:BB:CC:DD:EE:FF").unwrap();
+        a.start_policy.lock().unwrap().skip();
+        a.tick().unwrap();
+        assert!(a.controller.lock().unwrap().is_some());
+        for _ in 0..3 {
+            a.tick().unwrap();
+        }
+        let seen = start_lines(&lines);
+        assert_eq!(
+            seen.iter().filter(|l| *l == "carplay_wait network").count(),
+            1,
+            "{seen:?}"
+        );
+        assert!(
+            seen.contains(&"carplay_wait_end network ready".to_string()),
+            "{seen:?}"
+        );
+        // Waiting for the network is no refusal, and the running session holds no start.
+        assert!(
+            !seen.iter().any(|l| l.starts_with("carplay_start_blocked")),
+            "{seen:?}"
+        );
+        let admitted = seen
+            .iter()
+            .position(|l| l == "carplay_wait_end network ready");
+        assert!(!seen[admitted.unwrap()..]
+            .iter()
+            .any(|l| l.starts_with("carplay_wait network")
+                || l.starts_with("carplay_waiting network")));
+        // Provisioning is a named wait of its own, ended with what happened.
+        let outcome = match a.operation(Operation::Initialize) {
+            Ok(()) => "ready",
+            Err(_) => "failed",
+        };
+        let seen = start_lines(&lines);
+        assert_eq!(
+            seen[seen.len() - 2..],
+            [
+                "carplay_wait provisioning".to_string(),
+                format!("carplay_wait_end provisioning {outcome}")
+            ]
+        );
+        a.operation(Operation::Stop).unwrap();
+        let seen = start_lines(&lines);
+        assert_eq!(
+            seen[seen.len() - 2..],
+            ["carplay_wait stop", "carplay_wait_end stop done"]
+        );
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn refused_starts_log_once_and_the_stall_watchdog_choice_applies_at_once() {
+        let (mut a, dir) = fake();
+        // Both switches default on.
+        assert!(a.events.diagnostics.enabled());
+        let lines = record_events(&mut a);
+        for (key, value) in [
+            ("experimentalStallWatchdog", false),
+            ("experimentalStallWatchdog", true),
+            ("experimentalActive", false),
+            ("experimentalActive", true),
+        ] {
+            a.update(serde_json::json!({key:value}).as_object().unwrap().clone());
+            assert_eq!(a.events.diagnostics.enabled(), value, "{key}={value}");
+        }
+        a.action("start").unwrap();
+        assert_eq!(a.action("start"), Err("error.busy".into()));
+        assert_eq!(a.action("start"), Err("error.busy".into()));
+        assert_eq!(a.action("restart"), Err("error.busy".into()));
+        assert_eq!(
+            start_lines(&lines),
+            ["carplay_start_blocked busy", "carplay_start_blocked busy"]
+        );
+        let actions: Vec<_> = lines
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|l| l["action"].clone())
+            .collect();
+        assert_eq!(
+            actions,
+            [serde_json::json!("start"), serde_json::json!("restart")]
+        );
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn log_export_info_lists_process_watchdog_and_wait_facts() {
+        struct Quiet;
+        impl crate::logs::Journal for Quiet {
+            fn read(&self, _: u64, _: u64) -> std::io::Result<crate::logs::JournalSlice> {
+                Ok(crate::logs::JournalSlice {
+                    bytes: Vec::new(),
+                    truncated: false,
+                })
+            }
+        }
+        let (mut a, dir) = fake();
+        Arc::get_mut(&mut a).unwrap().log_exports = crate::logs::Service::with_sources(
+            dir.clone(),
+            Arc::new(Quiet),
+            Arc::new(crate::logs::http::Client::new(
+                Duration::from_secs(1),
+                65536,
+                "test",
+            )),
+        );
+        let detail = serde_json::json!({"reason":"radio_unavailable"});
+        a.events.diagnostics.begin(&a.events, "network", detail);
+        let export = a.build_log_export("10m").unwrap();
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        a.log_exports
+            .download(&export.id)
+            .unwrap()
+            .file
+            .read_to_end(&mut bytes)
+            .unwrap();
+        let entries = crate::logs::unzip(&bytes);
+        let info = String::from_utf8_lossy(&entries.iter().find(|e| e.0 == "info.txt").unwrap().1)
+            .into_owned();
+        for fact in [
+            "\"hostProfile\"",
+            "\nProcess: ",
+            "\nPrevious process: ",
+            "\nProcess exit: ",
+            "\nStall watchdog: {\"droppedDiagnostics\":0,\"enabled\":true",
+            "\nSession: ",
+            "\nWaits: {",
+            "\"for\":\"network\",\"reason\":\"radio_unavailable\"",
+        ] {
+            assert!(info.contains(fact), "{fact} in {info}");
+        }
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }

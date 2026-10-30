@@ -380,6 +380,7 @@ impl LinuxCarPlayController {
         s.stage = stage.into();
         let mut fields = fields;
         fields["stage"] = stage.into();
+        fields["generation"] = s.generation.into();
         self.events.emit("stage", &fields);
     }
     /// A stage of the attempt's network worker: logged like the others, while [`Self::stage`]
@@ -391,6 +392,7 @@ impl LinuxCarPlayController {
         }
         let mut fields = fields;
         fields["stage"] = stage.into();
+        fields["generation"] = s.generation.into();
         self.events.emit("stage", &fields);
     }
     fn check(&self) -> Result<()> {
@@ -476,6 +478,9 @@ impl LinuxCarPlayController {
             match result {
                 Ok(()) => {
                     self.disarm();
+                    self.events
+                        .diagnostics
+                        .end(&self.events, "bluetooth", "ready");
                     return Ok(());
                 }
                 Err(e) => {
@@ -503,7 +508,10 @@ impl LinuxCarPlayController {
             );
             let previous = selected.clone();
             match self.try_connect_iphone(&mut selected) {
-                Ok(c) => return Ok(c),
+                Ok(c) => {
+                    self.events.diagnostics.end(&self.events, "iphone", "ready");
+                    return Ok(c);
+                }
                 Err(e) => {
                     self.check()?;
                     if selected != previous {

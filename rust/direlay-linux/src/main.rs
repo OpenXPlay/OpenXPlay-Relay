@@ -453,6 +453,10 @@ pub fn run() -> Result<()> {
     let options = match Options::parse(&args) {
         Ok(o) => o,
         Err(e) => {
+            let detail = serde_json::json!({});
+            events
+                .diagnostics
+                .refuse(&events, "invalid_settings", detail);
             eprintln!("{USAGE}");
             return Err(e);
         }
@@ -474,6 +478,14 @@ pub fn run() -> Result<()> {
         }
         return Ok(());
     }
+    // After the state lock: only this process reads and replaces the heartbeat.
+    let watchdog = crate::logs::watchdog::Watchdog::start(
+        &options.state_dir,
+        events.clone(),
+        options.settings.effective_experimental().stall_watchdog,
+    )?;
+    let main_thread = events.diagnostics.main.clone();
+    let startup = main_thread.enter("startup", crate::logs::diagnostics::OPERATION_BUDGET);
     let admin = Arc::new(crate::relay_admin::LinuxRelayAdmin::new(
         options.clone(),
         state.clone(),
@@ -521,7 +533,10 @@ pub fn run() -> Result<()> {
         );
     }
     let mut previous = addresses;
+    drop(startup);
+    let _main_loop = main_thread.enter("tick", crate::logs::diagnostics::LOOP_BUDGET);
     while !STOP.load(Ordering::Acquire) {
+        main_thread.beat();
         // A finished admin operation, such as the startup network initialisation, ends the wait
         // early, so the controller starts without waiting for the next tick.
         admin.wait_for_tick(Duration::from_millis(250));
@@ -558,6 +573,9 @@ pub fn run() -> Result<()> {
     if let Some(mut host) = mdns {
         host.stop();
     }
-    state.close()
+    state.close()?;
+    events.diagnostics.end_all(&events, "shutdown");
+    watchdog.clean_exit();
+    Ok(())
 }
 pub const USAGE:&str="Usage: openxplay-relay [options]\n  --identity-dir DIR    Local identity.pk8 and certificate.p7b (default /var/lib/openxplay/mfi)\n  --state-dir DIR       Private state (default /var/lib/openxplay)\n  --host-profile PATH  Device profile (default /etc/openxplay/host.json)\n  --device-preset ID   Device preset: auto, msm8916, phicomm-n1, generic (default auto)\n  --network-mode MODE   device-hotspot or shared-wifi\n  --wifi-interface IF   Wi-Fi interface (profile default, otherwise wlan0)\n  --carlink-interface IF Carlink station interface (empty = Wi-Fi interface)\n  --wifi-channel N      AP channel (0 = automatic; 2.4 GHz fallback 6)\n  --wifi-ssid SSID      Shared Wi-Fi SSID\n  --wifi-password PASS  Shared Wi-Fi password\n  --transport MODE      wireless (default) or usb\n  --usb-charging-ma MA  USB charging offer: 500 (default), 1500 or 2400\n  --iphone ADDR         Select bonded iPhone\n  --rfcomm-channel N    iAP2 RFCOMM channel override (1..30)\n  --pair SECONDS        Auto-accept pairing window (1..3600)\n  --stream-socket PATH  oxp-relay socket (default /tmp/oxp-relay.sock)\n  --oxp-relay PATH      Output binary\n  --web-root DIR        Receiver web assets\n  --plugins-root DIR   Installed plugins (default /opt/openxplay/share/plugins)\n  --admin-root DIR      Admin assets (default /opt/openxplay/share/admin)\n  --bluetooth-guard-status PATH Bluetooth guard state (default /run/openxplay/bluetooth-guard.json)\n  --receiver-port PORT  Receiver HTTPS port (default 8443)\n  --pairing             Require receiver pairing code\n  --output MODE        web, carlink or both\n  --record DIR          Record decrypted media\n  --test-input replay:PATH[,PATH]  Test mode: replay Annex B clips (files or directories; a <file>.jsonl timing index from --record is used when present) instead of an iPhone\n  --test-keyframe RULES Test-mode key-frame answers: immediate (default), delay:MS, ignore-first, ignore:N, ignore-all, stream-restart; comma-separated, an h264: or h265: prefix limits a rule to that codec\n  --test-context FILE   Test-mode context script (JSON) or demo; needs the plugins setting\n  --enable-admin        Enable head-unit admin access and exit (stop the service first)\n  --reset-admin-password Reset admin password and exit\n  --help                Show this help";
