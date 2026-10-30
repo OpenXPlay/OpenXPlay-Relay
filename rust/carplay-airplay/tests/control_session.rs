@@ -110,8 +110,16 @@ struct Events {
     milestones: Mutex<Vec<String>>,
     rendered: AtomicUsize,
     throw_milestone: AtomicBool,
+    authentication_failures: AtomicUsize,
+    session_errors: Mutex<Vec<u64>>,
 }
 impl AirPlaySessionListener for Events {
+    fn on_session_error(&self, session: &AirPlaySession, _: &str) {
+        self.session_errors.lock().unwrap().push(session.id());
+    }
+    fn on_authentication_failed(&self, _: &AirPlaySession) {
+        self.authentication_failures.fetch_add(1, Ordering::Relaxed);
+    }
     fn on_startup_milestone(&self, _: &AirPlaySession, name: &str) {
         assert!(
             !self.throw_milestone.load(Ordering::Relaxed),
@@ -519,6 +527,39 @@ fn transport_milestones_distinguish_peer_eof_and_io_failure() {
             }]
         );
     }
+}
+#[test]
+fn a_control_failure_reaches_the_listener_with_its_session() {
+    let f = fixture(config());
+    let other = fixture(config());
+    assert_ne!(f.session.id(), other.session.id());
+    f.socket.failed.store(true, Ordering::Release);
+    f.session.start().unwrap();
+    wait_for_end(&f);
+    assert_eq!(*f.events.session_errors.lock().unwrap(), [f.session.id()]);
+    // A clean end is no failure.
+    other.socket.close().unwrap();
+    other.session.start().unwrap();
+    wait_for_end(&other);
+    assert!(other.events.session_errors.lock().unwrap().is_empty());
+}
+#[test]
+fn failed_pair_setup_and_auth_setup_are_reported_but_a_failed_pair_verify_is_not() {
+    let f = fixture(config());
+    let failures = || f.events.authentication_failures.load(Ordering::Relaxed);
+    // An unknown controller fails pair-verify; the iPhone then pairs again.
+    let verify = request("POST", "/pair-verify", tlv(&[(6, vec![3])]));
+    assert_eq!(f.session.handle_request(&verify).unwrap().status, 200);
+    assert_eq!(failures(), 0);
+    let setup = request("POST", "/pair-setup", tlv(&[(6, vec![1])]));
+    assert_eq!(f.session.handle_request(&setup).unwrap().status, 200);
+    assert_eq!(failures(), 0);
+    let setup = request("POST", "/pair-setup", tlv(&[(6, vec![3])]));
+    assert_eq!(f.session.handle_request(&setup).unwrap().status, 200);
+    assert_eq!(failures(), 1);
+    let auth = request("POST", "/auth-setup", vec![1; 5]);
+    assert_eq!(f.session.handle_request(&auth).unwrap().status, 400);
+    assert_eq!(failures(), 2);
 }
 #[test]
 fn close_notifies_once_and_terminates_waiting_input() {

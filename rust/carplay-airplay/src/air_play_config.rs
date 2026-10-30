@@ -76,6 +76,9 @@ pub struct AirPlayConfig {
 
     pub hevc: bool,
 
+    /// Enable the optional iAP2 channel only when the peer offers it.
+    pub iap_channel_only_when_offered: bool,
+
     pub microphone: bool,
 
     pub microphone_opus: bool,
@@ -109,6 +112,7 @@ impl AirPlayConfig {
             port: 7000,
             entertainment_sample_rate: 48000,
             hevc: false,
+            iap_channel_only_when_offered: false,
             microphone: true,
             microphone_opus: true,
             output_opus: true,

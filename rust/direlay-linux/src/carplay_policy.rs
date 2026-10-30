@@ -16,6 +16,21 @@ pub const CONNECTING_CONTROL: &str = "ConnectingControl";
 pub const RUNNING_CONTROL: &str = "RunningControl";
 pub const START_SESSION_SENT: &str = "StartSessionSent";
 
+/// Whether SETUP enables the iAP2 Wi-Fi channel only when the iPhone offers it; both transports.
+pub fn iap_channel_only_when_offered(settings: &crate::settings::Settings) -> bool {
+    settings.effective_experimental().iap_channel_when_offered
+}
+/// The wireless controller's handoff experiments for its next attempt.
+pub fn wireless_handoff_options(
+    settings: &crate::settings::Settings,
+) -> carplay_airplay::wireless_handoff_policy::WirelessHandoffOptions {
+    let choices = settings.effective_experimental();
+    carplay_airplay::wireless_handoff_policy::WirelessHandoffOptions {
+        release_bluetooth_on_request: choices.release_bluetooth_on_request,
+        await_iphone_reconnect: choices.await_iphone_reconnect,
+    }
+}
+
 pub fn screen_session_policy(
     settings: &crate::settings::Settings,
 ) -> carplay_airplay::ScreenSessionPolicy {
@@ -352,5 +367,37 @@ mod tests {
         ] {
             assert_eq!(startup_stage(stage).unwrap().1, reason);
         }
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+    #[test]
+    fn each_connection_choice_needs_the_experimental_master() {
+        for bits in 0..16u8 {
+            let settings = crate::settings::Settings {
+                experimental_active: bits & 8 != 0,
+                experimental_iap_channel_when_offered: bits & 1 != 0,
+                experimental_release_bluetooth_on_request: bits & 2 != 0,
+                experimental_await_iphone_reconnect: bits & 4 != 0,
+                ..Default::default()
+            };
+            let on = |bit: u8| bits & 8 != 0 && bits & bit != 0;
+            assert_eq!(iap_channel_only_when_offered(&settings), on(1));
+            let options = wireless_handoff_options(&settings);
+            assert_eq!(options.release_bluetooth_on_request, on(2));
+            assert_eq!(options.await_iphone_reconnect, on(4));
+        }
+        // The relay's defaults turn all three on; the library's keep them off.
+        let defaults = crate::settings::Settings::default();
+        assert!(iap_channel_only_when_offered(&defaults));
+        assert_eq!(
+            wireless_handoff_options(&defaults),
+            carplay_airplay::wireless_handoff_policy::WirelessHandoffOptions {
+                release_bluetooth_on_request: true,
+                await_iphone_reconnect: true,
+            }
+        );
     }
 }

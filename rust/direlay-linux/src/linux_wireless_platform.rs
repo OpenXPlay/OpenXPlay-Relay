@@ -212,6 +212,9 @@ impl BluetoothConnection for BluetoothClient {
     }
 }
 impl WirelessPlatform for LinuxWirelessPlatform {
+    fn handoff_options(&self) -> carplay_airplay::wireless_handoff_policy::WirelessHandoffOptions {
+        crate::carplay_policy::wireless_handoff_options(&self.input.connection_settings())
+    }
     fn network_watch_enabled(&self) -> bool {
         true
     }
@@ -371,6 +374,7 @@ impl WirelessPlatform for LinuxWirelessPlatform {
             self.backends.bluetooth.local_address()?,
             self.input.configure_session(),
             self.options.settings.car_bluetooth_audio,
+            crate::carplay_policy::iap_channel_only_when_offered(&self.input.connection_settings()),
         );
         self.input.configure_display(&mut config.main);
         let input = self.input.clone();
@@ -438,10 +442,12 @@ pub(crate) fn air_play_config(
     bt_mac: String,
     session: (u32, bool),
     car_bluetooth_audio: bool,
+    iap_channel_only_when_offered: bool,
 ) -> AirPlayConfig {
     let mut config = AirPlayConfig::linux_receiver(device_id, bt_mac);
     // No audio offer leaves the iPhone's audio on its own Bluetooth link with the car.
     config.disable_audio_output = car_bluetooth_audio;
+    config.iap_channel_only_when_offered = iap_channel_only_when_offered;
     config.microphone_opus = false;
     // The Linux relay cannot decode Opus and its receivers play only PCM and AAC.
     config.output_opus = false;
@@ -934,6 +940,7 @@ mod network_tests {
                 on_air_play: Arc::new(|| {}),
                 on_tunnel_ready: Arc::new(|| {}),
                 on_failure: Arc::new(|_| {}),
+                on_session: None,
             },
             closed: Arc::new(AtomicBool::new(false)),
             events: Arc::new(JsonEvents::new(Arc::new(|_| {}))),
@@ -1048,6 +1055,7 @@ mod network_tests {
             "02:00:00:00:00:03".into(),
             (30, false),
             false,
+            false,
         );
         let info = AirPlayInfoPlist::build(&config).unwrap();
         let key = |key: &str| info.get(key).unwrap();
@@ -1081,6 +1089,7 @@ mod network_tests {
                 "02:00:00:00:00:03".into(),
                 (30, false),
                 car_bluetooth_audio,
+                false,
             );
             let info = AirPlayInfoPlist::build(&config).unwrap();
             for key in ["audioFormats", "audioLatencies"] {

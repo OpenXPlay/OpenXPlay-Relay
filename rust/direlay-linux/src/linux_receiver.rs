@@ -4,6 +4,7 @@
 
 use crate::Result;
 use crate::*;
+use carplay_airplay::wireless_handoff_policy::WirelessSessionEvent;
 use carplay_airplay::*;
 use carplay_iap2::mfi::MfiAuthenticator;
 use std::{
@@ -104,8 +105,29 @@ impl SessionListener {
     fn current(&self) -> bool {
         !self.closed.load(Ordering::Acquire) && self.current.as_ref().is_none_or(|f| f())
     }
+    /// Reports a session event to the attempt's controller; true when it kept the event.
+    fn report(&self, event: WirelessSessionEvent) -> bool {
+        self.current()
+            && self
+                .callbacks
+                .on_session
+                .as_ref()
+                .is_some_and(|report| report(event))
+    }
 }
 impl AirPlaySessionListener for SessionListener {
+    fn on_authentication_failed(&self, session: &AirPlaySession) {
+        self.report(WirelessSessionEvent::AuthenticationFailed(session.id()));
+    }
+    fn on_session_error(&self, session: &AirPlaySession, message: &str) {
+        if self.report(WirelessSessionEvent::Failed(session.id())) {
+            // Only this session ended; the controller decides what its end means.
+            self.events
+                .log(&format!("airplay session={} {message}", session.id()));
+        } else {
+            self.on_transport_error(message);
+        }
+    }
     fn on_tcp_accepted(&self, event: AirPlayTcpAccepted) {
         if !self.current() {
             return;
@@ -126,8 +148,9 @@ impl AirPlaySessionListener for SessionListener {
             self.events.startup_milestone(name);
         }
     }
-    fn on_video_frame_rendered(&self, _: &AirPlaySession) {
+    fn on_video_frame_rendered(&self, session: &AirPlaySession) {
         if self.current() {
+            self.report(WirelessSessionEvent::Rendered(session.id()));
             self.events.startup_milestone("first_video_rendered");
         }
     }
@@ -138,6 +161,7 @@ impl AirPlaySessionListener for SessionListener {
                     return;
                 }
             }
+            self.report(WirelessSessionEvent::Active(s.id()));
             self.active.lock().unwrap().push(Arc::downgrade(&s));
             if let Some(input) = &self.input {
                 input.session_context(true);
@@ -151,6 +175,7 @@ impl AirPlaySessionListener for SessionListener {
         if self.current.as_ref().is_some_and(|f| !f()) {
             return;
         }
+        self.report(WirelessSessionEvent::Ended(s.id()));
         let mut active = self.active.lock().unwrap();
         let before = active.len();
         active.retain(|w| w.upgrade().is_some_and(|x| !Arc::ptr_eq(&x, &s)));
@@ -168,9 +193,12 @@ impl AirPlaySessionListener for SessionListener {
             (self.callbacks.on_failure)(std::io::Error::other(s));
         }
     }
-    fn on_command(&self, _: &AirPlaySession, kind: &str, params: &BplistValue) {
+    fn on_command(&self, session: &AirPlaySession, kind: &str, params: &BplistValue) {
         if self.current.as_ref().is_some_and(|f| !f()) {
             return;
+        }
+        if kind == "disableBluetooth" {
+            self.report(WirelessSessionEvent::HandoffRequested(session.id()));
         }
         if let Some(input) = &self.input {
             input.airplay_context(kind, params);

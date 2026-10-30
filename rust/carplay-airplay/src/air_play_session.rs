@@ -17,6 +17,13 @@ use std::{
 use BplistValue as V;
 /// Platform interface for `AirPlaySessionListener`. Implementations must support bounded shutdown.
 pub trait AirPlaySessionListener: Send + Sync {
+    /// The session's control connection failed; by default a transport error.
+    fn on_session_error(&self, _session: &AirPlaySession, message: &str) {
+        self.on_transport_error(message);
+    }
+    /// Pair-setup or MFi auth-setup of the session failed (default no-op). A failed pair-verify
+    /// is not reported: the iPhone answers it with pair-setup.
+    fn on_authentication_failed(&self, _session: &AirPlaySession) {}
     /// Receive fixed startup and transport milestone names on protocol threads; return quickly (default no-op).
     fn on_startup_milestone(&self, _session: &AirPlaySession, _name: &str) {}
     /// Receive confirmation that the current main stream reached an external display (default no-op).
@@ -124,6 +131,7 @@ pub struct PlaybackToken {
     generation: u64,
 }
 pub struct AirPlaySession {
+    id: u64,
     socket: Arc<dyn DuplexStream>,
     config: AirPlayConfig,
     mfi: Arc<dyn MfiAuthenticator>,
@@ -140,7 +148,9 @@ pub struct AirPlaySession {
     workers: Mutex<Vec<JoinHandle<()>>>,
     main_screen_token: Mutex<Option<u64>>,
     screen_generation: AtomicU64,
+    iap_channel_negotiation_logged: AtomicBool,
 }
+static SESSION_IDS: AtomicU64 = AtomicU64::new(1);
 fn dictionary<const N: usize>(v: [(&str, V); N]) -> V {
     V::dict(v)
 }
@@ -178,6 +188,7 @@ impl AirPlaySession {
         listener: Arc<dyn AirPlaySessionListener>,
     ) -> Result<Arc<Self>> {
         Ok(Arc::new_cyclic(|own| Self {
+            id: SESSION_IDS.fetch_add(1, Ordering::Relaxed),
             socket,
             config,
             mfi,
@@ -203,7 +214,12 @@ impl AirPlaySession {
             workers: Mutex::new(Vec::new()),
             main_screen_token: Mutex::new(None),
             screen_generation: AtomicU64::new(0),
+            iap_channel_negotiation_logged: AtomicBool::new(false),
         }))
+    }
+    /// Process-wide identity that tells the host's sessions apart; unrelated to stream tokens.
+    pub fn id(&self) -> u64 {
+        self.id
     }
     /// Supply portable I/O factories and the accepted control peer before starting the session.
     pub fn configure_transport(
@@ -580,7 +596,7 @@ impl AirPlaySession {
         if let Err(error) = result {
             if !self.is_closed() {
                 self.listener
-                    .on_transport_error(&format!("control I/O failed: {error}"));
+                    .on_session_error(&self, &format!("control I/O failed: {error}"));
             }
         }
         let _ = self.close();
@@ -620,7 +636,13 @@ impl AirPlaySession {
         }
         let path = request.path.to_lowercase();
         if path.ends_with("/pair-setup") {
-            let body = self.pairing.lock().unwrap().setup.handle(&request.body)?;
+            let result = self.pairing.lock().unwrap().setup.handle(&request.body);
+            let body = self.authentication_result(result)?;
+            if Tlv8Codec::decode(&body)
+                .is_ok_and(|fields| fields.contains_key(&(pair_setup::TYPE_ERROR as u8)))
+            {
+                self.listener.on_authentication_failed(self);
+            }
             return Ok(bytes_response(PAIRING_CONTENT_TYPE, body));
         }
         if path.ends_with("/pair-verify") {
@@ -629,12 +651,18 @@ impl AirPlaySession {
         }
         if path.ends_with("/auth-setup") {
             return Ok(
-                match MfiSapAuthSetup::handle(&request.body, self.mfi.as_ref())? {
+                match self.authentication_result(MfiSapAuthSetup::handle(
+                    &request.body,
+                    self.mfi.as_ref(),
+                ))? {
                     Some(body) => {
                         self.startup_milestone("auth_setup_accepted");
                         bytes_response(OCTET_CONTENT_TYPE, body)
                     }
-                    None => response(400),
+                    None => {
+                        self.listener.on_authentication_failed(self);
+                        response(400)
+                    }
                 },
             );
         }
@@ -766,16 +794,27 @@ impl AirPlaySession {
             })?;
             result.push(("keepAlivePort".into(), V::from(port as u64)));
         }
+        let proposed = body.get("features").and_then(V::as_array);
+        let features = setup_enabled_features(&self.config, proposed);
+        if !self
+            .iap_channel_negotiation_logged
+            .swap(true, Ordering::AcqRel)
+        {
+            self.log_debug(&format!(
+                "airplay iAPChannel offered={} enabled={} onlyWhenOffered={}",
+                iap_channel_offered(proposed),
+                features.iter().any(|v| v == "iAPChannel"),
+                self.config.iap_channel_only_when_offered,
+            ));
+        }
         result.push((
             "enabledFeatures".into(),
-            V::Array(
-                setup_enabled_features(&self.config, body.get("features").and_then(V::as_array))
-                    .into_iter()
-                    .map(V::from)
-                    .collect(),
-            ),
+            V::Array(features.into_iter().map(V::from).collect()),
         ));
         plist_response(&V::Dictionary(result))
+    }
+    fn authentication_result<T>(&self, result: Result<T>) -> Result<T> {
+        result.inspect_err(|_| self.listener.on_authentication_failed(self))
     }
     fn handle_streams(&self, streams: &[V]) -> Result<Vec<V>> {
         let mut result = Vec::new();
@@ -1015,7 +1054,10 @@ pub fn setup_enabled_features(config: &AirPlayConfig, proposed: Option<&[V]>) ->
     if config.hevc {
         features.push("hevc".into());
     }
-    features.extend(["iAPChannel".into(), "viewAreas".into()]);
+    if !config.iap_channel_only_when_offered || iap_channel_offered(proposed) {
+        features.push("iAPChannel".into());
+    }
+    features.push("viewAreas".into());
     if config.buffered_audio_output_enabled()
         && proposed
             .unwrap_or_default()
@@ -1025,6 +1067,12 @@ pub fn setup_enabled_features(config: &AirPlayConfig, proposed: Option<&[V]>) ->
         features.push(MAIN_BUFFERED_FEATURE.into());
     }
     features
+}
+fn iap_channel_offered(proposed: Option<&[V]>) -> bool {
+    proposed
+        .unwrap_or_default()
+        .iter()
+        .any(|v| v.as_str() == Some("iAPChannel"))
 }
 pub fn teardown_stream_types(body: Option<&V>) -> Option<Vec<u16>> {
     let entries: Vec<_> = body
