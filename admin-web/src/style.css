@@ -4,7 +4,7 @@
  */
 :root {
   color-scheme: light dark;
-  --ok: #0e9f63; --working: #0a6cff; --action: #b86e00; --failed: #d70015; --blocked: #6c6c7099;
+  --ok: #0a7d4e; --working: #0a6cff; --action: #945800; --failed: #d70015; --blocked: #6c6c7099;
   --background: #f2f2f7; --surface: #fff; --surface-variant: #fff; --outline: #c6c6c8; --secondary: #6c6c70; --text: #000; --primary-ink: #fff; --relay: #008c88;
   --accent: var(--ok); --muted: var(--secondary); --border: var(--outline);
   --card-radius: 28px; --group-radius: 20px; --sheet-radius: 32px; --chip-radius: 12px; --pill-radius: 999px;
@@ -150,7 +150,7 @@ dialog::backdrop { background: #0005; }
 .step-action { max-width: 36%; border: 0; border-radius: var(--pill-radius); color: var(--state); background: color-mix(in srgb, var(--state) 14%, var(--surface)); font: var(--footnote); }
 .done-steps { padding: 0 12px; font: var(--caption); }
 .sheet-header, .address-row, .receiver-heading, .report-row, .nearby-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.sheet-header h2, .address-row > div, .nearby-heading h3 { flex: 1; }
+.sheet-header h2, .address-row > div, .address-row > p, .nearby-heading h3 { flex: 1; }
 .copy-text { display: block; overflow-wrap: anywhere; font: var(--callout); user-select: all; }
 .copy-text.ip { font: var(--title); }
 .copy-feedback { font: var(--caption); }
@@ -209,6 +209,8 @@ dialog button.confirm { background: var(--ok); color: var(--primary-ink); }
 #arrival-countdown { margin: 0; text-align: center; }
 
 button.destructive { color: var(--failed); }
+/* A destructive decision makes the safe way out the primary action. */
+dialog .dialog-actions > button.primary[data-close] { border-radius: var(--pill-radius); background: var(--ok); color: var(--primary-ink); font: var(--headline); }
 .guide-blocker { outline: 2px solid var(--failed); outline-offset: 4px; border-radius: var(--chip-radius); }
 .guide-blocker small { display: block; color: var(--failed); }
 
@@ -219,3 +221,18 @@ button.destructive { color: var(--failed); }
 .guide-actions .quiet { display: grid; place-items: center; min-height: 48px; }
 .prepare-row { padding-inline: 0; }
 .prepare-row button { flex-shrink: 0; min-width: 72px; word-break: keep-all; }
+
+.iphone-row { justify-content: flex-start; }
+.iphone-row > span { flex: 1; }
+.network-current { border: 0; padding: 0; }
+summary { list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: '›'; display: inline-block; margin-inline-start: 12px; transform: rotate(90deg); }
+details[open] > summary::after { transform: rotate(-90deg); }
+summary:has(svg:last-child)::after { display: none; }
+/* Inline links keep their line but get a 44px-tall hit area; styled links (rows, buttons) size themselves. */
+:where(.settings-page, dialog) a:not([class]) { display: inline-block; padding-block: 12px; margin-block: -12px; }
+.stage-page { max-width: 480px; margin-inline: auto; }
+.topology { max-width: 480px; margin-inline: auto; }
+
+.guide-blocker .field-result { color: var(--failed); }

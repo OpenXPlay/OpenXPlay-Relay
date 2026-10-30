@@ -94,7 +94,7 @@ it('reports the Android 12+ Nearby devices step, the notification and a declined
   expect(pairingPanelView(status, false, 'error.pairingOpenApp', en, 1000)).toContain('Open OpenXPlay Relay on the relay’s screen');
 });
 it('escapes device names, reports errors and lists an empty state', () => {
-  const status = fixture(); status.pairedDevices = [{ name: '<img src=x>', connected: false, iphone: false }, { name: '', connected: false, iphone: true }];
+  const status = fixture(); status.pairedDevices = [{ name: '<img src=x>', connected: false, iphone: true }, { name: '', connected: false, iphone: true }];
   const html = pairingPanelView(status, false, 'error.pairing', en, 1000);
   expect(html).toContain('&lt;img src=x&gt;');
   expect(html).not.toContain('<img');
@@ -144,4 +144,10 @@ it('tells the user when Android opened Bluetooth settings on the relay instead o
   expect(html).not.toContain('pairing-open');
   expect(pairingPanelView(status, false, '', zh, 1000)).toContain('中继屏幕上已打开蓝牙设置');
   expect(statusView(status, en)).toContain('Bluetooth settings are open on the relay’s screen');
+});
+
+it('hides non-iPhones and suppresses the duplicate paired list in the Home drawer', () => {
+  const status = fixture(); status.pairedDevices = [{ name: 'Car audio', connected: true, iphone: false }, { name: 'My iPhone', connected: true, iphone: true }];
+  expect(pairingPanelView(status, false, '', en)).not.toContain('Car audio');
+  expect(pairingPanelView(status, false, '', en, undefined, false)).not.toContain('My iPhone');
 });

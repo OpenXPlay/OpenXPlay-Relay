@@ -23,7 +23,7 @@ it.each(['en', 'zh-CN'] as const)('shows off, waiting, raw signals, bounded insp
   expect(panel).toContain(t('vehicle.units')); expect(panel).toContain(t('vehicle.history_hint'));
   expect(panel).toContain(t('vehicle.updated', { seconds: 10 })); expect(panel).not.toContain('km/h');
 });
-it('requires confirmation to clear, sends opt-in settings once and disposes polling', async () => {
+it('requires confirmation to clear, leaves collection to the single settings switch and disposes polling', async () => {
   vi.useFakeTimers();
   let click!: (event: unknown) => Promise<void>;
   const content = { innerHTML: '', querySelectorAll: () => [], addEventListener: (_: string, fn: typeof click) => { click = fn; } };
@@ -37,6 +37,10 @@ it('requires confirmation to clear, sends opt-in settings once and disposes poll
   await click(event(true)); expect(fetch.mock.calls.some(([url]) => url.includes('clear-vehicle'))).toBe(false);
   vi.mocked(confirmSheet).mockResolvedValueOnce(true); await click(event(true));
   expect(fetch.mock.calls.filter(([url]) => url.includes('clear-vehicle'))).toHaveLength(1);
-  await click(event(false)); expect(fetch.mock.calls.some(([url, ...rest]) => url.endsWith('/settings'))).toBe(true);
+  await click(event(false)); expect(fetch.mock.calls.some(([url]) => url.endsWith('/settings'))).toBe(false);
   dispose(); const count = fetch.mock.calls.length; await vi.advanceTimersByTimeAsync(6000); expect(fetch).toHaveBeenCalledTimes(count);
+});
+
+it('keeps the vehicle report free of a second enable control', () => {
+  expect(vehiclePanel(view, key => key)).not.toContain('data-vehicle-enable');
 });

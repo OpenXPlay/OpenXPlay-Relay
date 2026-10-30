@@ -8,7 +8,7 @@ function fixture() {
   let now = 100, focused = 'page';
   const visible = new Set<string>(), shown: string[] = [], closed: string[] = [];
   const queue = new SurfaceQueue(() => now);
-  const add = (name: string, owner = 'page', options: { parent?: SurfaceHandle; expiresAt?: number; isValid?: () => boolean } = {}) => {
+  const add = (name: string, owner = 'page', options: { parent?: SurfaceHandle; priority?: number; expiresAt?: number; isValid?: () => boolean } = {}) => {
     const trigger = focused;
     return queue.enqueue({ owner, ...options, show: () => { visible.add(name); shown.push(name); focused = name; expect(visible.size).toBe(1); }, hide: () => { visible.delete(name); }, restoreFocus: () => { focused = trigger; }, onClose: () => closed.push(name) });
   };
@@ -45,4 +45,24 @@ it('restores the trigger on close and expires a visible prompt on refresh', () =
 it('holds the next surface until a browser history transition completes', () => {
   const f = fixture(), a = f.add('a'); f.add('b');
   const resume = f.queue.pause(); a.close(); expect(f.visible.size).toBe(0); resume(); expect(f.shown).toEqual(['a', 'b']);
+});
+it('lets an urgent prompt preempt the visible sheet, which then resumes without losing its place', () => {
+  const f = fixture(), sheet = f.add('sheet'); f.add('queued');
+  const pin = f.add('pin', 'carlink', { priority: 1 });
+  expect(sheet.visible).toBe(false); expect(pin.visible).toBe(true);
+  pin.close(); expect(sheet.visible).toBe(true); expect(f.focus()).toBe('sheet');
+  sheet.close(); expect(f.shown).toEqual(['sheet', 'pin', 'sheet', 'queued']);
+});
+it('keeps FIFO order within a priority and serves higher priorities first', () => {
+  const f = fixture(), first = f.add('first');
+  f.add('low'); f.add('high', 'poll', { priority: 1 });
+  expect(f.shown).toEqual(['first', 'high']);
+  f.add('high-2', 'poll', { priority: 1 });
+  f.queue.cancelOwner('poll'); first.close();
+  expect(f.shown).toEqual(['first', 'high', 'first', 'low']);
+});
+it('closes a suspended parent with its visible child and returns focus to the parent trigger', () => {
+  const f = fixture(), parent = f.add('parent'), child = f.add('child', 'page', { parent });
+  parent.close();
+  expect(child.closed).toBe(true); expect(f.closed).toEqual(['child', 'parent']); expect(f.visible.size).toBe(0); expect(f.focus()).toBe('page');
 });

@@ -33,7 +33,7 @@ export function pairingView(status: Status, now = Date.now() / 1000) {
     // Android without the dialog permission: its Bluetooth settings keep the relay visible while open.
     onRelay: seconds === 0 && status.pairingOnRelay === true, denied: seconds === 0 && status.pairingOnRelay === true && status.pairingPermissionDenied === true, devices };
 }
-export function pairingPanelView(status: Status, busy: boolean, error: string, t: Translate, now = Date.now() / 1000): string {
+export function pairingPanelView(status: Status, busy: boolean, error: string, t: Translate, now = Date.now() / 1000, showDevices = true): string {
   const v = pairingView(status, now);
   const control = v.open
     ? `<p id="pairing-remaining" role="timer">${esc(t('pairing.open', { time: v.time }))}</p><p>${esc(t('pairing.howTo', { name: relayBluetoothName(status) }))}</p>${v.cancelable ? `<button type="button" id="pairing-cancel" ${busy ? 'disabled' : ''}>${t('pairing.cancel')}</button>` : `<p class="muted">${t('pairing.noCancel')}</p>`}`
@@ -42,8 +42,8 @@ export function pairingPanelView(status: Status, busy: boolean, error: string, t
     : v.confirm ? `<p role="status">${t('pairing.confirm')}</p>`
     : v.onRelay ? `<p role="status">${t('pairing.settingsOpen')}</p><p>${esc(t('pairing.howTo', { name: relayBluetoothName(status) }))}</p>${v.denied ? `<p class="muted">${t('pairing.permissionDenied')}</p>` : ''}`
     : v.available ? `<button type="button" id="pairing-open" ${busy ? 'disabled' : ''}>${t('pairing.start')}</button>` : `<p>${t('home.pairOnDevice')}</p>`;
-  const rows = v.devices.map(d => `<li>${icon(d.iphone ? 'smartphone' : 'bluetooth')}<span>${esc(d.name || t('pairing.unnamed'))}</span>${d.connected ? `<span class="tag">${t('ui.connected')}</span>` : ''}</li>`).join('');
-  return `<div class="field pairing"><h3>${t('pairing.title')}</h3><p class="muted">${t('pairing.when')}</p>${control}<p id="pairing-result" class="error" role="alert">${esc(error ? t(error) : '')}</p><h4>${t('pairing.devices')}</h4><ul class="paired-devices">${rows || `<li class="muted">${t('pairing.none')}</li>`}</ul></div>`;
+  const rows = v.devices.filter(d => d.iphone).map(d => `<li>${icon(d.iphone ? 'smartphone' : 'bluetooth')}<span>${esc(d.name || t('pairing.unnamed'))}</span>${d.connected ? `<span class="tag">${t('ui.connected')}</span>` : ''}</li>`).join('');
+  return `<div class="field pairing"><h3>${t('pairing.title')}</h3><p class="muted">${t('pairing.when')}</p>${control}<p id="pairing-result" class="error" role="alert">${esc(error ? t(error) : '')}</p>${showDevices ? `<h4>${t('pairing.devices')}</h4><ul class="paired-devices">${rows || `<li class="muted">${t('pairing.none')}</li>`}</ul>` : ''}</div>`;
 }
 
 // One second ticker for every visible pairing countdown; onExpire runs once when an open window reaches zero.
