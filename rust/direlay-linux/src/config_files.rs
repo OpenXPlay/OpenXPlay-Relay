@@ -66,6 +66,27 @@ const NESTED_KEYS: &[(&str, &str, &str)] = &[
     ("experimental", "active", "experimentalActive"),
     (
         "experimental",
+        "iapChannelWhenOffered",
+        "experimentalIapChannelWhenOffered",
+    ),
+    (
+        "experimental",
+        "releaseBluetoothOnRequest",
+        "experimentalReleaseBluetoothOnRequest",
+    ),
+    (
+        "experimental",
+        "awaitIphoneReconnect",
+        "experimentalAwaitIphoneReconnect",
+    ),
+    (
+        "experimental",
+        "radioConflictPrompt",
+        "experimentalRadioConflictPrompt",
+    ),
+    ("experimental", "stallWatchdog", "experimentalStallWatchdog"),
+    (
+        "experimental",
         "remotePlaybackProof",
         "experimentalRemotePlaybackProof",
     ),
@@ -336,7 +357,12 @@ pub fn plan_envelope(
                 .cloned()
                 .collect();
             let mut errors = Errors::new();
-            for (key, value) in settings {
+            // Reconstructed Android defaults must replace flat aliases from an older export.
+            for (key, value) in settings
+                .iter()
+                .filter(|(key, _)| key.as_str() != "experimental")
+                .chain(settings.get_key_value("experimental"))
+            {
                 if key == "output" && settings.contains_key("outputs") {
                     continue;
                 }
@@ -532,6 +558,32 @@ fn import_key(
             }
             if !errors.is_empty() {
                 return Err(errors);
+            }
+            // Android reconstructs the object from defaults, including choices added in 0.2.3.
+            if key == "experimental" {
+                for leaf in [
+                    "iapChannelWhenOffered",
+                    "releaseBluetoothOnRequest",
+                    "awaitIphoneReconnect",
+                    "radioConflictPrompt",
+                    "stallWatchdog",
+                ] {
+                    if !object.contains_key(leaf) {
+                        let (_, _, target) = NESTED_KEYS
+                            .iter()
+                            .find(|(group, name, _)| *group == key && *name == leaf)
+                            .unwrap();
+                        values.remove(*target);
+                        import_key(
+                            values,
+                            ignored,
+                            current,
+                            target,
+                            &json!(true),
+                            &format!("{source}.{leaf}"),
+                        )?;
+                    }
+                }
             }
             // Android's unversioned experimental envelope predates the master switch.
             if key == "experimental" && !object.contains_key("version") {
@@ -1066,11 +1118,120 @@ mod tests {
         }
         assert!(crate::relay_admin::update_settings(&Settings::default(), settings).is_ok());
     }
+    const NEW_EXPERIMENTS: [(&str, &str); 5] = [
+        ("iapChannelWhenOffered", "experimentalIapChannelWhenOffered"),
+        (
+            "releaseBluetoothOnRequest",
+            "experimentalReleaseBluetoothOnRequest",
+        ),
+        ("awaitIphoneReconnect", "experimentalAwaitIphoneReconnect"),
+        ("radioConflictPrompt", "experimentalRadioConflictPrompt"),
+        ("stallWatchdog", "experimentalStallWatchdog"),
+    ];
+
+    #[test]
+    fn experiments_round_trip_every_parked_choice_and_reconstruct_omitted_keys() {
+        for active in [false, true] {
+            for bits in 0..32 {
+                let mut chosen = current();
+                chosen.insert("experimentalActive".into(), json!(active));
+                for (index, (_, key)) in NEW_EXPERIMENTS.iter().enumerate() {
+                    chosen.insert((*key).into(), json!(bits & (1 << index) != 0));
+                }
+                let mut file = export_user_values(chosen.clone(), 0).unwrap();
+                assert_eq!(file["settings"]["experimental"]["version"], 2);
+                let imported = plan(&serde_json::to_vec(&file).unwrap(), &current()).unwrap();
+                assert!(imported.report.ignored.is_empty());
+                let mut restored = current();
+                restored.extend(imported.values);
+                assert_eq!(restored, chosen);
+                for (wire, key) in NEW_EXPERIMENTS {
+                    assert_eq!(file["settings"]["experimental"][wire], chosen[key]);
+                }
+                // Flat Linux aliases are also exported; the Android object wins over them.
+                for (wire, _) in NEW_EXPERIMENTS {
+                    file["settings"]["experimental"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(wire);
+                }
+                let imported = plan(&serde_json::to_vec(&file).unwrap(), &chosen).unwrap();
+                assert!(imported.report.ignored.is_empty());
+                let mut reconstructed = chosen.clone();
+                reconstructed.extend(imported.values);
+                assert_eq!(reconstructed["experimentalActive"], active);
+                for (_, key) in NEW_EXPERIMENTS {
+                    assert_eq!(reconstructed[key], true);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn absent_experimental_object_keeps_choices_and_each_omitted_key_defaults_on() {
+        let mut chosen = current();
+        for (_, key) in NEW_EXPERIMENTS {
+            chosen.insert(key.into(), json!(false));
+        }
+        let mut file = json!({"format":USER_FORMAT,"version":1,"settings":{}});
+        assert!(plan(&serde_json::to_vec(&file).unwrap(), &chosen)
+            .unwrap()
+            .values
+            .is_empty());
+        for (omitted, _) in NEW_EXPERIMENTS {
+            file["settings"]["experimental"] = json!({"version":2});
+            for (wire, _) in NEW_EXPERIMENTS {
+                if wire != omitted {
+                    file["settings"]["experimental"][wire] = json!(false);
+                }
+            }
+            let p = plan(&serde_json::to_vec(&file).unwrap(), &chosen).unwrap();
+            assert!(p.report.ignored.is_empty());
+            let key = NEW_EXPERIMENTS
+                .iter()
+                .find(|(wire, _)| *wire == omitted)
+                .unwrap()
+                .1;
+            assert_eq!(p.values, Values::from_iter([(key.into(), json!(true))]));
+            assert_eq!(p.report.applied, [key]);
+        }
+    }
+
+    #[test]
+    fn invalid_experimental_choices_reject_the_entire_import() {
+        let chosen = current();
+        for (wire, key) in NEW_EXPERIMENTS {
+            for invalid in [json!("false"), json!(0), Value::Null, json!([]), json!({})] {
+                for nested in [false, true] {
+                    let mut file =
+                        json!({"format":USER_FORMAT,"version":1,"settings":{"autoStart":false}});
+                    let source = if nested {
+                        file["settings"]["experimental"] = json!({"version":2,wire:invalid});
+                        format!("experimental.{wire}")
+                    } else {
+                        file["settings"][key] = invalid.clone();
+                        key.into()
+                    };
+                    let errors = plan(&serde_json::to_vec(&file).unwrap(), &chosen)
+                        .err()
+                        .unwrap();
+                    assert_eq!(errors[&source], "invalid");
+                    assert_eq!(chosen, current());
+                }
+            }
+        }
+    }
+
     #[test]
     fn android_experiments_v2_import_export_preserves_all_choices() {
         for enabled in [true, false] {
             let mut current = current();
             let names = [
+                "IapChannelWhenOffered",
+                "ReleaseBluetoothOnRequest",
+                "AwaitIphoneReconnect",
+                "RadioConflictPrompt",
+                "StallWatchdog",
                 "ScreenSessionIsolation",
                 "ScreenReconnectReset",
                 "ScreenDeliverySerialization",

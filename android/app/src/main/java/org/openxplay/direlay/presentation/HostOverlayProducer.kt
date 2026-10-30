@@ -43,6 +43,6 @@ private fun RelayRuntime.overlaySnapshot(activity: android.content.Context, wifi
             carlinkErrorAt, carPlayDiagnostics.error, dlnaFailure.takeIf { settings.dlnaOutput },
             miracastFailure.takeIf { settings.miracastOutput }), path,
         displayChanged = displayMismatch(path.running, settings), carIncomplete = homeCarRowVisible(settings.car),
-        setupCompleted = settingsStore.setupCompleted)
+        setupCompleted = settingsStore.setupCompleted, highPerformance = settings.highPerformance)
 }
 

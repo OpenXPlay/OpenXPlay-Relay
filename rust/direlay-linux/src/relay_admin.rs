@@ -3072,6 +3072,11 @@ pub fn settings_schema() -> Vec<Section> {
             "experimental",
             &[
                 ("experimentalActive", "bool"),
+                ("experimentalIapChannelWhenOffered", "bool"),
+                ("experimentalReleaseBluetoothOnRequest", "bool"),
+                ("experimentalAwaitIphoneReconnect", "bool"),
+                ("experimentalRadioConflictPrompt", "bool"),
+                ("experimentalStallWatchdog", "bool"),
                 ("experimentalScreenSessionIsolation", "bool"),
                 ("experimentalScreenReconnectReset", "bool"),
                 ("experimentalScreenDeliverySerialization", "bool"),
@@ -3157,6 +3162,19 @@ fn settings_restart_keys(current: &Settings, next: &Settings) -> Vec<&'static st
     changed!(mfi_i2c_path, "mfiI2cPath");
     changed!(mfi_remote_server, "mfiRemoteServer");
     changed!(transport, "transport");
+    changed!(
+        experimental_iap_channel_when_offered,
+        "experimentalIapChannelWhenOffered"
+    );
+    changed!(
+        experimental_release_bluetooth_on_request,
+        "experimentalReleaseBluetoothOnRequest"
+    );
+    changed!(
+        experimental_await_iphone_reconnect,
+        "experimentalAwaitIphoneReconnect"
+    );
+
     changed!(iphone, "iphone");
     changed!(rfcomm_channel, "rfcommChannel");
     changed!(wifi_interface, "wifiInterface");
@@ -5329,6 +5347,146 @@ mod tests {
         drop(admin);
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn experimental_choices_use_the_schema_editor_and_reject_invalid_types_atomically() {
+        let (admin, dir) = fake();
+        let schema = settings_schema();
+        let section = schema.iter().find(|s| s.id == "experimental").unwrap();
+        for (key, next_start) in [
+            ("experimentalIapChannelWhenOffered", true),
+            ("experimentalReleaseBluetoothOnRequest", true),
+            ("experimentalAwaitIphoneReconnect", true),
+            ("experimentalRadioConflictPrompt", false),
+            ("experimentalStallWatchdog", false),
+        ] {
+            let field = section.fields.iter().find(|f| f.key == key).unwrap();
+            assert_eq!(field.field_type, "bool");
+            assert_eq!(field.label_key, format!("field.{key}"));
+            assert_eq!(field.hint_key, Some(format!("hint.field.{key}")));
+            assert_eq!(admin.settings().values[key], true);
+            for invalid in [
+                serde_json::json!("false"),
+                serde_json::json!(0),
+                serde_json::Value::Null,
+                serde_json::json!([]),
+                serde_json::json!({}),
+            ] {
+                let before = admin.settings.lock().unwrap().clone();
+                assert!(matches!(
+                    admin.update(
+                        serde_json::json!({key:invalid,"bootStart":true})
+                            .as_object()
+                            .unwrap()
+                            .clone()
+                    ),
+                    AdminUpdate::Errors(_)
+                ));
+                assert_eq!(*admin.settings.lock().unwrap(), before);
+            }
+            let result = admin.update(
+                serde_json::json!({key:false,"experimentalActive":false})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
+            assert!(if next_start {
+                matches!(result, AdminUpdate::NextStart)
+            } else {
+                matches!(result, AdminUpdate::AppliedNow)
+            });
+            assert_eq!(admin.settings().values[key], false);
+            assert_eq!(
+                serde_json::to_value(Settings::load(&dir).unwrap()).unwrap()[key],
+                false
+            );
+            assert_eq!(
+                serde_json::to_value(admin.input.connection_settings()).unwrap()[key],
+                false
+            );
+            assert!(admin.pending.lock().unwrap().is_empty());
+        }
+        assert!(matches!(
+            admin.update(
+                serde_json::json!({"experimentalActive":true})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            ),
+            AdminUpdate::AppliedNow
+        ));
+        assert_eq!(
+            admin.settings.lock().unwrap().effective_experimental(),
+            crate::settings::ExperimentalChoices {
+                iap_channel_when_offered: false,
+                release_bluetooth_on_request: false,
+                await_iphone_reconnect: false,
+                radio_conflict_prompt: false,
+                stall_watchdog: false,
+            }
+        );
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn android_new_experiment_import_reports_connection_choices_and_live_observers() {
+        let (admin, dir) = fake();
+        for enabled in [false, true] {
+            let before = admin.settings.lock().unwrap().clone();
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "format":"openxplay-user-config","version":1,"platform":"android",
+                "settings":{"experimental":{"version":2,
+                    "iapChannelWhenOffered":enabled,"releaseBluetoothOnRequest":enabled,
+                    "awaitIphoneReconnect":enabled,"radioConflictPrompt":enabled,"stallWatchdog":enabled}}
+            })).unwrap();
+            let report = admin.config_import(&bytes, true).unwrap();
+            assert_eq!(*admin.settings.lock().unwrap(), before);
+            assert_eq!(report["ignored"], serde_json::json!([]));
+            assert_eq!(report["applied"].as_array().unwrap().len(), 5);
+            assert_eq!(
+                report["nextStart"],
+                serde_json::json!([
+                    "experimentalAwaitIphoneReconnect",
+                    "experimentalIapChannelWhenOffered",
+                    "experimentalReleaseBluetoothOnRequest"
+                ])
+            );
+            assert_eq!(
+                report["appliedNow"],
+                serde_json::json!([
+                    "experimentalRadioConflictPrompt",
+                    "experimentalStallWatchdog"
+                ])
+            );
+            assert_eq!(report["restartNeeded"], true);
+            assert_eq!(admin.config_import(&bytes, false).unwrap(), report);
+            assert!(admin.pending.lock().unwrap().is_empty());
+            let saved = Settings::load(&dir).unwrap();
+            assert_eq!(saved, *admin.settings.lock().unwrap());
+            assert_eq!(saved, admin.input.connection_settings());
+            let output = admin.config_export(false).unwrap();
+            for wire in [
+                "iapChannelWhenOffered",
+                "releaseBluetoothOnRequest",
+                "awaitIphoneReconnect",
+                "radioConflictPrompt",
+                "stallWatchdog",
+            ] {
+                assert_eq!(output["settings"]["experimental"][wire], enabled);
+                let mut invalid = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap();
+                invalid["settings"]["experimental"][wire] = "false".into();
+                invalid["settings"]["bootStart"] = true.into();
+                assert!(admin
+                    .config_import(&serde_json::to_vec(&invalid).unwrap(), false)
+                    .is_err());
+                assert_eq!(*admin.settings.lock().unwrap(), saved);
+                assert_eq!(Settings::load(&dir).unwrap(), saved);
+            }
+        }
+        drop(admin);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn android_experiment_import_stages_next_connection_without_restarting_output() {
         let (admin, dir) = fake();

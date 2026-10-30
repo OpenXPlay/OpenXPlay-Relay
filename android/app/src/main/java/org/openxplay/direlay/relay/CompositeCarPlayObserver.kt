@@ -6,6 +6,7 @@ package org.openxplay.direlay.relay
 import com.shilapi.xcertplay.iap2.wire.Iap2Frame
 import com.shilapi.xcertplay.orchestration.CarPlayEventObserver
 import com.shilapi.xcertplay.orchestration.CarPlayStatus
+import com.shilapi.xcertplay.orchestration.CarPlayLinkEnd
 
 /** Each observer receives the same events independently of the others. */
 internal class CompositeCarPlayObserver(private val diagnostics: CarPlayEventObserver,
@@ -21,6 +22,7 @@ internal class CompositeCarPlayObserver(private val diagnostics: CarPlayEventObs
         runCatching { startup?.call() }
     }
     override fun onStartupMilestone(name: String) = forward { onStartupMilestone(name) }
+    override fun onLinkEnded(end: CarPlayLinkEnd) = forward { onLinkEnded(end) }
     override fun onStatus(status: CarPlayStatus) = forward { onStatus(status) }
     override fun onProgress(message: String) = forward { onProgress(message) }
     override fun onSessionActive() = forward { onSessionActive() }

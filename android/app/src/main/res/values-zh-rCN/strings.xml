@@ -575,7 +575,8 @@
     <string name="video_stats_browser_values">%1$s fps · 丢帧 %2$s%% · 解码 %3$s · 延迟 %4$s</string>
     <string name="audio_title">声音</string>
     <string name="audio_car_bluetooth">通过车辆蓝牙播放 CarPlay 音频（实验性）</string>
-    <string name="audio_car_bluetooth_hint">中继不向 iPhone 提供 CarPlay 音频，音乐、导航和通话改由 iPhone 自己与车辆的蓝牙连接播放。请保持 iPhone 与车辆配对，并将车辆音源设为蓝牙。如果声音改从 iPhone 播放，请关闭此选项。</string>
+    <string name="audio_car_bluetooth_hint">中继不向 iPhone 提供 CarPlay 音频，音乐、导航和通话改由 iPhone 自己与车辆的蓝牙连接播放。请保持 iPhone 与车辆配对，并将车辆音源设为蓝牙。</string>
+    <string name="audio_bluetooth_tip">如果声音从手机播放，请在车辆中控屏打开蓝牙设置，找到 iPhone，把它右侧的图标从静音改为播放。仍从手机播放时，再关闭上面的选项。</string>
     <string name="public_name_title">可信 HTTPS</string>
     <string name="public_name_summary">用免费域名，让车机打开网页时不再出现证书警告。</string>
     <string name="public_name_enabled">使用免费域名</string>

@@ -95,6 +95,7 @@ data class RelaySettings(
     val carlinkPictureDefault: PictureSize? = null,
     val miracastStretch: Boolean = false,
     val experimental: ExperimentalOptions = ExperimentalOptions(),
+    val highPerformance: Boolean = true,
 ) {
     val browserOutput get() = RelayOutput.BROWSER in outputs
     val carlinkOutput get() = RelayOutput.CARLINK in outputs
@@ -276,6 +277,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             carlinkPictureDefault = CarlinkPictureSizes.decodeDefault(relay.getString("carlinkPictureDefault", null)),
             miracastStretch = relay.getBoolean("miracastStretch", false),
             experimental = loadExperimentalOptions(),
+            highPerformance = relay.getBoolean("highPerformance", true),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
@@ -371,6 +373,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         // DiPlay reads this when it builds the next session's AirPlay configuration.
         AirPlayPersistence.saveCarBluetoothAudio(context, settings.carBluetoothAudio)
         val edit = relay.edit().putString("frameRate", settings.frameRate.name)
+            .putBoolean("highPerformance", settings.highPerformance)
             .putBoolean("localPreview", settings.localPreview)
             .putBoolean("playCarPlayAudio", settings.playCarPlayAudio)
             .putString("microphoneSource", settings.microphoneSource.name)

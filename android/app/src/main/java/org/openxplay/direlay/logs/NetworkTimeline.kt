@@ -83,14 +83,15 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
     private fun wifiState(state: Int) {
         when (state) {
             WifiManager.WIFI_STATE_ENABLED -> state("wifi", "wifi_enabled")
-            WifiManager.WIFI_STATE_DISABLED -> state("wifi", "wifi_disabled")
+            WifiManager.WIFI_STATE_DISABLED -> state("wifi", "wifi_disabled", "by=os cause=radio_off")
             WifiManager.WIFI_STATE_UNKNOWN -> unavailable("wifi")
         }
     }
     private fun bluetooth(value: Int) {
         when (value) {
             BluetoothAdapter.STATE_ON -> state("bluetooth", "bluetooth_on")
-            BluetoothAdapter.STATE_OFF -> state("bluetooth", "bluetooth_off")
+            BluetoothAdapter.STATE_OFF -> state("bluetooth", "bluetooth_off", "by=os cause=radio_off")
+            BluetoothAdapter.STATE_TURNING_OFF -> state("bluetooth", "bluetooth_turning_off", "by=os cause=radio_off")
             BluetoothAdapter.ERROR -> unavailable("bluetooth")
         }
     }
@@ -99,7 +100,7 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
         val frequency = info?.frequency ?: -1
         if (info == null || info.ssid == WifiManager.UNKNOWN_SSID || frequency <= 0) unavailable("wifi_identity")
         val band = when (frequency) { in 2400..2500 -> "2.4GHz"; in 4900..5900 -> "5GHz"; in 5925..7125 -> "6GHz"; else -> "unavailable" }
-        return "ssid=${info?.ssid ?: "unavailable"} frequency=$frequency band=$band"
+        return "frequency=$frequency band=$band"
     }
     @Suppress("DEPRECATION") private fun wifiConnection() {
         runCatching {
@@ -110,14 +111,12 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
             connected()
         }.onFailure { unavailable("wifi_connection") }
     }
-    /** Readings without location access report <unknown ssid>; keep the identity already seen for that network. */
     private fun remember(network: Network, detail: String) {
-        val previous = networks[network]
-        networks[network] = if (previous != null && detail.startsWith("ssid=${WifiManager.UNKNOWN_SSID} ")) previous else detail
+        networks[network] = detail
     }
     private fun connected() {
         val detail = networks.values.sorted().joinToString("; ")
-        if (networks.isEmpty()) state("wifi_connection", "wifi_disconnected")
+        if (networks.isEmpty()) state("wifi_connection", "wifi_disconnected", "by=os cause=network_lost")
         else state("wifi_connection", "wifi_connected", detail)
     }
     private fun hotspot(intent: Intent? = null) {
@@ -126,7 +125,7 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
             else org.openxplay.direlay.network.wifiTetheringEnabled(intent?.getStringArrayListExtra(key))
         when (enabled) {
             true -> state("hotspot", "hotspot_on")
-            false -> state("hotspot", "hotspot_off")
+            false -> state("hotspot", "hotspot_off", "by=os cause=radio_off")
             null -> unavailable("hotspot")
         }
     }
@@ -136,7 +135,7 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
             val channel = p2pChannel ?: manager.initialize(context, thread.looper, null)?.also { p2pChannel = it }
                 ?: return unavailable("wifi_direct")
             manager.requestGroupInfo(channel) { group -> safely {
-                    if (group == null) state("wifi_direct", "p2p_removed")
+                    if (group == null) state("wifi_direct", "p2p_removed", "by=os cause=network_lost")
                     else {
                         val frequency = if (Build.VERSION.SDK_INT >= 29) group.frequency else -1
                         if (frequency <= 0) unavailable("wifi_direct_frequency")

@@ -34,7 +34,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   density: 120–640}; fixed displayMode requires a profile.
  * - autoStartOnBoot, autoStartWhenReady, localPreview, playCarPlayAudio, vehicleInformation,
  *   carlinkAutoReconnect, carlinkReconnectOnResize, plugins, carlinkTrace, viewAreas,
- *   carBluetoothAudio: booleans; pluginsEnabled: unique valid plugin IDs.
+ *   carBluetoothAudio, highPerformance: booleans; pluginsEnabled: unique valid plugin IDs.
+ *   Missing highPerformance defaults true.
  * - carlinkDeviceName, carlinkDeviceModel: nonblank 1–128 UTF-8 bytes without controls.
  * - car: {brand, brandText, model, modelText, year, yearText}, using CarSelection's normalized
  *   values. Year fields are optional on import; legacy leaf model IDs migrate to model + year.
@@ -118,6 +119,7 @@ object UserConfigCodec {
         .put("iphone", s.iphoneAddress ?: JSONObject.NULL)
         .put("autoStartOnBoot", s.autoStartOnBoot)
         .put("autoStartWhenReady", s.autoStartWhenReady)
+        .put("highPerformance", s.highPerformance)
         .put("localPreview", s.localPreview)
         .put("playCarPlayAudio", s.playCarPlayAudio)
         .put("vehicleInformation", s.vehicleInformation)
@@ -213,7 +215,7 @@ object UserConfigCodec {
 
     fun decode(text: String, current: RelaySettings, choices: DeveloperOverrides = DeveloperOverrides(),
         wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS, phoneAddresses: Set<String> = emptySet()): UserConfigImport {
-        var s = current.copy(experimental = ExperimentalOptions())
+        var s = current.copy(experimental = ExperimentalOptions(), highPerformance = true)
         var d = choices
         val errors = linkedMapOf<String, String>()
         val ignored = mutableListOf<String>()
@@ -272,6 +274,7 @@ object UserConfigCodec {
                 "iphone" -> { val value = j.nullableString(key); s = s.copy(iphoneAddress = value) }
                 "autoStartOnBoot" -> { val value = j.bool(key); s = s.copy(autoStartOnBoot = value) }
                 "autoStartWhenReady" -> { val value = j.bool(key); s = s.copy(autoStartWhenReady = value) }
+                "highPerformance" -> { val value = j.bool(key); s = s.copy(highPerformance = value) }
                 "localPreview" -> { val value = j.bool(key); s = s.copy(localPreview = value) }
                 "playCarPlayAudio" -> { val value = j.bool(key); s = s.copy(playCarPlayAudio = value) }
                 "vehicleInformation" -> { val value = j.bool(key); s = s.copy(vehicleInformation = value) }

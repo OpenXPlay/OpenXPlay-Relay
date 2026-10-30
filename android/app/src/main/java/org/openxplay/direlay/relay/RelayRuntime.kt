@@ -744,6 +744,7 @@ class RelayRuntime(private val context: Context,
         private set
 
     init {
+        connectionLog.filterWith(::cleanTrace)
         prepareCarPlay()
         hub.addOutput(status)
         hub.start()
@@ -997,6 +998,7 @@ class RelayRuntime(private val context: Context,
     }
     private fun wirelessLogMessage(message: String): String = wirelessLogLine(redactFailureMessage(message))
 
+    private var dlnaLogConnection = 0L
     private fun configureDlna() {
         if (closed) return
         val settings = settingsStore.awaitSnapshot()
@@ -1006,10 +1008,15 @@ class RelayRuntime(private val context: Context,
         }
         when (dlnaLifecycle.update(requested)) {
             OutputChange.KEEP -> return
-            OutputChange.REMOVE -> { hub.removeOutput("cast"); return }
+            OutputChange.REMOVE -> {
+                connectionLog.castEvent("output_stop", "by=local cause=${if (requested == null) "stopped" else "replaced"}", dlnaLogConnection)
+                hub.removeOutput("cast"); return
+            }
             OutputChange.ADD -> Unit
         }
         val plan = checkNotNull(requested)
+        val logConnection = ++dlnaLogConnection
+        connectionLog.castEvent("output_start", connection = logConnection)
         val token = Any(); dlnaToken = token
         dlnaStateSinceMillis = System.currentTimeMillis()
         dlnaState = CastState.SEARCHING; dlnaRendererName = settings.dlnaRenderer?.name
@@ -1033,14 +1040,16 @@ class RelayRuntime(private val context: Context,
                     if (state == CastState.PLAYING) dlnaFailure = null
                 }
             }
-            override fun failure(failure: CastFailure) = wirelessUpdate {
-                if (dlnaToken === token && !dlnaLifecycle.retiring) {
+            override fun failure(failure: CastFailure) {
+                connectionLog.cast("failed link=renderer code=${failure.code} ${failure.detail}", logConnection)
+                wirelessUpdate { if (dlnaToken === token && !dlnaLifecycle.retiring) {
                     dlnaFailure = WirelessDisplayFailure(failure.code, redactFailureMessage(failure.detail), System.currentTimeMillis())
                     Log.w("OpenXPlay DLNA", wirelessLogMessage("failure ${failure.code}: ${failure.detail}"))
-                }
+                } }
             }
-            override fun diagnostic(message: String) = wirelessUpdate {
-                if (dlnaToken === token) Log.i("OpenXPlay DLNA", wirelessLogMessage(message))
+            override fun diagnostic(message: String) {
+                connectionLog.cast(message, logConnection)
+                wirelessUpdate { if (dlnaToken === token) Log.i("OpenXPlay DLNA", wirelessLogMessage(message)) }
             }
             override fun statistics(statistics: CastStatistics) = wirelessUpdate {
                 if (dlnaToken === token && !dlnaLifecycle.retiring) {
@@ -1057,6 +1066,8 @@ class RelayRuntime(private val context: Context,
                 castNetwork, listener)
             hub.addOutput(carDisplayMemory.exclude(output))
         } catch (failure: Exception) {
+            connectionLog.linkEnded("cast", org.openxplay.direlay.logs.LinkEnd("renderer", "opening", "local", "connect_failed",
+                "${failure.javaClass.simpleName}: ${redactFailureMessage(failure.message.orEmpty())}"), logConnection)
             dlnaToken = null; dlnaLifecycle.ended()
             dlnaFailure = WirelessDisplayFailure("output_failed", failureText(failure, ::redactFailureMessage), System.currentTimeMillis())
             Log.w("OpenXPlay DLNA", wirelessLogMessage("failure output_failed: ${dlnaFailure?.detail}"))
@@ -1162,6 +1173,7 @@ class RelayRuntime(private val context: Context,
         carlinkConfig = requested
         if (carlinkRetiring) { carlinkRestartPending = true; return }
         carlink?.let { output ->
+            connectionLog.carlink("decision link=session by=local cause=${if (requested.enabled) "replaced" else "stopped"} reached=${carlinkState.lowercase()}", carlinkLogConnection)
             carlinkRetiring = !carlinkEnded
             carlinkRestartPending = carlinkRetiring
             carlinkPins.retire()
@@ -1310,6 +1322,7 @@ class RelayRuntime(private val context: Context,
                 // E3 also puts AUTH diagnostics on the Carlink trail and trace.
                 override fun diagnostic(message: String) {
                     link.sessionDiagnostic(message)
+                    connectionLog.carlinkDiagnostic(message, logConnection)
                     connectionLog.diagnostic(message)
                 }
                 override fun statistics(stats: ClinkStatistics) {
@@ -1479,7 +1492,9 @@ class RelayRuntime(private val context: Context,
             webPhase = org.openxplay.direlay.path.WebPhase.FAILED
             serverFailureSinceMillis = System.currentTimeMillis()
             serverReason = webStartReason(failure, port)
-            connectionLog.event("relay", "web_failed", "reason=$serverReason exception=${failure.javaClass.simpleName}")
+            connectionLog.event("relay", "web_failed", "reason=$serverReason by=local cause=connect_failed " +
+                "next=${if (!closed && webEnabled) "retry" else "stop"} nextInMs=${if (!closed && webEnabled) webStartRetryDelay(bindAttempt).toString() else "-"}" +
+                org.openxplay.direlay.logs.quotedDetail(redactFailureMessage("${failure.javaClass.simpleName}: ${failure.message.orEmpty()}")))
             val root = generateSequence<Throwable>(failure) { it.cause }.last()
             val reason = "$serverReason: ${root.javaClass.name}: ${root.message}"
             if (reason != lastWebFailure) {
@@ -1535,7 +1550,10 @@ class RelayRuntime(private val context: Context,
                     urlRefresh = null
                     receiverUrls = emptyList()
                     pluginContext.configure(false)
-                    web?.let { hub.removeOutput(it.id) }
+                    web?.let {
+                        connectionLog.event("relay", "web_stop", "by=local cause=${if (webEnabled) "replaced" else "stopped"}")
+                        hub.removeOutput(it.id)
+                    }
                     web = null
                     serverReason = null
                     webPhase = if (webEnabled) org.openxplay.direlay.path.WebPhase.STARTING else org.openxplay.direlay.path.WebPhase.OFF
@@ -1615,6 +1633,9 @@ class RelayRuntime(private val context: Context,
         synchronized(lifecycle) {
             if (closed) return
             closed = true
+            connectionLog.phoneDecision(org.openxplay.direlay.logs.LinkEnd(
+                if (settingsStore.wireless()) "wireless_run" else "usb", "starting", "local", "stopped"), "stop")
+            connectionLog.carlink("decision link=session by=local cause=stopped reached=${carlinkState.lowercase()}", carlinkLogConnection)
             keepAlive.update(false)
             teslaSession.close()
             sharedWifiConnectivity.unregisterNetworkCallback(sharedWifiCallback)
@@ -1631,12 +1652,11 @@ class RelayRuntime(private val context: Context,
             pluginContext.close()
             if (traceCapture.isInitialized()) carlinkMediaCapture.close()
             if (traceRecorder.isInitialized()) carlinkTraceRecorder.close()
-            browserTimeline.close()
             carlinkSummary?.close()
-            connectionLog.close()
-            settingsStore.close()
             hub.stop()
             input.close()
+            // Output close is asynchronous; process-lived diagnostics retain the final callbacks.
+            settingsStore.close()
         }
     }
 }

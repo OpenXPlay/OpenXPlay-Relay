@@ -29,6 +29,8 @@ import kotlin.math.*
 
 internal const val GlyphSamples = 96
 
+internal fun stageBadgeVisible(state: StepState): Boolean = state == StepState.ACTION || state == StepState.FAILED
+
 /** Polar samples keep the contour's topology fixed throughout a spring morph. */
 internal fun glyphRadii(state: StepState): FloatArray = FloatArray(GlyphSamples) { index ->
     val angle = index * 2.0 * PI / GlyphSamples

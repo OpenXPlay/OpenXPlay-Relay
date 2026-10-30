@@ -40,6 +40,15 @@ it.each(['en', 'zh-CN'] as const)('requires a fresh confirmation for each privac
     setLanguage: () => {}, error: () => 'error.request', reload: async () => {},
   });
   await vi.waitFor(() => expect(container.querySelector('#privacy-export').disabled).toBe(false));
+  expect(container.innerHTML).not.toContain('↓');
+  expect(container.innerHTML.match(/class="lucide lucide-download"/g)).toHaveLength(2);
+  for (const key of ['files.export.user', 'files.export.privacy']) {
+    const label = translate(language, key);
+    expect(container.innerHTML).toContain(`<span class="row-copy">${label}</span>`);
+    expect(container.innerHTML).toContain(`aria-label="${label}" title="${label}"`);
+  }
+  expect(container.innerHTML).toContain('download="openxplay-user-config.json"');
+  expect(container.innerHTML).toContain('aria-describedby="privacy-empty"');
   expect(container.innerHTML).not.toContain('href="/api/v0/config/privacy"');
   container.querySelector('#privacy-export').click();
   expect(downloads).toHaveLength(0);

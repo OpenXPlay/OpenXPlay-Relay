@@ -13,6 +13,22 @@ import org.openxplay.direlay.R
 class SettingsAutoSaveTest {
     private val initial = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
         FrameRatePreference.AUTO, false, true, false, null, wirelessNetwork = WirelessNetworkSettings(choice = WirelessNetworkChoice.WIFI_DIRECT))
+
+    @Test fun highPerformanceChangesPublishOnceAndApplySilentlyDuringASession() {
+        val published = mutableListOf<RelaySettings>()
+        val saver = SettingsAutoSave(initial, published::add)
+        val edits = listOf(false, true).map { initial.copy(highPerformance = it) }
+        for (chosen in edits) {
+            assertTrue(saver.apply(chosen, true))
+            assertFalse(saver.apply(chosen, true))
+            assertTrue(settingsInvalidPages(chosen, initial) { true }.isEmpty())
+            for (connected in listOf(false, true)) {
+                assertEquals(SettingsNotice.SILENT, settingsNotice(initial, chosen, connected))
+                assertNull(settingsFeedback(initial, chosen, connected, true))
+            }
+        }
+        assertEquals(edits, published)
+    }
     @Test fun incompleteCarsNeverBlockSavingOrBecomeFixSettingsErrors() {
         for (car in listOf(CarSelection(), CarSelection("xpeng"), CarSelection("other", model = "other"),
             CarSelection("xpeng", model = "other"))) {

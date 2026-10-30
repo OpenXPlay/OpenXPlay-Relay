@@ -29,10 +29,12 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.path.StepState
 import org.openxplay.direlay.ui.LinkFill
 import org.openxplay.direlay.ui.LocalRelayMotion
+import kotlin.math.roundToInt
 
 private val cablePath = PathParser().parsePathString("M0,12 C30,22 70,22 100,12").toPath()
 
-@Composable internal fun StageCable(link: LinkFill, left: Boolean, live: Boolean, pulse: State<Float>, modifier: Modifier) {
+@Composable internal fun StageCable(link: LinkFill, left: Boolean, live: Boolean, pulse: State<Float>, modifier: Modifier,
+    geometry: StageCableGeometry? = null) {
     val motion = LocalRelayMotion.current
     val arrival = stageArrival(if (left) 60 else 120)
     val fraction = stageFloat(if (live) 1f else if (link.total > 0) link.done.toFloat() / link.total else 0f)
@@ -78,12 +80,18 @@ private val cablePath = PathParser().parsePathString("M0,12 C30,22 70,22 100,12"
     val currentColors = rememberUpdatedState(colors)
     val currentTrack = rememberUpdatedState(track)
     // State changes redraw without rebuilding the scaled path or its measure.
-    val cable = remember(left) {
-        Modifier.fillMaxWidth().height(24.dp).drawWithCache {
+    val cable = remember(left, geometry) {
+        (if (geometry == null) Modifier.fillMaxWidth().height(24.dp) else Modifier.fillMaxSize()).drawWithCache {
             val path = Path().apply {
-                addPath(cablePath)
-                transform(Matrix().apply { scale(if (left) -size.width / 100f else size.width / 100f, size.height / 24f) })
-                if (left) translate(Offset(size.width, 0f))
+                if (geometry == null) {
+                    addPath(cablePath)
+                    transform(Matrix().apply { scale(if (left) -size.width / 100f else size.width / 100f, size.height / 24f) })
+                    if (left) translate(Offset(size.width, 0f))
+                } else {
+                    val curve = geometry.curve
+                    moveTo(curve.start.x, curve.start.y)
+                    cubicTo(curve.control1.x, curve.control1.y, curve.control2.x, curve.control2.y, curve.end.x, curve.end.y)
+                }
             }
             val measure = PathMeasure().apply { setPath(path, false) }
             val length = measure.length
@@ -145,11 +153,18 @@ private val cablePath = PathParser().parsePathString("M0,12 C30,22 70,22 100,12"
         val number = measurables[0].measure(loose)
         val cable = measurables[1].measure(loose)
         val gap = 4.dp.roundToPx()
-        val height = constraints.constrainHeight(maxOf(112.dp.roundToPx(), cable.height + 2 * (number.height + gap)))
+        val height = if (geometry != null) constraints.maxHeight else
+            constraints.constrainHeight(maxOf(112.dp.roundToPx(), cable.height + 2 * (number.height + gap)))
         layout(constraints.maxWidth, height) {
-            val top = (height - cable.height) / 2
-            cable.placeRelative(0, top)
-            number.placeRelative((constraints.maxWidth - number.width) / 2, top - gap - number.height)
+            if (geometry == null) {
+                val top = (height - cable.height) / 2
+                cable.placeRelative(0, top)
+                number.placeRelative((constraints.maxWidth - number.width) / 2, top - gap - number.height)
+            } else {
+                val anchor = geometry.number.center(number.height.toFloat())
+                cable.place(0, 0)
+                number.place((anchor.x - number.width / 2f).roundToInt(), (anchor.y - number.height / 2f).roundToInt())
+            }
         }
     }
 }
