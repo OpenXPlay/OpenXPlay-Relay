@@ -7,6 +7,7 @@ import type { Status } from './api';
 import { carSelectionErrors } from './car-screen';
 import { presentPath } from './path/present-path';
 import { stepCommand } from './path/actions';
+import { pairingView, relayBluetoothName } from './pairing';
 import { esc } from './html';
 import { stepText, type Translate } from './stage';
 
@@ -21,9 +22,20 @@ export function setupBlocked(step: SetupStep, settings: Settings, status: Status
   if (step === 'prepare' || step === 'start') return !status.running && !presentPath(status.pathInput ?? {}).canStart;
   return false;
 }
+export function guideBack(step: SetupStep): string {
+  const index = setupSteps.indexOf(step);
+  return index > 0 ? 'setup/' + setupSteps[index - 1] : 'home';
+}
 export function preparationView(status: Status, t: Translate): string {
-  const steps = presentPath(status.pathInput ?? {}).sections.filter(section => section.section === 'RELAY' || section.section === 'IPHONE').flatMap(section => section.steps).filter(step => !['CARPLAY_START', 'SESSION', 'PICTURE', 'IPHONE_BLUETOOTH', 'IPHONE_AUTH', 'IPHONE_WIFI'].includes(step.id));
-  return `<p class="muted">${esc(t('setup_prepare_hint'))}</p>${steps.map(step => `<div class="inset-row" id="prepare-${step.id}" tabindex="-1"><span>${esc(t(step.title))}<small class="muted">${esc(stepText(step.detail, t))}</small></span><span>${esc(t(`stage.state.${step.state}`))}</span>${step.action && stepCommand(step.action, status.platform) ? `<button data-prepare-action="${step.id}">${esc(t(step.actionLabel ?? 'design_open'))}</button>` : ''}</div>`).join('')}<button id="setup-recheck">${esc(t('design_check_again'))}</button>`;
+  const steps = presentPath(status.pathInput ?? {}).sections.flatMap(section => section.steps).filter(step => !['CARPLAY_START', 'SESSION', 'PICTURE', 'IPHONE_BLUETOOTH', 'IPHONE_AUTH', 'IPHONE_WIFI'].includes(step.id));
+  const ready = steps.filter(step => step.state === 'OK'), blocker = steps.find(step => step.state !== 'OK');
+  const pair = pairingView(status);
+  const row = (step: typeof steps[number]) => {
+    const pairing = step.id === 'IPHONE_PAIRED' && pair.open;
+    const detail = pairing ? t('home.pairCountdown', { name: relayBluetoothName(status), time: pair.time }) : stepText(step.detail, t) || (step.explanation ? t(step.explanation) : '');
+    return `<div class="inset-row prepare-row" id="prepare-${step.id}" tabindex="-1"><span class="row-copy"><span>${esc(t(step.title))}</span>${detail ? `<small class="muted" ${pairing ? 'id="guide-pairing-remaining" role="timer"' : ''}>${esc(detail)}</small>` : ''}</span>${pairing ? pair.cancelable ? `<button class="quiet" data-prepare-cancel>${esc(t('ui.stop'))}</button>` : '' : step.action && stepCommand(step.action, status.platform) ? `<button class="quiet" data-prepare-action="${step.id}">${esc(t(step.actionLabel ?? 'design_open'))}</button>` : ''}</div>`;
+  };
+  return `<p class="muted">${esc(t('setup_prepare_hint'))}</p>${blocker ? `<div class="inset-group">${row(blocker)}</div>` : ''}<details class="inset-group" data-key="prepare-ready"><summary>${esc(t('setup.readyCount', { ready: ready.length, total: steps.length }))}</summary>${ready.map(row).join('')}</details><button class="quiet" id="setup-recheck">${esc(t('design_check_again'))}</button>`;
 }
 
 export function setupBlocker(step: SetupStep, settings: Settings, status: Status) {

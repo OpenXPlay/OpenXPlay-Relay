@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-15
 
 import { mountIdentity, IdentitySelection } from './identity';
-import { setupSteps, setupFields, setupBlocked, setupBlocker, preparationView, type SetupStep } from './setup-guide';
+import { setupSteps, setupFields, guideBack, setupBlocked, setupBlocker, preparationView, type SetupStep } from './setup-guide';
 import { restartPending } from './startup';
 import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRecommended, displayPresets, displayPresetsView } from './car-screen';
 import { teslaHint, teslaNotes } from './tesla';
@@ -54,11 +54,12 @@ let defaultPassword = false;
 let disabledAccess = false, initialGuideOffered = false;
 let selectedAddress: string | null = null;
 let route = normalizeRoute(location.hash);
+let guideReturn: string | null = null;
 let currentView = route === 'home' ? 'home' : 'settings';
 let stage: ReturnType<typeof mountStage> | null = null;
 let visibleTimer: ReturnType<typeof setInterval> | undefined;
 const drafts = new Map<string, string>();
-on(window, 'hashchange', () => { if (route === 'home' && normalizeRoute(location.hash) !== 'home') void cancelArrival(); videoStats.reset(); route = normalizeRoute(location.hash); currentView = route === 'home' ? 'home' : 'settings'; render(); });
+on(window, 'hashchange', () => { if (route === 'home' && normalizeRoute(location.hash) !== 'home') void cancelArrival(); videoStats.reset(); const next = normalizeRoute(location.hash); if (route.startsWith('setup') && next.startsWith('settings')) guideReturn = route; else if (next === 'home' || next.startsWith('setup')) guideReturn = null; route = next; currentView = route === 'home' ? 'home' : 'settings'; render(); });
 function showSettings(target?: string) {
   const next = target?.startsWith('settings') ? target : target === 'current-password' ? 'settings/access/admin' : target?.startsWith('field-') ? fieldRoute(decodeURIComponent(target.slice(6))) : 'settings';
   location.hash = next;
@@ -130,7 +131,7 @@ function shell() {
   document.documentElement.lang = language;
   document.body.dataset.page = currentView;
   const title = t(routeTitle(route));
-  patchMarkup(root, `<header class="top-bar">${session === 'ready' ? currentView === 'home' ? `<a class="icon-button" href="#settings" aria-label="${t('ui.settings')}">${icon('settings')}</a>` : `<a class="icon-button back" href="#${parentRoute(route)}" aria-label="${t('ui.back')}">${icon('chevron-left')}</a><span id="bar-title" aria-hidden="true">${esc(title)}</span>` : `<span>OpenXPlay Relay</span>`}</header><div id="connection" role="status" class="banner" ${offline ? '' : 'hidden'}>${t('ui.reconnecting')}</div><main id="main"></main><div id="restart-required" class="card" hidden></div>`);
+  patchMarkup(root, `<header class="top-bar">${session === 'ready' ? currentView === 'home' ? `<a class="icon-button" href="#settings" aria-label="${t('ui.settings')}">${icon('settings')}</a>` : `<a class="icon-button back" href="#${route.startsWith('setup') ? guideBack(guideStep()) : guideReturn && parentRoute(route) === 'home' ? guideReturn : parentRoute(route)}" aria-label="${t('ui.back')}">${icon('chevron-left')}</a><span id="bar-title" aria-hidden="true">${esc(title)}</span>` : `<span>OpenXPlay Relay</span>`}</header><div id="connection" role="status" class="banner" ${offline ? '' : 'hidden'}>${t('ui.reconnecting')}</div><main id="main"></main><div id="restart-required" class="card" hidden></div>`);
 }
 function render() {
   stage?.destroy(); stage = null; clearInterval(visibleTimer); visibleTimer = undefined;
@@ -240,7 +241,8 @@ function renderReady() {
     if (route === 'settings/experimental') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('hint.experimentalScope'))}</p>`);
     if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
-    const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry'].includes(f.key)).map(editorField);
+    const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !['carlinkPictureDefault', 'carlinkPictureTry', ...(route === 'settings/car' ? ['carPlayViewAreas'] : [])].includes(f.key)).map(editorField);
+    if (route === 'settings/car') list.sort((a, b) => setupFields('car').indexOf(a.key) - setupFields('car').indexOf(b.key));
     container.insertAdjacentHTML('beforeend', `<section ${list.length ? '' : 'hidden'} class="inset-group settings-section" data-section="${route === 'settings/access/public-name' ? 'publicName' : route}">${list.map(fieldMarkup).join('')}</section>`);
     list.forEach(bindField);
     if (route === 'settings/connection') container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/connection/network', 'menu.connection/network', pageSummary('settings/connection/network'), 'wifi')}</div><div id="pairing-panel"></div>`);
@@ -259,8 +261,10 @@ function renderReady() {
       container.insertAdjacentHTML('beforeend', `<section class="inset-group" id="password-card"><form id="password-form">${['current', 'new', 'confirm'].map(name => `<label for="${name}-password">${t(`ui.${name}Password`)}</label><input id="${name}-password" name="${name}" type="password" autocomplete="${name === 'current' ? 'current-password' : 'new-password'}" ${name === 'current' ? '' : 'minlength="8"'} required>`).join('')}<p class="muted">${t('error.passwordFormat')}</p><button class="primary">${t('ui.changePassword')}</button><p id="password-result" role="status"></p></form><button id="logout">${t('ui.logout')}</button></section>`);
       bindPassword(); on(document.getElementById('logout')!, 'click', async () => { try { await api.logout(); resetSession('login'); } catch (e) { pageError = errorKey(e); } });
     }
-    if (route === 'settings/car' && status!.platform === 'linux') {
-      container.insertAdjacentHTML('beforeend', '<div id="car-notes"></div><div id="car-screen"></div>'); renderCarScreen();
+    if (route === 'settings/car') {
+      const areasField = fields().find(field => field.key === 'carPlayViewAreas');
+      if (areasField) { container.insertAdjacentHTML('beforeend', `<details class="inset-group"><summary>${esc(t(areasField.labelKey))}</summary>${fieldMarkup(areasField)}</details>`); bindField(areasField); }
+      container.insertAdjacentHTML('beforeend', '<div id="car-notes"></div><div id="car-screen"></div><div id="view-areas"></div>'); renderCarScreen();
     }
     if (route === 'settings/developer/video' && status!.platform === 'linux') {
       container.insertAdjacentHTML('beforeend', displayPresetsView(t));
@@ -320,8 +324,8 @@ function bindAdminAccess() {
 function guideStep(): SetupStep { const step = route.split('/')[1] as SetupStep; return setupSteps.includes(step) ? step : 'car'; }
 function renderGuide() {
   const step = guideStep(), index = setupSteps.indexOf(step);
-  const list = fields().filter(field => setupFields(step).includes(field.key)).map(editorField);
-  patchMarkup(document.getElementById('main')!, `<div class="settings-page"><p class="muted">${esc(t('setup_progress', { arg1: index + 1, arg2: setupSteps.length }))}</p><h1>${esc(t(step === 'car' ? 'setup_car_title' : step === 'prepare' ? 'setup_prepare_title' : step === 'start' ? 'setup_start_title' : 'setup2_' + step + '_title'))}</h1><p>${esc(t(step === 'car' ? 'setup.carHint' : 'setup2_' + step + '_subtitle'))}</p>${step === 'connection' ? `<p>${esc(t('setup.wirelessLinux'))}</p>` : ''}<div class="inset-group">${list.map(fieldMarkup).join('')}</div>${step === 'network' ? `<div id="network-panel" class="inset-group"></div>` : ''}<div id="setup-preparation"></div>${step === 'start' ? `<div class="inset-group">${setupSteps.slice(0, 4).map(key => `<a class="inset-row" href="#setup/${key}">${esc(t(key === 'car' ? 'menu.car' : key === 'output' ? 'menu.output' : key === 'connection' ? 'menu.connection' : 'menu.connection/network'))} · ${esc(pageSummary('settings/' + (key === 'network' ? 'connection/network' : key)))}</a>`).join('')}</div>` : ''}<p id="setup-error" class="error" role="alert"></p><div class="dialog-actions"><button id="setup-next" class="primary">${esc(t(step === 'start' ? 'setup_start' : 'setup_next'))}</button>${index ? `<a class="quiet" href="#setup/${setupSteps[index - 1]}">${esc(t('ui.back'))}</a>` : ''}<a class="quiet" href="#home">${esc(t('stage_not_now'))}</a></div></div>`);
+  const list = setupFields(step).flatMap(key => fields().filter(field => field.key === key)).map(editorField);
+  patchMarkup(document.getElementById('main')!, `<div class="settings-page"><div class="guide-progress" role="img" aria-label="${esc(t('setup_progress', { arg1: index + 1, arg2: setupSteps.length }))}">${setupSteps.map((_, i) => `<span class="${i <= index ? 'done' : ''}"></span>`).join('')}</div><h1>${esc(t(step === 'car' ? 'setup_car_title' : step === 'prepare' ? 'setup_prepare_title' : step === 'start' ? 'setup_start_title' : 'setup2_' + step + '_title'))}</h1><p>${esc(t(step === 'car' ? 'setup.carHint' : 'setup2_' + step + '_subtitle'))}</p>${step === 'connection' ? `<p>${esc(t('setup.wirelessLinux'))}</p>` : ''}${list.length ? `<div class="inset-group">${list.map(fieldMarkup).join('')}</div>` : ''}${step === 'car' ? `<div id="car-notes">${carNotes(settings!.values, t)}</div>` : ''}${step === 'network' ? `<div id="network-panel" class="inset-group"></div>` : ''}<div id="setup-preparation"></div>${step === 'start' ? `<div class="inset-group">${setupSteps.slice(0, 4).map(key => `<a class="inset-row" href="#setup/${key}">${esc(t(key === 'car' ? 'menu.car' : key === 'output' ? 'menu.output' : key === 'connection' ? 'menu.connection' : 'menu.connection/network'))}${pageSummary('settings/' + (key === 'network' ? 'connection/network' : key)) ? ` · ${esc(pageSummary('settings/' + (key === 'network' ? 'connection/network' : key)))}` : ''}</a>`).join('')}</div>` : ''}<p id="setup-error" class="error" role="alert"></p><div class="guide-actions"><button id="setup-next" class="primary">${esc(t(step === 'start' ? 'setup_start' : 'setup_next'))}</button><a class="quiet" href="#home">${esc(t('stage_not_now'))}</a></div></div>`);
   list.forEach(bindField); renderNetworkPanel(); updateVisibility(); updateGuide();
   on(document.getElementById('setup-next'), 'click', async event => {
     const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
@@ -357,8 +361,9 @@ function markGuideField(key: string) { guideError = true; const row = document.g
 function clearGuideError() { if (!guideError) return; guideError = false; document.querySelectorAll('.guide-blocker').forEach(row => row.classList.remove('guide-blocker')); const error = document.getElementById('setup-error'); if (error) error.textContent = ''; }
 function updateGuide() {
   const target = document.getElementById('setup-preparation'); if (!target || !status) return;
-  if (guideStep() !== 'prepare') return;
+  if (!['prepare', 'start'].includes(guideStep())) return;
   patchMarkup(target, preparationView(status, t));
+  on(target.querySelector('[data-prepare-cancel]'), 'click', () => { clearGuideError(); void pairingAction('cancel-pairing'); });
   on(document.getElementById('setup-recheck'), 'click', () => void tick());
   target.querySelectorAll<HTMLButtonElement>('[data-prepare-action]').forEach(button => on(button, 'click', () => {
     const step = presentPath(status!.pathInput ?? {}).sections.flatMap(section => section.steps).find(step => step.id === button.dataset.prepareAction);
@@ -397,9 +402,9 @@ function updateDashboard() {
   syncPinDialog(); syncVisibleTimer();
 }
 function syncVisibleTimer() {
-  const visible = !document.hidden && (!!document.querySelector('#pairing-remaining, #carlink-countdown') || !!stage?.timerVisible || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0);
+  const visible = !document.hidden && (!!document.querySelector('#pairing-remaining, #carlink-countdown, #guide-pairing-remaining') || !!stage?.timerVisible || currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0);
   if (visible && !visibleTimer) visibleTimer = setInterval(() => {
-    stage?.tick(); syncPinDialog();
+    stage?.tick(); syncPinDialog(); if (route.startsWith('setup')) updateGuide();
     if (currentView === 'home' && videoStatsInterval(settings, status?.platform) > 0) void tick();
     const seconds = Math.max(0, Math.ceil((status?.pairingDeadline ?? 0) - Date.now() / 1000));
     const panel = document.getElementById('pairing-remaining'); if (panel) panel.textContent = t('pairing.open', { time: formatRemaining(seconds) });
@@ -416,7 +421,7 @@ async function pairingAction(name: 'pair-iphone' | 'cancel-pairing') {
   catch (error) { if (current === epoch) pageError = pairingError = errorKey(error); }
   finally {
     if (current === epoch) {
-      actionBusy = false; pairingBusy = false; updateDashboard(); renderPairingPanel();
+      actionBusy = false; pairingBusy = false; updateDashboard(); renderPairingPanel(); if (route.startsWith('setup')) updateGuide();
       (document.getElementById(name === 'pair-iphone' ? 'pairing-cancel' : 'pairing-open') ?? document.getElementById('context-cancel') ?? document.getElementById('context-primary'))?.focus();
     }
   }
@@ -738,6 +743,7 @@ function bindField(field: Field) {
   else if (field.type === 'phone') on(el, 'click', () => void pickPhone(field));
   else if (field.type === 'choice') on(el, 'click', () => {
     const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => {
+      if (['carBrand', 'carModel', 'carYear'].includes(field.key) && option.value === '') return '';
       const hintKey = field.key === 'transport' && status?.platform === 'linux' ? usbTransportHint('linux', option.value) ?? option.hintKey : option.hintKey;
       return `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : field.key === 'hotspotSecurity' && !(status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']).includes(option.value as HotspotSecurity) ? 'disabled' : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(hintKey))}</small>` : ''}</button>`; }).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
     dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', async () => {

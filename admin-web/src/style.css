@@ -211,3 +211,11 @@ dialog button.confirm { background: var(--ok); color: var(--primary-ink); }
 button.destructive { color: var(--failed); }
 .guide-blocker { outline: 2px solid var(--failed); outline-offset: 4px; border-radius: var(--chip-radius); }
 .guide-blocker small { display: block; color: var(--failed); }
+
+.guide-progress { display: flex; gap: 6px; margin-block: 12px 24px; }
+.guide-progress span { flex: 1; height: 4px; border-radius: 4px; background: var(--outline); }
+.guide-progress .done { background: var(--ok); }
+.guide-actions { display: grid; gap: 8px; text-align: center; }
+.guide-actions .quiet { display: grid; place-items: center; min-height: 48px; }
+.prepare-row { padding-inline: 0; }
+.prepare-row button { flex-shrink: 0; min-width: 72px; word-break: keep-all; }

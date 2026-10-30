@@ -126,3 +126,15 @@ it('names the actual guide blocker rather than a generic Next error', () => {
   status.pathInput!.iphone!.pick = 'NONE'; status.running = false;
   expect(setupBlocker('prepare', settings, status)?.id).toBe('prepare-IPHONE_PAIRED');
 });
+
+import { guideBack, preparationView } from '../src/setup-guide';
+it('returns to the previous guide step and Home from its first step', () => {
+  expect(guideBack('car')).toBe('home'); expect(guideBack('prepare')).toBe('setup/network'); expect(guideBack('start')).toBe('setup/prepare');
+});
+it('folds ready preparation rows and shows the active pairing countdown with Stop', () => {
+  const status = previewStatus({ platform: 'linux', host: 'relay.local', receiverUrls: [] } as unknown as Status, 'ready');
+  status.pathInput!.iphone!.pick = 'NONE'; status.pairingDeadline = Date.now() / 1000 + 600; status.pairingCancelable = true;
+  const html = preparationView(status, key => key);
+  expect(html).toContain('guide-pairing-remaining'); expect(html).toContain('home.pairCountdown'); expect(html).toContain('data-prepare-cancel');
+  expect(html).toContain('prepare-ready'); expect(html).toContain('setup.readyCount'); expect(html).not.toContain('data-prepare-action="IPHONE_PAIRED"');
+});
