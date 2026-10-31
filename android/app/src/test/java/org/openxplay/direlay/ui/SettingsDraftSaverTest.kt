@@ -19,6 +19,17 @@ import org.openxplay.direlay.settings.*
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE, application = Application::class)
 class SettingsDraftSaverTest {
+    @Test fun hotspotSetupChoiceAndCredentialsSurviveDraftRestoration() {
+        for (method in HotspotSetupMethod.entries) {
+            val chosen = base.copy(wirelessNetwork = WirelessNetworkSettings(manualSsid = "OpenXPlay-A-ABCDE",
+                manualPassphrase = "ABCDEFGH23456789", hotspotSetupMethod = method))
+            val saved = bundle(chosen)
+            assertEquals(chosen, relaySettingsSaver(base).restore(saved))
+            saved.remove("hotspotSetupMethod")
+            assertEquals(HotspotSetupMethod.EXISTING, relaySettingsSaver(base).restore(saved)?.wirelessNetwork?.hotspotSetupMethod)
+        }
+    }
+
     @Test fun everyFrameRateSurvivesAParcelRoundTripAndOlderDraftsKeepTheBaseChoice() {
         for (rate in FrameRatePreference.entries) {
             val chosen = base.copy(frameRate = rate)

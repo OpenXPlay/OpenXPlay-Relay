@@ -66,6 +66,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBooleanArray("flags", booleanArrayOf(value.autoStartOnBoot, value.autoStartWhenReady,
             value.localPreview, false, value.playCarPlayAudio, false, value.vehicleInformation))
         putString("frameRate", value.frameRate.name)
+        putString("hotspotSetupMethod", value.wirelessNetwork.hotspotSetupMethod.name)
         putBoolean("highPerformance", value.highPerformance)
         putIntArray("numbers", intArrayOf(0, value.webPort ?: 0, value.wirelessNetwork.channel))
         putStringArray("outputs", RelayOutput.entries.filter { it in value.outputs }.map { it.wire }.toTypedArray())
@@ -192,5 +193,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         displayMode = migratedDisplayMode(bundle.getString("displayMode"), bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) }),
         display = bundle.getIntArray("display")?.let { DisplayProfile(it[0], it[1], it[2]) },
         wirelessNetwork = WirelessNetworkSettings(WirelessNetworkChoice.fromSavedName(text[8]), text[9], text[10],
-            ManualHotspotBand.valueOf(text[11]), numbers[2], ManualHotspotSecurity.valueOf(text[12]), if (text.size > 14) SharedWifiNetworks.migrate(null, text[13], text[14]) else SharedWifiNetworks.decode(text[13])))
+            ManualHotspotBand.valueOf(text[11]), numbers[2], ManualHotspotSecurity.valueOf(text[12]), if (text.size > 14) SharedWifiNetworks.migrate(null, text[13], text[14]) else SharedWifiNetworks.decode(text[13]),
+            HotspotSetupMethod.entries.firstOrNull { it.name == bundle.getString("hotspotSetupMethod") }
+                ?: HotspotSetupMethod.forCredentials(text[9], text[10])))
 })

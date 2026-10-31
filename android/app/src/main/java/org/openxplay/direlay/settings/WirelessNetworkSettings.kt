@@ -32,9 +32,11 @@ data class WirelessNetworkSettings(
     val channel: Int = 0,
     val security: ManualHotspotSecurity = ManualHotspotSecurity.OPEN,
     val sharedWifiNetworks: List<SharedWifiNetwork> = emptyList(),
+    val hotspotSetupMethod: HotspotSetupMethod = HotspotSetupMethod.forCredentials(manualSsid, manualPassphrase),
 ) {
     override fun toString() = "WirelessNetworkSettings(choice=$choice, manualSsid=$manualSsid, manualPassphrase=[redacted], " +
-        "band=$band, channel=$channel, security=$security, sharedWifiNetworks=$sharedWifiNetworks)"
+        "band=$band, channel=$channel, security=$security, sharedWifiNetworks=$sharedWifiNetworks, hotspotSetupMethod=$hotspotSetupMethod)"
+    fun sameConnectionAs(other: WirelessNetworkSettings) = copy(hotspotSetupMethod = other.hotspotSetupMethod) == other
     fun validate(allowEmptySharedWifi: Boolean = false, allowIncompleteHotspot: Boolean = false) {
         SharedWifiNetworks.validate(sharedWifiNetworks)
         when (choice) {
@@ -65,19 +67,20 @@ data class WirelessNetworkSettings(
         AirPlayPersistence.saveManualHotspotChannel(context, channel)
         AirPlayPersistence.saveManualHotspotSecurity(context, security)
         context.getSharedPreferences("direlay", Context.MODE_PRIVATE).edit()
-            .putString("sharedWifiNetworks", SharedWifiNetworks.encode(sharedWifiNetworks)).apply()
+            .putString("sharedWifiNetworks", SharedWifiNetworks.encode(sharedWifiNetworks))
+            .putString("hotspotSetupMethod", hotspotSetupMethod.name).apply()
     }
 
     companion object {
         fun validateCredentials(ssid: String, passphrase: String) = SharedWifiNetworks.validateCredentials(ssid, passphrase)
 
-        fun load(context: Context): WirelessNetworkSettings {
+        @Synchronized fun load(context: Context): WirelessNetworkSettings {
             val relay = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
             val chosen = relay.getBoolean("wirelessNetworkChosen", false)
             val networks = SharedWifiNetworks.migrate(relay.getString("sharedWifiNetworks", null),
                 AirPlayPersistence.loadExistingWifiSsid(context), AirPlayPersistence.loadExistingWifiPassphrase(context))
             if (!relay.contains("sharedWifiNetworks")) relay.edit().putString("sharedWifiNetworks", SharedWifiNetworks.encode(networks)).apply()
-            return WirelessNetworkSettings(
+            var network = WirelessNetworkSettings(
                 if (chosen) WirelessNetworkChoice.fromMode(AirPlayPersistence.loadWirelessHotspotMode(context)) else WirelessNetworkChoice.WIFI_DIRECT,
                 AirPlayPersistence.loadManualHotspotSsid(context),
                 AirPlayPersistence.loadManualHotspotPassphrase(context),
@@ -86,6 +89,24 @@ data class WirelessNetworkSettings(
                 AirPlayPersistence.loadManualHotspotSecurity(context),
                 networks,
             )
+            if (!relay.contains("hotspotSetupMethod")) {
+                if (network.manualSsid.isEmpty() && network.manualPassphrase.isEmpty()) {
+                    val suggested = suggestedHotspot()
+                    network = network.copy(manualSsid = suggested.ssid, manualPassphrase = suggested.passphrase,
+                        band = ManualHotspotBand.GHZ_5, channel = 0, security = ManualHotspotSecurity.WPA2,
+                        hotspotSetupMethod = HotspotSetupMethod.COPY_TO_SYSTEM)
+                    // Seed only the credentials; the user has not chosen a network mode yet.
+                    AirPlayPersistence.saveManualHotspotSsid(context, network.manualSsid)
+                    AirPlayPersistence.saveManualHotspotPassphrase(context, network.manualPassphrase)
+                    AirPlayPersistence.saveManualHotspotBand(context, network.band)
+                    AirPlayPersistence.saveManualHotspotChannel(context, network.channel)
+                    AirPlayPersistence.saveManualHotspotSecurity(context, network.security)
+                }
+                relay.edit().putString("hotspotSetupMethod", network.hotspotSetupMethod.name).commit()
+            }
+            val method = HotspotSetupMethod.entries.firstOrNull { it.name == relay.getString("hotspotSetupMethod", null) }
+                ?: network.hotspotSetupMethod
+            return network.copy(hotspotSetupMethod = method)
         }
     }
 }

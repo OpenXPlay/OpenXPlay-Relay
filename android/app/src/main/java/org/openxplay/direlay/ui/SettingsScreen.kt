@@ -318,7 +318,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint(stringResource(if (hotspot) R.string.direlay_car_hotspot_hint else R.string.direlay_existing_wifi_hint))
+        Column(credentialsModifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            HotspotSetupFields(network, errors, opener, change)
+        }
         // Apps cannot read the hotspot band, so the advice is unconditional (2.4 GHz stutters on real cars).
         if (compactHints) {
             var expanded by rememberSaveable { mutableStateOf(false) }
@@ -336,19 +338,6 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 Hint(stringResource(R.string.hotspot_5ghz_hint))
             }
         } else Hint(stringResource(R.string.hotspot_5ghz_hint))
-        TextButton(onClick = { opener.open(hotspot) }) {
-            Text(stringResource(if (hotspot) R.string.settings_open_hotspot else R.string.ui_open_wifi))
-        }
-        Column(credentialsModifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SettingField(stringResource(if (hotspot) R.string.settings_hotspot_name else R.string.direlay_network_ssid), network.manualSsid, errors["ssid"]) {
-                change(network.copy(manualSsid = it))
-            }
-            SettingField(stringResource(if (hotspot) R.string.settings_hotspot_password else R.string.direlay_network_passphrase), network.manualPassphrase,
-                errors["password"], secret = true) {
-                change(network.copy(manualPassphrase = it,
-                    security = if (it.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2))
-            }
-        }
         if (hotspot) {
             SmallHeading(stringResource(R.string.direlay_hotspot_band))
             Options(listOf(stringResource(R.string.direlay_band_auto), stringResource(R.string.direlay_band_24), stringResource(R.string.direlay_band_5)),

@@ -821,4 +821,14 @@
     <string name="experimental_radio_conflict_prompt_hint">手机打开热点会关闭 Wi-Fi 时，如果当前方式无法启动 CarPlay，弹窗建议改用可用的方式。关闭后只写入日志。</string>
     <string name="experimental_stall_watchdog">卡顿监测</string>
     <string name="experimental_stall_watchdog_hint">每秒检查一次，记录暂停、线程卡住和长时间不动的连接步骤；为下次启动保留心跳，并重启停止输出的日志记录。会多耗一点电。</string>
+    <string name="hotspot_copy_method">复制到系统（推荐）</string>
+    <string name="hotspot_copy_hint">将下面的名称和密码分别复制到这台手机的热点设置，再开启热点。设置一项后，返回这里复制另一项。</string>
+    <string name="hotspot_existing_method">填写已有热点</string>
+    <string name="hotspot_existing_hint">保留你自己设置的热点，在这里填写它的名称和密码。</string>
+    <string name="hotspot_copy_name">复制名称并打开设置</string>
+    <string name="hotspot_copy_password">复制密码并打开设置</string>
+    <string name="hotspot_name_copied">名称已复制，打开设置</string>
+    <string name="hotspot_password_copied">密码已复制，打开设置</string>
+    <string name="hotspot_no_password">无密码</string>
+    <string name="hotspot_system_options">在系统设置中选择%1$s，热点频段与下方选择保持一致。还需要保存设置并开启热点。</string>
 </resources>
