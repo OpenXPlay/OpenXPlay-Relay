@@ -19,6 +19,23 @@ import org.openxplay.stream.clink.ClinkPictureSize
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class UserConfigCodecTest {
+    @Test fun hotspotSetupMethodRoundTripsAndLegacyCredentialsRemainCustom() {
+        for (method in HotspotSetupMethod.entries) {
+            val chosen = base.copy(wirelessNetwork = base.wirelessNetwork.copy(
+                manualSsid = "OpenXPlay-A-ABCDE", manualPassphrase = "ABCDEFGH23456789", hotspotSetupMethod = method))
+            val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
+            val restored = UserConfigCodec.decode(text, base)
+            assertTrue(restored.errors.toString(), restored.errors.isEmpty())
+            assertEquals(chosen, restored.settings)
+            val legacy = JSONObject(text).getJSONObject("settings").apply { remove("hotspotSetupMethod") }
+            val imported = UserConfigCodec.decode(wrapped(legacy), chosen)
+            assertTrue(imported.errors.toString(), imported.errors.isEmpty())
+            assertEquals(HotspotSetupMethod.EXISTING, imported.settings.wirelessNetwork.hotspotSetupMethod)
+            assertEquals(chosen.wirelessNetwork.manualSsid, imported.settings.wirelessNetwork.manualSsid)
+            assertEquals(chosen.wirelessNetwork.manualPassphrase, imported.settings.wirelessNetwork.manualPassphrase)
+        }
+    }
+
     @Test fun highPerformanceRoundTripsAndMissingKeyDefaultsTrue() {
         for (highPerformance in listOf(false, true)) {
             val chosen = base.copy(highPerformance = highPerformance)

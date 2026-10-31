@@ -143,4 +143,5 @@ fun setupPrepareComplete(path: ConnectionPath?, checks: List<SetupCheck>): Boole
 
 fun revealHotspotFields(network: WirelessNetworkSettings, errors: Map<String, Int>): Boolean =
     network.choice == WirelessNetworkChoice.PHONE_HOTSPOT &&
-        (network.manualSsid.isBlank() || network.manualPassphrase.isBlank() || errors.keys.any { it in networkFields })
+        (network.hotspotSetupMethod == HotspotSetupMethod.COPY_TO_SYSTEM || network.manualSsid.isBlank() ||
+            network.manualPassphrase.isBlank() || errors.keys.any { it in networkFields })

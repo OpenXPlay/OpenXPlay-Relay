@@ -55,9 +55,45 @@ class WirelessNetworkSettingsTest {
             assertEquals(ManualHotspotSecurity.WPA2, AirPlayPersistence.loadManualHotspotSecurity(context))
             assertEquals(configured.sharedWifiNetworks, WirelessNetworkSettings.load(context).sharedWifiNetworks)
             assertFalse(context.getSharedPreferences("direlay", 0).all.keys.any {
-                it.contains("ssid", true) || it.contains("passphrase", true) || it.contains("hotspot", true)
+                it.contains("ssid", true) || it.contains("passphrase", true) || it.contains("hotspot", true) && it != "hotspotSetupMethod"
             })
         }
+    }
+
+    @Test fun firstLoadGeneratesStableAndroidCredentialsWithoutChoosingANetwork() {
+        val first = WirelessNetworkSettings.load(context)
+        assertEquals(HotspotSetupMethod.COPY_TO_SYSTEM, first.hotspotSetupMethod)
+        assertTrue(first.manualSsid.matches(Regex("OpenXPlay-A-[A-HJ-NP-Z2-9]{5}")))
+        assertTrue(first.manualPassphrase.matches(Regex("[A-HJ-NP-Z2-9]{16}")))
+        assertEquals(ManualHotspotSecurity.WPA2, first.security)
+        assertEquals(ManualHotspotBand.GHZ_5, first.band)
+        assertEquals(first, WirelessNetworkSettings.load(context))
+        assertFalse(context.getSharedPreferences("direlay", 0).getBoolean("wirelessNetworkChosen", false))
+        assertFalse(first.toString().contains(first.manualPassphrase))
+    }
+
+    @Test fun migrationPreservesExistingAndPartiallyEnteredCredentials() {
+        for ((ssid, password) in listOf("My hotspot" to "password123", "Partial hotspot" to "", "" to "password123")) {
+            clear()
+            AirPlayPersistence.saveManualHotspotSsid(context, ssid)
+            AirPlayPersistence.saveManualHotspotPassphrase(context, password)
+            val loaded = WirelessNetworkSettings.load(context)
+            assertEquals(HotspotSetupMethod.EXISTING, loaded.hotspotSetupMethod)
+            assertEquals(ssid, loaded.manualSsid)
+            assertEquals(password, loaded.manualPassphrase)
+        }
+    }
+
+    @Test fun setupMethodSwitchPreservesCustomValuesAndAnIntentionallyEmptyDraft() {
+        for (method in HotspotSetupMethod.entries) {
+            val changed = configured.copy(hotspotSetupMethod = method)
+            changed.save(context)
+            assertEquals(changed, WirelessNetworkSettings.load(context))
+            assertTrue(changed.sameConnectionAs(configured))
+        }
+        val empty = WirelessNetworkSettings(hotspotSetupMethod = HotspotSetupMethod.EXISTING)
+        empty.save(context)
+        assertEquals(empty, WirelessNetworkSettings.load(context))
     }
 
     @Test fun changesFromDiPlayAndOpenNetworkCredentialsRemainVisible() {

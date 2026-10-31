@@ -72,6 +72,7 @@ object UserConfigCodec {
         MfiTarget.LOCAL to "local", MfiTarget.USB_CH341 to "usb-ch341", MfiTarget.I2C to "i2c", MfiTarget.REMOTE to "remote",
         ManualHotspotBand.AUTO to "auto", ManualHotspotBand.GHZ_2_4 to "ghz-2-4", ManualHotspotBand.GHZ_5 to "ghz-5",
         ManualHotspotSecurity.OPEN to "open", ManualHotspotSecurity.WPA2 to "wpa2", ManualHotspotSecurity.WPA3_TRANSITION to "wpa3-transition", ManualHotspotSecurity.WPA3 to "wpa3",
+        HotspotSetupMethod.COPY_TO_SYSTEM to "copy-to-system", HotspotSetupMethod.EXISTING to "existing",
         ClinkHevcMode.STREAM_ONLY to "stream-only", ClinkHevcMode.OFF to "off", ClinkHevcMode.SIGNAL to "signal",
         ClinkPictureSize.WINDOW to "window", ClinkPictureSize.MODE to "mode",
         DlnaPicture.P720 to "720p", DlnaPicture.P1080 to "1080p",
@@ -152,6 +153,7 @@ object UserConfigCodec {
         .put("hotspotBand", wire(s.wirelessNetwork.band))
         .put("hotspotChannel", s.wirelessNetwork.channel)
         .put("hotspotSecurity", wire(s.wirelessNetwork.security))
+        .put("hotspotSetupMethod", wire(s.wirelessNetwork.hotspotSetupMethod))
         .put("developer", developerValues(d))
         .put("experimental", experimentalValues(s.experimental))
 
@@ -311,6 +313,7 @@ object UserConfigCodec {
                     else s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(channel = value))
                 }
                 "hotspotSecurity" -> { val value = enumValue<ManualHotspotSecurity>(j.string(key)); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(security = value)) }
+                "hotspotSetupMethod" -> { val value = enumValue<HotspotSetupMethod>(j.string(key)); s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(hotspotSetupMethod = value)) }
                 "experimental" -> {
                     val objectValue = j.getJSONObject(key)
                     var e = ExperimentalOptions()
@@ -381,6 +384,10 @@ object UserConfigCodec {
             } else null
             if (migrated != null) s = s.copy(frameRate = migrated)
             else listOf("fpsEnabled", "fps").filter(legacy::has).forEach { ignored.add("developer.$it") }
+        }
+        // Older files carry credentials but no setup method: keep their existing-hotspot workflow.
+        if (!j.has("hotspotSetupMethod") && (j.has("hotspotSsid") || j.has("hotspotPassphrase"))) {
+            s = s.copy(wirelessNetwork = s.wirelessNetwork.copy(hotspotSetupMethod = HotspotSetupMethod.EXISTING))
         }
         s = s.normalizedCarlinkPictures()
         fun check(key: String, test: () -> Unit) { try { test() } catch (_: Exception) { errors.putIfAbsent(key, "invalid") } }

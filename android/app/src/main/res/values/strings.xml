@@ -830,4 +830,14 @@
     <string name="experimental_radio_conflict_prompt_hint">On a phone that turns Wi-Fi off while its hotspot is on, ask to switch when the current mode cannot start CarPlay. Off: the conflict is only written to the log.</string>
     <string name="experimental_stall_watchdog">Watch for stalls</string>
     <string name="experimental_stall_watchdog_hint">Checks the relay every second and logs pauses, blocked threads and connection steps that stop moving; keeps a heartbeat for the next start and restarts a silent log recorder. Uses a little more battery.</string>
+    <string name="hotspot_copy_method">Copy to settings (recommended)</string>
+    <string name="hotspot_copy_hint">Copy each value below into this phone\'s hotspot settings, then turn on the hotspot. Return here to copy the other value.</string>
+    <string name="hotspot_existing_method">Use my existing hotspot</string>
+    <string name="hotspot_existing_hint">Keep the hotspot you already set up. Enter its name and password here.</string>
+    <string name="hotspot_copy_name">Copy name and open settings</string>
+    <string name="hotspot_copy_password">Copy password and open settings</string>
+    <string name="hotspot_name_copied">Name copied · Open settings</string>
+    <string name="hotspot_password_copied">Password copied · Open settings</string>
+    <string name="hotspot_no_password">No password</string>
+    <string name="hotspot_system_options">In system settings, select %1$s and the hotspot band chosen below. You still need to save the changes and turn on the hotspot.</string>
 </resources>

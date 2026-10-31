@@ -174,6 +174,7 @@ class SetupPresentationTest {
         val hotspot = WirelessNetworkSettings(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
             manualSsid = "Car", manualPassphrase = "password")
         assertFalse(revealHotspotFields(hotspot, emptyMap()))
+        assertTrue(revealHotspotFields(hotspot.copy(hotspotSetupMethod = HotspotSetupMethod.COPY_TO_SYSTEM), emptyMap()))
         assertTrue(revealHotspotFields(hotspot.copy(manualSsid = ""), emptyMap()))
         assertTrue(revealHotspotFields(hotspot.copy(manualPassphrase = ""), emptyMap()))
         for (field in listOf("ssid", "password")) assertTrue(revealHotspotFields(hotspot, mapOf(field to 1)))
