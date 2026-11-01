@@ -2662,8 +2662,8 @@ impl LinuxRelayAdmin {
     }
 }
 /// The head-unit address under the trusted-HTTPS name, first in the list while the name is
-/// trusted (certificate valid, current address published), also while a renewal fails; the
-/// other addresses stay as fallbacks.
+/// trusted (certificate servable, current address published or answered by a relay hotspot),
+/// also while a renewal fails; the other addresses stay as fallbacks.
 fn public_name_url(
     status: &crate::public_name::PublicNameStatus,
     receiver_urls: &[String],
@@ -2677,7 +2677,7 @@ fn public_name_url(
         .map_or(String::new(), |(_, f)| format!("#{f}"));
     Some(format!("https://{name}:{port}/{fragment}"))
 }
-/// A stored certificate is not necessarily loaded by the page child yet.
+/// Provider or local-DNS trust still needs the matching certificate loaded by the page child.
 fn receiver_public_name(
     mut status: crate::public_name::PublicNameStatus,
     served: Option<&crate::public_name::Served>,
