@@ -97,6 +97,10 @@ impl BluetoothBackend for Backend {
     fn devices(&self) -> Result<Vec<BondedDevice>> {
         Ok(vec![])
     }
+    fn remove(&self, address: &str) -> Result<()> {
+        self.0.record(format!("remove:{address}"));
+        Ok(())
+    }
     fn select(&self, configured: Option<&str>) -> Result<BondedDevice> {
         self.0.record(format!("iphone:{}", configured.unwrap()));
         Ok(BondedDevice {

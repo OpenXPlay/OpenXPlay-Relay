@@ -322,6 +322,19 @@ fn prop<'a>(c: &'a Connection, p: &'a str, interface: &'a str) -> Result<Proxy<'
 fn text(v: Option<&OwnedValue>) -> Option<String> {
     v.and_then(|x| <&str>::try_from(x).ok()).map(str::to_string)
 }
+fn paired_device_path(objects: &Objects, adapter: &str, address: &str) -> Result<OwnedObjectPath> {
+    let prefix = format!("{adapter}/");
+    objects
+        .iter()
+        .find_map(|(path, interfaces)| {
+            let device = interfaces.get("org.bluez.Device1")?;
+            (path.as_str().starts_with(&prefix)
+                && text(device.get("Address")).is_some_and(|a| a.eq_ignore_ascii_case(address))
+                && device.get("Paired").and_then(|v| bool::try_from(v).ok()) == Some(true))
+            .then(|| path.clone())
+        })
+        .ok_or_else(|| std::io::ErrorKind::NotFound.into())
+}
 pub struct LinuxBluetooth {
     selection: AdapterSelection,
     runner: Arc<dyn CommandRunner>,
@@ -385,6 +398,26 @@ impl LinuxBluetooth {
                 })
             })
             .collect())
+    }
+    pub fn remove(&self, address: &str) -> Result<()> {
+        if !valid_mac(address) {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        }
+        let c = Connection::system().map_err(err)?;
+        let objects = objects(&c)?;
+        let adapter = self.selection.selected_path(&objects)?;
+        let device = paired_device_path(&objects, &adapter, address)?;
+        let result = prop(&c, &adapter, "org.bluez.Adapter1")?
+            .call::<_, _, ()>("RemoveDevice", &(device,))
+            .map_err(|e| match &e {
+                zbus::Error::MethodError(name, _, _)
+                    if name.as_str() == "org.bluez.Error.DoesNotExist" =>
+                {
+                    std::io::ErrorKind::NotFound.into()
+                }
+                _ => err(e),
+            });
+        result
     }
     /// Whether the adapter can reach the iPhone: present, addressed and powered. The controller
     /// waits for it with the access point already up; BlueZ changes end that wait early.
@@ -1218,6 +1251,52 @@ mod signal_tests {
             assert_eq!(crate::carplay_policy::iphone_unreachable(&error), waiting);
             assert_eq!(error.kind(), kind);
         }
+    }
+    #[test]
+    fn removal_path_requires_a_bond_on_the_selected_adapter() {
+        let address = "AA:BB:CC:DD:EE:A1";
+        let entry = |adapter: &str, paired: bool| {
+            (
+                OwnedObjectPath::try_from(format!("/org/bluez/{adapter}/dev_AA_BB_CC_DD_EE_A1"))
+                    .unwrap(),
+                HashMap::from([(
+                    "org.bluez.Device1".into(),
+                    HashMap::from([
+                        (
+                            "Address".into(),
+                            OwnedValue::from(zbus::zvariant::Str::from(address)),
+                        ),
+                        ("Paired".into(), OwnedValue::from(paired)),
+                    ]),
+                )]),
+            )
+        };
+        let mut objects = Objects::from([entry("hci0", true), entry("hci2", false)]);
+        assert_eq!(
+            paired_device_path(&objects, "/org/bluez/hci2", address)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        objects.extend([entry("hci2", true)]);
+        assert_eq!(
+            paired_device_path(&objects, "/org/bluez/hci2", &address.to_lowercase())
+                .unwrap()
+                .as_str(),
+            "/org/bluez/hci2/dev_AA_BB_CC_DD_EE_A1"
+        );
+        assert_eq!(
+            paired_device_path(&objects, "/org/bluez/hci2", "AA:BB:CC:DD:EE:A2")
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            paired_device_path(&objects, "/org/bluez/hci20", address)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
     }
     #[test]
     fn adapter_selection_is_deterministic_and_never_falls_back() {

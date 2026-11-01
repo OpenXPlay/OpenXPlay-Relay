@@ -319,6 +319,9 @@ pub struct LinuxCarPlayController {
     retry_budget: Mutex<crate::start_policy::RetryBudget>,
 }
 impl LinuxCarPlayController {
+    pub fn bluetooth_device(&self) -> Option<String> {
+        self.state.0.lock().unwrap().selected_iphone.clone()
+    }
     pub fn new(
         platform: Arc<dyn WirelessPlatform>,
         events: Arc<JsonEvents>,

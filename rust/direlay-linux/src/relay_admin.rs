@@ -37,6 +37,7 @@ enum Operation {
     Restart,
     Forget,
     ForgetCarlink,
+    RemovePairedDevice(String),
     ClearSavedHeadUnit,
     RegeneratePairingCode,
     ConnectCarlink(Option<ArmedPin>),
@@ -65,6 +66,7 @@ impl Operation {
             Self::Restart => "restart",
             Self::Forget => "forget_wifi",
             Self::ForgetCarlink => "forget_carlink",
+            Self::RemovePairedDevice(_) => "remove_paired_device",
             Self::ClearSavedHeadUnit => "clear_head_unit",
             Self::RegeneratePairingCode => "pairing_code",
             Self::ConnectCarlink(_) => "connect_carlink",
@@ -1343,6 +1345,7 @@ impl LinuxRelayAdmin {
                 self.input.display.lock().unwrap().clear_saved()?;
             }
             Operation::ForgetCarlink => self.forget_carlink()?,
+            Operation::RemovePairedDevice(address) => self.remove_bluetooth_device(&address)?,
             Operation::Network {
                 mode_changed,
                 reconnect,
@@ -1371,6 +1374,50 @@ impl LinuxRelayAdmin {
                 settings.save(&self.options.state_dir)?;
             }
         }
+        Ok(())
+    }
+    fn remove_bluetooth_device(&self, address: &str) -> Result<()> {
+        let bluetooth = &self.backends.bluetooth;
+        let devices = bluetooth.devices()?;
+        if !devices
+            .iter()
+            .any(|d| d.paired && d.address.eq_ignore_ascii_case(address))
+        {
+            return Err(std::io::ErrorKind::NotFound.into());
+        }
+        let stop = self.controller.lock().unwrap().as_ref().is_some_and(|c| {
+            c.transport() == "wireless"
+                && c.bluetooth_device()
+                    .is_none_or(|a| a.eq_ignore_ascii_case(address))
+        });
+        if stop {
+            self.stop_controller();
+        }
+        bluetooth.remove(address)?;
+        {
+            let mut current = self.settings.lock().unwrap();
+            if current
+                .iphone
+                .as_deref()
+                .is_some_and(|a| a.eq_ignore_ascii_case(address))
+            {
+                let mut next = current.clone();
+                next.iphone = None;
+                next.save(&self.options.state_dir)?;
+                *current = next;
+            }
+        }
+        if !bluetooth
+            .devices()?
+            .iter()
+            .any(|d| d.paired && likely_iphone(d))
+        {
+            self.state.pairings()?.clear()?;
+        }
+        self.events.emit(
+            "bluetooth-device-removed",
+            &serde_json::json!({"address":address}),
+        );
         Ok(())
     }
     fn forget_carlink(&self) -> Result<()> {
@@ -4185,10 +4232,12 @@ impl RelayAdmin for LinuxRelayAdmin {
             pairing_deadline: pairing_remaining.map(|remaining| wall_now.saturating_add(remaining)),
             pairing_remaining,
             pairing_cancelable: true,
+            paired_device_removal: true,
             paired_devices: devices
                 .iter()
                 .filter(|d| d.paired)
                 .map(|d| AdminPairedDevice {
+                    id: d.address.clone(),
                     name: d.name.clone(),
                     connected: d.connected,
                     iphone: likely_iphone(d),
@@ -4697,6 +4746,27 @@ impl RelayAdmin for LinuxRelayAdmin {
             }
             Err(e) => AdminUpdate::Errors(e),
         }
+    }
+    fn remove_paired_device(
+        &self,
+        address: &str,
+    ) -> std::result::Result<(), PairedDeviceRemovalError> {
+        if !crate::linux_bluetooth::valid_mac(address) {
+            return Err(PairedDeviceRemovalError::Invalid);
+        }
+        let devices = self
+            .backends
+            .bluetooth
+            .devices()
+            .map_err(|_| PairedDeviceRemovalError::Request("error.request".into()))?;
+        if !devices
+            .iter()
+            .any(|d| d.paired && d.address.eq_ignore_ascii_case(address))
+        {
+            return Err(PairedDeviceRemovalError::NotFound);
+        }
+        self.defer(Operation::RemovePairedDevice(address.into()))
+            .map_err(PairedDeviceRemovalError::Request)
     }
     fn action(&self, name: &str) -> AdminResult {
         match name {
@@ -6074,6 +6144,248 @@ mod tests {
         fn radio(&self, _: &str) -> Result<crate::linux_hotspot::Radio> {
             Err(std::io::ErrorKind::Unsupported.into())
         }
+    }
+    #[derive(Default)]
+    struct RemovableBluetooth {
+        devices: Mutex<Vec<BondedDevice>>,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+    impl crate::host_backends::SecureConnectionsControl for RemovableBluetooth {
+        fn set_secure_connections(
+            &self,
+            _: u16,
+            _: bool,
+        ) -> std::result::Result<(), crate::secure_connections::Failure> {
+            Ok(())
+        }
+    }
+    impl crate::host_backends::BluetoothBackend for RemovableBluetooth {
+        fn session(&self) -> Arc<dyn crate::host_backends::BluetoothBackend> {
+            unreachable!()
+        }
+        fn check_radio(&self) -> Result<()> {
+            Ok(())
+        }
+        fn register_profiles(&self) -> Result<()> {
+            Ok(())
+        }
+        fn devices(&self) -> Result<Vec<BondedDevice>> {
+            Ok(self.devices.lock().unwrap().clone())
+        }
+        fn remove(&self, address: &str) -> Result<()> {
+            self.calls.lock().unwrap().push(format!("remove:{address}"));
+            let mut devices = self.devices.lock().unwrap();
+            let index = devices
+                .iter()
+                .position(|d| d.paired && d.address.eq_ignore_ascii_case(address))
+                .ok_or(std::io::ErrorKind::NotFound)?;
+            devices.remove(index);
+            Ok(())
+        }
+        fn select(&self, configured: Option<&str>) -> Result<BondedDevice> {
+            crate::linux_bluetooth::select_iphone(&self.devices()?, configured)
+        }
+        fn local_address(&self) -> Result<String> {
+            Ok("02:00:00:00:00:01".into())
+        }
+        fn channel(&self, _: &str, _: Option<u8>) -> Result<u8> {
+            Ok(1)
+        }
+        fn set_device_class(&self, _: u32) -> Result<()> {
+            Ok(())
+        }
+        fn selected_adapter(&self) -> Option<crate::linux_bluetooth::SelectedAdapter> {
+            None
+        }
+        fn pairing(&self) -> Arc<dyn crate::linux_bluetooth::PairingBackend> {
+            unreachable!()
+        }
+    }
+    struct RemovalController(Arc<Mutex<Vec<String>>>, String);
+    impl CarPlayController for RemovalController {
+        fn run(&self) -> Result<()> {
+            Ok(())
+        }
+        fn close(&self) -> Result<()> {
+            self.0.lock().unwrap().push("stop".into());
+            Ok(())
+        }
+        fn stage(&self) -> String {
+            "ConnectingBluetooth".into()
+        }
+        fn failed(&self) -> bool {
+            false
+        }
+        fn armed(&self) -> bool {
+            true
+        }
+        fn set_start_when_ready(&self, _: bool) {}
+        fn readiness_restored(&self) {}
+        fn running(&self) -> bool {
+            true
+        }
+        fn hotspot_info(&self) -> Option<WirelessHotspotInfo> {
+            None
+        }
+        fn transport(&self) -> &'static str {
+            "wireless"
+        }
+        fn bluetooth_device(&self) -> Option<String> {
+            Some(self.1.clone())
+        }
+    }
+    fn removable_admin() -> (
+        Arc<LinuxRelayAdmin>,
+        std::path::PathBuf,
+        Arc<RemovableBluetooth>,
+    ) {
+        let (mut a, dir) = fake();
+        let bluetooth = Arc::new(RemovableBluetooth::default());
+        bluetooth.devices.lock().unwrap().push(BondedDevice {
+            address: "02:00:00:00:00:A1".into(),
+            name: "Test iPhone".into(),
+            paired: true,
+            ..Default::default()
+        });
+        Arc::get_mut(&mut a).unwrap().backends.bluetooth = bluetooth.clone();
+        (a, dir, bluetooth)
+    }
+    #[test]
+    fn bluetooth_removal_status_advertises_capability_and_all_bond_ids() {
+        let (a, dir, bt) = removable_admin();
+        bt.devices.lock().unwrap().push(BondedDevice {
+            address: "02:00:00:00:00:A2".into(),
+            name: "Speaker".into(),
+            paired: true,
+            ..Default::default()
+        });
+        let value = serde_json::to_value(a.status()).unwrap();
+        assert_eq!(value["pairedDeviceRemoval"], true);
+        assert_eq!(value["pairedDevices"][0]["id"], "02:00:00:00:00:A1");
+        assert_eq!(value["pairedDevices"][1]["id"], "02:00:00:00:00:A2");
+        assert_eq!(value["pairedDevices"][1]["iphone"], false);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn bluetooth_removal_is_deferred_stops_only_its_attempt_and_resets_selection() {
+        for same in [true, false] {
+            let (a, dir, bt) = removable_admin();
+            let address = "02:00:00:00:00:A1";
+            a.settings.lock().unwrap().iphone = Some(address.to_lowercase());
+            *a.controller.lock().unwrap() = Some(Arc::new(RemovalController(
+                bt.calls.clone(),
+                if same { address } else { "02:00:00:00:00:A2" }.into(),
+            )));
+            a.remove_paired_device(address).unwrap();
+            assert!(bt.calls.lock().unwrap().is_empty());
+            a.response_sent();
+            let op = a
+                .operation_rx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .try_recv()
+                .unwrap();
+            assert!(matches!(op, Operation::RemovePairedDevice(_)));
+            a.operation(op).unwrap();
+            let calls = bt.calls.lock().unwrap().clone();
+            assert_eq!(
+                calls,
+                if same {
+                    vec!["stop", "remove:02:00:00:00:00:A1"]
+                } else {
+                    vec!["remove:02:00:00:00:00:A1"]
+                }
+            );
+            assert!(a.settings.lock().unwrap().iphone.is_none());
+            assert!(Settings::load(&dir).unwrap().iphone.is_none());
+            assert!(!a.status().state.contains("Failed"));
+            assert!(a.events.runtime_path_facts().iphone.failure.is_none());
+            a.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
+    fn bluetooth_removal_clears_airplay_only_without_another_iphone() {
+        for remaining_iphone in [true, false] {
+            let (a, dir, bt) = removable_admin();
+            bt.devices.lock().unwrap().push(BondedDevice {
+                address: "02:00:00:00:00:A2".into(),
+                name: if remaining_iphone {
+                    "Spare iPhone"
+                } else {
+                    "Speaker"
+                }
+                .into(),
+                paired: true,
+                ..Default::default()
+            });
+            a.state
+                .pairings()
+                .unwrap()
+                .save("phone-id", &[7; 32])
+                .unwrap();
+            let before = std::fs::read(dir.join("airplay.pairings")).unwrap();
+            a.operation(Operation::RemovePairedDevice("02:00:00:00:00:A1".into()))
+                .unwrap();
+            assert_eq!(
+                a.state.pairings().unwrap().get("phone-id").unwrap(),
+                remaining_iphone.then_some([7; 32])
+            );
+            if remaining_iphone {
+                assert_eq!(std::fs::read(dir.join("airplay.pairings")).unwrap(), before);
+            }
+            a.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
+    fn bluetooth_removal_endpoint_validates_bonds_auth_and_csrf() {
+        use crate::admin::server::Request;
+        let (a, dir, bt) = removable_admin();
+        let mut auth = AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap();
+        let token = auth
+            .login("127.0.0.1".parse().unwrap(), "openxplay", 100)
+            .ok()
+            .unwrap();
+        let server = AdminServer::new(
+            a.clone(),
+            auth,
+            AdminServerConfig::new(dir.clone(), dir.clone(), vec![]),
+        );
+        let mut req = Request {
+            method: "POST".into(),
+            path: "/api/v0/paired-devices/remove".into(),
+            headers: BTreeMap::from([
+                ("content-type".into(), "application/json".into()),
+                ("x-openxplay-admin".into(), "1".into()),
+            ]),
+            body: br#"{"id":"02:00:00:00:00:A1"}"#.to_vec(),
+            peer: "127.0.0.1".parse().unwrap(),
+        };
+        assert_eq!(server.route(&req, 100).status, 401);
+        req.headers
+            .insert("cookie".into(), format!("oxp_admin={token}"));
+        req.headers.remove("x-openxplay-admin");
+        assert_eq!(server.route(&req, 100).status, 403);
+        req.headers.insert("x-openxplay-admin".into(), "1".into());
+        for body in [r#"{}"#, r#"{"id":4}"#, r#"{"id":"bad"}"#] {
+            req.body = body.as_bytes().to_vec();
+            assert_eq!(server.route(&req, 100).status, 422);
+        }
+        req.body = br#"{"id":"02:00:00:00:00:A2"}"#.to_vec();
+        assert_eq!(server.route(&req, 100).status, 404);
+        bt.devices.lock().unwrap()[0].paired = false;
+        req.body = br#"{"id":"02:00:00:00:00:A1"}"#.to_vec();
+        assert_eq!(server.route(&req, 100).status, 404);
+        bt.devices.lock().unwrap()[0].paired = true;
+        assert_eq!(server.route(&req, 100).status, 200);
+        assert!(bt.calls.lock().unwrap().is_empty());
+        a.response_failed();
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     fn fake() -> (Arc<LinuxRelayAdmin>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(

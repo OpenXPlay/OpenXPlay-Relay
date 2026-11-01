@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-16
 
-import type { Status } from './api';
+import type { PairedDevice, Status } from './api';
 import { icon } from './icons';
 type Translate = (key: string, parameters?: Record<string, string | number>) => string;
 import { esc } from './html';
@@ -25,7 +25,7 @@ export function formatRemaining(seconds: number): string {
 }
 export function pairingView(status: Status, now = Date.now() / 1000) {
   const seconds = Math.max(0, Math.ceil((status.pairingDeadline ?? 0) - now));
-  const devices = [...(status.pairedDevices ?? [])].sort((a, b) => Number(b.connected) - Number(a.connected) || Number(b.iphone) - Number(a.iphone) || a.name.localeCompare(b.name));
+  const devices = [...(status.pairedDevices ?? [])].sort((a, b) => (status.pairedDeviceRemoval ? Number(b.iphone) - Number(a.iphone) || Number(b.connected) - Number(a.connected) : Number(b.connected) - Number(a.connected) || Number(b.iphone) - Number(a.iphone)) || a.name.localeCompare(b.name));
   return { available: status.pairingAvailable === true, open: seconds > 0, seconds, time: formatRemaining(seconds),
     cancelable: seconds > 0 && status.pairingCancelable === true, confirm: seconds === 0 && status.pairingNeedsConfirmation === true,
     // Android 12+ asks for Nearby devices first; in the background the request waits in a notification.
@@ -42,8 +42,12 @@ export function pairingPanelView(status: Status, busy: boolean, error: string, t
     : v.confirm ? `<p role="status">${t('pairing.confirm')}</p>`
     : v.onRelay ? `<p role="status">${t('pairing.settingsOpen')}</p><p>${esc(t('pairing.howTo', { name: relayBluetoothName(status) }))}</p>${v.denied ? `<p class="muted">${t('pairing.permissionDenied')}</p>` : ''}`
     : v.available ? `<button type="button" id="pairing-open" ${busy ? 'disabled' : ''}>${t('pairing.start')}</button>` : `<p>${t('home.pairOnDevice')}</p>`;
-  const rows = v.devices.filter(d => d.iphone).map(d => `<li>${icon(d.iphone ? 'smartphone' : 'bluetooth')}<span>${esc(d.name || t('pairing.unnamed'))}</span>${d.connected ? `<span class="tag">${t('ui.connected')}</span>` : ''}</li>`).join('');
+  const rows = v.devices.filter(d => d.iphone || status.pairedDeviceRemoval).map(d => `<li>${icon(d.iphone ? 'smartphone' : 'bluetooth')}<span>${esc(d.name || t('pairing.unnamed'))}</span>${d.connected ? `<span class="tag">${t('ui.connected')}</span>` : ''}${pairedDeviceRemoveButton(status, d, busy, t)}</li>`).join('');
   return `<div class="field pairing"><h3>${t('pairing.title')}</h3><p class="muted">${t('pairing.when')}</p>${control}<p id="pairing-result" class="error" role="alert">${esc(error ? t(error) : '')}</p>${showDevices ? `<h4>${t('pairing.devices')}</h4><ul class="paired-devices">${rows || `<li class="muted">${t('pairing.none')}</li>`}</ul>` : ''}</div>`;
+}
+
+export function pairedDeviceRemoveButton(status: Status, device: PairedDevice, busy: boolean, t: Translate): string {
+  return status.pairedDeviceRemoval && device.id ? `<button type="button" class="icon-button" data-remove-paired-device="${esc(device.id)}" aria-label="${esc(t('pairing.removeTitle', { name: device.name || t('pairing.unnamed') }))}" ${busy ? 'disabled' : ''}>${icon('x')}</button>` : '';
 }
 
 // One second ticker for every visible pairing countdown; onExpire runs once when an open window reaches zero.

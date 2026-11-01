@@ -115,3 +115,12 @@ it('previews and saves roles through authenticated CSRF requests without retryin
   await expect(api.saveRoles({ mode: 'auto' })).rejects.toBeInstanceOf(NetworkError);
   expect(fetch).toHaveBeenCalledOnce();
 });
+
+it('removes a Bluetooth bond by id once with the admin write guard', async () => {
+  const fetcher = respond({ ok: true });
+  await api.removePairedDevice('02:00:00:00:00:A1');
+  expect(fetcher).toHaveBeenCalledWith('/api/v0/paired-devices/remove', expect.objectContaining({ method: 'POST', body: '{"id":"02:00:00:00:00:A1"}', headers: { 'Content-Type': 'application/json', 'X-OpenXPlay-Admin': '1' } }));
+  fetcher.mockRejectedValue(new TypeError('offline')); fetcher.mockClear();
+  await expect(api.removePairedDevice('02:00:00:00:00:A1')).rejects.toBeInstanceOf(NetworkError);
+  expect(fetcher).toHaveBeenCalledOnce();
+});

@@ -24,7 +24,7 @@ export interface CarlinkStatus {
   pinRequested?: boolean; pinDeadline?: number | null;
 }
 export interface HostAddress { interface: string; ipv4: string; developerOnly: boolean }
-export interface PairedDevice { name: string; connected: boolean; iphone: boolean }
+export interface PairedDevice { id?: string; name: string; connected: boolean; iphone: boolean }
 export interface VideoStatus { codec: string; reason: string; codecString?: string | null; width?: number | null; height?: number | null;
   // Linux input counters are scoped to this Stream session; rates use the admin page's monotonic clock.
   session?: string | null; active?: boolean; frames?: number; bytes?: number; bytesMeasured?: boolean;
@@ -91,7 +91,7 @@ export interface Status {
   };
   adminHotspot?: { state: 'up' | 'paused-carlink' | 'waiting-interface' | 'off' | 'failed'; reason: string | null };
   hostAddresses?: HostAddress[]; receiverPort?: number; adminPort?: number; pairingAvailable?: boolean; pairingDeadline?: number | null; screenConnected?: boolean;
-  pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[];
+  pairingRemaining?: number | null; pairingCancelable?: boolean; pairingNeedsConfirmation?: boolean; pairingOnRelay?: boolean; pairedDevices?: PairedDevice[]; pairedDeviceRemoval?: boolean;
   // Android 12+: the Nearby devices step of a pairing window, and whether the request waits in a notification.
   pairingNeedsPermission?: boolean; pairingPermissionDenied?: boolean; pairingNotified?: boolean;
   receiverHistory?: { screens: { width: number; height: number; densityDpi: number; info: Record<string, unknown> }[];
@@ -168,6 +168,7 @@ export const api = {
   switchNetwork: (networkMode: string) => request<Update>('/settings', 'PUT', { networkMode }, false),
   carlinkConnect: (pin?: string) => request('/carlink/connect', 'POST', pin === undefined ? {} : { pin }, false),
   carlinkPin: (pin: string) => request('/carlink/pin', 'POST', { pin }, false),
+  removePairedDevice: (id: string) => request('/paired-devices/remove', 'POST', { id }, false),
   action: (name: 'start' | 'stop' | 'enable-bluetooth' | 'enable-wifi' | 'cancel-arrival' | 'restart' | 'regenerate-pairing-code' | 'forget-wifi' | 'forget-carlink' | 'clear-saved-head-unit' | 'clear-window-records' | 'pair-iphone' | 'cancel-pairing' | 'public-name-renew' | 'public-name-remove') => request(`/actions/${name}`, 'POST', {}, false),
   showViewArea: (index: number) => request('/view-area', 'POST', { index }, false),
   phones: () => request<Phone[]>('/phones'),
