@@ -9,20 +9,22 @@ import android.os.Build
 import org.json.JSONObject
 import org.openxplay.stream.clink.ble.Advertisement
 import org.openxplay.stream.clink.ble.BleCodec
+import java.util.concurrent.atomic.AtomicLong
 
 /** Bound duplicate memory as well as the trace rate during a continuous scan. */
 internal class BleRawThrottle {
     private val recent = linkedMapOf<Pair<String, String>, Long>()
     private val emitted = java.util.ArrayDeque<Long>()
-    var dropped: Long = 0
-        private set
+    private val droppedCount = AtomicLong()
+    val dropped: Long get() = droppedCount.get()
+    fun drop() { droppedCount.incrementAndGet() }
 
     @Synchronized fun accept(address: String, payload: String, nowMs: Long): Boolean {
         while (emitted.isNotEmpty() && nowMs - emitted.first >= 1000) emitted.removeFirst()
         val iterator = recent.iterator()
         while (iterator.hasNext()) if (nowMs - iterator.next().value >= 2000) iterator.remove()
         val key = address to payload
-        if (key in recent || emitted.size >= 50) { dropped++; return false }
+        if (key in recent || emitted.size >= 50) { drop(); return false }
         recent[key] = nowMs
         emitted.addLast(nowMs)
         return true
@@ -34,7 +36,7 @@ internal data class BleRawAdvertisement(
     val legacy: Boolean, val txPower: Int, val localName: String?, val serviceUuids: List<String>,
     val serviceData: Map<String, ByteArray>, val manufacturerData: Map<Int, ByteArray>, val raw: ByteArray,
 ) {
-    fun fields(): Map<String, String> = buildMap {
+    fun fields(rawHex: String = hex(raw)): Map<String, String> = buildMap {
         put("address", address)
         addressType?.let { put("addressType", it.toString()) }
         put("rssi", rssi.toString()); put("connectable", connectable.toString())
@@ -43,11 +45,19 @@ internal data class BleRawAdvertisement(
         put("serviceUuids", org.json.JSONArray(serviceUuids).toString())
         put("serviceData", JSONObject().also { json -> serviceData.toSortedMap().forEach { (uuid, bytes) -> json.put(uuid, hex(bytes)) } }.toString())
         put("manufacturerData", JSONObject().also { json -> manufacturerData.toSortedMap().forEach { (id, bytes) -> json.put(id.toString(), hex(bytes)) } }.toString())
-        put("raw", hex(raw))
+        put("raw", rawHex)
     }
 
     companion object {
-        fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
+        private const val HEX = "0123456789abcdef"
+        fun hex(bytes: ByteArray): String {
+            val chars = CharArray(bytes.size * 2)
+            bytes.forEachIndexed { index, byte ->
+                val value = byte.toInt() and 255
+                chars[index * 2] = HEX[value ushr 4]; chars[index * 2 + 1] = HEX[value and 15]
+            }
+            return String(chars)
+        }
 
         @SuppressLint("MissingPermission")
         fun from(scan: ScanResult): BleRawAdvertisement {
@@ -92,9 +102,12 @@ internal class BleAdvertisementTrace(private val diagnostics: ClinkDiagnostics, 
         private val throttle = BleRawThrottle()
         private var finished = false
 
+        fun dropped() { throttle.drop() }
         @Synchronized fun record(raw: BleRawAdvertisement, nowMs: Long) {
-            if (finished || !throttle.accept(raw.address, BleRawAdvertisement.hex(raw.raw), nowMs)) return
-            val fields = raw.fields().toMutableMap()
+            if (finished) return
+            val rawHex = BleRawAdvertisement.hex(raw.raw)
+            if (!throttle.accept(raw.address, rawHex, nowMs)) return
+            val fields = raw.fields(rawHex).toMutableMap()
             val identity = raw.serviceData[BleCodec.IDENTITY_SERVICE]
             if (identity != null) try {
                 val advertisement = BleCodec.advertisement(identity, raw.serviceData[BleCodec.NAME_SERVICE] ?: byteArrayOf())

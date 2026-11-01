@@ -45,10 +45,19 @@ internal const val STAGE_TAP_SETTLE_MILLIS = 500L
 internal fun stageTapSettled(changedAtMillis: Long, nowMillis: Long): Boolean =
     nowMillis - changedAtMillis >= STAGE_TAP_SETTLE_MILLIS
 
+internal class StageTapGuard(private var action: StageAction?) {
+    private var changedAt: Long? = null
+    fun update(action: StageAction?, nowMillis: Long) {
+        if (this.action != action) { this.action = action; changedAt = nowMillis }
+    }
+    fun settled(nowMillis: Long): Boolean = changedAt?.let { stageTapSettled(it, nowMillis) } ?: true
+}
+
 @Composable private fun rememberSettledAction(action: StageAction?, onAction: (StageAction) -> Unit): (StageAction) -> Unit {
-    val changedAt = remember(action) { SystemClock.uptimeMillis() }
+    val guard = remember { StageTapGuard(action) }
+    SideEffect { guard.update(action, SystemClock.uptimeMillis()) }
     val latest by rememberUpdatedState(onAction)
-    return remember(changedAt) { { tapped -> if (stageTapSettled(changedAt, SystemClock.uptimeMillis())) latest(tapped) } }
+    return remember { { tapped -> if (guard.settled(SystemClock.uptimeMillis())) latest(tapped) } }
 }
 
 @Composable fun StageActions(view: StageView, onAction: (StageAction) -> Unit,
