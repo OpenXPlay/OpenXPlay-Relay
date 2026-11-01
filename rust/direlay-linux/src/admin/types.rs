@@ -582,6 +582,7 @@ pub enum AdminUpdate {
 pub type AdminResult = Result<(), String>;
 #[derive(Debug)]
 pub enum PairedDeviceRemovalError {
+    Invalid,
     NotFound,
     Request(String),
 }

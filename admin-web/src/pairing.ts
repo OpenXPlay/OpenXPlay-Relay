@@ -47,7 +47,7 @@ export function pairingPanelView(status: Status, busy: boolean, error: string, t
 }
 
 export function pairedDeviceRemoveButton(status: Status, device: PairedDevice, busy: boolean, t: Translate): string {
-  return status.pairedDeviceRemoval && device.id ? `<button type="button" class="icon-button" data-remove-paired-device="${esc(device.id)}" aria-label="${esc(t('pairing.removeTitle', { name: device.name || t('pairing.unnamed') }))}" ${busy ? 'disabled' : ''}>${icon('trash-2')}</button>` : '';
+  return status.pairedDeviceRemoval && device.id ? `<button type="button" class="icon-button" data-remove-paired-device="${esc(device.id)}" aria-label="${esc(t('pairing.removeTitle', { name: device.name || t('pairing.unnamed') }))}" ${busy ? 'disabled' : ''}>${icon('x')}</button>` : '';
 }
 
 // One second ticker for every visible pairing countdown; onExpire runs once when an open window reaches zero.

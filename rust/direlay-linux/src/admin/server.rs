@@ -396,12 +396,12 @@ impl AdminServer {
             }
             ("GET", "/phones") => Response::json(200, json!(self.admin.phones())),
             ("POST", "/paired-devices/remove") => {
-                let Some(address) = string("id").filter(|a| crate::linux_bluetooth::valid_mac(a))
-                else {
+                let Some(address) = string("id") else {
                     return Response::error(422, "error.invalid");
                 };
                 match self.admin.remove_paired_device(address) {
                     Ok(()) => Response::json(200, json!({"ok":true})),
+                    Err(PairedDeviceRemovalError::Invalid) => Response::error(422, "error.invalid"),
                     Err(PairedDeviceRemovalError::NotFound) => {
                         Response::error(404, "error.request")
                     }

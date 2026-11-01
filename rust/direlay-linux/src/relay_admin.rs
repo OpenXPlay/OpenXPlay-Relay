@@ -4751,6 +4751,9 @@ impl RelayAdmin for LinuxRelayAdmin {
         &self,
         address: &str,
     ) -> std::result::Result<(), PairedDeviceRemovalError> {
+        if !crate::linux_bluetooth::valid_mac(address) {
+            return Err(PairedDeviceRemovalError::Invalid);
+        }
         let devices = self
             .backends
             .bluetooth
