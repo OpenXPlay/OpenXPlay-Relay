@@ -2441,7 +2441,7 @@ impl LinuxRelayAdmin {
                         "Start cancelled",
                     ));
                 }
-                let enabled = settings.lock().unwrap().output != "web";
+                let output = settings.lock().unwrap().output.clone();
                 let (ready, reported) = {
                     let c = carlink.lock().unwrap();
                     (c.ready_for_carplay(), c.view_size.is_some())
@@ -2451,7 +2451,7 @@ impl LinuxRelayAdmin {
                     policy
                         .lock()
                         .unwrap()
-                        .ready(std::time::Instant::now(), enabled, ready, screen);
+                        .ready(std::time::Instant::now(), &output, ready, screen);
                 events
                     .diagnostics
                     .start_gate(&events, &result, ready, screen);
@@ -6599,6 +6599,44 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn both_releases_start_without_carlink_then_accepts_late_readiness() {
+        let (a, dir) = fake();
+        a.settings.lock().unwrap().output = "both".into();
+        add_second_radio(&a);
+        a.inventory.set(role_inventory());
+        a.start_policy.lock().unwrap().request(
+            std::time::Instant::now() - Duration::from_secs(61),
+            true,
+            true,
+        );
+        let ready = || {
+            a.start_policy
+                .lock()
+                .unwrap()
+                .ready(
+                    std::time::Instant::now(),
+                    &a.settings.lock().unwrap().output,
+                    a.carlink.lock().unwrap().ready_for_carplay(),
+                    true,
+                )
+                .unwrap()
+        };
+        assert!(ready());
+        assert!(!a.start_policy.lock().unwrap().waiting());
+        assert!(a.events.runtime_path_facts().iphone.failure.is_none());
+        a.carlink.lock().unwrap().apply_event(
+            &serde_json::json!({"type":"state","state":"Playing","generation":1}),
+            0,
+        );
+        assert!(ready());
+        assert!(!a.start_policy.lock().unwrap().waiting());
+        a.operation(Operation::Stop).unwrap();
+        a.observe_automatic_start().unwrap();
+        assert!(!a.desired.load(Ordering::Acquire));
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn late_carlink_keeps_waiting_and_stop_wins_over_readiness() {
         let (a, dir) = fake();
         a.settings.lock().unwrap().output = "carlink".into();
@@ -6615,7 +6653,7 @@ mod tests {
             .start_policy
             .lock()
             .unwrap()
-            .ready(std::time::Instant::now(), true, true, true)
+            .ready(std::time::Instant::now(), "carlink", true, true)
             .unwrap());
         a.operation(Operation::Stop).unwrap();
         a.observe_automatic_start().unwrap();
@@ -8872,7 +8910,7 @@ esac
                 .unwrap()
                 .ready(
                     std::time::Instant::now(),
-                    true,
+                    "carlink",
                     admin.carlink.lock().unwrap().ready_for_carplay(),
                     true,
                 )
@@ -8954,21 +8992,21 @@ esac
             0,
         );
         assert!(!gate
-            .ready(now, true, status.state == "playing", true)
+            .ready(now, "carlink", status.state == "playing", true)
             .unwrap());
         status.apply_event(
             &serde_json::json!({"type":"clink-restart","generation":2,"result":"started"}),
             0,
         );
         assert!(!gate
-            .ready(now, true, status.state == "playing", true)
+            .ready(now, "carlink", status.state == "playing", true)
             .unwrap());
         status.apply_event(
             &serde_json::json!({"type":"state","generation":2,"state":"Playing"}),
             0,
         );
         assert!(gate
-            .ready(now, true, status.state == "playing", true)
+            .ready(now, "carlink", status.state == "playing", true)
             .unwrap());
         status.apply_event(&serde_json::json!({"type":"clink-summary","generation":2,"fields":{"stream":"1280x720","view":"1920x1080","codec":"H264"}}),0);
         assert_eq!(
