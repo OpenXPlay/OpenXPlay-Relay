@@ -38,7 +38,7 @@ const usbSettings = JSON.parse(readFileSync(new URL('./fixtures/linux/settings-u
 const cases = Object.entries(linuxStatusFixtures).map(([state, status]) => ({ state, platform: 'linux', status, settings: status.pathInput?.setup?.network === 'USB' ? usbSettings : status.output === 'web' ? linuxSettings : carlinkSettings }));
 for (const state of ['idle', 'ready', 'pairing', 'carlink-scanning', 'carlink-pin', 'failure', 'live']) {
   const status = structuredClone(linuxStatusFixtures.ready) as Status;
-  status.platform = 'android'; delete status.adminFeatures; delete status.hostProfile; delete status.publicName;
+  status.platform = 'android'; delete status.adminFeatures; delete status.pairedDeviceRemoval; delete status.hostProfile; delete status.publicName;
   status.pathInput = mockPathInput(status, state);
   cases.push({ state, platform: 'android', status, settings: mockSettings() });
 }
@@ -78,6 +78,32 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     }
     }
   }, 30000);
+  it('confirms Bluetooth removal, posts its id and refreshes the status list', async () => {
+    const status = structuredClone(linuxStatusFixtures.ready);
+    status.pairedDeviceRemoval = true;
+    status.pairedDevices = [{ id: '02:00:00:00:00:A1', name: 'Test iPhone', connected: false, iphone: true }, { id: '02:00:00:00:00:A2', name: 'Speaker', connected: false, iphone: false }];
+    await showFixture(status, 'settings/connection', linuxSettings);
+    await cdp.js(`window.removalBodies=[]; const originalFetch=window.fetch; window.fetch=async(url,init={})=>{ if(String(url).endsWith('/paired-devices/remove')) { const body=JSON.parse(init.body); window.removalBodies.push(body); if(window.removalError) return new Response(JSON.stringify({error:'error.busy'}),{status:409}); window.fixtureStatus.pairedDevices=window.fixtureStatus.pairedDevices.filter(d=>d.id!==body.id); } return originalFetch(url,init); }; document.querySelector('[data-remove-paired-device]').click()`);
+    await until(`document.querySelector('dialog[open] .confirm')`);
+    expect(await cdp.js(`document.querySelector('dialog[open]').innerText`)).toContain('Remove Test iPhone?');
+    expect(await cdp.js(`document.querySelector('dialog[open]').innerText`)).toContain("Also forget OpenXPlay Linux in the iPhone's Bluetooth settings");
+    expect(await cdp.js('window.removalBodies')).toEqual([]);
+    await cdp.js(`document.querySelector('dialog[open] .cancel').click()`);
+    await until(`!document.querySelector('dialog[open]')`);
+    expect(await cdp.js('window.removalBodies')).toEqual([]);
+    await cdp.js(`document.querySelector('[data-remove-paired-device]').click()`);
+    await until(`document.querySelector('dialog[open] .confirm')`);
+    await cdp.js(`document.querySelector('dialog[open] .confirm').click()`);
+    await until(`document.querySelectorAll('[data-remove-paired-device]').length===1`);
+    expect(await cdp.js('window.removalBodies')).toEqual([{ id: '02:00:00:00:00:A1' }]);
+    expect(await cdp.js(`document.querySelector('.paired-devices').innerText`)).toContain('Speaker');
+    await cdp.js(`window.removalError=true; document.querySelector('[data-remove-paired-device]').click()`);
+    await until(`document.querySelector('dialog[open] .confirm')`);
+    await cdp.js(`document.querySelector('dialog[open] .confirm').click()`);
+    await until(`document.querySelector('#pairing-result').textContent.length>0`);
+    expect(await cdp.js(`document.querySelector('#pairing-result').textContent`)).not.toContain('error.busy');
+    expect(await cdp.js(`document.querySelectorAll('[data-remove-paired-device]').length`)).toBe(1);
+  });
   it('saves Linux USB without confirmation and keeps cable advice under the option', async () => {
     await showFixture(linuxStatusFixtures.ready, 'settings/connection', linuxSettings);
     await cdp.js(`document.querySelector('#field-transport').click(); new Promise(r=>setTimeout(r,50))`);

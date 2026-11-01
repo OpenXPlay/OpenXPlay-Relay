@@ -37,6 +37,8 @@ pub struct AdminStatus {
     pub pairing_remaining: Option<u64>,
     #[serde(default)]
     pub pairing_cancelable: bool,
+    #[serde(default)]
+    pub paired_device_removal: bool,
     /// Bonded Bluetooth devices; names appear only in this authenticated response, never in logs.
     #[serde(default)]
     pub paired_devices: Vec<AdminPairedDevice>,
@@ -153,6 +155,7 @@ pub struct AdminBluetoothGuard {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct AdminPairedDevice {
+    pub id: String,
     pub name: String,
     pub connected: bool,
     pub iphone: bool,

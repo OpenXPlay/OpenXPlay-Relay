@@ -67,6 +67,7 @@
   },
   "notices": [],
   "output": "web",
+  "pairedDeviceRemoval": true,
   "pairedDevices": [],
   "pairingAvailable": true,
   "pairingCancelable": true,

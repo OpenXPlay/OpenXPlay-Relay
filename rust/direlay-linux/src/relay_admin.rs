@@ -4232,10 +4232,12 @@ impl RelayAdmin for LinuxRelayAdmin {
             pairing_deadline: pairing_remaining.map(|remaining| wall_now.saturating_add(remaining)),
             pairing_remaining,
             pairing_cancelable: true,
+            paired_device_removal: true,
             paired_devices: devices
                 .iter()
                 .filter(|d| d.paired)
                 .map(|d| AdminPairedDevice {
+                    id: d.address.clone(),
                     name: d.name.clone(),
                     connected: d.connected,
                     iphone: likely_iphone(d),
@@ -6246,6 +6248,23 @@ mod tests {
         (a, dir, bluetooth)
     }
     #[test]
+    fn bluetooth_removal_status_advertises_capability_and_all_bond_ids() {
+        let (a, dir, bt) = removable_admin();
+        bt.devices.lock().unwrap().push(BondedDevice {
+            address: "02:00:00:00:00:A2".into(),
+            name: "Speaker".into(),
+            paired: true,
+            ..Default::default()
+        });
+        let value = serde_json::to_value(a.status()).unwrap();
+        assert_eq!(value["pairedDeviceRemoval"], true);
+        assert_eq!(value["pairedDevices"][0]["id"], "02:00:00:00:00:A1");
+        assert_eq!(value["pairedDevices"][1]["id"], "02:00:00:00:00:A2");
+        assert_eq!(value["pairedDevices"][1]["iphone"], false);
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn bluetooth_removal_is_deferred_stops_only_its_attempt_and_resets_selection() {
         for same in [true, false] {
             let (a, dir, bt) = removable_admin();
@@ -6326,7 +6345,8 @@ mod tests {
         let mut auth = AdminAuth::new(Box::new(FileAuthStore(dir.join("auth.json")))).unwrap();
         let token = auth
             .login("127.0.0.1".parse().unwrap(), "openxplay", 100)
-            .ok().unwrap();
+            .ok()
+            .unwrap();
         let server = AdminServer::new(
             a.clone(),
             auth,

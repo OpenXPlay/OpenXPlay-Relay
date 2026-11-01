@@ -142,6 +142,7 @@
   },
   "notices": [],
   "output": "carlink",
+  "pairedDeviceRemoval": true,
   "pairedDevices": [],
   "pairingAvailable": true,
   "pairingCancelable": true,

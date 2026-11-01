@@ -37,7 +37,7 @@ import { isVisible, optionLabel, coerceValue, validatePassword, type Field, type
 import { defaultLanguage, relayTranslate, type Language } from './i18n';
 import { sessionRoute, wifiGuidance, setupHotspotName, sortNetworks, wifiJoinCredentials, carlinkView, carlinkPinError, canConnectCarlink, validCarlinkPin } from './logic';
 import { icon } from './icons';
-import { anchorPairing, createCountdown, formatRemaining, pairingPanelView } from './pairing';
+import { anchorPairing, createCountdown, formatRemaining, pairingPanelView, relayBluetoothName } from './pairing';
 import { VideoStatsSnapshot, videoStatsInterval, videoStatsView } from './video-stats';
 import { capabilityFieldEnabled, capabilityFieldVisible, capabilityView } from './capabilities';
 import { copyText, diagnosticsView, receiverReport } from './diagnostics';
@@ -206,9 +206,9 @@ function renderReady() {
   if (currentView === 'home') {
     patchMarkup(main, '<div id="carlink-radio-blocker"></div><div id="dashboard"></div>');
     stage = mountStage(document.getElementById('dashboard')!, { t, action: action => void dispatchStage(action), copy: copyStage,
-      details: () => `<a class="inset-group inset-row" href="#setup/car">${esc(t('setup2_set_up_again'))}</a>${menuRow('settings/car', 'menu.car', pageSummary('settings/car'), 'car')}<div class="inset-group">${fields().filter(f => f.key === 'autoStart').map(f => fieldMarkup({ ...f, labelKey: 'stage.automatic', hintKey: undefined })).join('')}</div>${addressesView(status!, true, t)}${devicesView(status!, true, t)}${drawerRows()}<div id="pairing-panel" data-preserve></div>${videoStatsView(videoStats.read(status!, videoStatsInterval(settings, status!.platform), performance.now()), t)}${status!.notices.length ? `<div class="inset-group">${status!.notices.filter(n => status!.platform !== 'linux' || n !== 'notice.nextStart').map(n => `<p>${esc(t(n))}</p>`).join('')}</div>` : ''}`,
+      details: () => `<a class="inset-group inset-row" href="#setup/car">${esc(t('setup2_set_up_again'))}</a>${menuRow('settings/car', 'menu.car', pageSummary('settings/car'), 'car')}<div class="inset-group">${fields().filter(f => f.key === 'autoStart').map(f => fieldMarkup({ ...f, labelKey: 'stage.automatic', hintKey: undefined })).join('')}</div>${addressesView(status!, true, t)}${devicesView(status!, true, t, pairingBusy)}${drawerRows()}<div id="pairing-panel" data-preserve></div>${videoStatsView(videoStats.read(status!, videoStatsInterval(settings, status!.platform), performance.now()), t)}${status!.notices.length ? `<div class="inset-group">${status!.notices.filter(n => status!.platform !== 'linux' || n !== 'notice.nextStart').map(n => `<p>${esc(t(n))}</p>`).join('')}</div>` : ''}`,
       recheck: tick, addresses: () => status?.receiverUrls ?? [], opened: () => { void cancelArrival(); },
-      bindDetails: scope => { bindCopies(scope); scope.querySelectorAll('[data-pick-iphone]').forEach(link => on(link, 'click', event => { event.preventDefault(); const phone = fields().find(f => f.key === 'iphone'); if (phone) void pickPhone(phone); })); on(scope.querySelector('[data-drawer-reconnect]'), 'click', () => void reconnect()); const auto = fields().find(f => f.key === 'autoStart'); if (auto) bindField(auto); renderPairingPanel(); syncVisibleTimer(); },
+      bindDetails: scope => { bindCopies(scope); bindPairedDeviceRemoval(scope); scope.querySelectorAll('[data-pick-iphone]').forEach(link => on(link, 'click', event => { event.preventDefault(); const phone = fields().find(f => f.key === 'iphone'); if (phone) void pickPhone(phone); })); on(scope.querySelector('[data-drawer-reconnect]'), 'click', () => void reconnect()); const auto = fields().find(f => f.key === 'autoStart'); if (auto) bindField(auto); renderPairingPanel(); syncVisibleTimer(); },
       notice: notice => { if (notice === 'DISPLAY_CHANGED') void dispatchStage({ type: 'Step', action: 'RETRY', step: 'CARPLAY_START', label: null }); else if (notice === 'SET_UP') location.hash = 'setup/car'; else showSettings(notice === 'TRUSTED_HTTPS' ? 'settings/access/public-name' : notice === 'CHOOSE_CAR' ? 'settings/car' : 'settings'); },
     });
     updateDashboard(); return;
@@ -460,16 +460,37 @@ async function pairingAction(name: 'pair-iphone' | 'cancel-pairing') {
     }
   }
 }
+function bindPairedDeviceRemoval(scope: ParentNode) {
+  scope.querySelectorAll<HTMLButtonElement>('[data-remove-paired-device]').forEach(button => on(button, 'click', () => {
+    const device = status?.pairedDevices?.find(d => d.id === button.dataset.removePairedDevice);
+    if (!status?.pairedDeviceRemoval || !device?.id || actionBusy) return;
+    const id = device.id, current = epoch;
+    const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'paired-device-remove-title');
+    patchMarkup(dialog, `<h2 id="paired-device-remove-title">${esc(t('pairing.removeTitle', { name: device.name || t('pairing.unnamed') }))}</h2><p>${esc(t('pairing.removeHint', { relay: relayBluetoothName(status) }))}</p><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm destructive">${t('pairing.remove')}</button></div>`);
+    document.body.append(dialog); openSurface(dialog);
+    const close = () => { closeSurface(dialog); if (button.isConnected) button.focus(); };
+    on(dialog.querySelector('.cancel'), 'click', close);
+    on(dialog, 'cancel', event => { event.preventDefault(); close(); });
+    on(dialog.querySelector('.confirm'), 'click', async () => {
+      if (actionBusy || current !== epoch) return;
+      close(); actionBusy = true; pairingBusy = true; pairingError = ''; updateDashboard(); renderPairingPanel();
+      try { await api.removePairedDevice(id); const next = await fetchStatus(); if (current === epoch) status = next; }
+      catch (error) { if (current === epoch) pairingError = errorKey(error); }
+      finally { if (current === epoch) { actionBusy = false; pairingBusy = false; updateDashboard(); renderPairingPanel(); } }
+    });
+  }));
+}
 function renderPairingPanel() {
   const el = document.getElementById('pairing-panel'); if (!el || !status) return;
   const s = status;
-  const signature = JSON.stringify([homeView(s).seconds > 0, s.pairingAvailable, s.pairingCancelable, s.pairingNeedsConfirmation, s.pairingOnRelay, s.pairingNeedsPermission, s.pairingPermissionDenied, s.pairingNotified, s.pairedDevices, pairingBusy, pairingError, language]);
+  const signature = JSON.stringify([homeView(s).seconds > 0, s.pairingAvailable, s.pairingCancelable, s.pairingNeedsConfirmation, s.pairingOnRelay, s.pairingNeedsPermission, s.pairingPermissionDenied, s.pairingNotified, s.pairedDeviceRemoval, s.pairedDevices, pairingBusy, pairingError, language]);
   if (el.dataset.signature === signature) return;
   const focused = el.contains(document.activeElement) ? (document.activeElement as HTMLElement).id : '';
   el.dataset.signature = signature;
   patchMarkup(el, pairingPanelView(s, pairingBusy, pairingError, t, undefined, currentView !== 'home'));
   on(document.getElementById('pairing-open'), 'click', () => void pairingAction('pair-iphone'));
   on(document.getElementById('pairing-cancel'), 'click', () => void pairingAction('cancel-pairing'));
+  bindPairedDeviceRemoval(el);
   if (focused) (document.getElementById(focused) ?? document.getElementById('pairing-cancel') ?? document.getElementById('pairing-open'))?.focus();
 }
 function renderPublicName() {
