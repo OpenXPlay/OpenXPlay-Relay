@@ -13,7 +13,7 @@ use super::{
     local_dns, privacy,
     providers::{self, Endpoints, ProviderClient, ProviderError},
     schedule,
-    store::{self, ErrorRecord, Meta, Store},
+    store::{self, ErrorRecord, Issuance, Meta, Store},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -150,6 +150,8 @@ pub struct PublicNameStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_after: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<CertificateInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_detail: Option<String>,
@@ -163,6 +165,33 @@ pub struct PublicNameStatus {
     /// the status line reports a problem (a failing renewal does not hide a name that works).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trusted_name: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateInfo {
+    pub not_before: u64,
+    pub not_after: u64,
+    pub renew_at: u64,
+    pub issued: Vec<Issuance>,
+}
+/// A successful store write, without the name or any account data.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateEvent {
+    pub issued_at: u64,
+    pub not_before: u64,
+    pub not_after: u64,
+    pub renewal: bool,
+}
+impl CertificateEvent {
+    fn new(issuance: &Issuance, renewal: bool) -> Self {
+        Self {
+            issued_at: issuance.at,
+            not_before: issuance.not_before,
+            not_after: issuance.not_after,
+            renewal,
+        }
+    }
 }
 impl PublicNameStatus {
     fn state(state: &str) -> Self {
@@ -180,6 +209,8 @@ struct Shared {
     version: u64,
     status: PublicNameStatus,
     served: Option<Served>,
+    certificate: Option<CertificateInfo>,
+    certificate_events: Vec<CertificateEvent>,
     /// The CarPlay hotspot's address at its last activation.
     hotspot: Option<Ipv4Addr>,
     /// Established Tesla address; only name modes set this override.
@@ -219,6 +250,8 @@ impl PublicNameService {
                 version: 0,
                 status: PublicNameStatus::state("off"),
                 served: None,
+                certificate: None,
+                certificate_events: Vec::new(),
                 hotspot: None,
                 address_override: None,
                 renew: false,
@@ -263,6 +296,10 @@ impl PublicNameService {
     }
     pub fn status(&self) -> PublicNameStatus {
         self.inner.status()
+    }
+    /// Drained by the relay shell; loading existing files never queues an event.
+    pub fn take_certificate_events(&self) -> Vec<CertificateEvent> {
+        std::mem::take(&mut self.inner.shared.lock().unwrap().certificate_events)
     }
     /// The ACME certificate to serve, if any; `None` means the relay's own certificates.
     pub fn served(&self) -> Option<Served> {
@@ -329,20 +366,44 @@ impl PublicNameService {
                 .store
                 .save_certificate(material.chain.as_bytes(), &material.key)?;
             let mut meta = self.inner.store.meta();
-            meta.name = Some(material.name);
+            let issuance = Issuance {
+                at: material.leaf.not_before,
+                not_before: material.leaf.not_before,
+                not_after: material.leaf.not_after,
+            };
+            let acme = config.as_ref().unwrap().acme.id();
+            let previous = (meta.name.as_deref() == Some(material.name.as_str())
+                && meta.acme.as_deref() == Some(acme))
+            .then(|| {
+                meta.issued().into_iter().find(|i| {
+                    i.not_before == issuance.not_before && i.not_after == issuance.not_after
+                })
+            })
+            .flatten();
+            let event = previous.is_none().then(|| {
+                let renewal = meta.add_issuance(&material.name, acme, issuance.clone());
+                CertificateEvent::new(&issuance, renewal)
+            });
             meta.provider = config
                 .as_ref()
                 .and_then(|c| c.provider)
                 .map(|p| p.id().into());
-            meta.acme = config.as_ref().map(|c| c.acme.id().into());
             meta.not_before = Some(material.leaf.not_before);
             meta.not_after = Some(material.leaf.not_after);
-            meta.issued_at = Some(material.leaf.not_before);
+            meta.issued_at = Some(previous.map_or(material.leaf.not_before, |i| i.at));
             meta.cert_id = material.leaf.cert_id;
             meta.ari_window = None;
             meta.renew_at = None;
             meta.ari_next_poll = None;
             self.inner.store.save_meta(&meta)?;
+            if let Some(event) = event {
+                self.inner
+                    .shared
+                    .lock()
+                    .unwrap()
+                    .certificate_events
+                    .push(event);
+            }
         }
         if let Some(account) = import.account {
             self.inner.store.save_account(
@@ -730,11 +791,35 @@ impl Inner {
     /// passes the checks (its expiry only while the clock can be trusted).
     fn refresh_served(&self, now: Option<u64>) {
         let config = self.shared.lock().unwrap().config.clone();
+        let material = self.store.certificate();
+        let meta = self.store.meta();
+        let certificate = config
+            .as_ref()
+            .filter(|c| {
+                c.enabled
+                    && c.complete()
+                    && c.name == meta.name
+                    && meta.acme.as_deref() == Some(c.acme.id())
+            })
+            .and_then(|c| {
+                let (chain, key) = material.as_ref()?;
+                let leaf = cert::check(chain, key, c.name.as_deref()?, None).ok()?;
+                Some(CertificateInfo {
+                    not_before: leaf.not_before,
+                    not_after: leaf.not_after,
+                    renew_at: schedule::planned_renewal(
+                        leaf.not_before,
+                        leaf.not_after,
+                        meta.renew_at,
+                    ),
+                    issued: meta.issued().into_iter().rev().collect(),
+                })
+            });
         let served = config
             .filter(|c| c.enabled)
             .and_then(|c| c.name)
             .and_then(|name| {
-                let (chain, key) = self.store.certificate()?;
+                let (chain, key) = material?;
                 let leaf = cert::check(&chain, &key, &name, now).ok()?;
                 Some(Served {
                     name,
@@ -748,6 +833,7 @@ impl Inner {
                 })
             });
         let mut shared = self.shared.lock().unwrap();
+        shared.certificate = certificate;
         if shared.served != served {
             shared.served = served;
             self.generation.fetch_add(1, Ordering::AcqRel);
@@ -822,7 +908,9 @@ impl Inner {
         if self.shared.lock().unwrap().version != version || !self.path.exists() {
             return false;
         }
-        write(&self.store).is_ok()
+        let stored = write(&self.store).is_ok();
+        self.refresh_served(trusted_clock());
+        stored
     }
 
     fn run(&self, host: &dyn Host) {
@@ -906,6 +994,7 @@ impl Inner {
     fn status(&self) -> PublicNameStatus {
         let shared = self.shared.lock().unwrap();
         let mut status = shared.status.clone();
+        status.certificate = shared.certificate.clone();
         if status.trusted_name.is_some() {
             return status;
         }
@@ -1317,19 +1406,26 @@ impl Inner {
         let stored = self.write(version, |store| {
             store.save_certificate(&issued.chain, &issued.key_pem)?;
             let mut meta = store.meta();
-            meta.name = Some(name.into());
+            let issuance = Issuance {
+                at: now,
+                not_before: issued.leaf.not_before,
+                not_after: issued.leaf.not_after,
+            };
+            let renewal = meta.add_issuance(name, config.acme.id(), issuance.clone());
             meta.provider = Some(provider.id().into());
-            meta.acme = Some(config.acme.id().into());
-            meta.not_before = Some(issued.leaf.not_before);
-            meta.not_after = Some(issued.leaf.not_after);
-            meta.issued_at = Some(now);
             meta.cert_id = issued.leaf.cert_id.clone();
             meta.ari_window = None;
             meta.renew_at = None;
             meta.ari_next_poll = None;
             meta.retry_after = None;
             meta.last_error = None;
-            store.save_meta(&meta)
+            store.save_meta(&meta)?;
+            self.shared
+                .lock()
+                .unwrap()
+                .certificate_events
+                .push(CertificateEvent::new(&issuance, renewal));
+            Ok(())
         });
         if !stored {
             return Check::Failed(IssueError::Interrupted);
@@ -1516,6 +1612,126 @@ mod tests {
     }
 
     #[test]
+    fn certificate_status_is_cached_without_clock_or_servable_material_and_scoped_to_config() {
+        use crate::public_name::{cert::tests::LEAF, jws::tests::PAD_KEY};
+        let state = TempDir::new("certificate-status");
+        let config = serde_json::json!({"version":1,"provider":"duckdns","name":NAME,"token":TOKEN,"agreeLetsEncryptTerms":true});
+        let path = state.0.join(config::FILE);
+        crate::admin::auth::private_file(&path, &serde_json::to_vec(&config).unwrap()).unwrap();
+        let store = Store::new(&state.0);
+        store.save_certificate(LEAF.as_bytes(), PAD_KEY).unwrap();
+        let leaf = cert::leaf(LEAF.as_bytes()).unwrap();
+        let mut meta = Meta {
+            name: Some(NAME.into()),
+            acme: Some("production".into()),
+            not_before: Some(leaf.not_before),
+            not_after: Some(leaf.not_after),
+            issued_at: Some(leaf.not_before + 60),
+            ..Default::default()
+        };
+        store.save_meta(&meta).unwrap();
+        let service = PublicNameService::new(&state.0, Network::internet(None));
+        let expected = CertificateInfo {
+            not_before: leaf.not_before,
+            not_after: leaf.not_after,
+            renew_at: leaf.not_after - leaf.lifetime() / 3,
+            issued: meta.issued(),
+        };
+        for now in [Some(leaf.not_before + 1), Some(leaf.not_after), None] {
+            service.inner.refresh_served(now);
+            assert_eq!(service.status().certificate, Some(expected.clone()));
+            assert_eq!(service.served().is_some(), now != Some(leaf.not_after));
+        }
+        meta.renew_at = Some(leaf.not_before + 30 * DAY);
+        store.save_meta(&meta).unwrap();
+        service.inner.refresh_served(None);
+        assert_eq!(
+            service.status().certificate.unwrap().renew_at,
+            meta.renew_at.unwrap()
+        );
+        // Status reads only the cached certificate; the next refresh observes disk changes.
+        std::fs::remove_file(store.cert_path()).unwrap();
+        assert!(service.status().certificate.is_some());
+        service.inner.refresh_served(None);
+        assert!(service.status().certificate.is_none());
+        store.save_certificate(LEAF.as_bytes(), PAD_KEY).unwrap();
+        for changes in [
+            serde_json::json!({"name":"other.duckdns.org"}),
+            serde_json::json!({"enabled":false}),
+            serde_json::json!({"token":""}),
+            serde_json::json!({"acme":"staging"}),
+        ] {
+            let mut changed = config.clone();
+            changed
+                .as_object_mut()
+                .unwrap()
+                .extend(changes.as_object().unwrap().clone());
+            crate::admin::auth::private_file(&path, &serde_json::to_vec(&changed).unwrap())
+                .unwrap();
+            service.inner.reload(true);
+            assert!(service.status().certificate.is_none(), "{changes}");
+        }
+        service.remove().unwrap();
+        assert!(service.status().certificate.is_none());
+        assert!(
+            service.take_certificate_events().is_empty(),
+            "existing files are not new issuances"
+        );
+    }
+
+    #[test]
+    fn certificate_import_preserves_legacy_issuance_seeds_renewals_and_resets_for_another_ca() {
+        use crate::public_name::{cert::tests::LEAF, jws::tests::PAD_KEY};
+        let state = TempDir::new("import-history");
+        let service = PublicNameService::new(&state.0, Network::internet(None));
+        let mut backup = serde_json::json!({
+            "publicName": {"version":1,"provider":"duckdns","name":NAME,"token":TOKEN,"agreeLetsEncryptTerms":true},
+            "publicNameCertificate": {"name":NAME,"chainPem":LEAF,"keyPem":PAD_KEY}
+        });
+        let leaf = cert::leaf(LEAF.as_bytes()).unwrap();
+        let store = Store::new(&state.0);
+        let mut legacy = Meta {
+            name: Some(NAME.into()),
+            acme: Some("production".into()),
+            issued_at: Some(leaf.not_before + 60),
+            not_before: Some(leaf.not_before),
+            not_after: Some(leaf.not_after),
+            ..Default::default()
+        };
+        store.save_meta(&legacy).unwrap();
+        let import = |backup: &Value| {
+            privacy::decode(backup, None, 1_795_000_000).unwrap_or_else(|e| panic!("{e:?}"))
+        };
+        service.import_privacy(import(&backup)).unwrap();
+        assert!(store.meta().issuances.is_empty());
+        assert_eq!(store.meta().issued(), legacy.issued());
+        assert!(service.take_certificate_events().is_empty());
+        legacy.not_before = Some(leaf.not_before - 60 * DAY);
+        legacy.not_after = Some(leaf.not_after - 60 * DAY);
+        legacy.issued_at = legacy.not_before;
+        store.save_meta(&legacy).unwrap();
+        service.import_privacy(import(&backup)).unwrap();
+        let issued = store.meta().issuances;
+        assert_eq!(issued.len(), 2);
+        assert_eq!(issued[0], legacy.issued()[0]);
+        assert_eq!(issued[1].at, leaf.not_before);
+        assert_eq!(
+            service.take_certificate_events(),
+            [CertificateEvent::new(&issued[1], true)]
+        );
+        service.import_privacy(import(&backup)).unwrap();
+        assert_eq!(store.meta().issuances, issued);
+        assert!(service.take_certificate_events().is_empty());
+        backup["publicName"]["acme"] = "staging".into();
+        service.import_privacy(import(&backup)).unwrap();
+        assert_eq!(store.meta().issuances, std::slice::from_ref(&issued[1]));
+        assert_eq!(
+            service.take_certificate_events(),
+            [CertificateEvent::new(&issued[1], false)]
+        );
+    }
+
+    #[test]
     fn an_offline_hotspot_trusts_the_stored_certificate_without_publishing() {
         let world = stored_certificate_offline();
         let dns = world.network().local_dns.unwrap();
@@ -1527,6 +1743,7 @@ mod tests {
         assert_eq!(status.state, "waiting-network");
         assert_eq!(status.trusted_name.as_deref(), Some(NAME));
         assert_eq!(status.not_after, Some(service.served().unwrap().not_after));
+        assert!(status.certificate.is_some());
         assert_eq!(world.published(), published);
         assert_eq!(world.new_orders(), 1);
         service.stop();
@@ -1677,6 +1894,14 @@ mod tests {
         assert_eq!(meta.not_after, Some(leaf.not_after));
         assert_eq!(meta.cert_id, leaf.cert_id);
         assert_eq!(
+            meta.issuances,
+            [Issuance {
+                at: leaf.not_before,
+                not_before: leaf.not_before,
+                not_after: leaf.not_after
+            }]
+        );
+        assert_eq!(
             store.account_url_for(acme::PRODUCTION).as_deref(),
             Some("https://ca.example/account/1")
         );
@@ -1703,6 +1928,25 @@ mod tests {
             );
         }
         target.stop();
+        let events = target.take_certificate_events();
+        assert_eq!(events, [CertificateEvent::new(&meta.issuances[0], false)]);
+        target
+            .import_privacy(
+                privacy::decode(
+                    &backup,
+                    target.config().as_ref(),
+                    world.host.clock().unwrap(),
+                )
+                .unwrap_or_else(|e| panic!("{e:?}")),
+            )
+            .unwrap();
+        assert_eq!(store.meta().issuances, meta.issuances);
+        assert!(
+            target.take_certificate_events().is_empty(),
+            "importing the same certificate is idempotent"
+        );
+        let restarted = PublicNameService::new(&destination.0, world.network());
+        assert!(restarted.take_certificate_events().is_empty());
     }
     #[test]
     fn privacy_sections_without_active_config_survive_reload_and_remove() {
@@ -1757,14 +2001,30 @@ mod tests {
         );
         service.stop();
         let mut meta = store.meta();
+        let previous = meta.issued();
+        meta.issuances.clear();
         meta.renew_at = Some(now + 10);
         store.save_meta(&meta).unwrap();
         service.start(world.host.clone()).unwrap();
         wait_for("settled", || service.status().state == "ready");
         *world.host.clock.lock().unwrap() = Some(now + 10);
         wait_for("renewal without a manual request or 12-hour wait", || {
-            world.new_orders() == 2
+            service
+                .status()
+                .certificate
+                .is_some_and(|c| c.issued.len() == 2)
         });
+        let issued = store.meta().issuances;
+        assert_eq!(issued[0], previous[0]);
+        assert_eq!(issued[1].at, now + 10);
+        assert_eq!(
+            service.status().certificate.unwrap().issued,
+            issued.iter().rev().cloned().collect::<Vec<_>>()
+        );
+        let events = service.take_certificate_events();
+        assert_eq!(events.len(), 2);
+        assert!(!events[0].renewal);
+        assert!(events[1].renewal);
         service.stop();
     }
     #[test]
@@ -1817,6 +2077,10 @@ mod tests {
         assert_eq!(status.address.as_deref(), Some("10.77.0.1"));
         let served = service.served().unwrap();
         assert_eq!(status.not_after, Some(served.not_after));
+        assert_eq!(
+            status.certificate.as_ref().unwrap().issued,
+            service.inner.store.meta().issued()
+        );
         assert_ne!(service.generation(), generation);
         assert_eq!(world.published(), ["10.77.0.1"]);
         assert_eq!(world.new_orders(), 1);
@@ -1859,6 +2123,7 @@ mod tests {
         assert!(!world.state.0.join(config::FILE).exists());
         assert!(!dir.exists());
         assert_eq!(service.status().state, "off");
+        assert!(service.status().certificate.is_none());
         assert!(service.served().is_none());
         assert_ne!(service.generation(), before);
         std::thread::sleep(Duration::from_millis(100));
@@ -2072,6 +2337,11 @@ mod tests {
             Store::new(&world.state.0).meta().acme.as_deref(),
             Some("production")
         );
+        assert_eq!(Store::new(&world.state.0).meta().issuances.len(), 1);
+        assert!(service
+            .take_certificate_events()
+            .iter()
+            .all(|event| !event.renewal));
         service.stop();
     }
     #[test]

@@ -79,7 +79,9 @@ export interface ReceiverReport { client: string; idleSeconds: number; info: Rec
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
 export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updating-address' | 'requesting-certificate' | 'ready' | 'error';
 // trustedName: the name while its certificate is servable and the current address is published or answered by a relay hotspot's local DNS, also while the status line reports a problem.
-export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
+export interface CertificateIssuance { at: number; notBefore: number; notAfter: number }
+export interface CertificateInfo { notBefore: number; notAfter: number; renewAt: number; issued: CertificateIssuance[] }
+export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; certificate?: CertificateInfo; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
   identity?: import('./identity').IdentityStatus;
   adminEnabled?: boolean; setupCompleted?: boolean;

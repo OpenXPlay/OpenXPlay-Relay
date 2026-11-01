@@ -10,7 +10,7 @@ import type { SavedNetwork } from './src/schema';
 import { qrMatrix } from './src/qr';
 import { deflateSync } from 'node:zlib';
 import { normalizeInput } from './src/path/model';
-import { linuxSettings, linuxStatusFixtures, linuxFixtureStatus, linuxFixtureSettings, linuxCarSettings, mockPhones, mockPathInput, mockNetwork, STAGE_STATES } from './dev-fixtures';
+import { linuxSettings, linuxStatusFixtures, linuxFixtureStatus, linuxFixtureSettings, linuxCarSettings, mockCertificate, mockPhones, mockPathInput, mockNetwork, STAGE_STATES } from './dev-fixtures';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Plugin } from 'vite';
 import type { Field, Section, Settings, Value } from './src/schema';
@@ -87,7 +87,8 @@ export function mockPublicName(values: Settings['values'], now = Date.now() / 10
   const name = String(values.publicName ?? '');
   if (!values.publicNameProvider || !name || values.publicNameTokenSet !== true || values.publicNameAgreeTerms !== true) return { state: 'incomplete', ...(name ? { name } : {}) };
   if (name.startsWith('fail.')) return { state: 'error', name, address: '192.168.1.78', error: 'acme-rejected', errorDetail: 'Incorrect TXT record found at _acme-challenge.' + name, nextAttempt: Math.floor(now) + 300 };
-  return { state: 'ready', name, address: '192.168.1.78', notAfter: Math.floor(now) + 90 * 86400, trustedName: name };
+  const certificate = mockCertificate(now);
+  return { state: 'ready', name, address: '192.168.1.78', notAfter: certificate.notAfter, certificate, trustedName: name };
 }
 function baseSettings(linux = false): Settings {
   if (linux) return structuredClone(linuxSettings);
