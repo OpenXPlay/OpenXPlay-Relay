@@ -86,7 +86,8 @@ fn admin_contract_status(state: &str) {
     });
     status.wifi_client = Some(WifiClient::default());
     status.receiver_urls = vec!["https://10.42.0.1:8443/".into()];
-    status.admin_urls = vec!["https://10.42.0.1:6975/".into()];
+    status.admin_urls = vec!["https://10.42.0.1:6975/".into(), "https://openxplay-car.local:6975/".into(), "https://openxplay-admin.local:6975/".into()];
+    status.admin_url = status.admin_urls[0].clone();
     status.iphone = AdminIphone {
         name: Some("iPhone".into()),
         reason: "Selected".into(),
@@ -282,6 +283,15 @@ fn admin_contract_status(state: &str) {
     }
     status.auto_start_paused = facts.auto_start_paused;
     facts.automatic = settings.auto_start && !facts.auto_start_paused;
+    if state == "carlink-radio-missing" {
+        settings.output = "carlink".into();
+        let mut network = admin.network_status(&settings);
+        network.plan.carlink.radio_available = false;
+        network.plan.carlink.radio_reason = Some("carlink-radio-missing".into());
+        network.inventory = Default::default();
+        network.checks.clear();
+        status.network.planned = Some(network);
+    }
     status.output = settings.output.clone();
     crate::path_input::update(&facts, &settings, &mut status, now, !matches!(state, "identity-missing" | "identity-invalid"), state != "bluetooth-off");
     let p = &status.path_input;
@@ -334,6 +344,7 @@ macro_rules! contract_states {
     ($($name:ident => $state:literal),* $(,)?) => { $(#[test] fn $name() { admin_contract_status($state); })* };
 }
 contract_states! {
+    admin_contract_carlink_radio_missing => "carlink-radio-missing",
     admin_contract_usb_waiting => "usb-waiting", admin_contract_usb_trust => "usb-trust",
     admin_contract_usb_control => "usb-control", admin_contract_usb_video => "usb-video",
     admin_contract_invalid_identity => "identity-invalid",

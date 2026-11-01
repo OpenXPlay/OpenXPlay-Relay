@@ -11,7 +11,10 @@ use openxplay_relay::{
 use std::{
     os::unix::fs::PermissionsExt,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 #[derive(Default)]
@@ -21,6 +24,11 @@ struct Runner {
     rows: String,
     foreign: bool,
     fail_up: bool,
+    fail_load: bool,
+    fail_delete: bool,
+    active_profile: AtomicBool,
+    inactive_profile: bool,
+    fail_list: bool,
 }
 impl CommandRunner for Runner {
     fn run(&self, args: &[String], _: Duration) -> Result<CommandResult> {
@@ -38,7 +46,26 @@ impl CommandRunner for Runner {
         }
         let mut exit_code = 0;
         let output = if args.iter().any(|s| s == "NAME,UUID,ACTIVE") {
-            self.rows.clone()
+            if self.fail_list {
+                exit_code = 1;
+            }
+            let keyfiles = self.keyfiles.lock().unwrap();
+            if self.active_profile.load(Ordering::SeqCst) || self.inactive_profile {
+                let id = keyfiles
+                    .last()
+                    .unwrap()
+                    .lines()
+                    .find_map(|line| line.strip_prefix("id="))
+                    .unwrap();
+                let active = if self.active_profile.load(Ordering::SeqCst) {
+                    "yes"
+                } else {
+                    "no"
+                };
+                format!("{id}:synthetic-uuid:{active}\n")
+            } else {
+                self.rows.clone()
+            }
         } else if args[0] == "iw" {
             format!(
                 "Interface wlan9\naddr 02:00:00:00:00:09\ntype {}\nchannel 165 (5825 MHz)\n",
@@ -51,7 +78,11 @@ impl CommandRunner for Runner {
         } else if args.iter().any(|s| s == "GENERAL.STATE") {
             "30 (disconnected)".into()
         } else {
-            if self.fail_up && args.get(2).is_some_and(|s| s == "up") {
+            if args.get(2).is_some_and(|s| {
+                (self.fail_up && s == "up")
+                    || (self.fail_load && s == "load")
+                    || (self.fail_delete && (s == "down" || s == "delete"))
+            }) {
                 exit_code = 10;
             }
             String::new()
@@ -93,7 +124,6 @@ fn admin_keyfile_is_mac_bound_private_and_fixed_without_a_password_in_argv() {
     assert_eq!(keyfiles.len(), 1);
     let text = &keyfiles[0];
     for setting in [
-        "interface-name=\n",
         "mac-address=02:00:00:00:00:09\n",
         "autoconnect=false\n",
         "mode=ap\n",
@@ -111,6 +141,8 @@ fn admin_keyfile_is_mac_bound_private_and_fixed_without_a_password_in_argv() {
     ] {
         assert!(text.contains(setting), "missing {setting:?}");
     }
+    assert!(!text.lines().any(|line| line.starts_with("interface-name=")));
+    assert!(!text.lines().any(|line| line.ends_with('=')));
     let id = text.lines().find_map(|l| l.strip_prefix("id=")).unwrap();
     assert_eq!(id.len(), "oxp-admin-".len() + 16);
     assert!(id
@@ -189,4 +221,83 @@ fn admin_does_not_silently_fall_back_to_another_band() {
             .is_empty()
     );
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn carplay_keyfile_binds_by_interface_without_empty_properties() {
+    let root = root();
+    let runner = Arc::new(Runner::default());
+    let hotspot = LinuxHotspot::new(root.clone(), runner.clone(), "wlan9".into(), 165)
+        .with_runtime_dirs(
+            root.join("nm-keyfiles"),
+            openxplay_relay::public_name::local_dns::Paths::in_dir(root.join("dnsmasq-shared.d")),
+        );
+    hotspot.start(Duration::from_secs(1)).unwrap();
+    let keyfiles = runner.keyfiles.lock().unwrap();
+    assert_eq!(keyfiles.len(), 1);
+    let text = &keyfiles[0];
+    assert!(text.contains("interface-name=wlan9\n"));
+    assert!(!text.contains("mac-address="));
+    assert!(!text.lines().any(|line| line.ends_with('=')));
+    hotspot.close().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn close_succeeds_when_nm_already_removed_or_deactivated_the_connection() {
+    for inactive in [false, true] {
+        let root = root();
+        let runner = Arc::new(Runner {
+            fail_delete: true,
+            inactive_profile: inactive,
+            ..Default::default()
+        });
+        let hotspot = admin(&root, runner);
+        hotspot.start(Duration::from_secs(1)).unwrap();
+        hotspot.close().unwrap();
+        hotspot.close().unwrap();
+        assert_eq!(
+            std::fs::read_dir(root.join("nm-keyfiles")).unwrap().count(),
+            0
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+#[test]
+fn rejected_profile_load_keeps_start_error_and_can_close() {
+    let root = root();
+    let runner = Arc::new(Runner {
+        fail_load: true,
+        fail_delete: true,
+        ..Default::default()
+    });
+    let hotspot = admin(&root, runner);
+    let error = hotspot.start(Duration::from_secs(1)).unwrap_err();
+    assert_eq!(error.to_string(), "nmcli failed (exit 10)");
+    hotspot.close().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn close_retries_a_still_active_connection_and_does_not_hide_query_errors() {
+    for fail_list in [false, true] {
+        let root = root();
+        let runner = Arc::new(Runner {
+            fail_delete: true,
+            active_profile: AtomicBool::new(true),
+            fail_list,
+            ..Default::default()
+        });
+        let hotspot = admin(&root, runner.clone());
+        hotspot.start(Duration::from_secs(1)).unwrap();
+        assert!(hotspot.close().is_err());
+        assert_eq!(
+            std::fs::read_dir(root.join("nm-keyfiles")).unwrap().count(),
+            1
+        );
+        if !fail_list {
+            runner.active_profile.store(false, Ordering::SeqCst);
+            hotspot.close().unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

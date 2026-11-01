@@ -85,6 +85,6 @@ printf '%s\n' 'Installed. Supply your MFi identity separately:' \
   '  /var/lib/openxplay/mfi/identity.pk8' \
   '  /var/lib/openxplay/mfi/certificate.p7b' \
   'Set both files to mode 0600, then run systemctl start openxplay-relay.service.' \
-  'First setup: https://openxplay-linux.local:6975 (password: openxplay).' \
+  'First setup: https://openxplay-admin.local:6975 (LAN) or https://openxplay-car.local:6975 (CarPlay network) (password: openxplay).' \
   'Requires NetworkManager (nmcli), iw, dnsmasq-base (shared-mode DHCP),' \
   'BlueZ (bluetoothctl, btmgmt, sdptool, hciconfig), and kernel RFCOMM support.'

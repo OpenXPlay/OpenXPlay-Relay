@@ -10,9 +10,11 @@
     "state": "off"
   },
   "adminPort": 6975,
-  "adminUrl": "https://openxplay-linux.local:6975/",
+  "adminUrl": "https://10.42.0.1:6975/",
   "adminUrls": [
-    "https://10.42.0.1:6975/"
+    "https://10.42.0.1:6975/",
+    "https://openxplay-car.local:6975/",
+    "https://openxplay-admin.local:6975/"
   ],
   "autoStartPaused": false,
   "carlink": {
@@ -80,7 +82,7 @@
     "vehicle": null,
     "viewSize": null
   },
-  "host": "openxplay-linux.local",
+  "host": "",
   "hostAddresses": [
     {
       "developerOnly": false,

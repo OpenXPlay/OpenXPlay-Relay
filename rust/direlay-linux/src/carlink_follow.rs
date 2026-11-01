@@ -93,7 +93,7 @@ impl LinuxRelayAdmin {
                 .as_mut()
                 .is_some_and(|provision| provision.hold_for_carlink(false));
             if following || held {
-                self.stop_controller();
+                self.stop_controller_for_restart(false);
                 self.operation(Operation::Initialize)?;
             }
             return Ok(());
@@ -160,7 +160,7 @@ impl LinuxRelayAdmin {
             Err(error) => {
                 // Do not let the old controller retry its hotspot while Carlink owns the radio.
                 // tick remains blocked until the target credentials have been resolved.
-                self.stop_controller();
+                self.stop_controller_for_restart(false);
                 let mut follow = self.follow.lock().unwrap();
                 if follow.generation == generation {
                     follow.changed = Some(std::time::Instant::now());
@@ -177,7 +177,7 @@ impl LinuxRelayAdmin {
         drop(follow);
         // Publish the resolved target before stopping; tick shares the lifecycle lock.
         self.events.follow_over("controller-stop");
-        self.stop_controller();
+        self.stop_controller_for_restart(false);
         if target.is_none() {
             self.events.follow_over("link-left");
             {

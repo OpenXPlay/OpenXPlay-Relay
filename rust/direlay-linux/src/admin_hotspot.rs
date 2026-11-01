@@ -249,6 +249,9 @@ impl AdminHotspot {
                 }
             }
             Err(_) => {
+                // Preserve this attempt's failure. Cleanup can retry on the next reconcile;
+                // no inputs or running manager may suppress a fresh activation attempt.
+                state.inputs = None;
                 let _ = self.down(&mut state);
                 Status {
                     state: "failed".into(),
@@ -422,6 +425,40 @@ mod tests {
             |_| unreachable!(),
         );
         assert_eq!(admin.status().state, "off");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn failed_activation_reports_start_failure_and_retries_on_later_reconcile() {
+        struct FailedStart(Arc<Fake>);
+        impl WirelessHotspotManager for FailedStart {
+            fn start(&self, _: Duration) -> Result<crate::WirelessHotspotInfo> {
+                Err(std::io::Error::other("synthetic profile load rejected"))
+            }
+            fn validate_ready(&self) -> Result<()> {
+                unreachable!()
+            }
+            fn on_car_play_confirmed(&self) -> Result<()> {
+                unreachable!()
+            }
+            fn close(&self) -> Result<()> {
+                self.0.close()
+            }
+        }
+        let (admin, plan, inventory, dir) = fixture(Duration::ZERO);
+        let fake = Arc::new(Fake::default());
+        admin.reconcile_with(&plan, None, &inventory, |_| {
+            Arc::new(FailedStart(fake.clone()))
+        });
+        assert_eq!(admin.status().state, "failed");
+        assert_eq!(admin.status().reason.as_deref(), Some("activation-failed"));
+        assert!(admin.state.lock().unwrap().inputs.is_none());
+        assert!(admin.state.lock().unwrap().manager.is_none());
+        assert_eq!(fake.closes.load(Ordering::SeqCst), 1);
+        admin.reconcile_with(&plan, None, &inventory, |_| fake.clone());
+        assert_eq!(admin.status().state, "up");
+        assert_eq!(admin.status().reason, None);
+        assert_eq!(fake.starts.load(Ordering::SeqCst), 1);
+        admin.close().unwrap();
         let _ = std::fs::remove_dir_all(dir);
     }
 }

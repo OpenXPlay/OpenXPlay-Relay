@@ -5,6 +5,11 @@
 export type Language = 'en' | 'zh-CN';
 const messages: Record<Language, Record<string, string>> = {
   "en": {
+    "admin.carNetwork": "CarPlay Wi-Fi",
+    "admin.otherNetwork": "LAN or admin hotspot",
+    "carlink.radioMissing": "Carlink needs a second Wi-Fi adapter. Use the browser with one adapter.",
+    "carlink.useBrowser": "Use browser",
+    "connections.check.carlink-same-radio": "Carlink needs a second Wi-Fi adapter.",
     "ui.continue": "Continue",
     "menu.admin": "Admin",
     "menu.options": "options",
@@ -1564,6 +1569,11 @@ const messages: Record<Language, Record<string, string>> = {
     "hint.field.rfcommChannel": "Leave empty to choose automatically."
   },
   "zh-CN": {
+    "admin.carNetwork": "CarPlay Wi-Fi",
+    "admin.otherNetwork": "局域网或管理热点",
+    "carlink.radioMissing": "Carlink 需要第二个 Wi-Fi 适配器。只有一个适配器时请使用浏览器。",
+    "carlink.useBrowser": "使用浏览器",
+    "connections.check.carlink-same-radio": "Carlink 需要第二个 Wi-Fi 适配器。",
     "ui.continue": "继续",
     "menu.admin": "管理页面",
     "menu.options": "项",

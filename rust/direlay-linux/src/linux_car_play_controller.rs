@@ -92,6 +92,9 @@ pub trait WirelessPlatform: Send + Sync {
     /// wait for, such as removing the access points a killed run left behind. It runs with the
     /// access point's start, which then waits out a down gap it began.
     fn prepare_hotspot(&self) {}
+    fn reset_hotspot_for_recovery(&self) -> Result<()> {
+        Ok(())
+    }
     /// The SSID the current attempt's access point will have, when the platform knows it before
     /// the access point is up; without it the identification waits for the access point.
     fn planned_hotspot_ssid(&self) -> Option<String> {
@@ -743,6 +746,9 @@ impl LinuxCarPlayController {
                 // iPhone drop their stale association before the next attempt brings it back.
                 let recovery = e.to_string().contains("changed")
                     || e.to_string().contains("association was lost");
+                if recreate.is_some() || recovery {
+                    self.platform.reset_hotspot_for_recovery()?;
+                }
                 self.release_attempt(recreate.is_none() && !recovery);
                 if let Some(reason) = recreate {
                     self.events.log(&format!(

@@ -4,6 +4,8 @@
 // Source: admin-web/dev-server.ts.
 #[path = "file_routes.rs"]
 mod file_routes;
+#[path = "http_redirect.rs"]
+mod http_redirect;
 #[path = "carlink_trace.rs"]
 pub(crate) mod trace_files;
 
@@ -117,6 +119,7 @@ impl Response {
     fn write(&self, out: &mut impl Write) -> io::Result<()> {
         let reason = match self.status {
             200 => "OK",
+            308 => "Permanent Redirect",
             400 => "Bad Request",
             401 => "Unauthorized",
             403 => "Forbidden",
@@ -717,7 +720,7 @@ impl AdminServer {
                     .name("admin-http".into())
                     .stack_size(256 * 1024)
                     .spawn(move || loop {
-                        let socket = match rx.lock().unwrap().recv() {
+                        let mut socket = match rx.lock().unwrap().recv() {
                             Ok(s) => s,
                             Err(_) => break,
                         };
@@ -728,6 +731,15 @@ impl AdminServer {
                         let Ok(peer) = socket.peer_addr() else {
                             continue;
                         };
+                        let mut first = [0];
+                        match socket.peek(&mut first) {
+                            Ok(1) if first[0] == 0x16 => {}
+                            Ok(1) => {
+                                http_redirect::serve(&mut socket, Duration::from_secs(5));
+                                continue;
+                            }
+                            _ => continue,
+                        }
                         let Ok(connection) =
                             rustls::ServerConnection::new(tls.read().unwrap().clone())
                         else {
@@ -959,7 +971,34 @@ pub fn tls_config_with(
     addresses: &[Ipv4Addr],
     named: &NamedCertificate,
 ) -> io::Result<Arc<rustls::ServerConfig>> {
-    let names = vec!["openxplay-linux.local".into(), "localhost".into()];
+    tls_config_with_names(state, addresses, named, &[])
+}
+fn tls_config_with_names(
+    state: &Path,
+    addresses: &[Ipv4Addr],
+    named: &NamedCertificate,
+    advertised: &[String],
+) -> io::Result<Arc<rustls::ServerConfig>> {
+    let mut names = vec![
+        "openxplay-admin.local".into(),
+        "openxplay-car.local".into(),
+        "openxplay-linux.local".into(),
+        "localhost".into(),
+    ];
+    names.extend(
+        advertised
+            .iter()
+            .filter(|name| {
+                ![
+                    "openxplay-admin.local",
+                    "openxplay-car.local",
+                    "openxplay-linux.local",
+                    "localhost",
+                ]
+                .contains(&name.as_str())
+            })
+            .cloned(),
+    );
     let path = state.join("admin-tls.json");
     let saved = match fs::read(&path) {
         Ok(b) => Some(serde_json::from_slice::<SavedTls>(&b)?),
@@ -1028,6 +1067,11 @@ impl AdminServerHandle {
         *self.tls.write().unwrap() = tls_config_with(&self.state_dir, addresses, &self.named)?;
         Ok(())
     }
+    pub fn update_names(&self, addresses: &[Ipv4Addr], names: &[String]) -> io::Result<()> {
+        *self.tls.write().unwrap() =
+            tls_config_with_names(&self.state_dir, addresses, &self.named, names)?;
+        Ok(())
+    }
     pub fn stop(&mut self) {
         self.stopped.store(true, Ordering::Relaxed);
         for thread in self.threads.drain(..).rev() {
@@ -1072,6 +1116,33 @@ mod sni_tests {
         pki_types::{CertificateDer, ServerName, UnixTime},
         DigitallySignedStruct, SignatureScheme,
     };
+    #[test]
+    fn legacy_admin_certificate_regenerates_once_for_required_network_names() {
+        let state =
+            std::env::temp_dir().join(format!("admin-upgrade-{}", auth::random_hex(8).unwrap()));
+        let path = state.join("admin-tls.json");
+        tls_config(&state, &[]).unwrap();
+        let mut legacy: SavedTls = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        legacy.sans.retain(|san| {
+            !["openxplay-car.local", "openxplay-admin.local"].contains(&san.as_str())
+        });
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        tls_config(&state, &[]).unwrap();
+        let upgraded = fs::read(&path).unwrap();
+        let saved: SavedTls = serde_json::from_slice(&upgraded).unwrap();
+        assert_ne!(saved.cert, legacy.cert);
+        for name in [
+            "openxplay-car.local",
+            "openxplay-admin.local",
+            "openxplay-linux.local",
+            "localhost",
+        ] {
+            assert!(saved.sans.contains(&name.into()));
+        }
+        tls_config(&state, &[]).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), upgraded);
+        fs::remove_dir_all(state).unwrap();
+    }
     #[test]
     fn accumulating_identity_keeps_covered_sans_and_adds_the_hotspot_address() {
         let state =

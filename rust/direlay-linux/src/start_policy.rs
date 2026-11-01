@@ -157,7 +157,8 @@ impl Arrival {
 
 pub type StartGate = std::sync::Arc<dyn Fn() -> crate::Result<bool> + Send + Sync>;
 
-/// One start owns both budgets; polling and controller retries cannot extend them.
+/// Carlink alone waits for a head unit; both outputs give it a sixty-second head start.
+/// An unknown browser screen gets at most twenty seconds, within the same budget.
 #[derive(Default)]
 pub struct StartPolicy {
     carlink: Option<Instant>,
@@ -195,6 +196,9 @@ impl StartPolicy {
     pub fn take_failure(&mut self) -> bool {
         std::mem::take(&mut self.failed)
     }
+    pub fn browser_only(&mut self) {
+        self.carlink = None;
+    }
     pub fn cancel(&mut self) {
         *self = Self::default();
     }
@@ -204,7 +208,7 @@ impl StartPolicy {
     pub fn ready(
         &mut self,
         now: Instant,
-        carlink_enabled: bool,
+        output: &str,
         carlink_ready: bool,
         screen_reported: bool,
     ) -> crate::Result<bool> {
@@ -214,17 +218,11 @@ impl StartPolicy {
             ));
         }
         if let Some(until) = self.carlink {
-            if !carlink_enabled {
-                return Err(std::io::Error::other(
-                    "Carlink output was disabled while waiting to start CarPlay",
-                ));
-            }
-            if carlink_ready {
+            if output == "web" || carlink_ready || (output == "both" && now >= until) {
                 self.carlink = None;
             } else if now >= until {
-                return Err(std::io::Error::other(
-                    "Carlink output did not become ready before CarPlay startup",
-                ));
+                self.carlink = Some(now + Duration::from_secs(60));
+                return Ok(false);
             } else {
                 return Ok(false);
             }
@@ -243,18 +241,47 @@ impl StartPolicy {
 mod tests {
     use super::*;
     #[test]
-    fn gate_is_bounded_and_saved_screen_cannot_release_it() {
+    fn carlink_waits_for_a_late_head_unit_and_saved_screen_cannot_release_it() {
         let t = Instant::now();
         let mut p = StartPolicy::default();
         p.request(t, true, true);
         assert!(!p
-            .ready(t + Duration::from_secs(59), true, false, true)
+            .ready(t + Duration::from_secs(59), "carlink", false, true)
+            .unwrap());
+        assert!(!p
+            .ready(t + Duration::from_secs(60), "carlink", false, true)
             .unwrap());
         assert!(p
-            .ready(t + Duration::from_secs(60), true, false, true)
-            .is_err());
-        assert!(p.ready(t, false, false, true).is_err());
-        assert!(p.ready(t, true, true, false).unwrap());
+            .ready(t + Duration::from_secs(180), "carlink", true, true)
+            .unwrap());
+        p.request(t, true, true);
+        assert!(p.ready(t, "web", false, true).unwrap());
+        assert!(p.ready(t, "carlink", true, false).unwrap());
+    }
+    #[test]
+    fn both_starts_browser_at_budget_and_late_carlink_does_not_rearm_the_gate() {
+        let now = Instant::now();
+        for screen_known in [false, true] {
+            let mut policy = StartPolicy::default();
+            policy.request(now, true, screen_known);
+            assert!(!policy
+                .ready(now + Duration::from_secs(59), "both", false, screen_known)
+                .unwrap());
+            assert!(policy
+                .ready(now + Duration::from_secs(60), "both", false, screen_known)
+                .unwrap());
+            assert!(!policy.waiting());
+            assert!(!policy.take_failure());
+            assert!(policy
+                .ready(now + Duration::from_secs(61), "both", true, true)
+                .unwrap());
+            assert!(policy
+                .ready(now + Duration::from_secs(62), "both", false, true)
+                .unwrap());
+        }
+        let mut policy = StartPolicy::default();
+        policy.request(now, true, true);
+        assert!(policy.ready(now, "both", true, true).unwrap());
     }
     #[test]
     fn car_first_expires_without_extending_and_start_now_skips_both() {
@@ -262,16 +289,16 @@ mod tests {
         let mut p = StartPolicy::default();
         p.request(t, false, false);
         assert!(!p
-            .ready(t + Duration::from_secs(19), false, false, false)
+            .ready(t + Duration::from_secs(19), "web", false, false)
             .unwrap());
         assert!(p
-            .ready(t + Duration::from_secs(20), false, false, false)
+            .ready(t + Duration::from_secs(20), "web", false, false)
             .unwrap());
         p.request(t, true, false);
         p.skip();
-        assert!(p.ready(t, true, false, false).unwrap());
+        assert!(p.ready(t, "carlink", false, false).unwrap());
         p.request(t, false, false);
-        assert!(p.ready(t, false, false, true).unwrap());
+        assert!(p.ready(t, "web", false, true).unwrap());
         p.cancel();
         assert!(!p.requested());
     }
@@ -407,9 +434,9 @@ mod runtime_tests {
         policy.fail();
         assert!(policy.take_failure());
         assert!(!policy.take_failure());
-        assert!(policy.ready(Instant::now(), true, true, true).is_err());
+        assert!(policy.ready(Instant::now(), "carlink", true, true).is_err());
         policy.request(Instant::now(), true, true);
-        assert!(policy.ready(Instant::now(), true, true, true).unwrap());
+        assert!(policy.ready(Instant::now(), "carlink", true, true).unwrap());
     }
     #[test]
     fn arrival_is_five_seconds_cancellable_and_restarts_after_lost_readiness() {

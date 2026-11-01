@@ -408,21 +408,20 @@ impl ApKeyfile<'_> {
             &random[20..]
         );
         let binding = if self.mac.is_some() {
-            ""
+            String::new()
         } else {
-            self.interface
+            format!("interface-name={}\n", self.interface)
         };
         let mac = self
             .mac
             .map_or_else(String::new, |mac| format!("mac-address={mac}\n"));
         let security = keyfile_security(self.security, self.password)?;
-        Ok(format!("[connection]\nid={}\nuuid={uuid}\ntype=wifi\nautoconnect=false\ninterface-name={binding}\n\n[wifi]\n{mac}mode=ap\nssid={}\nband={}\nchannel={}\npowersave=2\n\n{security}[ipv4]\nmethod=shared\naddress1={}\n\n[ipv6]\nmethod=disabled\n",
+        Ok(format!("[connection]\nid={}\nuuid={uuid}\ntype=wifi\nautoconnect=false\n{binding}\n[wifi]\n{mac}mode=ap\nssid={}\nband={}\nchannel={}\npowersave=2\n\n{security}[ipv4]\nmethod=shared\naddress1={}\n\n[ipv6]\nmethod=disabled\n",
             self.id, self.ssid.bytes().map(|b| format!("{b};")).collect::<String>(), self.band, self.channel, self.subnet))
     }
 }
 struct HotspotState {
     connection: Option<String>,
-    profile_loaded: bool,
     profile_channel: u8,
     ready: Option<WirelessHotspotInfo>,
     ready_prefix: u8,
@@ -462,7 +461,6 @@ impl LinuxHotspot {
             channel,
             state: Mutex::new(HotspotState {
                 connection: None,
-                profile_loaded: false,
                 profile_channel: 0,
                 ready: None,
                 ready_prefix: 32,
@@ -666,7 +664,6 @@ impl LinuxHotspot {
                     .to_str()
                     .ok_or_else(|| std::io::Error::other("Invalid keyfile path"))?,
             ])?;
-            self.state.lock().unwrap().profile_loaded = true;
             self.wait_for_provisioning(deadline);
             self.wait_for_device(deadline);
             crate::public_name::local_dns::hotspot(
@@ -950,15 +947,37 @@ impl LinuxHotspot {
                 &["nmcli", "connection", "delete", "id", &id],
                 Duration::from_secs(10),
             );
-            let _ = std::fs::remove_file(self.keyfile_dir.join(format!("{id}.nmconnection")));
-            if self.state.lock().unwrap().profile_loaded {
-                deleted?;
+            if let Err(error) = deleted {
+                // NM may already have removed the profile (including a rejected load), or
+                // deactivated it externally. Only a still-active AP makes shutdown fail.
+                let rows = command(
+                    self.runner.as_ref(),
+                    &[
+                        "nmcli",
+                        "-t",
+                        "-f",
+                        "NAME,UUID,ACTIVE",
+                        "connection",
+                        "show",
+                    ],
+                    Duration::from_secs(10),
+                )?;
+                if rows.lines().any(|line| {
+                    let fields = crate::provision::terse_fields(line);
+                    fields.len() == 3 && fields[0] == id && fields[2] == "yes"
+                }) {
+                    return Err(error);
+                }
             }
+            match std::fs::remove_file(self.keyfile_dir.join(format!("{id}.nmconnection"))) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            crate::public_name::local_dns::hotspot(&self.dns, &self.interface, None)?;
             let mut state = self.state.lock().unwrap();
             state.connection = None;
-            state.profile_loaded = false;
             state.ready = None;
-            crate::public_name::local_dns::hotspot(&self.dns, &self.interface, None)?;
         }
         Ok(())
     }

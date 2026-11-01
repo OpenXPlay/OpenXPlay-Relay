@@ -133,6 +133,10 @@ impl SupervisorSettings {
                 self.state_dir.join("receiver-tls").into_os_string(),
                 "--tls-san".into(),
                 "openxplay-linux.local".into(),
+                "--tls-san".into(),
+                "openxplay-admin.local".into(),
+                "--tls-san".into(),
+                "openxplay-car.local".into(),
             ]);
             args
         };
@@ -270,7 +274,11 @@ impl SupervisorSettings {
         if self.web_port == 0 {
             return Vec::new();
         }
-        let mut urls = vec![format!("https://{host}:{}/", self.web_port)];
+        let mut urls = if host.is_empty() {
+            Vec::new()
+        } else {
+            vec![format!("https://{host}:{}/", self.web_port)]
+        };
         for ip in &self.addresses {
             let url = format!("https://{ip}:{}/", self.web_port);
             if !urls.contains(&url) {
@@ -1455,6 +1463,10 @@ mod tls_tests {
             &format!("{state}/receiver-tls"),
             "--tls-san",
             "openxplay-linux.local",
+            "--tls-san",
+            "openxplay-admin.local",
+            "--tls-san",
+            "openxplay-car.local",
             "--web-transcode",
             "auto",
             "--host-ui",

@@ -14,6 +14,7 @@ import { mfiSubmission, mfiError, mfiReadiness } from './mfi';
 import { validateHotspot, hotspotForm, stationBandHint, devicePresetLabel, restartRequired, restartView } from './hotspot-settings';
 import './style.css';
 import { patchMarkup, on, enhanceSheets, confirmSheet, openSurface, openPrompt, closeSurface, setSurfaceOwner, cancelSurfaces, refreshSurfaces, SURFACE_PRIORITY } from './dom';
+import { carlinkRadioMissing, outputOptionDisabled, carlinkRadioBlocker, browserOutput } from './carlink-radio';
 import { mountStage, timer, stepText } from './stage';
 import { presentPath } from './path/present-path';
 import { stageCommand } from './path/actions';
@@ -203,7 +204,7 @@ function renderReady() {
   const main = document.getElementById('main')!;
   if (currentView !== 'home') videoStats.reset();
   if (currentView === 'home') {
-    patchMarkup(main, '<div id="dashboard"></div>');
+    patchMarkup(main, '<div id="carlink-radio-blocker"></div><div id="dashboard"></div>');
     stage = mountStage(document.getElementById('dashboard')!, { t, action: action => void dispatchStage(action), copy: copyStage,
       details: () => `<a class="inset-group inset-row" href="#setup/car">${esc(t('setup2_set_up_again'))}</a>${menuRow('settings/car', 'menu.car', pageSummary('settings/car'), 'car')}<div class="inset-group">${fields().filter(f => f.key === 'autoStart').map(f => fieldMarkup({ ...f, labelKey: 'stage.automatic', hintKey: undefined })).join('')}</div>${addressesView(status!, true, t)}${devicesView(status!, true, t)}${drawerRows()}<div id="pairing-panel" data-preserve></div>${videoStatsView(videoStats.read(status!, videoStatsInterval(settings, status!.platform), performance.now()), t)}${status!.notices.length ? `<div class="inset-group">${status!.notices.filter(n => status!.platform !== 'linux' || n !== 'notice.nextStart').map(n => `<p>${esc(t(n))}</p>`).join('')}</div>` : ''}`,
       recheck: tick, addresses: () => status?.receiverUrls ?? [], opened: () => { void cancelArrival(); },
@@ -418,6 +419,15 @@ async function dispatchStage(action: StageAction) {
   }
 }
 function updateDashboard() {
+  if (status) {
+    const blocker = document.getElementById('carlink-radio-blocker');
+    if (blocker) {
+      patchMarkup(blocker, carlinkRadioBlocker(status, t));
+      on(blocker.querySelector('[data-browser-output]'), 'click', async () => {
+        try { await api.save(browserOutput); if (settings) settings.values.output = browserOutput.output; await tick(); } catch (e) { pageError = errorKey(e); updateDashboard(); }
+      });
+    }
+  }
   const applied = status?.carlink?.appliedPicture;
   const currentPicture = document.querySelector<HTMLElement>('[data-current-picture]');
   if (currentPicture) currentPicture.textContent = applied ? `${t('picture.current')}: ${applied.width} × ${applied.height}` : t('picture.pending');
@@ -753,7 +763,7 @@ function fieldMarkup(field: Field): string {
     const string = draft ?? (object ? JSON.stringify(value, null, 2) : String(value ?? ''));
     control = `<label for="${id}">${label}</label><div class="input-row">${object ? `<textarea ${attr} rows="4">${esc(string)}</textarea>` : `<input ${attr} type="${field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'}" value="${esc(string)}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} ${field.type === 'number' ? 'step="1" inputmode="numeric"' : ''} ${field.type === 'secret' ? 'autocomplete="new-password"' : ''} ${/^car(Brand|Model|Year)Text$/.test(field.key) ? 'maxlength="40"' : ''}>`}${field.type === 'secret' ? `<button type="button" class="icon-button reveal" aria-label="${t('ui.reveal')}">${icon('eye')}</button>` : ''}</div><div class="field-edit-actions" ${draft === undefined ? 'hidden' : ''}><button type="button" data-save="${esc(field.key)}">${t('net.save')}</button><button type="button" data-cancel="${esc(field.key)}">${t('ui.cancel')}</button></div>`;
   }
-  const hint = status!.platform === 'linux' && field.key === 'experimentalSendBluetoothAddress' && !String(settings!.values.experimentalBluetoothAddress ?? '').trim() ? esc(t('hint.bluetoothAddressRequired')) : field.key === 'mfiTarget' ? esc(mfiReadiness(settings!.values, t)) : field.key === 'teslaBrowser' ? esc(teslaHint(settings!.values, String(value), t)) : field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
+  const hint = field.key === 'output' && carlinkRadioMissing(status) ? esc(t('carlink.radioMissing')) : status!.platform === 'linux' && field.key === 'experimentalSendBluetoothAddress' && !String(settings!.values.experimentalBluetoothAddress ?? '').trim() ? esc(t('hint.bluetoothAddressRequired')) : field.key === 'mfiTarget' ? esc(mfiReadiness(settings!.values, t)) : field.key === 'teslaBrowser' ? esc(teslaHint(settings!.values, String(value), t)) : field.key === 'publicNameProvider' ? publicNameGuidance(settings!.values, t, language) : field.key === 'publicName' ? esc(t(publicNameNameHint(settings!.values))) : field.hintKey ? esc(t(field.hintKey)) : '';
   if (field.key === 'mfiRemoteToken' && settings!.values.mfiRemoteTokenSet) control += `<p class="muted">${t('mfi.tokenSaved')}</p><button type="button" data-clear-mfi-token>${t('mfi.removeToken')}</button>`;
   return `<div class="field" data-field="${esc(field.key)}">${control}<p class="muted hint" id="${id}-hint">${hint}</p><p id="${id}-result" class="field-result" role="status">${esc(t(feedback.get(field.key) ?? ''))}</p></div>`;
 }
@@ -771,8 +781,9 @@ function bindField(field: Field) {
   else if (field.type === 'choice') on(el, 'click', () => {
     const { dialog, close } = networkDialog(t(field.labelKey), `<div class="${['frameRate', 'resolution', 'carplayResolution', 'videoCodec'].includes(field.key) ? 'chips' : 'choice-list'}" role="group">${field.options?.map((option, index) => {
       if (['carBrand', 'carModel', 'carYear'].includes(field.key) && option.value === '') return '';
-      const hintKey = field.key === 'transport' && status?.platform === 'linux' ? usbTransportHint('linux', option.value) ?? option.hintKey : option.hintKey;
-      return `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : field.key === 'hotspotSecurity' && !(status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']).includes(option.value as HotspotSecurity) ? 'disabled' : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(hintKey))}</small>` : ''}</button>`; }).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
+      const radioDisabled = field.key === 'output' && outputOptionDisabled(status, option.value);
+      const hintKey = radioDisabled ? 'carlink.radioMissing' : field.key === 'transport' && status?.platform === 'linux' ? usbTransportHint('linux', option.value) ?? option.hintKey : option.hintKey;
+      return `<button data-option="${index}" aria-pressed="${option.value === settings!.values[field.key]}" ${radioDisabled ? 'disabled' : field.key === 'networkMode' ? networkOptionState(status?.platform, settings!.values, option.value) : field.key === 'hotspotSecurity' && !(status?.hotspot?.supportedSecurity ?? ['open', 'wpa2']).includes(option.value as HotspotSecurity) ? 'disabled' : ''}><span>${esc(optionLabel(option, language, t))}</span>${option.value === settings!.values[field.key] ? icon('check') : ''}${hintKey ? `<small class="muted">${esc(field.key === 'teslaBrowser' ? teslaHint(settings!.values, String(option.value), t) : t(hintKey))}</small>` : ''}</button>`; }).join('')}</div><button data-close>${t('ui.cancel')}</button>`);
     dialog.querySelectorAll<HTMLButtonElement>('[data-option]').forEach(button => on(button, 'click', async () => {
       const option = field.options![Number(button.dataset.option)];
       if (restartsPicture(field.key) && status?.platform !== 'linux' && status?.running && !await confirmSheet(t('files.pictureRestart'), t('ui.save'), t('ui.cancel'))) return;
@@ -997,6 +1008,7 @@ function updateVisibility() {
 }
 async function queueSave(field: Field, raw: string | boolean) {
   const value = coerceValue(field, raw);
+  if (field.key === 'output' && outputOptionDisabled(status, value)) return;
   if (field.key.startsWith('publicName')) {
     if (publicNameBusy) return;
     if (field.key === 'publicNameProvider') publicNameDrafts.select(String(value), settings!.values);
