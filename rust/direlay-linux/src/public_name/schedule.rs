@@ -33,8 +33,7 @@ pub fn next_check(
     renew_at: Option<u64>,
     ari_next_poll: Option<u64>,
 ) -> Option<u64> {
-    let renewal = renew_at
-        .or_else(|| Some(not_after?.saturating_sub(not_after?.saturating_sub(not_before?) / 3)));
+    let renewal = renew_at.or_else(|| Some(planned_renewal(not_before?, not_after?, None)));
     Some(
         [Some(now + CHECK_EVERY), renewal, ari_next_poll]
             .into_iter()
@@ -65,10 +64,9 @@ pub fn next_order_allowed(orders: &[u64], now: u64) -> u64 {
     (recent[recent.len() - ORDERS_PER_DAY] + DAY).max(now)
 }
 
-/// Renewal is due once less than a third of the lifetime remains.
-pub fn one_third_due(not_before: u64, not_after: u64, now: u64) -> bool {
-    let lifetime = not_after.saturating_sub(not_before);
-    now >= not_after.saturating_sub(lifetime / 3)
+/// The chosen ARI time, otherwise the time when a third of the lifetime remains.
+pub fn planned_renewal(not_before: u64, not_after: u64, renew_at: Option<u64>) -> u64 {
+    renew_at.unwrap_or_else(|| not_after.saturating_sub(not_after.saturating_sub(not_before) / 3))
 }
 /// A time inside the ARI suggested window (RFC 9773 section 4.2), from `random`.
 pub fn ari_time(start: u64, end: u64, random: u64) -> u64 {
@@ -80,10 +78,7 @@ pub fn ari_time(start: u64, end: u64, random: u64) -> u64 {
 }
 /// Due at the chosen ARI time when the CA suggested a window, else by the one-third rule.
 pub fn renewal_due(not_before: u64, not_after: u64, now: u64, renew_at: Option<u64>) -> bool {
-    match renew_at {
-        Some(at) => now >= at,
-        None => one_third_due(not_before, not_after, now),
-    }
+    now >= planned_renewal(not_before, not_after, renew_at)
 }
 /// Whether a valid certificate may be replaced by a new order now.
 pub fn may_replace(not_after: u64, now: u64, due: bool) -> bool {
@@ -170,8 +165,12 @@ mod tests {
     #[test]
     fn renewal_by_ari_window_or_one_third_of_the_lifetime() {
         let (issued, expires) = (1_800_000_000, 1_800_000_000 + 90 * DAY);
-        assert!(!one_third_due(issued, expires, issued + 59 * DAY));
-        assert!(one_third_due(issued, expires, issued + 60 * DAY));
+        assert_eq!(planned_renewal(issued, expires, None), issued + 60 * DAY);
+        assert_eq!(
+            planned_renewal(issued, expires, Some(issued + 17)),
+            issued + 17
+        );
+        assert!(renewal_due(issued, expires, issued + 60 * DAY, None));
         assert!(!renewal_due(issued, expires, issued + 59 * DAY, None));
         // A suggested window decides instead, also earlier than the one-third rule.
         let (start, end) = (issued + 30 * DAY, issued + 32 * DAY);

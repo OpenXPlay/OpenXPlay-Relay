@@ -1913,6 +1913,12 @@ impl LinuxRelayAdmin {
     /// Follows the trusted-HTTPS certificate: the admin page swaps it at once, the head-unit
     /// page through its acknowledged control channel.
     fn apply_public_name(&self) {
+        for event in self.public_name.take_certificate_events() {
+            self.events.emit(
+                "public-name-certificate",
+                &serde_json::to_value(event).unwrap(),
+            );
+        }
         let served = self.public_name.served();
         let generation = self.public_name.generation();
         if self
@@ -10740,6 +10746,74 @@ esac
         assert!(a.receiver_tls.lock().unwrap().is_none());
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["publicName"], serde_json::json!({"state":"off"}));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn public_name_certificate_events_follow_successful_writes_once_without_private_data() {
+        use crate::public_name::{cert, jws::tests::PAD_KEY, privacy};
+        let (mut admin, dir) = fake();
+        let lines = record_events(&mut admin);
+        let backup = serde_json::json!({
+            "publicName": {"version":1,"provider":"duckdns","name":"myrelay.duckdns.org","token":"a1b2c3d4-0000-0000-0000-000000000000","agreeLetsEncryptTerms":true},
+            "publicNameCertificate": {"name":"myrelay.duckdns.org","chainPem":cert::tests::LEAF,"keyPem":PAD_KEY}
+        });
+        let import =
+            || privacy::decode(&backup, None, 1_795_000_000).unwrap_or_else(|e| panic!("{e:?}"));
+        admin.public_name.import_privacy(import()).unwrap();
+        admin.apply_public_name();
+        admin.apply_public_name();
+        admin.public_name.import_privacy(import()).unwrap();
+        admin.apply_public_name();
+        let mut params = rcgen::CertificateParams::new(vec!["myrelay.duckdns.org".into()]).unwrap();
+        params.not_before = rcgen::date_time_ymd(2026, 10, 22);
+        params.not_after = rcgen::date_time_ymd(2027, 1, 20);
+        let key = rcgen::KeyPair::from_pem(PAD_KEY).unwrap();
+        let chain = params.self_signed(&key).unwrap().pem();
+        let leaf = cert::leaf(chain.as_bytes()).unwrap();
+        admin
+            .public_name
+            .import_privacy(privacy::Import {
+                certificate: Some(privacy::Certificate {
+                    chain,
+                    key: PAD_KEY.into(),
+                    name: "myrelay.duckdns.org".into(),
+                    leaf: leaf.clone(),
+                }),
+                ..Default::default()
+            })
+            .unwrap();
+        admin.apply_public_name();
+        admin.apply_public_name();
+        let events: Vec<_> = lines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|v| v["event"] == "public-name-certificate")
+            .cloned()
+            .collect();
+        assert_eq!(events.len(), 2);
+        for (event, leaf, renewal) in [
+            (
+                &events[0],
+                cert::leaf(cert::tests::LEAF.as_bytes()).unwrap(),
+                false,
+            ),
+            (&events[1], leaf, true),
+        ] {
+            let mut payload = event.clone();
+            payload.as_object_mut().unwrap().remove("event");
+            payload.as_object_mut().unwrap().remove("time");
+            assert_eq!(
+                payload,
+                serde_json::json!({"issuedAt":leaf.not_before,"notBefore":leaf.not_before,"notAfter":leaf.not_after,"renewal":renewal})
+            );
+        }
+        let restarted = crate::public_name::PublicNameService::new(
+            &dir,
+            crate::public_name::Network::internet(None),
+        );
+        assert!(restarted.take_certificate_events().is_empty());
+        admin.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

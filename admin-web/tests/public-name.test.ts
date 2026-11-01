@@ -6,9 +6,10 @@ import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Connect, ViteDevServer } from 'vite';
 import { afterEach, expect, it, vi } from 'vitest';
-import { mockApi, mockPublicName, mockSettings, previewStatus } from '../dev-server';
+import { linuxFixtureStatus, mockApi, mockPublicName, mockSettings, previewStatus } from '../dev-server';
+import { linuxFixtureSettings } from '../dev-fixtures';
 import { addressViews, homeButtonCount, publicNameUrl, settingsViews } from '../src/logic';
-import { PublicNameDrafts, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, publicNameMessageLines, PUBLIC_NAME_MAX_BYTES, hasPublicName, publicNameConfigured, publicNameFileErrors, publicNameLine, publicNamePanel, TERMS_URL } from '../src/public-name';
+import { publicNameCertificate, PublicNameDrafts, publicNameSubmission, publicNameGuidance, publicNameNameHint, importPublicNameFile, publicNameMessageLines, PUBLIC_NAME_MAX_BYTES, hasPublicName, publicNameConfigured, publicNameFileErrors, publicNameLine, publicNamePanel, TERMS_URL } from '../src/public-name';
 import { addressesView } from '../src/views';
 import { translate, type Language } from '../src/i18n';
 import type { PublicNameStatus, Status } from '../src/api';
@@ -24,6 +25,18 @@ const status = (publicName?: PublicNameStatus, receiverUrls: string[] = []): Sta
 it('uses the shared labels exactly, in both languages', () => {
   const labels: [string, string, string][] = [
     ['publicName.title', 'Trusted HTTPS', '可信 HTTPS'],
+    ["publicName.cert.validUntil", "Valid until", "有效期至"],
+    ["publicName.cert.left", "{date} · {days} days left", "{date} · 还剩 {days} 天"],
+    ["publicName.cert.lessThanDay", "{date} · less than a day left", "{date} · 剩不到 1 天"],
+    ["publicName.cert.expired", "Expired on {date}", "已于 {date} 过期"],
+    ["publicName.cert.renewal", "Renewal", "自动续期"],
+    ["publicName.cert.renewFrom", "From {date} · needs internet access", "{date} 起 · 需要联网"],
+    ["publicName.cert.renewDue", "Due · renews once the relay has internet access", "已到时间 · 中继联网后自动续期"],
+    ["publicName.cert.renewExpired", "Requests a new certificate once the relay has internet access", "中继联网后会申请新证书"],
+    ["publicName.cert.cycle", "Cycle", "续期周期"],
+    ["publicName.cert.cycleValue", "Valid {lifetime} days · renewed after about {interval} days", "有效 {lifetime} 天 · 约 {interval} 天续期一次"],
+    ["publicName.cert.issued", "Issued", "签发记录"],
+    ["publicName.cert.issuedGap", "{time} · {days} days after the previous", "{time} · 距上次 {days} 天"],
     ['publicName.summary', 'Open the head-unit page without a certificate warning, using a free domain name.', '用免费域名，让车机打开网页时不再出现证书警告。'],
     ['publicName.enabled', 'Use a free domain name', '使用免费域名'],
     ['publicName.provider', 'DNS provider', '域名服务商'],
@@ -53,8 +66,8 @@ it('uses the shared labels exactly, in both languages', () => {
     ['publicName.error.no-address', 'No head-unit network address yet', '还没有车机网络地址'],
   ];
   for (const [key, english, chinese] of labels) { expect(en(key), key).toBe(english); expect(zh(key), key).toBe(chinese); }
-  expect(en('publicName.status.ready', { address: 'https://a.duckdns.org:8443/', date: 'Jan 19, 2027' })).toBe('Ready: https://a.duckdns.org:8443/ (certificate valid until Jan 19, 2027)');
-  expect(zh('publicName.status.ready', { address: 'X', date: 'D' })).toBe('已就绪：X（证书有效期至 D）');
+  expect(en('publicName.status.ready', { address: 'https://a.duckdns.org:8443/', date: 'Jan 19, 2027' })).toBe('Ready: https://a.duckdns.org:8443/');
+  expect(zh('publicName.status.ready', { address: 'X', date: 'D' })).toBe('已就绪：X');
   expect(en('publicName.status.error', { problem: 'P', time: 'T' })).toBe('Problem: P. Next try at T.');
   expect(zh('publicName.status.error', { problem: 'P', time: 'T' })).toBe('出现问题：P。将于 T 重试。');
   expect(en('publicName.error.acme-rejected', { detail: 'D' })).toBe("Let's Encrypt rejected the request: D");
@@ -64,13 +77,12 @@ it('uses the shared labels exactly, in both languages', () => {
   expect(en('option.publicNameProvider.desec')).toBe('option.publicNameProvider.desec');
 });
 
-it('shows the status line for every state with the address, dates and the CA detail', () => {
+it('shows the status line for every state with the address and the CA detail', () => {
   const now = 1_800_000_000;
   expect(publicNameLine(status(undefined), en, 'en')).toBe('');
   for (const state of ['off', 'incomplete', 'waiting-network', 'updating-address', 'requesting-certificate'] as const) expect(publicNameLine(status({ state }), en, 'en')).toBe(en(`publicName.status.${state}`));
   const ready = publicNameLine(status({ state: 'ready', name: 'myrelay.duckdns.org', trustedName: 'myrelay.duckdns.org', notAfter: now }, ['https://myrelay.duckdns.org:8443/#pair=1']), en, 'en');
-  expect(ready).toContain('Ready: https://myrelay.duckdns.org:8443/#pair=1 (certificate valid until ');
-  expect(ready).toContain('2027');
+  expect(ready).toBe('Ready: https://myrelay.duckdns.org:8443/#pair=1');
   expect(publicNameLine(status({ state: 'ready', name: 'new.duckdns.org' }), en, 'en')).toBe(en('publicName.state.ready'));
   const error = publicNameLine(status({ state: 'error', error: 'acme-rejected', errorDetail: 'CAA forbids', nextAttempt: now }), zh, 'zh-CN');
   expect(error).toMatch(/^出现问题：Let's Encrypt 拒绝了请求：CAA forbids。将于 .+ 重试。$/);
@@ -323,4 +335,82 @@ it('prepares provider configuration while off and reports private-data availabil
   expect(JSON.stringify(saved)).not.toContain('prepared-token');
   expect((await call('/status')).data.publicName).toEqual({ state: 'off' });
   expect(saved.schema.find((s: { id: string }) => s.id === 'publicName').fields.every((f: { visibleWhen?: unknown }) => !f.visibleWhen)).toBe(true);
+});
+
+const day = 86400, viewerNow = 1_800_000_000;
+const certificate = { notBefore: viewerNow - 10 * day, notAfter: viewerNow + 80 * day, renewAt: viewerNow + 50 * day, issued: [] };
+it.each([
+  ['before the renewal grace boundary', 20 * day, -day + 1, ''],
+  ['at the renewal grace boundary', 20 * day, -day, 'notice'],
+  ['before the seven-day boundary', 7 * day + 1, 10 * day, ''],
+  ['at the seven-day boundary', 7 * day, 10 * day, 'notice'],
+  ['one second before expiry', 1, 10 * day, 'notice'],
+  ['at expiry', 0, 10 * day, 'error'],
+  ['after expiry', -1, 10 * day, 'error'],
+] as const)('judges certificate warnings %s with a fixed viewer clock', (_label, left, renewIn, tone) => {
+  for (const [t, language] of [[en, 'en'], [zh, 'zh-CN']] as const) {
+    const cert = { ...certificate, notAfter: viewerNow + left, renewAt: viewerNow + renewIn };
+    const html = publicNameCertificate(cert, t, language, viewerNow);
+    const values = [...html.matchAll(/<dd class="([^"]*)">(.*?)<\/dd>/g)];
+    expect(values.map(value => value[1])).toEqual([tone, tone]);
+    const key = tone === 'error' ? 'renewExpired' : tone === 'notice' ? 'renewDue' : 'renewFrom';
+    expect(values[1][2]).toBe(t(`publicName.cert.${key}`, { date: new Date(cert.renewAt * 1000).toLocaleString(language, { dateStyle: 'medium' }) }));
+    if (left <= 0) expect(values[0][2]).toBe(t('publicName.cert.expired', { date: new Date(cert.notAfter * 1000).toLocaleString(language, { dateStyle: 'medium' }) }));
+    expect(html).not.toMatch(/…|\.\.\./);
+  }
+});
+it('shows whole days left, less than a day, rounded cycles and the ordered certificate rows', () => {
+  for (const [t, language] of [[en, 'en'], [zh, 'zh-CN']] as const) {
+    const cert = { ...certificate, notBefore: viewerNow - 10 * day - 1, notAfter: viewerNow + 2.9 * day, renewAt: viewerNow + 3.6 * day };
+    const date = new Date(cert.notAfter * 1000).toLocaleString(language, { dateStyle: 'medium' });
+    const html = publicNameCertificate(cert, t, language, viewerNow);
+    expect(html).toContain(t('publicName.cert.left', { date, days: 2 }));
+    expect(html).toContain(t('publicName.cert.cycleValue', { lifetime: 13, interval: 14 }));
+    const rows = (html: string) => [...html.matchAll(/<dt>(.*?)<\/dt>/g)].map(match => match[1]);
+    // Without a recorded issuance the history row is left out.
+    expect(rows(html)).toEqual(['validUntil', 'renewal', 'cycle'].map(key => t(`publicName.cert.${key}`)));
+    const recorded = publicNameCertificate({ ...cert, issued: [{ at: cert.notBefore, notBefore: cert.notBefore, notAfter: cert.notAfter }] }, t, language, viewerNow);
+    expect(rows(recorded)).toEqual(['validUntil', 'renewal', 'cycle', 'issued'].map(key => t(`publicName.cert.${key}`)));
+    for (const left of [1, day - 1]) {
+      const near = { ...certificate, notAfter: viewerNow + left };
+      expect(publicNameCertificate(near, t, language, viewerNow)).toContain(t('publicName.cert.lessThanDay', { date: new Date(near.notAfter * 1000).toLocaleString(language, { dateStyle: 'medium' }) }));
+    }
+    const oneDay = { ...certificate, notAfter: viewerNow + day };
+    expect(publicNameCertificate(oneDay, t, language, viewerNow)).toContain(t('publicName.cert.left', { date: new Date(oneDay.notAfter * 1000).toLocaleString(language, { dateStyle: 'medium' }), days: 1 }));
+  }
+});
+it('shows newest issuance times first, caps at five lines and leaves the oldest shown gap off', () => {
+  const issued = [0, 4, 2, 6, 1, 5, 3].map(index => ({ at: viewerNow - index * 10.5 * day, notBefore: viewerNow - index * 10.5 * day, notAfter: viewerNow + 90 * day }));
+  for (const [t, language] of [[en, 'en'], [zh, 'zh-CN']] as const) {
+    const html = publicNameCertificate({ ...certificate, issued }, t, language, viewerNow);
+    const lines = html.split('<dd>').at(-1)!.split('</dd>')[0].split('<br>');
+    expect(lines).toHaveLength(5);
+    const times = [...issued].sort((a, b) => b.at - a.at).slice(0, 5).map(entry => new Date(entry.at * 1000).toLocaleString(language, { dateStyle: 'medium', timeStyle: 'short' }));
+    expect(lines).toEqual(times.map((time, index) => index === 4 ? time : t('publicName.cert.issuedGap', { time, days: 10 })));
+    expect(publicNameCertificate({ ...certificate, issued: [issued[0]] }, t, language, viewerNow)).toContain(`<dd>${times[0]}</dd>`);
+  }
+});
+it('puts the certificate after the status line and uses Date.now by default even while the relay waits', () => {
+  vi.spyOn(Date, 'now').mockReturnValue(viewerNow * 1000);
+  const p: PublicNameStatus = { state: 'waiting-network', certificate: { ...certificate, notAfter: viewerNow }, notAfter: viewerNow + 90 * day };
+  const html = publicNamePanel(status(p), mockSettings(true), false, '', en, 'en');
+  expect(html.indexOf('<dl class="facts">')).toBeGreaterThan(html.indexOf('id="public-name-status"'));
+  expect(html).toContain('Requests a new certificate once the relay has internet access');
+  expect(publicNamePanel(status({ state: 'off' }), mockSettings(true), false, '', en, 'en', viewerNow)).not.toContain('<dl');
+  vi.restoreAllMocks();
+});
+it('provides a fine mock with three issuances and production-shaped gallery states for every warning', () => {
+  const values = { publicNameEnabled: true, publicNameProvider: 'duckdns', publicName: 'myrelay.duckdns.org', publicNameTokenSet: true, publicNameAgreeTerms: true };
+  const fine = mockPublicName(values, viewerNow).certificate!;
+  expect(fine.issued).toHaveLength(3);
+  expect(publicNameCertificate(fine, en, 'en', viewerNow)).toContain('class=""');
+  expect(publicNameCertificate(fine, en, 'en', viewerNow)).not.toContain('class="notice"');
+  for (const [state, tone] of [['fine', ''], ['due', 'notice'], ['expired', 'error']] as const) {
+    const preview = linuxFixtureStatus(`certificate-${state}`, viewerNow * 1000);
+    expect(preview.publicName?.certificate).toBeDefined();
+    const settings = linuxFixtureSettings(preview);
+    expect(settings.values.publicNameEnabled).toBe(true);
+    const html = publicNamePanel(preview, settings, false, '', en, 'en', viewerNow);
+    expect(html.match(new RegExp(`<dd class="${tone}">`, 'g'))).toHaveLength(2);
+  }
 });

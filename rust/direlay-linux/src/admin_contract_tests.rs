@@ -60,6 +60,56 @@ fn admin_contract_status(state: &str) {
     use crate::display::Size;
     let (admin, dir) = fake();
     let now = 1_793_000_000_000;
+    if state.starts_with("certificate-") {
+        use crate::public_name::{cert::tests::LEAF, jws::tests::PAD_KEY, privacy};
+        let backup = serde_json::json!({
+            "publicName": {"version":1,"provider":"duckdns","name":"myrelay.duckdns.org","token":"a1b2c3d4-0000-0000-0000-000000000000","agreeLetsEncryptTerms":true},
+            "publicNameCertificate": {"name":"myrelay.duckdns.org","chainPem":LEAF,"keyPem":PAD_KEY}
+        });
+        admin.public_name.import_privacy(privacy::decode(&backup, None, now / 1000).unwrap_or_else(|e| panic!("{e:?}"))).unwrap();
+        let store = crate::public_name::store::Store::new(&dir);
+        let mut meta = store.meta();
+        let current = meta.issuances[0].clone();
+        meta.issuances = (0..3).rev().map(|index| {
+            let gap = index * 60 * crate::public_name::schedule::DAY;
+            crate::public_name::store::Issuance { at: current.at - gap, not_before: current.not_before - gap, not_after: current.not_after - gap }
+        }).collect();
+        // Due: past the one-third renewal point with five days left; expired: past notAfter.
+        // Both describe the stored certificate independently of relay time.
+        let dated = match state {
+            "certificate-due" => Some(((2026, 8, 2), (2026, 10, 31), 3)),
+            "certificate-expired" => Some(((2026, 7, 23), (2026, 10, 21), 1)),
+            _ => None,
+        };
+        if let Some(((by, bm, bd), (ay, am, ad), count)) = dated {
+            let mut params = rcgen::CertificateParams::new(vec!["myrelay.duckdns.org".into()]).unwrap();
+            params.not_before = rcgen::date_time_ymd(by, bm, bd);
+            params.not_after = rcgen::date_time_ymd(ay, am, ad);
+            let key = rcgen::KeyPair::from_pem(PAD_KEY).unwrap();
+            let cert = params.self_signed(&key).unwrap();
+            let leaf = crate::public_name::cert::leaf(cert.pem().as_bytes()).unwrap();
+            store.save_certificate(cert.pem().as_bytes(), PAD_KEY).unwrap();
+            meta.not_before = Some(leaf.not_before); meta.not_after = Some(leaf.not_after);
+            meta.issued_at = Some(leaf.not_before);
+            meta.issuances = (0..count).rev().map(|index| {
+                let gap = index * 60 * crate::public_name::schedule::DAY;
+                crate::public_name::store::Issuance { at: leaf.not_before - gap, not_before: leaf.not_before - gap, not_after: leaf.not_after - gap }
+            }).collect();
+        }
+        store.save_meta(&meta).unwrap();
+        struct OfflineHost;
+        impl crate::public_name::Host for OfflineHost {
+            fn address(&self) -> Option<std::net::Ipv4Addr> { Some(std::net::Ipv4Addr::new(10, 42, 0, 1)) }
+            fn clock(&self) -> Option<u64> { None }
+        }
+        admin.public_name.start(Arc::new(OfflineHost)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while admin.public_name.status().state != "waiting-network" {
+            assert!(std::time::Instant::now() < deadline, "offline certificate status");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        admin.public_name.stop();
+    }
     let mut settings = admin.settings.lock().unwrap().clone();
     if state == "identity-invalid" {
         std::fs::create_dir_all(&admin.options.identity_dir).unwrap();
@@ -344,6 +394,9 @@ macro_rules! contract_states {
     ($($name:ident => $state:literal),* $(,)?) => { $(#[test] fn $name() { admin_contract_status($state); })* };
 }
 contract_states! {
+    admin_contract_certificate_fine => "certificate-fine",
+    admin_contract_certificate_due => "certificate-due",
+    admin_contract_certificate_expired => "certificate-expired",
     admin_contract_carlink_radio_missing => "carlink-radio-missing",
     admin_contract_usb_waiting => "usb-waiting", admin_contract_usb_trust => "usb-trust",
     admin_contract_usb_control => "usb-control", admin_contract_usb_video => "usb-video",

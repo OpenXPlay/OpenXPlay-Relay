@@ -94,6 +94,13 @@ pub struct ErrorRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Issuance {
+    pub at: u64,
+    pub not_before: u64,
+    pub not_after: u64,
+}
 /// What the relay remembers about its name and certificate. Times are wall-clock Unix seconds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -105,6 +112,8 @@ pub struct Meta {
     pub not_before: Option<u64>,
     pub not_after: Option<u64>,
     pub issued_at: Option<u64>,
+    /// Certificate issuances, newest last, retaining the newest twelve.
+    pub issuances: Vec<Issuance>,
     /// The ARI identifier of the certificate, and the renewal time chosen in its window.
     pub cert_id: Option<String>,
     pub ari_window: Option<(u64, u64)>,
@@ -120,6 +129,41 @@ pub struct Meta {
     pub last_error: Option<ErrorRecord>,
 }
 impl Meta {
+    /// Old metadata describes one issuance until the next certificate is stored.
+    pub fn issued(&self) -> Vec<Issuance> {
+        if !self.issuances.is_empty() {
+            return self.issuances.clone();
+        }
+        self.issued_at
+            .zip(self.not_before)
+            .zip(self.not_after)
+            .map(|((at, not_before), not_after)| Issuance {
+                at,
+                not_before,
+                not_after,
+            })
+            .into_iter()
+            .collect()
+    }
+    /// Records a stored certificate and returns whether it renews the same name and CA.
+    pub fn add_issuance(&mut self, name: &str, acme: &str, issuance: Issuance) -> bool {
+        self.issuances = if self.name.as_deref() == Some(name) && self.acme.as_deref() == Some(acme)
+        {
+            self.issued()
+        } else {
+            Vec::new()
+        };
+        let renewal = !self.issuances.is_empty();
+        self.name = Some(name.into());
+        self.acme = Some(acme.into());
+        self.issued_at = Some(issuance.at);
+        self.not_before = Some(issuance.not_before);
+        self.not_after = Some(issuance.not_after);
+        self.issuances.push(issuance);
+        self.issuances
+            .drain(..self.issuances.len().saturating_sub(12));
+        renewal
+    }
     pub fn order_times(&self, name: &str) -> Vec<u64> {
         self.orders
             .iter()
@@ -296,6 +340,60 @@ mod tests {
     use super::*;
     use crate::public_name::testing::TempDir;
     use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn old_metadata_loads_and_issuances_seed_cap_and_follow_the_name_and_ca() {
+        let state = TempDir::new("issuances");
+        let store = Store::new(&state.0);
+        store.write("meta.json", br#"{"name":"a.duckdns.org","acme":"production","issuedAt":12,"notBefore":10,"notAfter":100}"#).unwrap();
+        let mut meta = store.meta();
+        assert!(meta.issuances.is_empty());
+        let first = Issuance {
+            at: 12,
+            not_before: 10,
+            not_after: 100,
+        };
+        assert_eq!(meta.issued(), std::slice::from_ref(&first));
+        assert!(meta.add_issuance(
+            "a.duckdns.org",
+            "production",
+            Issuance {
+                at: 72,
+                not_before: 70,
+                not_after: 160
+            }
+        ));
+        assert_eq!(meta.issuances[0], first);
+        assert_eq!(meta.issuances[1].at, 72);
+        for at in 3..=14 {
+            assert!(meta.add_issuance(
+                "a.duckdns.org",
+                "production",
+                Issuance {
+                    at,
+                    not_before: at,
+                    not_after: at + 90
+                }
+            ));
+        }
+        assert_eq!(
+            meta.issuances.iter().map(|i| i.at).collect::<Vec<_>>(),
+            (3..=14).collect::<Vec<_>>()
+        );
+        store.save_meta(&meta).unwrap();
+        assert_eq!(store.meta(), meta);
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(
+            json["issuances"][0],
+            serde_json::json!({"at":3,"notBefore":3,"notAfter":93})
+        );
+        for (name, acme) in [
+            ("b.duckdns.org", "production"),
+            ("b.duckdns.org", "staging"),
+        ] {
+            assert!(!meta.add_issuance(name, acme, first.clone()));
+            assert_eq!(meta.issuances, std::slice::from_ref(&first));
+        }
+    }
     #[test]
     fn providers_seed_read_validate_and_write_the_android_format() {
         let state = TempDir::new("providers");

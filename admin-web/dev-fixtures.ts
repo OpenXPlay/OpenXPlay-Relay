@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-27
 
 import { readFileSync, readdirSync } from 'node:fs';
-import type { Phone, Status } from './src/api';
+import type { CertificateInfo, Phone, Status } from './src/api';
 import type { Option, Settings, Values } from './src/schema';
 import { normalizeInput, type PathInput } from './src/path/model';
 const fixtureRoot = new URL('./tests/fixtures/linux/', import.meta.url);
@@ -20,6 +20,13 @@ export function linuxFixtureStatus(state: string, now = Date.now()): Status {
   shift(status.pathInput);
   if (status.pairingDeadline != null) status.pairingDeadline += (now - old) / 1000;
   if (status.carlink?.pinDeadline != null) status.carlink.pinDeadline += (now - old) / 1000;
+  if (status.publicName?.certificate) {
+    const certificate = status.publicName.certificate;
+    const offset = (now - old) / 1000;
+    for (const key of ['notBefore', 'notAfter', 'renewAt'] as const) certificate[key] += offset;
+    for (const issued of certificate.issued) for (const key of ['at', 'notBefore', 'notAfter'] as const) issued[key] += offset;
+    if (status.publicName.notAfter != null) status.publicName.notAfter += offset;
+  }
   return status;
 }
 export function linuxFixtureSettings(status: Status): Settings {
@@ -27,7 +34,13 @@ export function linuxFixtureSettings(status: Status): Settings {
   const settings = structuredClone(input.setup.network === 'USB' ? linuxUsbSettings : input.setup.outputs.includes('CARLINK') ? linuxCarlinkSettings : linuxSettings);
   Object.assign(settings.values, { output: status.output, transport: input.setup.network === 'USB' ? 'usb' : 'wireless', networkMode: status.network.mode,
     autoStart: input.startup?.automatic, bootStart: input.startup?.bootStart, teslaBrowser: input.setup.outputs.includes('TESLA') ? 'public' : 'off' });
+  if (status.publicName?.certificate) Object.assign(settings.values, { publicNameEnabled: true, publicNameProvider: 'duckdns', publicName: status.publicName.name, publicNameTokenSet: true, publicNameAgreeTerms: true });
   return settings;
+}
+export function mockCertificate(now: number): CertificateInfo {
+  const day = 86400, notBefore = Math.floor(now) - 10 * day;
+  return { notBefore, notAfter: notBefore + 90 * day, renewAt: notBefore + 60 * day,
+    issued: [0, 1, 2].map(index => ({ at: notBefore - index * 60 * day, notBefore: notBefore - index * 60 * day, notAfter: notBefore - index * 60 * day + 90 * day })) };
 }
 // Use the same embedded catalog as Rust; model/year options depend on the saved selection.
 interface CarRow { id: string; names: NonNullable<Option['labels']> }

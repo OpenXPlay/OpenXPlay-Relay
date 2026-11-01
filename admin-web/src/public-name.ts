@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-20
 
-import type { PublicNameStatus, Status } from './api';
+import type { CertificateInfo, PublicNameStatus, Status } from './api';
 import { api, ApiError, type PublicNameImport } from './api';
 import type { PublicNameProviders, Settings, Values } from './schema';
 import { publicNameUrl } from './logic';
@@ -81,7 +81,7 @@ export function publicNameLine(status: Status, t: Translate, language: string): 
   if (!p) return '';
   if (p.state === 'ready') {
     const url = publicNameUrl(status);
-    return url ? t('publicName.status.ready', { address: url, date: p.notAfter ? time(p.notAfter, language, true) : '—' }) : t('publicName.state.ready');
+    return url ? t('publicName.status.ready', { address: url }) : t('publicName.state.ready');
   }
   if (p.state === 'error') {
     const problem = t(`publicName.error.${p.error ?? 'provider-unreachable'}`, { detail: p.errorDetail ?? '' });
@@ -93,12 +93,29 @@ export function publicNameLine(status: Status, t: Translate, language: string): 
 export function publicNameFileErrors(status: Status, t: Translate): string[] {
   return Object.entries(status.publicName?.fileErrors ?? {}).map(([key, code]) => t('publicName.fileError', { key, problem: t(`publicName.file.${code}`) }));
 }
+/** Certificate warnings use the viewer's clock, also when the relay has no trusted clock. */
+export function publicNameCertificate(certificate: CertificateInfo, t: Translate, language: string, now = Date.now() / 1000): string {
+  const day = 86400;
+  const expired = now >= certificate.notAfter;
+  const due = now >= certificate.renewAt + day || certificate.notAfter - now <= 7 * day;
+  const tone = expired ? 'error' : due ? 'notice' : '';
+  const days = Math.floor((certificate.notAfter - now) / day);
+  const validity = t(`publicName.cert.${expired ? 'expired' : days < 1 ? 'lessThanDay' : 'left'}`, { date: time(certificate.notAfter, language, true), days });
+  const renewal = t(`publicName.cert.${expired ? 'renewExpired' : due ? 'renewDue' : 'renewFrom'}`, { date: time(certificate.renewAt, language, true) });
+  const cycle = t('publicName.cert.cycleValue', { lifetime: Math.round((certificate.notAfter - certificate.notBefore) / day), interval: Math.round((certificate.renewAt - certificate.notBefore) / day) });
+  const issued = [...certificate.issued].sort((a, b) => b.at - a.at).slice(0, 5);
+  const history = issued.map((entry, index) => {
+    const dateTime = new Date(entry.at * 1000).toLocaleString(language, { dateStyle: 'medium', timeStyle: 'short' });
+    return esc(index === issued.length - 1 ? dateTime : t('publicName.cert.issuedGap', { time: dateTime, days: Math.floor((entry.at - issued[index + 1].at) / day) }));
+  }).join('<br>');
+  return `<dl class="facts"><dt>${esc(t('publicName.cert.validUntil'))}</dt><dd class="${tone}">${esc(validity)}</dd><dt>${esc(t('publicName.cert.renewal'))}</dt><dd class="${tone}">${esc(renewal)}</dd><dt>${esc(t('publicName.cert.cycle'))}</dt><dd>${esc(cycle)}</dd>${history ? `<dt>${esc(t('publicName.cert.issued'))}</dt><dd>${history}</dd>` : ''}</dl>`;
+}
 /** The status line, the agreement link and the buttons below the section's fields. */
-export function publicNamePanel(status: Status, settings: Settings, busy: boolean, message: PublicNameMessage, t: Translate, language: string): string {
+export function publicNamePanel(status: Status, settings: Settings, busy: boolean, message: PublicNameMessage, t: Translate, language: string, now = Date.now() / 1000): string {
   if (!hasPublicName(settings)) return '';
   const values = settings.values;
   const enabled = values.publicNameEnabled === true;
   const tone = status.publicName?.state === 'error' ? 'error' : status.publicName?.state === 'ready' ? 'state-active' : 'muted';
   const files = publicNameFileErrors(status, t);
-  return `<p class="muted"><a href="${TERMS_URL}" target="_blank" rel="noopener">${esc(TERMS_URL)}</a></p><p id="public-name-status" class="${tone}" role="status" aria-live="polite">${esc(publicNameLine(status, t, language))}</p>${files.map(line => `<p class="error">${esc(line)}</p>`).join('')}<div class="public-name-actions"><button id="public-name-import" type="button" ${busy ? 'disabled' : ''}>${t('publicName.import')}</button><input id="public-name-file" type="file" accept=".json" hidden>${enabled && status.publicName?.state === 'error' ? `<button id="public-name-renew" type="button" ${busy ? 'disabled' : ''}>${t('publicName.renew')}</button>` : ''}${publicNameConfigured(values, status.publicName) ? `<button id="public-name-remove" type="button" class="quiet" ${busy ? 'disabled' : ''}>${t('publicName.remove')}</button>` : ''}</div><div id="public-name-result" class="${typeof message === 'object' && 'ok' in message ? 'muted' : 'error'}" role="alert">${publicNameMessageLines(message, t).map(line => `<p>${esc(line)}</p>`).join('')}</div>`;
+  return `<p class="muted"><a href="${TERMS_URL}" target="_blank" rel="noopener">${esc(TERMS_URL)}</a></p><p id="public-name-status" class="${tone}" role="status" aria-live="polite">${esc(publicNameLine(status, t, language))}</p>${status.publicName?.certificate ? publicNameCertificate(status.publicName.certificate, t, language, now) : ''}${files.map(line => `<p class="error">${esc(line)}</p>`).join('')}<div class="public-name-actions"><button id="public-name-import" type="button" ${busy ? 'disabled' : ''}>${t('publicName.import')}</button><input id="public-name-file" type="file" accept=".json" hidden>${enabled && status.publicName?.state === 'error' ? `<button id="public-name-renew" type="button" ${busy ? 'disabled' : ''}>${t('publicName.renew')}</button>` : ''}${publicNameConfigured(values, status.publicName) ? `<button id="public-name-remove" type="button" class="quiet" ${busy ? 'disabled' : ''}>${t('publicName.remove')}</button>` : ''}</div><div id="public-name-result" class="${typeof message === 'object' && 'ok' in message ? 'muted' : 'error'}" role="alert">${publicNameMessageLines(message, t).map(line => `<p>${esc(line)}</p>`).join('')}</div>`;
 }
