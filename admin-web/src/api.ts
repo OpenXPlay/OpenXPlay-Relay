@@ -78,7 +78,7 @@ export interface TranscodeCapability { enabled: boolean; available: boolean; dec
 export interface ReceiverReport { client: string; idleSeconds: number; info: Record<string, unknown> | null; stats: Record<string, unknown>[] }
 // Trusted HTTPS with a free domain name (Linux); times are the relay's wall clock, for display.
 export type PublicNameState = 'off' | 'incomplete' | 'waiting-network' | 'updating-address' | 'requesting-certificate' | 'ready' | 'error';
-// trustedName: the name while its certificate is valid and the current address is published, also while the status line reports a problem.
+// trustedName: the name while its certificate is servable and the current address is published or answered by a relay hotspot's local DNS, also while the status line reports a problem.
 export interface PublicNameStatus { state: PublicNameState; name?: string; address?: string; notAfter?: number; error?: string; errorDetail?: string; nextAttempt?: number; fileErrors?: Record<string, string>; trustedName?: string }
 export interface Status {
   identity?: import('./identity').IdentityStatus;

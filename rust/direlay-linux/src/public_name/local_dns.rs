@@ -35,6 +35,7 @@ struct Names {
     hotspots: BTreeMap<String, Ipv4Addr>,
     public: Option<(String, Option<Ipv4Addr>)>,
     address_override: Option<Ipv4Addr>,
+    synced: bool,
 }
 static NAMES: LazyLock<Mutex<BTreeMap<PathBuf, Names>>> = LazyLock::new(Mutex::default);
 pub fn path(dir: &Path) -> PathBuf {
@@ -100,7 +101,8 @@ fn atomic_write(target: &Path, text: &str) -> io::Result<bool> {
     }
     result.map(|()| true)
 }
-fn sync(paths: &Paths, names: &Names) -> io::Result<()> {
+fn sync(paths: &Paths, names: &mut Names) -> io::Result<()> {
+    names.synced = false;
     let dir = &paths.dir;
     let hosts = &paths.hosts;
     // Install hosts first: a new dnsmasq must never see a missing addn-hosts file.
@@ -122,7 +124,24 @@ fn sync(paths: &Paths, names: &Names) -> io::Result<()> {
     if changed && paths.reload {
         reload_shared_dnsmasq();
     }
+    names.synced = true;
     Ok(())
+}
+/// Whether a relay hotspot's last successful DNS sync answers this name at this address.
+pub fn answers(paths: &Paths, name: &str, address: Ipv4Addr) -> bool {
+    let all = NAMES.lock().unwrap();
+    let Some(names) = all.get(&paths.dir) else {
+        return false;
+    };
+    names.synced
+        && names
+            .public
+            .as_ref()
+            .is_some_and(|(public, _)| public.eq_ignore_ascii_case(name))
+        && match names.address_override {
+            Some(overridden) => overridden == address && !names.hotspots.is_empty(),
+            None => names.hotspots.values().any(|ip| *ip == address),
+        }
 }
 /// Reload only NM's shared dnsmasq instances; addn-hosts is reread on SIGHUP.
 fn reload_shared_dnsmasq() {
@@ -166,8 +185,9 @@ pub fn hotspot(paths: &Paths, interface: &str, address: Option<Ipv4Addr>) -> io:
 }
 pub fn reset(paths: &Paths) -> io::Result<()> {
     let mut all = NAMES.lock().unwrap();
-    all.insert(paths.dir.clone(), Names::default());
-    sync(paths, &all[&paths.dir])
+    let names = all.entry(paths.dir.clone()).or_default();
+    *names = Names::default();
+    sync(paths, names)
 }
 pub fn write(paths: &Paths, name: &str, address: Ipv4Addr) -> io::Result<()> {
     public_name(paths, name, Some(address))
@@ -200,6 +220,71 @@ pub fn remove(paths: &Paths) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::public_name::testing::TempDir;
+    #[test]
+    fn answers_require_the_name_and_a_registered_hotspot_address() {
+        let root = TempDir::new("local-answers");
+        let dns = Paths::in_dir(root.0.join("dns"));
+        let car = Ipv4Addr::new(10, 77, 0, 1);
+        let admin = Ipv4Addr::new(10, 79, 0, 1);
+        let wifi = Ipv4Addr::new(192, 168, 1, 2);
+        let name = "relay.example.org";
+        assert!(!answers(&dns, name, car));
+        write(&dns, name, wifi).unwrap();
+        assert!(!answers(&dns, name, wifi), "a hosts row alone is not local");
+        hotspot(&dns, "admin", Some(admin)).unwrap();
+        assert!(!answers(&dns, name, wifi), "admin AP is not shared Wi-Fi");
+        hotspot(&dns, "car", Some(car)).unwrap();
+        assert!(answers(&dns, "RELAY.EXAMPLE.ORG", car));
+        assert!(answers(&dns, name, admin));
+        assert!(!answers(&dns, "other.example.org", car));
+        assert!(!answers(&dns, name, wifi));
+        hotspot(&dns, "car", None).unwrap();
+        assert!(!answers(&dns, name, car));
+        remove(&dns).unwrap();
+        assert!(!answers(&dns, name, admin));
+        write(&dns, name, admin).unwrap();
+        assert!(answers(&dns, name, admin));
+        reset(&dns).unwrap();
+        assert!(!answers(&dns, name, admin));
+    }
+    #[test]
+    fn override_answers_require_at_least_one_hotspot() {
+        let root = TempDir::new("override-answers");
+        let dns = Paths::in_dir(root.0.join("dns"));
+        let car = Ipv4Addr::new(10, 77, 0, 1);
+        let tesla = Ipv4Addr::new(169, 254, 88, 1);
+        let name = "tesla.example.org";
+        public_name_override(&dns, name, Some(car), Some(tesla)).unwrap();
+        assert!(!answers(&dns, name, tesla));
+        hotspot(&dns, "car", Some(car)).unwrap();
+        assert!(answers(&dns, "TESLA.EXAMPLE.ORG", tesla));
+        assert!(!answers(&dns, name, car));
+        assert!(!answers(&dns, name, Ipv4Addr::new(100, 88, 0, 1)));
+        assert!(!answers(&dns, "other.example.org", tesla));
+        hotspot(&dns, "car", None).unwrap();
+        assert!(!answers(&dns, name, tesla));
+        hotspot(&dns, "car", Some(car)).unwrap();
+        remove(&dns).unwrap();
+        assert!(!answers(&dns, name, tesla));
+    }
+    #[test]
+    fn a_failed_sync_revokes_answers_until_a_successful_sync() {
+        let root = TempDir::new("failed-answers");
+        let dns = Paths::in_dir(root.0.join("dns"));
+        let address = Ipv4Addr::new(10, 77, 0, 1);
+        let name = "relay.example.org";
+        hotspot(&dns, "car", Some(address)).unwrap();
+        write(&dns, name, address).unwrap();
+        assert!(answers(&dns, name, address));
+        // A directory in place of the config fails even when the test runs as root.
+        std::fs::remove_file(path(&dns.dir)).unwrap();
+        std::fs::create_dir(path(&dns.dir)).unwrap();
+        assert!(write(&dns, name, address).is_err());
+        assert!(!answers(&dns, name, address));
+        std::fs::remove_dir(path(&dns.dir)).unwrap();
+        write(&dns, name, address).unwrap();
+        assert!(answers(&dns, name, address));
+    }
     #[test]
     fn tesla_override_answers_only_with_the_established_address_on_every_hotspot() {
         let root = TempDir::new("tesla-dns");

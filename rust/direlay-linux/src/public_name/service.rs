@@ -158,9 +158,9 @@ pub struct PublicNameStatus {
     /// Problems in `public-name.json` by file key (`missing` keys left out).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub file_errors: BTreeMap<String, String>,
-    /// The name, while its certificate is valid and the published address is the current one:
-    /// the head-unit address to show first, also while the status line reports a problem (a
-    /// failing renewal does not hide a name that still works).
+    /// The name, while its certificate is servable and the current address is published or
+    /// answered by a relay hotspot's local DNS: the head-unit address to show first, also while
+    /// the status line reports a problem (a failing renewal does not hide a name that works).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trusted_name: Option<String>,
 }
@@ -262,7 +262,7 @@ impl PublicNameService {
         }
     }
     pub fn status(&self) -> PublicNameStatus {
-        self.inner.shared.lock().unwrap().status.clone()
+        self.inner.status()
     }
     /// The ACME certificate to serve, if any; `None` means the relay's own certificates.
     pub fn served(&self) -> Option<Served> {
@@ -901,6 +901,31 @@ impl Inner {
             }
         }
     }
+    /// Local answers can change during offline backoff without waking the worker. Add their
+    /// trust only to the read snapshot; `base_status` keeps the provider rule below.
+    fn status(&self) -> PublicNameStatus {
+        let shared = self.shared.lock().unwrap();
+        let mut status = shared.status.clone();
+        if status.trusted_name.is_some() {
+            return status;
+        }
+        if let (Some(config), Some(served), Some(paths), Some(address)) = (
+            shared.config.as_ref(),
+            shared.served.as_ref(),
+            self.network.local_dns.as_ref(),
+            status.address.as_ref().and_then(|a| a.parse().ok()),
+        ) {
+            if config.enabled
+                && config.complete()
+                && config.name.as_deref() == Some(served.name.as_str())
+                && local_dns::answers(paths, &served.name, address)
+            {
+                status.trusted_name = Some(served.name.clone());
+                status.not_after = Some(served.not_after);
+            }
+        }
+        status
+    }
     fn base_status(
         &self,
         config: &Config,
@@ -1477,6 +1502,108 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    fn stored_certificate_offline() -> World {
+        let world = World::new(FakeAcmeOptions::default());
+        world.configure();
+        let service = world.service();
+        wait_for("stored certificate", || service.status().state == "ready");
+        service.stop();
+        world.host.online.store(false, Ordering::SeqCst);
+        *world.host.clock.lock().unwrap() = None;
+        world
+    }
+
+    #[test]
+    fn an_offline_hotspot_trusts_the_stored_certificate_without_publishing() {
+        let world = stored_certificate_offline();
+        let dns = world.network().local_dns.unwrap();
+        local_dns::hotspot(&dns, "car", world.host.address()).unwrap();
+        let published = world.published();
+        let service = world.service();
+        wait_for("offline address", || service.status().address.is_some());
+        let status = service.status();
+        assert_eq!(status.state, "waiting-network");
+        assert_eq!(status.trusted_name.as_deref(), Some(NAME));
+        assert_eq!(status.not_after, Some(service.served().unwrap().not_after));
+        assert_eq!(world.published(), published);
+        assert_eq!(world.new_orders(), 1);
+        service.stop();
+    }
+    #[test]
+    fn offline_shared_wifi_still_requires_publishing_even_with_an_admin_hotspot() {
+        let world = stored_certificate_offline();
+        *world.host.address.lock().unwrap() = Some(Ipv4Addr::new(192, 168, 1, 2));
+        let service = PublicNameService::new(&world.state.0, world.network());
+        service.head_unit_address(world.host.address());
+        service.start(world.host.clone()).unwrap();
+        wait_for("offline address", || service.status().address.is_some());
+        assert_eq!(service.status().address.as_deref(), Some("192.168.1.2"));
+        assert!(service.served().is_some());
+        assert!(service.status().trusted_name.is_none());
+        let dns = world.network().local_dns.unwrap();
+        local_dns::hotspot(&dns, "admin", Some(Ipv4Addr::new(10, 79, 0, 1))).unwrap();
+        assert!(service.status().trusted_name.is_none());
+        assert_eq!(service.status().state, "waiting-network");
+        service.stop();
+    }
+    #[test]
+    fn an_offline_tesla_override_is_trusted_on_a_registered_hotspot() {
+        let world = stored_certificate_offline();
+        let dns = world.network().local_dns.unwrap();
+        local_dns::hotspot(&dns, "admin", Some(Ipv4Addr::new(10, 79, 0, 1))).unwrap();
+        let service = PublicNameService::new(&world.state.0, world.network());
+        service.published_address_override(Some(Ipv4Addr::new(169, 254, 88, 1)));
+        service.start(world.host.clone()).unwrap();
+        wait_for("offline Tesla address", || {
+            service.status().address.is_some()
+        });
+        let status = service.status();
+        assert_eq!(status.address.as_deref(), Some("169.254.88.1"));
+        assert_eq!(status.state, "waiting-network");
+        assert_eq!(status.trusted_name.as_deref(), Some(NAME));
+        local_dns::hotspot(&dns, "admin", None).unwrap();
+        assert!(service.status().trusted_name.is_none());
+        service.stop();
+    }
+    #[test]
+    fn a_first_run_offline_hotspot_has_no_trusted_name_without_a_certificate() {
+        let world = World::new(FakeAcmeOptions::default());
+        world.configure();
+        world.host.online.store(false, Ordering::SeqCst);
+        *world.host.clock.lock().unwrap() = None;
+        let dns = world.network().local_dns.unwrap();
+        local_dns::hotspot(&dns, "car", world.host.address()).unwrap();
+        let service = world.service();
+        wait_for("offline address", || service.status().address.is_some());
+        let status = service.status();
+        assert_eq!(status.state, "waiting-network");
+        assert!(status.trusted_name.is_none());
+        assert!(service.served().is_none());
+        assert!(world.published().is_empty());
+        assert_eq!(world.new_orders(), 0);
+        service.stop();
+    }
+    #[test]
+    fn local_trust_follows_hotspot_changes_while_the_worker_is_waiting() {
+        let world = stored_certificate_offline();
+        let service = world.service();
+        wait_for("offline address", || service.status().address.is_some());
+        assert!(service.status().trusted_name.is_none());
+        // Freeze the waiting worker so a new attempt cannot refresh the cached status.
+        service.stop();
+        let waiting = service.inner.shared.lock().unwrap().status.clone();
+        let dns = world.network().local_dns.unwrap();
+        local_dns::hotspot(&dns, "car", world.host.address()).unwrap();
+        let status = service.status();
+        assert_eq!(status.state, "waiting-network");
+        assert_eq!(status.trusted_name.as_deref(), Some(NAME));
+        assert_eq!(status.not_after, Some(service.served().unwrap().not_after));
+        assert_eq!(service.inner.shared.lock().unwrap().status, waiting);
+        local_dns::hotspot(&dns, "car", None).unwrap();
+        assert!(service.status().trusted_name.is_none());
+        assert_eq!(service.inner.shared.lock().unwrap().status, waiting);
     }
 
     #[test]
