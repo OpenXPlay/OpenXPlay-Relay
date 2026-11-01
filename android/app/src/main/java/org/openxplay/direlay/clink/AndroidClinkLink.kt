@@ -110,6 +110,13 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     }
     @Volatile private var current: Run? = null
     @Volatile private var failurePassphrase = ""
+    /**
+     * MIUI scan-cache priming is throttled by wall time, not by session: the 2-minute foreground
+     * scan budget (4 requests) is shared with the system dialog, and the relay retries with a fresh
+     * connect() each attempt, so a per-session flag would prime again on every retry and starve the
+     * dialog. One priming per throttle window keeps the remaining requests for the dialog.
+     */
+    @Volatile private var lastPrimeAt = 0L
     internal fun redactFailureMessage(text: String): String = failurePassphrase.let {
         if (it.isEmpty()) text else text.replace(it, "[redacted]")
     }
@@ -653,6 +660,12 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     @Suppress("DEPRECATION")
     private fun primeScanCache(run: Run, ssid: String) {
         if (!Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true) || Build.VERSION.SDK_INT > 30) return
+        // One priming per throttle window: the relay retries with a fresh connect() each attempt, so
+        // priming on every attempt would spend the whole shared scan budget and leave the system
+        // dialog with nothing to list.
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPrimeAt < 120_000) return
+        lastPrimeAt = now
         val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return
         if (!wifi.isWifiEnabled) return
         val deadline = System.currentTimeMillis() + 2_500
@@ -660,7 +673,10 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             // A null list means the location permission is missing; waiting would only add delay.
             val results = wifi.scanResults ?: return
             if (results.any { it.SSID == ssid }) return
-            wifi.startScan()
+            // A refused startScan means the scan throttle is exhausted: retrying cannot succeed and
+            // only burns the budget of the next attempt. Stop here and let the framework dialog (or
+            // the next attempt) take over.
+            if (!wifi.startScan()) return
             if (System.currentTimeMillis() >= deadline) return
             try { Thread.sleep(350) } catch (_: InterruptedException) { return }
         }
