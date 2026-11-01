@@ -145,11 +145,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                             RadioOptionRow(option, selected == choice, extra = when {
                                 choice == OutputChoice.CARLINK -> ({ NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI) })
                                 choice == OutputChoice.WIRELESS && selected == choice -> ({
-                                    Options(listOf("DLNA", "Miracast"), kind.ordinal, outputOpen(choice)) { selectOutput(choice, WirelessDisplayKind.entries[it]) }
+                                    Options(listOf("DLNA", "Miracast"), kind.ordinal) { selectOutput(choice, WirelessDisplayKind.entries[it]) }
                                 })
                                 else -> null
-                            }, enabled = outputOpen(choice),
-                                badge = setupOutputTag(choice).takeUnless { outputOpen(choice) }) { selectOutput(choice, kind) }
+                            }, badge = setupOutputTag(choice)?.takeIf { it.warning }) { selectOutput(choice, kind) }
                         }
                     }
                     if (selected == null) InsetRow(R.drawable.symbol_link, IconHue.DEVELOPER,
