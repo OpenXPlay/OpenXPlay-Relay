@@ -7,6 +7,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
+import org.openxplay.direlay.ui.design.StageTapGuard
 import org.openxplay.direlay.ui.design.stageTapSettled
 
 class StagePresentationTest {
@@ -63,6 +64,36 @@ class StagePresentationTest {
         assertFalse(stageTapSettled(1_000, 1_000))
         assertFalse(stageTapSettled(1_000, 1_499))
         assertTrue(stageTapSettled(1_000, 1_500))
+    }
+
+    @Test fun freshlyComposedActionSlotsAreImmediatelySettled() {
+        listOf(null, StageAction.Connect, StageAction.Stop, StageAction.NotNow,
+            StageAction.Step(StepAction.OPEN_HOTSPOT, StepId.HOTSPOT, null)).forEach { action ->
+            val guard = StageTapGuard(action)
+            guard.update(action, 0)
+            assertTrue(guard.settled(0))
+            guard.update(action, 100)
+            assertTrue(guard.settled(100))
+        }
+    }
+
+    @Test fun changedActionSlotsSettleAfter500MillisWithoutResettingOnTheSameAction() {
+        val step = StageAction.Step(StepAction.OPEN_HOTSPOT, StepId.HOTSPOT, null)
+        listOf(StageAction.Connect to StageAction.Stop, StageAction.Stop to StageAction.Connect,
+            step to step.copy(action = StepAction.RETRY), null to StageAction.Connect,
+            StageAction.Connect to null).forEach { (before, after) ->
+            val guard = StageTapGuard(before)
+            guard.update(after, 1_000)
+            assertFalse(guard.settled(1_000))
+            guard.update(after, 1_499)
+            assertFalse(guard.settled(1_499))
+            assertTrue(guard.settled(1_500))
+            guard.update(after, 1_501)
+            assertTrue(guard.settled(1_501))
+            guard.update(before, 1_502)
+            assertFalse(guard.settled(1_502))
+            assertTrue(guard.settled(2_002))
+        }
     }
 
     @Test fun carScreenWaitCarriesItsDeadlineWithoutFormattingAClockInThePresenter() {
