@@ -4,6 +4,8 @@
 // Source: admin-web/dev-server.ts.
 #[path = "file_routes.rs"]
 mod file_routes;
+#[path = "http_redirect.rs"]
+mod http_redirect;
 #[path = "carlink_trace.rs"]
 pub(crate) mod trace_files;
 
@@ -117,6 +119,7 @@ impl Response {
     fn write(&self, out: &mut impl Write) -> io::Result<()> {
         let reason = match self.status {
             200 => "OK",
+            308 => "Permanent Redirect",
             400 => "Bad Request",
             401 => "Unauthorized",
             403 => "Forbidden",
@@ -717,7 +720,7 @@ impl AdminServer {
                     .name("admin-http".into())
                     .stack_size(256 * 1024)
                     .spawn(move || loop {
-                        let socket = match rx.lock().unwrap().recv() {
+                        let mut socket = match rx.lock().unwrap().recv() {
                             Ok(s) => s,
                             Err(_) => break,
                         };
@@ -728,6 +731,15 @@ impl AdminServer {
                         let Ok(peer) = socket.peer_addr() else {
                             continue;
                         };
+                        let mut first = [0];
+                        match socket.peek(&mut first) {
+                            Ok(1) if first[0] == 0x16 => {}
+                            Ok(1) => {
+                                http_redirect::serve(&mut socket, Duration::from_secs(5));
+                                continue;
+                            }
+                            _ => continue,
+                        }
                         let Ok(connection) =
                             rustls::ServerConnection::new(tls.read().unwrap().clone())
                         else {

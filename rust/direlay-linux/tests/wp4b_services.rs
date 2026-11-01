@@ -975,11 +975,22 @@ fn supervisor_forwards_only_bounded_json_objects() {
 }
 #[test]
 #[ignore = "requires a host that permits loopback listen sockets"]
-fn tls_server_serves_http_and_stops() {
+fn admin_port_redirects_plain_http_and_serves_tls() {
     use std::io::{Read, Write};
     let dir = Temp::new();
     let server = Arc::new(server(&dir.0));
     let mut handle = server.start().unwrap();
+    let mut plain = std::net::TcpStream::connect(handle.address).unwrap();
+    plain
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    plain
+        .write_all(b"GET /settings?q=radio HTTP/1.1\r\nHost: openxplay-car.local:6975\r\n\r\n")
+        .unwrap();
+    let mut redirect = String::new();
+    plain.read_to_string(&mut redirect).unwrap();
+    assert!(redirect.starts_with("HTTP/1.1 308 Permanent Redirect\r\n"));
+    assert!(redirect.contains("Location: https://openxplay-car.local:6975/settings?q=radio\r\n"));
     let saved: Value =
         serde_json::from_slice(&fs::read(dir.0.join("state/admin-tls.json")).unwrap()).unwrap();
     let bytes: Vec<u8> = saved["cert"]
