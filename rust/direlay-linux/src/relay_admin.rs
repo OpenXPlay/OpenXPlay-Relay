@@ -359,14 +359,17 @@ impl LinuxRelayAdmin {
                 .set_enabled(settings.carlink_reconnect_on_resize);
         }
         // The AP stays down for a gap before the next one comes up, also across relay restarts.
-        let hotspot_lifetime = Arc::new(crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
-            Duration::from_secs(options.hotspot_down_gap_seconds()),
-            Some(
-                options
-                    .state_dir
-                    .join(crate::hotspot_lifetime::AP_DOWN_RECORD),
-            ),
-        ));
+        let hotspot_lifetime = Arc::new(
+            crate::hotspot_lifetime::HotspotLifetime::with_down_gap(
+                Duration::from_secs(options.hotspot_down_gap_seconds()),
+                Some(
+                    options
+                        .state_dir
+                        .join(crate::hotspot_lifetime::AP_DOWN_RECORD),
+                ),
+            )
+            .for_service(),
+        );
         if let Some(error) = &options.host_profile.error {
             events.log(&format!("host-profile ignored: {error}"));
         } else if !options.host_profile.unknown.is_empty() {
@@ -1127,7 +1130,7 @@ impl LinuxRelayAdmin {
         Ok(options)
     }
     fn stop_controller(&self) {
-        self.stop_controller_for_restart(false);
+        self.stop_controller_for_restart(true);
     }
     fn stop_controller_for_restart(&self, keep_hotspot: bool) {
         self.input.expect_stop();
@@ -1233,6 +1236,7 @@ impl LinuxRelayAdmin {
                     && self.network_override.lock().unwrap().is_none()
                 {
                     self.stop_controller();
+                    self.hotspot_lifetime.close()?;
                 }
                 self.apply_pending.store(false, Ordering::Release);
                 if let Some(after) = after {
@@ -1294,8 +1298,7 @@ impl LinuxRelayAdmin {
                 self.resume_start()?;
                 self.input.accept_picture_default();
                 self.start_policy.lock().unwrap().cancel();
-                // An explicit restart starts over like Start, closing the AP too; only receiver
-                // renegotiation keeps it (see tick).
+                // Output and controller restarts keep the in-car admin network available.
                 self.stop_controller();
                 self.operation(Operation::Initialize)?;
                 self.stop_supervisor();
@@ -1417,6 +1420,12 @@ impl LinuxRelayAdmin {
                 reconnect: true,
             });
         if changes.iter().any(|c| c == "carlink") {
+            let settings = self.settings.lock().unwrap().clone();
+            if settings.output == "both"
+                && !self.network_status(&settings).plan.carlink.radio_available
+            {
+                self.start_policy.lock().unwrap().browser_only();
+            }
             self.operation(Operation::Outputs(network.map(Box::new)))?;
         } else if let Some(network) = network {
             self.operation(network)?;
@@ -1472,9 +1481,51 @@ impl LinuxRelayAdmin {
         wait.finish("ready");
         Ok(())
     }
+    fn ensure_device_hotspot(&self) -> Result<()> {
+        let options = self.effective_options()?;
+        if !self.runtime.network_services
+            || options.settings.network_mode != "device-hotspot"
+            || self.controller.lock().unwrap().is_some()
+            || self.hotspot_lifetime.ready_info().is_some()
+            || !self.wifi_present(&options.wifi_interface)
+        {
+            return Ok(());
+        }
+        if let Some(result) = self
+            .hotspot_lifetime
+            .remove_stale_once(|| self.backends.access_point.prepare())
+        {
+            result?;
+        }
+        if !self.hotspot_lifetime.down_remaining().is_zero() {
+            return Ok(());
+        }
+        let wifi = self.capabilities.wifi(&options.wifi_interface);
+        let hotspot = crate::device_preset::resolve_hotspot(
+            &options.settings.hotspot_band,
+            options.wifi_channel,
+            &options.device_preset(self.capabilities.root()).id,
+            wifi.capabilities.as_ref(),
+        );
+        let lease = self.hotspot_lifetime.create(|| {
+            self.backends
+                .access_point
+                .access_point(crate::host_backends::AccessPointConfig {
+                    state_dir: options.state_dir.clone(),
+                    interface: options.wifi_interface.clone(),
+                    hotspot,
+                    capabilities: Some(self.capabilities.clone()),
+                    provisioning: None,
+                    before_activation: None,
+                })
+        })?;
+        lease.start(Duration::from_secs(30))?;
+        lease.close()
+    }
     fn change_network(&self, mode_changed: bool, reconnect: bool) -> Result<()> {
         if mode_changed || reconnect {
             self.stop_controller();
+            self.hotspot_lifetime.close()?;
         }
         let options = self.effective_options()?;
         if !self.prepare_wifi()? {
@@ -2037,6 +2088,7 @@ impl LinuxRelayAdmin {
             }
         }
         if !self.busy.load(Ordering::Acquire) && self.pending.lock().unwrap().is_empty() {
+            self.ensure_device_hotspot()?;
             self.reconcile_admin_hotspot();
         }
         if self.start_policy.lock().unwrap().take_failure() {
@@ -2321,7 +2373,13 @@ impl LinuxRelayAdmin {
         self.input.configure_connection_experiments();
         let (carlink_budget, screen_budget) = {
             let mut policy = self.start_policy.lock().unwrap();
-            let carlink = options.settings.output != "web";
+            let carlink = options.settings.output == "carlink"
+                || (options.settings.output == "both"
+                    && self
+                        .network_status(&options.settings)
+                        .plan
+                        .carlink
+                        .radio_available);
             let screen = !self.input.screen_known();
             let requested = !policy.requested();
             if requested {
@@ -2388,7 +2446,7 @@ impl LinuxRelayAdmin {
         // On one radio, Carlink must own that radio before the controller prepares a network.
         match start_gate() {
             Err(_) => return Ok(()), // The failed request is published; the daemon keeps serving.
-            Ok(false) if options.shared_carlink_radio() => return Ok(()),
+
             _ => {}
         }
         if self
@@ -2501,6 +2559,7 @@ impl LinuxRelayAdmin {
             let _ = worker.join();
         }
         self.stop_controller();
+        let _ = self.hotspot_lifetime.close();
         let _ = self.admin_hotspot.close();
         // After the controller's `--pair` window has closed too.
         self.secure_connections.close("relay-stop");
@@ -5969,6 +6028,24 @@ mod tests {
         paths.local_dns.hosts = dir.join("run/hotspot-hosts");
         paths
     }
+    struct TestAccessPoints;
+    impl crate::host_backends::AccessPointFactory for TestAccessPoints {
+        fn prepare(&self) -> Result<bool> {
+            Ok(false)
+        }
+        fn access_point(
+            &self,
+            _: crate::host_backends::AccessPointConfig,
+        ) -> Arc<dyn WirelessHotspotManager> {
+            Arc::new(crate::hotspot_lifetime::tests::Fake::default())
+        }
+        fn stations(&self, _: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+        fn radio(&self, _: &str) -> Result<crate::linux_hotspot::Radio> {
+            Err(std::io::ErrorKind::Unsupported.into())
+        }
+    }
     fn fake() -> (Arc<LinuxRelayAdmin>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "wp4a-admin-{}",
@@ -5997,6 +6074,7 @@ mod tests {
             runtime_paths(&dir),
         )
         .unwrap();
+        admin.backends.access_point = Arc::new(TestAccessPoints);
         admin.tesla = Mutex::new(
             crate::tesla_address::Session::new(Arc::new(
                 crate::tesla_address::tests::FakeBackend::default(),
@@ -6492,47 +6570,30 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn carlink_timeout_keeps_tick_alive_and_rearms_when_playing_unless_stopped() {
-        for interface in ["wlan0", "wlan1"] {
-            let (a, dir) = fake();
-            {
-                let mut settings = a.settings.lock().unwrap();
-                settings.output = "carlink".into();
-                settings.carlink_interface = interface.into();
-                settings.auto_start = true;
-            }
-            a.start_policy.lock().unwrap().request(
-                std::time::Instant::now() - Duration::from_secs(61),
-                true,
-                true,
-            );
-            a.tick().unwrap();
-            assert!(a.controller.lock().unwrap().is_none());
-            let path = a.status().path_input;
-            assert_eq!(path["iphone"]["failure"]["code"], "carlink_not_ready");
-            assert_eq!(path["iphone"]["failure"]["retrying"], false);
-            assert_eq!(path["iphone"]["armed"], true);
-            a.tick().unwrap();
-            assert!(
-                a.controller.lock().unwrap().is_none(),
-                "a timer must not retry the failed start"
-            );
-            a.carlink.lock().unwrap().state = "playing".into();
-            a.observe_automatic_start().unwrap();
-            assert!(a.events.runtime_path_facts().iphone.failure.is_none());
-            assert!(!a.start_policy.lock().unwrap().requested());
-            assert!(a.desired.load(Ordering::Acquire));
-            // Stop persists, including when the same readiness edge arrives again.
-            a.operation(Operation::Stop).unwrap();
-            a.carlink.lock().unwrap().state = "scanning".into();
-            a.observe_automatic_start().unwrap();
-            a.carlink.lock().unwrap().state = "playing".into();
-            a.observe_automatic_start().unwrap();
-            assert!(!a.desired.load(Ordering::Acquire));
-            assert!(!a.runtime_path_facts().iphone.armed);
-            a.shutdown();
-            std::fs::remove_dir_all(dir).unwrap();
-        }
+    fn late_carlink_keeps_waiting_and_stop_wins_over_readiness() {
+        let (a, dir) = fake();
+        a.settings.lock().unwrap().output = "carlink".into();
+        a.start_policy.lock().unwrap().request(
+            std::time::Instant::now() - Duration::from_secs(61),
+            true,
+            true,
+        );
+        a.ensure_controller().unwrap();
+        assert!(a.start_policy.lock().unwrap().waiting());
+        assert!(a.events.runtime_path_facts().iphone.failure.is_none());
+        a.carlink.lock().unwrap().state = "playing".into();
+        assert!(a
+            .start_policy
+            .lock()
+            .unwrap()
+            .ready(std::time::Instant::now(), true, true, true)
+            .unwrap());
+        a.operation(Operation::Stop).unwrap();
+        a.observe_automatic_start().unwrap();
+        assert!(!a.desired.load(Ordering::Acquire));
+        assert!(a.controller.lock().unwrap().is_none());
+        a.shutdown();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn lifecycle_contention_never_starves_tesla_or_public_name_refresh() {
@@ -6746,7 +6807,7 @@ mod tests {
             Some(("wlan0".into(), "10.42.0.1".parse().unwrap()))
         );
         a.operation(Operation::Stop).unwrap();
-        assert!(a.hotspot_lifetime.ready_info().is_none());
+        assert!(a.hotspot_lifetime.ready_info().is_some());
         assert!(a.tesla.lock().unwrap().active.is_none());
         a.shutdown();
         std::fs::remove_dir_all(dir).unwrap();
@@ -6756,6 +6817,8 @@ mod tests {
         let (a, dir) = fake();
         a.settings.lock().unwrap().output = "both".into();
         a.settings.lock().unwrap().carlink_interface = "wlan1".into();
+        add_second_radio(&a);
+        a.inventory.set(role_inventory());
         a.start_policy.lock().unwrap().cancel();
         a.ensure_controller().unwrap();
         assert!(a.controller.lock().unwrap().is_some());
@@ -8629,6 +8692,8 @@ esac
         let (mut a, dir) = fake();
         let outputs = Arc::new(OutputFake::default());
         Arc::get_mut(&mut a).unwrap().child_factory = outputs.clone();
+        add_second_radio(&a);
+        a.inventory.set(role_inventory());
         a.start_supervisor().unwrap();
         let wait_for_launches = |count| {
             let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -8759,51 +8824,40 @@ esac
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn timeout_rearms_only_after_current_generation_playing_and_stop_wins() {
+    fn carlink_wait_releases_only_for_current_generation_playing_and_stop_wins() {
         let (admin, dir) = fake();
         admin.settings.lock().unwrap().output = "carlink".into();
-        admin.settings.lock().unwrap().auto_start = true;
         let event = |value| admin.carlink.lock().unwrap().apply_event(&value, 0);
         event(serde_json::json!({"type":"state","generation":1,"state":"Playing"}));
         event(serde_json::json!({"type":"carlink-starting"}));
         event(serde_json::json!({"type":"clink-restart","generation":2}));
-        event(
-            serde_json::json!({"type":"clink-view-size","generation":2,"width":1920,"height":1080}),
-        );
         admin.start_policy.lock().unwrap().request(
             std::time::Instant::now() - Duration::from_secs(61),
             true,
             true,
         );
-        admin.tick().unwrap();
-        assert_eq!(
+        let ready = || {
             admin
-                .events
-                .runtime_path_facts()
-                .iphone
-                .failure
+                .start_policy
+                .lock()
                 .unwrap()
-                .code,
-            "carlink_not_ready"
-        );
+                .ready(
+                    std::time::Instant::now(),
+                    true,
+                    admin.carlink.lock().unwrap().ready_for_carplay(),
+                    true,
+                )
+                .unwrap()
+        };
+        assert!(!ready());
         event(serde_json::json!({"type":"state","generation":1,"state":"Playing"}));
-        admin.observe_automatic_start().unwrap();
-        assert!(admin.events.runtime_path_facts().iphone.failure.is_some());
+        assert!(!ready());
         event(serde_json::json!({"type":"carlink-starting"}));
         event(serde_json::json!({"type":"state","generation":3,"state":"Playing"}));
-        admin.observe_automatic_start().unwrap();
-        assert!(
-            admin.events.runtime_path_facts().iphone.failure.is_some(),
-            "pending replacement must not rearm"
-        );
+        assert!(!ready());
         event(serde_json::json!({"type":"clink-restart","generation":3}));
-        admin.observe_automatic_start().unwrap();
-        assert!(admin.events.runtime_path_facts().iphone.failure.is_none());
-        assert!(admin.desired.load(Ordering::Acquire));
+        assert!(ready());
         admin.operation(Operation::Stop).unwrap();
-        event(serde_json::json!({"type":"carlink-starting"}));
-        event(serde_json::json!({"type":"clink-restart","generation":4}));
-        event(serde_json::json!({"type":"state","generation":4,"state":"Playing"}));
         admin.observe_automatic_start().unwrap();
         assert!(!admin.desired.load(Ordering::Acquire));
         assert!(!admin.runtime_path_facts().iphone.armed);
@@ -9778,6 +9832,22 @@ esac
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn in_car_admin_hotspot_survives_terminal_failure_and_user_stop() {
+        let (a, dir) = fake();
+        let ap = Arc::new(crate::hotspot_lifetime::tests::Fake::default());
+        let lease = a.hotspot_lifetime.create(|| ap).unwrap();
+        lease.start(Duration::from_secs(1)).unwrap();
+        lease.close().unwrap();
+        assert!(a.hotspot_lifetime.ready_info().is_some());
+        a.fail_start(&std::io::Error::other("Invalid identity"));
+        assert!(a.hotspot_lifetime.ready_info().is_some());
+        a.operation(Operation::Stop).unwrap();
+        assert!(a.hotspot_lifetime.ready_info().is_some());
+        a.shutdown();
+        assert!(a.hotspot_lifetime.ready_info().is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn saved_outputs_follow_radio_hotplug_without_rewriting_settings() {
         for output in ["carlink", "both"] {
             let (mut a, dir) = fake();
@@ -9928,7 +9998,7 @@ esac
         inv.interfaces[1].activity.kind = "other-ap".into();
         a.inventory.set(inv.clone());
         let current = a.network_status(&a.settings.lock().unwrap());
-        assert_eq!(current.plan.carlink.role.name(), Some("wlan0"));
+        assert_eq!(current.plan.carlink.role.name(), None);
         inv.interfaces[1].activity.kind = "idle".into();
         a.inventory.set(inv.clone());
         let values = serde_json::json!({"networkRoles":{"mode":"auto"}})
@@ -9948,7 +10018,7 @@ esac
                 .carlink
                 .role
                 .name(),
-            Some("wlan0")
+            None
         );
         let crate::network_roles::SaveResult::Saved(saved) = a.propose_roles(values, true) else {
             panic!("save failed");
@@ -9982,6 +10052,8 @@ esac
         a.settings.lock().unwrap().output = "carlink".into();
         a.desired.store(false, Ordering::Release);
         trust_carlink(&dir);
+        add_second_radio(&a);
+        a.inventory.set(role_inventory());
         a.start_supervisor().unwrap();
         let (args, sink) = children.recv_timeout(Duration::from_secs(2)).unwrap();
         let has_hevc = |args: &[std::ffi::OsString], value: &str| {
@@ -10034,6 +10106,8 @@ esac
         }
         a.desired.store(false, Ordering::Release);
         trust_carlink(&dir);
+        add_second_radio(&a);
+        a.inventory.set(role_inventory());
         a.start_supervisor().unwrap();
         let (_, first) = children.recv_timeout(Duration::from_secs(2)).unwrap();
         let mut capabilities: serde_json::Value = serde_json::from_str(include_str!(
@@ -10188,22 +10262,20 @@ esac
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn admin_restart_closes_the_hotspot_like_start() {
-        let (mut a, dir) = fake();
-        let _children = link_children(&mut a);
+    fn admin_start_and_restart_keep_the_in_car_hotspot() {
         for op in [Operation::Restart, Operation::Start] {
-            // Even an AP retained between controllers for a soft restart is closed.
+            let (mut a, dir) = fake();
+            let _children = link_children(&mut a);
             let hotspot = Arc::new(crate::hotspot_lifetime::tests::Fake::default());
             let lease = a.hotspot_lifetime.create(|| hotspot.clone()).unwrap();
             lease.start(Duration::from_secs(1)).unwrap();
-            a.hotspot_lifetime.keep_for_restart();
             lease.close().unwrap();
-            assert_eq!(hotspot.closes.load(Ordering::SeqCst), 0);
             a.operation(op).unwrap();
+            assert_eq!(hotspot.closes.load(Ordering::SeqCst), 0);
+            a.shutdown();
             assert_eq!(hotspot.closes.load(Ordering::SeqCst), 1);
+            std::fs::remove_dir_all(dir).unwrap();
         }
-        a.shutdown();
-        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn terminal_loss_keeps_shared_child_and_forget_clears_pairing_state() {
@@ -10250,141 +10322,28 @@ esac
             assert_ne!(follow.generation, generation);
         }
     }
-    struct NoMfi;
-    impl carplay_iap2::mfi::MfiAuthenticator for NoMfi {
-        fn protocol_major(&self) -> Result<u8> {
-            Ok(3)
-        }
-        fn read_certificate(&self, _: usize) -> Result<Vec<u8>> {
-            unreachable!()
-        }
-        fn sign_challenge(&self, _: &[u8]) -> Result<Vec<u8>> {
-            unreachable!()
-        }
-        fn baa_certificates(&self) -> Result<carplay_iap2::mfi::BaaCertificatePair> {
-            unreachable!()
-        }
-    }
-    /// Brings its AP up through the relay's hotspot lifetime, then finds no iPhone: the
-    /// controller retries every few milliseconds and keeps the AP for the next attempt.
-    struct RetryingPlatform {
-        lifetime: Arc<crate::hotspot_lifetime::HotspotLifetime>,
-        aps: Mutex<Vec<Arc<crate::hotspot_lifetime::tests::Fake>>>,
-    }
-    impl WirelessPlatform for RetryingPlatform {
-        fn check_bluetooth_radio(&self) -> Result<()> {
-            Ok(())
-        }
-        fn prepare_mfi(&self) -> Result<MfiResource> {
-            Ok(MfiResource {
-                authenticator: Arc::new(NoMfi),
-            })
-        }
-        fn create_hotspot(&self) -> Result<Arc<dyn WirelessHotspotManager>> {
-            self.lifetime.create(|| {
-                let ap = Arc::new(crate::hotspot_lifetime::tests::Fake::default());
-                self.aps.lock().unwrap().push(ap.clone());
-                ap
-            })
-        }
-        fn keep_hotspot_for_retry(&self) {
-            self.lifetime.keep_for_retry();
-        }
-        fn cancel_hotspot_retry(&self) -> Result<()> {
-            self.lifetime.cancel_retry()
-        }
-        fn start_pairing(&self) -> Result<Option<Arc<dyn CloseResource>>> {
-            Ok(None)
-        }
-        fn select_iphone(&self) -> Result<BondedDevice> {
-            Err(std::io::Error::other("No iPhone"))
-        }
-        fn create_bluetooth(&self, _: &BondedDevice) -> Result<Arc<dyn BluetoothConnection>> {
-            unreachable!()
-        }
-        fn create_network(
-            &self,
-            _: WirelessHotspotInfo,
-            _: Arc<dyn carplay_iap2::mfi::MfiAuthenticator>,
-            _: NetworkCallbacks,
-        ) -> Result<Arc<dyn NetworkAttachment>> {
-            Err(std::io::Error::other("No iPhone"))
-        }
-        fn run_bootstrap(
-            &self,
-            _: Arc<dyn BluetoothConnection>,
-            _: Arc<dyn PendingNetwork>,
-            _: Arc<dyn carplay_iap2::mfi::MfiAuthenticator>,
-            _: BootstrapCallbacks,
-        ) -> Result<()> {
-            unreachable!()
-        }
-    }
     #[test]
-    fn pending_follow_over_keeps_old_controller_retries_off_the_radio() {
+    fn single_radio_output_never_follows_or_takes_the_hotspot() {
         let (mut a, dir) = fake();
+        a.settings.lock().unwrap().output = "both".into();
         let children = link_children(&mut a);
         a.start_supervisor().unwrap();
-        let (_, sink) = children.recv_timeout(Duration::from_secs(2)).unwrap();
-        let platform = Arc::new(RetryingPlatform {
-            lifetime: a.hotspot_lifetime.clone(),
-            aps: Mutex::default(),
-        });
-        let controller = Arc::new(
-            LinuxCarPlayController::new(platform.clone(), a.events.clone(), Duration::from_secs(1))
-                .with_retry_delay(Duration::from_millis(50), Duration::from_millis(100)),
-        );
-        *a.controller.lock().unwrap() = Some(controller.clone());
-        let running = controller.clone();
-        *a.worker.lock().unwrap() = Some(std::thread::spawn(move || {
-            let _ = running.run();
-        }));
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while platform
-            .aps
-            .lock()
-            .unwrap()
-            .first()
-            .is_none_or(|ap| ap.starts.load(Ordering::SeqCst) == 0)
-        {
-            assert!(std::time::Instant::now() < deadline, "no AP started");
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        // Retries reuse the retained AP.
-        std::thread::sleep(Duration::from_millis(30));
-        assert_eq!(platform.aps.lock().unwrap().len(), 1);
-        let ap = platform.aps.lock().unwrap()[0].clone();
-        // Carlink joins the head unit's group on wlan0, which takes the radio from the AP.
+        let (args, sink) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!args.iter().any(|arg| arg == "--clink-interface"));
+        let ap = Arc::new(crate::hotspot_lifetime::tests::Fake::default());
+        let lease = a.hotspot_lifetime.create(|| ap.clone()).unwrap();
+        lease.start(Duration::from_secs(1)).unwrap();
+        lease.close().unwrap();
         sink(
             serde_json::json!({"type":"link","state":"joined","network":{"ssid":"DIRECT-Car","interface":"wlan0"}}),
         );
-        ap.failed.store(true, Ordering::SeqCst);
-        // An error that leaves the link up is shown but does not end the follow-over.
-        sink(serde_json::json!({"type":"error","message":"Cannot read PIN file"}));
-        assert_eq!(
-            a.carlink.lock().unwrap().last_error.as_deref(),
-            Some("Cannot read PIN file")
-        );
-        // During the debounce the old controller keeps failing but brings no new AP up.
-        std::thread::sleep(Duration::from_millis(100));
-        assert_ne!(controller.stage(), "Stopped");
-        assert_eq!(platform.aps.lock().unwrap().len(), 1);
-        assert_eq!(ap.starts.load(Ordering::SeqCst), 1);
+        assert!(a.follow.lock().unwrap().target.is_none());
+        a.reconcile_carlink_network().unwrap();
+        assert!(a.network_override.lock().unwrap().is_none());
+        assert!(a.hotspot_lifetime.ready_info().is_some());
         assert_eq!(ap.closes.load(Ordering::SeqCst), 0);
-        // The follow-over stops it; here the network credentials cannot be read.
-        a.follow.lock().unwrap().changed = Some(std::time::Instant::now() - Duration::from_secs(1));
-        assert!(a.reconcile_carlink_network().is_err());
-        assert_eq!(controller.stage(), "Stopped");
-        assert!(a.worker.lock().unwrap().is_none());
-        assert_eq!(platform.aps.lock().unwrap().len(), 1);
-        // Once the link has left, the next controller may bring its AP up again.
-        sink(serde_json::json!({"type":"receiver-stopped"}));
-        settle_follow(&a);
-        assert!(a
-            .hotspot_lifetime
-            .create(|| Arc::new(crate::hotspot_lifetime::tests::Fake::default()))
-            .is_ok());
         a.shutdown();
+        assert_eq!(ap.closes.load(Ordering::SeqCst), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -10952,7 +10911,7 @@ esac
         a.settings.lock().unwrap().admin_hotspot_password =
             Some("synthetic-private-password".into());
         let before = a.network_status(&a.settings.lock().unwrap());
-        assert_eq!(before.plan.carlink.role.name(), Some("wlan0"));
+        assert_eq!(before.plan.carlink.role.name(), None);
         // The foreign profile was removed and the admin AP can use the adapter, but an admin edit
         // must preserve the existing automatic Carlink assignment.
         inv.interfaces[1].activity.kind = "idle".into();
@@ -10973,7 +10932,7 @@ esac
             panic!("valid preview");
         };
         assert_eq!(preview.changes, ["adminHotspot"]);
-        assert_eq!(preview.plan.carlink.role.name(), Some("wlan0"));
+        assert_eq!(preview.plan.carlink.role.name(), None);
         assert!(!serde_json::to_string(&preview)
             .unwrap()
             .contains("private-password"));

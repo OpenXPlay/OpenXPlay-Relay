@@ -293,6 +293,9 @@ impl WirelessPlatform for LinuxWirelessPlatform {
             self.remove_stale_hotspots();
         }
     }
+    fn reset_hotspot_for_recovery(&self) -> Result<()> {
+        self.hotspot_lifetime.close()
+    }
     fn planned_hotspot_ssid(&self) -> Option<String> {
         self.planned_ssid.lock().unwrap().clone()
     }

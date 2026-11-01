@@ -157,7 +157,7 @@ impl Arrival {
 
 pub type StartGate = std::sync::Arc<dyn Fn() -> crate::Result<bool> + Send + Sync>;
 
-/// One start owns both budgets; polling and controller retries cannot extend them.
+/// A start waits for Carlink and gives an unknown browser screen at most twenty seconds.
 #[derive(Default)]
 pub struct StartPolicy {
     carlink: Option<Instant>,
@@ -195,6 +195,9 @@ impl StartPolicy {
     pub fn take_failure(&mut self) -> bool {
         std::mem::take(&mut self.failed)
     }
+    pub fn browser_only(&mut self) {
+        self.carlink = None;
+    }
     pub fn cancel(&mut self) {
         *self = Self::default();
     }
@@ -214,17 +217,11 @@ impl StartPolicy {
             ));
         }
         if let Some(until) = self.carlink {
-            if !carlink_enabled {
-                return Err(std::io::Error::other(
-                    "Carlink output was disabled while waiting to start CarPlay",
-                ));
-            }
-            if carlink_ready {
+            if !carlink_enabled || carlink_ready {
                 self.carlink = None;
             } else if now >= until {
-                return Err(std::io::Error::other(
-                    "Carlink output did not become ready before CarPlay startup",
-                ));
+                self.carlink = Some(now + Duration::from_secs(60));
+                return Ok(false);
             } else {
                 return Ok(false);
             }
@@ -243,17 +240,21 @@ impl StartPolicy {
 mod tests {
     use super::*;
     #[test]
-    fn gate_is_bounded_and_saved_screen_cannot_release_it() {
+    fn carlink_waits_for_a_late_head_unit_and_saved_screen_cannot_release_it() {
         let t = Instant::now();
         let mut p = StartPolicy::default();
         p.request(t, true, true);
         assert!(!p
             .ready(t + Duration::from_secs(59), true, false, true)
             .unwrap());
-        assert!(p
+        assert!(!p
             .ready(t + Duration::from_secs(60), true, false, true)
-            .is_err());
-        assert!(p.ready(t, false, false, true).is_err());
+            .unwrap());
+        assert!(p
+            .ready(t + Duration::from_secs(180), true, true, true)
+            .unwrap());
+        p.request(t, true, true);
+        assert!(p.ready(t, false, false, true).unwrap());
         assert!(p.ready(t, true, true, false).unwrap());
     }
     #[test]

@@ -26,6 +26,7 @@ pub const AP_DOWN_RECORD: &str = "hotspot-down";
 /// when the relay asked to keep it for a session restart or the controller keeps it for a retry.
 #[derive(Default)]
 pub struct HotspotLifetime {
+    service_owned: bool,
     current: Mutex<Option<Arc<HotspotLease>>>,
     /// Serializes `create` without holding `current` across the slow nmcli calls.
     creating: Mutex<()>,
@@ -37,6 +38,11 @@ pub struct HotspotLifetime {
     stale_checked: Mutex<bool>,
 }
 impl HotspotLifetime {
+    pub fn for_service(mut self) -> Self {
+        self.service_owned = true;
+        self
+    }
+
     /// Keeps a new AP down until `gap` has passed since the previous one went down. With a
     /// `record` file the last teardown survives relay restarts: a teardown less than `gap` ago,
     /// in the same boot, delays the first AP of this process by the rest of the gap.
@@ -101,7 +107,10 @@ impl HotspotLifetime {
         let previous = self.current.lock().unwrap().clone();
         let mut ready = None;
         if let Some(previous) = &previous {
-            let retained = previous.state.lock().unwrap().retained();
+            let state = previous.state.lock().unwrap();
+            let retained = state.retained()
+                || (self.service_owned && state.ready.is_some() && !state.closed && !state.failed);
+            drop(state);
             if retained && previous.inner.validate_ready().is_ok() {
                 ready = previous.state.lock().unwrap().ready.clone();
             } else {
@@ -113,6 +122,7 @@ impl HotspotLifetime {
         let lease = Arc::new(HotspotLease {
             inner: reused.map_or_else(factory, |previous| previous.inner.clone()),
             reused: ready.is_some(),
+            service_owned: self.service_owned,
             held: self.held.clone(),
             downtime: self.downtime.clone(),
             state: Mutex::new(LeaseState {
@@ -266,6 +276,7 @@ impl LeaseState {
     }
 }
 struct HotspotLease {
+    service_owned: bool,
     inner: Arc<dyn WirelessHotspotManager>,
     state: Mutex<LeaseState>,
     reused: bool,
@@ -332,6 +343,7 @@ impl WirelessHotspotManager for HotspotLease {
             return Err(std::io::Error::other("Hotspot lease cancelled"));
         }
         state.ready = Some(info.clone());
+        state.keep |= self.service_owned;
         Ok(info)
     }
     fn validate_ready(&self) -> Result<()> {
@@ -416,6 +428,23 @@ pub(crate) mod tests {
             self.closes.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+    }
+    #[test]
+    fn service_ap_survives_failed_start_and_user_stop_until_explicit_teardown() {
+        let lifetime = HotspotLifetime::default().for_service();
+        let ap = Arc::new(Fake::default());
+        let lease = lifetime.create(|| ap.clone()).unwrap();
+        lease.start(Duration::from_secs(1)).unwrap();
+        lease.close().unwrap();
+        lifetime.cancel_retry().unwrap();
+        assert!(lifetime.ready_info().is_some());
+        assert_eq!(ap.closes.load(Ordering::SeqCst), 0);
+        let next = lifetime.create(|| panic!("must reuse service AP")).unwrap();
+        next.start(Duration::from_secs(1)).unwrap();
+        next.close().unwrap();
+        assert_eq!(ap.starts.load(Ordering::SeqCst), 1);
+        lifetime.close().unwrap();
+        assert_eq!(ap.closes.load(Ordering::SeqCst), 1);
     }
     #[test]
     fn retained_hotspot_skips_second_start_and_hard_stop_closes_it() {
