@@ -191,7 +191,7 @@
       "bootStart": true,
       "paused": false
     },
-    "version": "0.1.6-beta.3"
+    "version": "0.1.6"
   },
   "platform": "linux",
   "publicName": {
@@ -239,7 +239,7 @@
       "scaling": false
     }
   },
-  "version": "0.1.6-beta.3",
+  "version": "0.1.6",
   "video": {
     "active": false,
     "appliedFps": 60,
