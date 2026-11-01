@@ -461,23 +461,16 @@ async function pairingAction(name: 'pair-iphone' | 'cancel-pairing') {
   }
 }
 function bindPairedDeviceRemoval(scope: ParentNode) {
-  scope.querySelectorAll<HTMLButtonElement>('[data-remove-paired-device]').forEach(button => on(button, 'click', () => {
+  scope.querySelectorAll<HTMLButtonElement>('[data-remove-paired-device]').forEach(button => on(button, 'click', async () => {
     const device = status?.pairedDevices?.find(d => d.id === button.dataset.removePairedDevice);
     if (!status?.pairedDeviceRemoval || !device?.id || actionBusy) return;
     const id = device.id, current = epoch;
-    const dialog = document.createElement('dialog'); dialog.setAttribute('aria-labelledby', 'paired-device-remove-title');
-    patchMarkup(dialog, `<h2 id="paired-device-remove-title">${esc(t('pairing.removeTitle', { name: device.name || t('pairing.unnamed') }))}</h2><p>${esc(t('pairing.removeHint', { relay: relayBluetoothName(status) }))}</p><div class="dialog-actions"><button class="cancel">${t('ui.cancel')}</button><button class="confirm destructive">${t('pairing.remove')}</button></div>`);
-    document.body.append(dialog); openSurface(dialog);
-    const close = () => { closeSurface(dialog); if (button.isConnected) button.focus(); };
-    on(dialog.querySelector('.cancel'), 'click', close);
-    on(dialog, 'cancel', event => { event.preventDefault(); close(); });
-    on(dialog.querySelector('.confirm'), 'click', async () => {
-      if (actionBusy || current !== epoch) return;
-      close(); actionBusy = true; pairingBusy = true; pairingError = ''; updateDashboard(); renderPairingPanel();
-      try { await api.removePairedDevice(id); const next = await fetchStatus(); if (current === epoch) status = next; }
-      catch (error) { if (current === epoch) pairingError = errorKey(error); }
-      finally { if (current === epoch) { actionBusy = false; pairingBusy = false; updateDashboard(); renderPairingPanel(); } }
-    });
+    if (!await confirmSheet(t('pairing.removeHint', { relay: relayBluetoothName(status) }), t('pairing.removeNamed', { name: device.name || t('pairing.unnamed') }), t('ui.cancel'), 'destructive')) return;
+    if (actionBusy || current !== epoch) return;
+    actionBusy = true; pairingBusy = true; pairingError = ''; updateDashboard(); renderPairingPanel();
+    try { await api.removePairedDevice(id); const next = await fetchStatus(); if (current === epoch) status = next; }
+    catch (error) { if (current === epoch) pairingError = errorKey(error); }
+    finally { if (current === epoch) { actionBusy = false; pairingBusy = false; updateDashboard(); renderPairingPanel(); } }
   }));
 }
 function renderPairingPanel() {
