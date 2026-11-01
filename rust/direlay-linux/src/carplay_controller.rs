@@ -16,10 +16,14 @@ pub trait CarPlayController: Send + Sync {
     fn running(&self) -> bool;
     fn hotspot_info(&self) -> Option<WirelessHotspotInfo>;
     fn transport(&self) -> &'static str;
+    /// None also covers an attempt that has not selected its device yet.
+    fn bluetooth_device(&self) -> Option<String> {
+        None
+    }
 }
 
 macro_rules! controller {
-    ($ty:ty, $transport:literal) => {
+    ($ty:ty, $transport:literal $(, $device:ident)?) => {
         impl CarPlayController for $ty {
             fn run(&self) -> Result<()> {
                 self.run()
@@ -51,8 +55,11 @@ macro_rules! controller {
             fn transport(&self) -> &'static str {
                 $transport
             }
+            $(fn bluetooth_device(&self) -> Option<String> {
+                self.$device()
+            })?
         }
     };
 }
-controller!(crate::LinuxCarPlayController, "wireless");
+controller!(crate::LinuxCarPlayController, "wireless", bluetooth_device);
 controller!(crate::linux_wired_controller::LinuxWiredController, "usb");

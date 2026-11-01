@@ -171,6 +171,7 @@ pub trait BluetoothBackend: SecureConnectionsControl {
     /// Controller-only profile lease; released when the session backend is dropped.
     fn register_profiles(&self) -> Result<()>;
     fn devices(&self) -> Result<Vec<BondedDevice>>;
+    fn remove(&self, address: &str) -> Result<()>;
     fn select(&self, configured: Option<&str>) -> Result<BondedDevice>;
     fn local_address(&self) -> Result<String>;
     fn channel(&self, address: &str, channel: Option<u8>) -> Result<u8>;
@@ -443,6 +444,9 @@ impl BluetoothBackend for BluezBackend {
     }
     fn devices(&self) -> Result<Vec<BondedDevice>> {
         self.bluetooth.devices()
+    }
+    fn remove(&self, address: &str) -> Result<()> {
+        self.bluetooth.remove(address)
     }
     fn select(&self, configured: Option<&str>) -> Result<BondedDevice> {
         linux_bluetooth::select_iphone(&self.bluetooth.devices()?, configured)

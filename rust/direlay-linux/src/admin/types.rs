@@ -577,6 +577,11 @@ pub enum AdminUpdate {
     Errors(BTreeMap<String, String>),
 }
 pub type AdminResult = Result<(), String>;
+#[derive(Debug)]
+pub enum PairedDeviceRemovalError {
+    NotFound,
+    Request(String),
+}
 /// The shell implements this seam; the HTTP server never accesses receiver internals.
 pub trait RelayAdmin: Send + Sync + 'static {
     fn identity_status(&self) -> Value {
@@ -671,6 +676,9 @@ pub trait RelayAdmin: Send + Sync + 'static {
     fn settings(&self) -> AdminSettings;
     fn update(&self, values: Values) -> AdminUpdate;
     fn action(&self, name: &str) -> AdminResult;
+    fn remove_paired_device(&self, _address: &str) -> Result<(), PairedDeviceRemovalError> {
+        Err(PairedDeviceRemovalError::NotFound)
+    }
     fn public_name_import(
         &self,
         _content: &str,
