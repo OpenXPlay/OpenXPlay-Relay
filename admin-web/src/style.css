@@ -167,6 +167,9 @@ dialog::backdrop { background: #0005; }
 .network-actions { display: grid; gap: 8px; }.network-indicators { display: flex; gap: 8px; align-items: center; }
 .signal-bars { display: inline-flex; align-items: flex-end; gap: 3px; height: 20px; }.signal-bars i { width: 4px; height: 25%; background: var(--outline); }.signal-bars i:nth-child(2) { height: 50%; }.signal-bars i:nth-child(3) { height: 75%; }.signal-bars i:nth-child(4) { height: 100%; }.signal-bars i.filled { background: currentColor; }
 .paired-devices, .trace-files { list-style: none; margin: 0; padding: 0; }.paired-devices li, .trace-files li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 48px; }
+.paired-devices li { flex-wrap: nowrap; }.paired-devices li > span:first-of-type { overflow-wrap: anywhere; }.paired-devices .tag { flex-shrink: 0; }
+.device-actions { display: flex; align-items: center; gap: 8px; }
+.paired-devices [data-remove-paired-device], .device-actions [data-remove-paired-device] { margin-inline-start: auto; flex-shrink: 0; }
 .facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 12px; }.facts dt { color: var(--secondary); font: var(--footnote); }.facts dd { margin: 0 0 8px; overflow-wrap: anywhere; }
 .plugin-icon { width: 48px; height: 48px; object-fit: contain; }.plugin-meta { display: block; font: var(--footnote); }.public-name-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .trace-lines { max-height: 280px; overflow: auto; white-space: pre-wrap; }.network-table { overflow-x: auto; }.network-table table { width: 100%; border-collapse: collapse; font: var(--caption); }.network-table td, .network-table th { padding: 8px; border-bottom: 1px solid var(--outline); text-align: start; }

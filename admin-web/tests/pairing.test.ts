@@ -162,7 +162,10 @@ it('gates removal and all-bond visibility on the Linux capability in both views'
     const html = view(enabled, false, '', en);
     expect(html.match(/data-remove-paired-device=/g)).toHaveLength(2);
     expect(html).toContain('data-remove-paired-device="02:00:00:00:00:A1"');
-    expect(html).toContain('aria-label="Remove My iPhone?"');
+    expect(html).toContain('aria-label="Remove My iPhone"');
+    expect(view(enabled, false, '', zh)).toContain('aria-label="移除 My iPhone"');
+    expect(view({ ...enabled, pairedDevices: [{ id: '02:00:00:00:00:A1', name: '<Phone>', connected: false, iphone: true }] }, false, '', en)).toContain('aria-label="Remove &lt;Phone&gt;"');
+    expect(view({ ...enabled, pairedDevices: [{ id: '02:00:00:00:00:A1', name: '', connected: false, iphone: true }] }, false, '', en)).toContain('aria-label="Remove Unnamed device"');
     expect(html).toContain('Speaker');
     expect(view(enabled, true, '', en)).toMatch(/data-remove-paired-device=[^>]+disabled/);
     expect(view({ ...enabled, pairedDevices: [{ name: '<Phone>', connected: false, iphone: true }] }, false, '', en)).not.toContain('data-remove-paired-device');
@@ -172,9 +175,8 @@ it('gates removal and all-bond visibility on the Linux capability in both views'
   expect(pairingPanelView(android, false, '', en)).not.toContain('data-remove-paired-device');
 });
 it('translates the removal confirmation and relay name in both languages', () => {
-  expect(en('pairing.removeTitle', { name: 'Test iPhone' })).toBe('Remove Test iPhone?');
-  expect(zh('pairing.removeTitle', { name: 'Test iPhone' })).toBe('移除 Test iPhone？');
+  expect(en('pairing.removeNamed', { name: 'Test iPhone' })).toBe('Remove Test iPhone');
+  expect(zh('pairing.removeNamed', { name: 'Test iPhone' })).toBe('移除 Test iPhone');
   expect(en('pairing.removeHint', { relay: 'OpenXPlay Linux' })).toBe("Also forget OpenXPlay Linux in the iPhone's Bluetooth settings, then open pairing to pair again.");
   expect(zh('pairing.removeHint', { relay: 'OpenXPlay Linux' })).toBe('还需要在 iPhone 的蓝牙设置里忽略 OpenXPlay Linux，然后开放配对重新配对。');
-  expect(en('pairing.remove')).toBe('Remove'); expect(zh('pairing.remove')).toBe('移除');
 });

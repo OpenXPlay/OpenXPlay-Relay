@@ -84,25 +84,59 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     status.pairedDevices = [{ id: '02:00:00:00:00:A1', name: 'Test iPhone', connected: false, iphone: true }, { id: '02:00:00:00:00:A2', name: 'Speaker', connected: false, iphone: false }];
     await showFixture(status, 'settings/connection', linuxSettings);
     await cdp.js(`window.removalBodies=[]; const originalFetch=window.fetch; window.fetch=async(url,init={})=>{ if(String(url).endsWith('/paired-devices/remove')) { const body=JSON.parse(init.body); window.removalBodies.push(body); if(window.removalError) return new Response(JSON.stringify({error:'error.busy'}),{status:409}); window.fixtureStatus.pairedDevices=window.fixtureStatus.pairedDevices.filter(d=>d.id!==body.id); } return originalFetch(url,init); }; document.querySelector('[data-remove-paired-device]').click()`);
-    await until(`document.querySelector('dialog[open] .confirm')`);
-    expect(await cdp.js(`document.querySelector('dialog[open]').innerText`)).toContain('Remove Test iPhone?');
+    await until(`document.querySelector('dialog[open] [data-confirm]')`);
+    expect(await cdp.js(`document.querySelector('dialog[open]').innerText`)).toContain('Remove Test iPhone');
     expect(await cdp.js(`document.querySelector('dialog[open]').innerText`)).toContain("Also forget OpenXPlay Linux in the iPhone's Bluetooth settings");
+    expect(await cdp.js(`document.querySelector('dialog [data-confirm]').className`)).toBe('quiet destructive');
+    expect(await cdp.js(`document.querySelector('dialog [data-close]').classList.contains('primary')`)).toBe(true);
     expect(await cdp.js('window.removalBodies')).toEqual([]);
-    await cdp.js(`document.querySelector('dialog[open] .cancel').click()`);
+    await cdp.js(`document.querySelector('dialog[open] [data-close]').click()`);
     await until(`!document.querySelector('dialog[open]')`);
     expect(await cdp.js('window.removalBodies')).toEqual([]);
     await cdp.js(`document.querySelector('[data-remove-paired-device]').click()`);
-    await until(`document.querySelector('dialog[open] .confirm')`);
-    await cdp.js(`document.querySelector('dialog[open] .confirm').click()`);
+    await until(`document.querySelector('dialog[open] [data-confirm]')`);
+    await cdp.js(`document.querySelector('dialog[open] [data-confirm]').click()`);
     await until(`document.querySelectorAll('[data-remove-paired-device]').length===1`);
     expect(await cdp.js('window.removalBodies')).toEqual([{ id: '02:00:00:00:00:A1' }]);
     expect(await cdp.js(`document.querySelector('.paired-devices').innerText`)).toContain('Speaker');
     await cdp.js(`window.removalError=true; document.querySelector('[data-remove-paired-device]').click()`);
-    await until(`document.querySelector('dialog[open] .confirm')`);
-    await cdp.js(`document.querySelector('dialog[open] .confirm').click()`);
+    await until(`document.querySelector('dialog[open] [data-confirm]')`);
+    await cdp.js(`document.querySelector('dialog[open] [data-confirm]').click()`);
     await until(`document.querySelector('#pairing-result').textContent.length>0`);
     expect(await cdp.js(`document.querySelector('#pairing-result').textContent`)).not.toContain('error.busy');
     expect(await cdp.js(`document.querySelectorAll('[data-remove-paired-device]').length`)).toBe(1);
+  });
+  it.each(['light', 'dark'])('aligns paired-device actions and shows a quiet destructive confirmation at 390px (%s)', async theme => {
+    const status = structuredClone(linuxStatusFixtures.ready);
+    status.pairedDeviceRemoval = true; status.iphone.name = 'Test iPhone';
+    status.pairedDevices = [{ id: '02:00:00:00:00:A1', name: 'Test iPhone', connected: true, iphone: true }, { id: '02:00:00:00:00:A2', name: 'A Bluetooth speaker with a very long device name', connected: true, iphone: false }];
+    await showFixture(status, 'settings/connection', linuxSettings);
+    await cdp.call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
+    async function checkRows() {
+      const result = await cdp.js(`({width:document.documentElement.scrollWidth,viewport:innerWidth,rows:[...document.querySelectorAll('[data-remove-paired-device]')].map(button=>{const row=button.parentElement.getBoundingClientRect(),box=button.getBoundingClientRect();return {end:row.right-box.right,center:row.top+row.height/2-box.top-box.height/2,width:box.width,height:box.height}})})`);
+      expect(result.viewport).toBe(390); expect(result.width).toBeLessThanOrEqual(result.viewport);
+      expect(result.rows).toHaveLength(2);
+      for (const row of result.rows) { expect(Math.abs(row.end)).toBeLessThanOrEqual(1); expect(Math.abs(row.center)).toBeLessThanOrEqual(1); expect(row.width).toBeGreaterThanOrEqual(48); expect(row.height).toBeGreaterThanOrEqual(48); }
+    }
+    await checkRows();
+    await screenshot(`ui2-${theme}-page`, process.env.ADMIN_UNPAIR_SCREENSHOTS);
+    await cdp.js(`document.querySelector('[data-remove-paired-device]').click()`);
+    await until(`document.querySelector('dialog[open] [data-confirm]')`);
+    const decision = await cdp.js(`{const dialog=document.querySelector('dialog[open]'),action=dialog.querySelector('[data-confirm]'),cancel=dialog.querySelector('[data-close]');({title:dialog.querySelector('h2').textContent,label:dialog.getAttribute('aria-label'),action:action.textContent,actionColor:getComputedStyle(action).color,errorColor:getComputedStyle(document.querySelector('#pairing-result')).color,background:getComputedStyle(action).backgroundColor,cancelFirst:cancel.getBoundingClientRect().top<action.getBoundingClientRect().top,width:document.documentElement.scrollWidth,viewport:innerWidth})}`);
+    expect(decision.title).toBe('Remove Test iPhone'); expect(decision.label).toBe(decision.title); expect(decision.action).toBe(decision.title);
+    expect(decision.actionColor).toBe(decision.errorColor); expect(decision.background).toBe('rgba(0, 0, 0, 0)'); expect(decision.cancelFirst).toBe(true);
+    expect(decision.width).toBeLessThanOrEqual(decision.viewport);
+    await screenshot(`ui2-${theme}-confirmation`, process.env.ADMIN_UNPAIR_SCREENSHOTS);
+    await cdp.js(`document.querySelector('dialog [data-close]').click()`); await until(`!document.querySelector('dialog[open]')`);
+    await cdp.js(`location.hash='home'`); await until(`!!document.querySelector('#drawer-open')`);
+    await cdp.js(`document.querySelector('#drawer-open').click()`); await until(`!!document.querySelector('#stage-drawer[open] .devices')`);
+    await cdp.js(`document.querySelectorAll('.devices details').forEach(detail=>detail.open=true);document.querySelector('.devices').scrollIntoView()`);
+    await checkRows();
+    await screenshot(`ui2-${theme}-home-devices`, process.env.ADMIN_UNPAIR_SCREENSHOTS);
+    await cdp.js(`document.querySelector('.devices [data-remove-paired-device]').click()`); await until(`!!document.querySelector('dialog[open] [data-confirm]')`);
+    expect(await cdp.js(`document.querySelector('dialog[open] h2').textContent`)).toBe('Remove Test iPhone');
+    await cdp.js(`document.querySelector('dialog[open] [data-close]').click()`); await until(`!!document.querySelector('#stage-drawer[open]')`);
+    expect(await cdp.js('window.adminCalls')).toEqual([]); expect(await cdp.js('window.renderErrors')).toEqual([]);
   });
   it('saves Linux USB without confirmation and keeps cable advice under the option', async () => {
     await showFixture(linuxStatusFixtures.ready, 'settings/connection', linuxSettings);
@@ -168,10 +202,10 @@ describe.skipIf(!browser)('phone route rendering with production responses', () 
     expect(await cdp.js('window.renderErrors')).toEqual([]);
   }, 10000);
 
-  async function screenshot(name: string) {
-    if (!process.env.ADMIN_SB_SCREENSHOTS && !process.env.ADMIN_W14_SCREENSHOTS) return;
+  async function screenshot(name: string, directory = process.env.ADMIN_SB_SCREENSHOTS ?? process.env.ADMIN_W14_SCREENSHOTS) {
+    if (!directory) return;
     const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
-    writeFileSync(`${process.env.ADMIN_SB_SCREENSHOTS ?? process.env.ADMIN_W14_SCREENSHOTS}/${name}.png`, Buffer.from(shot.data, 'base64'));
+    writeFileSync(`${directory}/${name}.png`, Buffer.from(shot.data, 'base64'));
   }
   async function showFixture(status: Status, hash = 'home', fixtureSettings = carlinkSettings) {
     await freshPage();
