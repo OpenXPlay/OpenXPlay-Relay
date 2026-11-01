@@ -19,6 +19,7 @@ use std::{
     time::Duration,
 };
 pub struct LinuxWirelessPlatform {
+    mdns: Arc<crate::mdns_host::Responders>,
     options: Options,
     identity: Arc<AirPlayIdentity>,
     pairings: Arc<dyn PairingStore>,
@@ -57,6 +58,7 @@ impl LinuxWirelessPlatform {
             None,
         ));
         Self {
+            mdns: Arc::default(),
             options,
             identity,
             pairings,
@@ -75,6 +77,10 @@ impl LinuxWirelessPlatform {
             before_activation: None,
             inventory: None,
         }
+    }
+    pub fn with_mdns(mut self, mdns: Arc<crate::mdns_host::Responders>) -> Self {
+        self.mdns = mdns;
+        self
     }
     pub fn with_start_gate(mut self, gate: crate::start_policy::StartGate) -> Self {
         self.start_gate = Some(gate);
@@ -393,6 +399,8 @@ impl WirelessPlatform for LinuxWirelessPlatform {
             self.events.clone(),
             callbacks,
         );
+        network.mdns = self.mdns.clone();
+        network.mdns_interface = Some(self.options.wifi_interface.clone());
         network.input = Some((input, sink, events));
         network.hotspot = self.current_hotspot.lock().unwrap().clone();
         Ok(Arc::new(network))
@@ -561,6 +569,8 @@ struct NetworkState {
 }
 type BridgeWiring = (Arc<DiPlayInput>, Arc<dyn MediaSink>, Arc<JsonEvents>);
 pub struct LinuxNetwork {
+    mdns: Arc<crate::mdns_host::Responders>,
+    mdns_interface: Option<String>,
     info: WirelessHotspotInfo,
     config: AirPlayConfig,
     identity: Arc<AirPlayIdentity>,
@@ -589,6 +599,8 @@ impl LinuxNetwork {
         callbacks: NetworkCallbacks,
     ) -> Self {
         Self {
+            mdns: Arc::default(),
+            mdns_interface: None,
             info,
             config,
             identity,
@@ -806,7 +818,22 @@ impl NetworkAttachment for LinuxNetwork {
         let mut state = self.state.lock().unwrap();
         state.endpoint = Some(e);
         state.server = Some(server);
-        let bonjour = LinuxBonjour::new(address, c, self.identity.clone(), self.events.clone());
+        let interface = match &self.mdns_interface {
+            Some(interface) => interface.clone(),
+            None => crate::linux_hotspot::interface_addresses()?
+                .into_iter()
+                .find(|(_, ip, _)| *ip == address)
+                .map(|(interface, _, _)| interface)
+                .ok_or_else(|| std::io::Error::other("CarPlay mDNS interface is missing"))?,
+        };
+        let bonjour = LinuxBonjour::new(
+            address,
+            c,
+            self.identity.clone(),
+            self.events.clone(),
+            self.mdns.clone(),
+            interface,
+        );
         bonjour.start()?;
         state.bonjour = Some(bonjour);
         Ok(())

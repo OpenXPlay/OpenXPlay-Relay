@@ -100,9 +100,14 @@ impl WebTlsControl {
             .pem
             .as_ref()
             .map(|pem| json!({"name":pem.name,"cert":pem.cert,"key":pem.key}));
-        let sans: Vec<_> = std::iter::once("openxplay-linux.local".to_owned())
-            .chain(settings.sans.iter().map(ToString::to_string))
-            .collect();
+        let sans: Vec<_> = [
+            "openxplay-linux.local".to_owned(),
+            "openxplay-admin.local".to_owned(),
+            "openxplay-car.local".to_owned(),
+        ]
+        .into_iter()
+        .chain(settings.sans.iter().map(ToString::to_string))
+        .collect();
         let mut request = json!({"type":"web-tls","id":id,"trusted":trusted,"sans":sans});
         // W15: optional default material is separate from trusted SNI and generated SANs.
         if settings.default_tls.is_some() || state.settings.default_tls.is_some() {

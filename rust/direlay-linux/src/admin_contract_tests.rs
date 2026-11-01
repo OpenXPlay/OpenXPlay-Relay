@@ -86,7 +86,8 @@ fn admin_contract_status(state: &str) {
     });
     status.wifi_client = Some(WifiClient::default());
     status.receiver_urls = vec!["https://10.42.0.1:8443/".into()];
-    status.admin_urls = vec!["https://10.42.0.1:6975/".into()];
+    status.admin_urls = vec!["https://10.42.0.1:6975/".into(), "https://openxplay-car.local:6975/".into(), "https://openxplay-admin.local:6975/".into()];
+    status.admin_url = status.admin_urls[0].clone();
     status.iphone = AdminIphone {
         name: Some("iPhone".into()),
         reason: "Selected".into(),

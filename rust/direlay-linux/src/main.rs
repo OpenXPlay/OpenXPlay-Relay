@@ -492,11 +492,6 @@ pub fn run() -> Result<()> {
         events.clone(),
     )?);
     let _services = ServicesGuard(admin.clone());
-    let addresses = crate::linux_hotspot::interface_addresses()?
-        .into_iter()
-        .filter(|(interface, a, _)| !interface.starts_with("oxpusb") && !a.is_loopback())
-        .map(|(_, a, _)| a)
-        .collect::<Vec<_>>();
     let auth = crate::admin::AdminAuth::new(Box::new(crate::admin::FileAuthStore(
         options.state_dir.join("admin-auth.json"),
     )))?;
@@ -516,15 +511,15 @@ pub fn run() -> Result<()> {
     let mut http = server.start()?;
     admin.start_services()?;
     let mut receiver_port = admin.receiver_port()?;
-    let mut mdns = if addresses.is_empty() {
-        None
-    } else {
-        Some(crate::mdns_host::MdnsHost::new(
-            &addresses,
-            6975,
-            receiver_port,
-        )?)
-    };
+    let mut mdns = crate::mdns_host::MdnsHost::new(
+        admin.mdns_responders(),
+        &admin.mdns_assignments()?,
+        6975,
+        receiver_port,
+    )?;
+    let mut previous_names = mdns.advertised_names();
+    http.update_names(&previous_admin, &previous_names)?;
+    admin.set_admin_names(previous_names.clone());
     unsafe {
         libc::signal(libc::SIGINT, stop_signal as *const () as libc::sighandler_t);
         libc::signal(
@@ -532,7 +527,6 @@ pub fn run() -> Result<()> {
             stop_signal as *const () as libc::sighandler_t,
         );
     }
-    let mut previous = addresses;
     drop(startup);
     let _main_loop = main_thread.enter("tick", crate::logs::diagnostics::LOOP_BUDGET);
     while !STOP.load(Ordering::Acquire) {
@@ -549,30 +543,27 @@ pub fn run() -> Result<()> {
         let next_receiver_port = admin.receiver_port()?;
         let port_changed = next_receiver_port != receiver_port;
         if port_changed {
-            mdns.take();
+            mdns.stop();
             receiver_port = next_receiver_port;
+            mdns = crate::mdns_host::MdnsHost::new(
+                admin.mdns_responders(),
+                &admin.mdns_assignments()?,
+                6975,
+                receiver_port,
+            )?;
+        } else {
+            mdns.update(&admin.mdns_assignments()?)?;
         }
-        let addresses = admin.host_addresses()?;
-        if addresses != previous || port_changed {
-            if addresses.is_empty() {
-                mdns.take();
-            } else if let Some(host) = &mdns {
-                host.update_addresses(&addresses)?;
-            } else {
-                mdns = Some(crate::mdns_host::MdnsHost::new(
-                    &addresses,
-                    6975,
-                    receiver_port,
-                )?);
-            }
-            previous = addresses;
+        let names = mdns.advertised_names();
+        if names != previous_names {
+            http.update_names(&previous_admin, &names)?;
+            admin.set_admin_names(names.clone());
+            previous_names = names;
         }
     }
     admin.shutdown();
     http.stop();
-    if let Some(mut host) = mdns {
-        host.stop();
-    }
+    mdns.stop();
     state.close()?;
     events.diagnostics.end_all(&events, "shutdown");
     watchdog.clean_exit();

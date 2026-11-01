@@ -52,12 +52,14 @@ fn withdraw(announcer: &dyn Announcer, services: &[String], budget: Duration, re
     announcer.shutdown();
 }
 pub struct LinuxBonjour {
+    responders: Arc<crate::mdns_host::Responders>,
+    interface: String,
     address: Ipv4Addr,
     config: AirPlayConfig,
     identity: Arc<AirPlayIdentity>,
     events: Arc<JsonEvents>,
     /// The daemon and the full names of the services it announces.
-    dns: Mutex<Option<(mdns_sd::ServiceDaemon, Vec<String>)>>,
+    dns: Mutex<Option<(Arc<crate::mdns_host::Responder>, Vec<String>)>>,
     closed: Arc<AtomicBool>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
@@ -67,8 +69,12 @@ impl LinuxBonjour {
         config: AirPlayConfig,
         identity: Arc<AirPlayIdentity>,
         events: Arc<JsonEvents>,
+        responders: Arc<crate::mdns_host::Responders>,
+        interface: String,
     ) -> Self {
         Self {
+            responders,
+            interface,
             address,
             config,
             identity,
@@ -79,11 +85,8 @@ impl LinuxBonjour {
         }
     }
     pub fn start(&self) -> Result<()> {
-        let dns = mdns_sd::ServiceDaemon::new().map_err(std::io::Error::other)?;
-        dns.disable_interface(mdns_sd::IfKind::All)
-            .map_err(std::io::Error::other)?;
-        dns.enable_interface(mdns_sd::IfKind::Addr(self.address.into()))
-            .map_err(std::io::Error::other)?;
+        let responder = self.responders.acquire(&self.interface, &[self.address])?;
+        let dns = &responder.daemon;
         let records = CarPlayBonjourProtocol::air_play_txt_records(&self.config, &self.identity);
         let host = format!("carplay-{}.local.", self.config.device_id.replace(':', ""));
         let service = mdns_sd::ServiceInfo::new(
@@ -94,13 +97,14 @@ impl LinuxBonjour {
             self.config.port,
             records,
         )
+        .map(mdns_sd::ServiceInfo::enable_addr_interface_only)
         .map_err(std::io::Error::other)?;
         let services = vec![service.get_fullname().to_string()];
         dns.register(service).map_err(std::io::Error::other)?;
         let rx = dns
             .browse("_carplay-ctrl._tcp.local.")
             .map_err(std::io::Error::other)?;
-        *self.dns.lock().unwrap() = Some((dns, services));
+        *self.dns.lock().unwrap() = Some((responder, services));
         let address = self.address;
         let (closed, events, config) = (
             self.closed.clone(),
@@ -185,7 +189,20 @@ impl LinuxBonjour {
         self.closed.store(true, Ordering::Release);
         let dns = self.dns.lock().unwrap().take();
         if let Some((dns, services)) = dns {
-            withdraw(&dns, &services, GOODBYE_BUDGET, GOODBYE_REPEAT);
+            let _ = dns.daemon.stop_browse("_carplay-ctrl._tcp.local.");
+            struct Shared<'a>(&'a mdns_sd::ServiceDaemon);
+            impl Announcer for Shared<'_> {
+                fn unregister(&self, name: &str, timeout: Duration) -> bool {
+                    Announcer::unregister(self.0, name, timeout)
+                }
+                fn shutdown(&self) {}
+            }
+            withdraw(
+                &Shared(&dns.daemon),
+                &services,
+                GOODBYE_BUDGET,
+                GOODBYE_REPEAT,
+            );
         }
         if let Some(w) = self.worker.lock().unwrap().take() {
             let _ = w.join();

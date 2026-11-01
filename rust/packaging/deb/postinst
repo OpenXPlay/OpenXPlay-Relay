@@ -32,7 +32,7 @@ configure|abort-upgrade|abort-deconfigure|abort-remove)
         printf '%s\n' 'openxplay-relay: no accessory identity yet. Supply your own as' \
             "  $state/mfi/identity.pk8 and $state/mfi/certificate.p7b (mode 0600)," \
             '  then: systemctl restart openxplay-relay' \
-            'Admin page: https://openxplay-linux.local:6975 (first password: openxplay).'
+            'Admin page: https://openxplay-admin.local:6975 (LAN) or https://openxplay-car.local:6975 (CarPlay network) (first password: openxplay).'
     fi
     ;;
 esac

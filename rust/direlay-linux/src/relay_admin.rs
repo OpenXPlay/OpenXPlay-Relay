@@ -235,6 +235,8 @@ pub struct LinuxRelayAdmin {
     public_name: Arc<crate::public_name::PublicNameService>,
     identity_imports: Mutex<crate::identity::Imports>,
     user_tls_lock: Mutex<()>,
+    local_admin_names: Mutex<Vec<String>>,
+    mdns: Arc<crate::mdns_host::Responders>,
     receiver_default_tls: Arc<Mutex<Option<crate::identity::tls::DefaultTls>>>,
     /// The admin page's certificate for that name, chosen by SNI.
     admin_certificate: crate::admin::server::NamedCertificate,
@@ -441,6 +443,8 @@ impl LinuxRelayAdmin {
             public_name,
             identity_imports: Mutex::default(),
             user_tls_lock: Mutex::default(),
+            local_admin_names: Mutex::default(),
+            mdns: Arc::default(),
             receiver_default_tls: Arc::default(),
             admin_certificate: Default::default(),
             receiver_tls: Mutex::new(None),
@@ -1485,7 +1489,12 @@ impl LinuxRelayAdmin {
         let options = self.effective_options()?;
         if !self.runtime.network_services
             || options.settings.network_mode != "device-hotspot"
-            || self.controller.lock().unwrap().is_some()
+            || self
+                .controller
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|c| c.running())
             || self.hotspot_lifetime.ready_info().is_some()
             || !self.wifi_present(&options.wifi_interface)
         {
@@ -1542,6 +1551,22 @@ impl LinuxRelayAdmin {
             provision.stop()?;
         }
         Ok(())
+    }
+    pub fn mdns_responders(&self) -> Arc<crate::mdns_host::Responders> {
+        self.mdns.clone()
+    }
+    pub fn mdns_assignments(&self) -> Result<Vec<crate::mdns_host::Assignment>> {
+        let options = self.effective_options()?;
+        let car_up = options.settings.network_mode == "shared-wifi"
+            || self.hotspot_lifetime.ready_info().is_some();
+        Ok(crate::mdns_host::assignments(
+            &self.runtime.network_addresses()?,
+            &options.wifi_interface,
+            car_up,
+        ))
+    }
+    pub fn set_admin_names(&self, names: Vec<String>) {
+        *self.local_admin_names.lock().unwrap() = names;
     }
     pub fn host_addresses(&self) -> Result<Vec<std::net::Ipv4Addr>> {
         let options = self.effective_options()?;
@@ -2442,12 +2467,8 @@ impl LinuxRelayAdmin {
                 result
             })
         };
-        // A concurrent/browser path prepares its AP before waiting for a screen report.
-        // On one radio, Carlink must own that radio before the controller prepares a network.
-        match start_gate() {
-            Err(_) => return Ok(()), // The failed request is published; the daemon keeps serving.
-
-            _ => {}
+        if start_gate().is_err() {
+            return Ok(());
         }
         if self
             .pairing
@@ -2480,6 +2501,7 @@ impl LinuxRelayAdmin {
             .with_inventory(self.inventory.clone())
             .with_capabilities(self.capabilities.clone())
             .with_hotspot_lifetime(self.hotspot_lifetime.clone())
+            .with_mdns(self.mdns.clone())
             .with_bluetooth_wake(self.bluetooth_wake.clone())
             .with_secure_connections(self.secure_connections.clone())
             .with_provisioning(self.provisioning.clone())
@@ -2624,6 +2646,7 @@ fn admin_urls(
     status: &crate::public_name::PublicNameStatus,
     head_unit: Option<std::net::Ipv4Addr>,
     hosts: &[std::net::Ipv4Addr],
+    names: &[String],
 ) -> Vec<String> {
     let mut urls = Vec::new();
     if let Some(name) = status.trusted_name.as_ref().filter(|_| {
@@ -2631,15 +2654,17 @@ fn admin_urls(
     }) {
         urls.push(format!("https://{name}:6975/"));
     }
+    for name in names {
+        let url = format!("https://{name}:6975/");
+        if !urls.contains(&url) {
+            urls.push(url);
+        }
+    }
     for address in head_unit.into_iter().chain(hosts.iter().copied()) {
         let url = format!("https://{address}:6975/");
         if !urls.contains(&url) {
             urls.push(url);
         }
-    }
-    let local = "https://openxplay-linux.local:6975/".to_string();
-    if !urls.contains(&local) {
-        urls.push(local);
     }
     urls
 }
@@ -4046,6 +4071,7 @@ impl RelayAdmin for LinuxRelayAdmin {
         let head_unit = self.head_unit_address();
         let active_hotspot = self.active_hotspot();
         let host_addresses = self.host_addresses().unwrap_or_default();
+        let local_names = self.local_admin_names.lock().unwrap().clone();
         let controller = self.controller.lock().unwrap();
         let stage = controller.as_ref().map(|c| c.stage()).unwrap_or_else(|| {
             if wifi.setup_hotspot {
@@ -4059,7 +4085,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             .lock()
             .unwrap()
             .as_ref()
-            .map(|s| s.receiver_urls("openxplay-linux.local"))
+            .map(|s| s.receiver_urls(local_names.first().map_or("", String::as_str)))
             .unwrap_or_default();
         let selected_tesla = options.settings.tesla_address();
         let served_tesla = *self.receiver_tesla_tls.lock().unwrap();
@@ -4176,7 +4202,7 @@ impl RelayAdmin for LinuxRelayAdmin {
             platform: "linux".into(),
             name: crate::branding::DEVICE_NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            host: "openxplay-linux.local".into(),
+            host: local_names.first().cloned().unwrap_or_default(),
             admin_hotspot: Some(self.admin_hotspot.status()),
             host_capabilities: self.capabilities.get(),
             local_audio: crate::local_audio::devices(&self.runtime.root),
@@ -4230,8 +4256,11 @@ impl RelayAdmin for LinuxRelayAdmin {
                 }
                 .into(),
             }),
-            admin_url: "https://openxplay-linux.local:6975/".into(),
-            admin_urls: admin_urls(&admin_public_name, head_unit, &host_addresses),
+            admin_url: admin_urls(&admin_public_name, head_unit, &host_addresses, &local_names)
+                .first()
+                .cloned()
+                .unwrap_or_default(),
+            admin_urls: admin_urls(&admin_public_name, head_unit, &host_addresses, &local_names),
             receiver_urls,
             state: stage,
             running: controller.as_ref().is_some_and(|c| c.running()),
@@ -7788,7 +7817,7 @@ mod tests {
         assert!(a.provision.lock().unwrap().is_none());
         assert!(a.controller.lock().unwrap().is_none());
         let status = serde_json::to_value(a.status()).unwrap();
-        assert_eq!(status["host"], "openxplay-linux.local");
+        assert_eq!(status["host"], "");
         let host = &status["hostProfile"];
         assert!(host.get("hostname").is_none());
         assert_eq!(host["profilePath"], "/etc/openxplay/host.json");
@@ -10651,44 +10680,100 @@ esac
             ..Default::default()
         };
         let fallback = vec![
+            "https://openxplay-admin.local:6975/",
             "https://10.77.0.1:6975/",
             "https://192.168.1.2:6975/",
-            "https://openxplay-linux.local:6975/",
         ];
         let mut expected = vec!["https://a.duckdns.org:6975/"];
         expected.extend(fallback.iter().copied());
-        assert_eq!(admin_urls(&ready, Some(head), &hosts), expected);
+        assert_eq!(
+            admin_urls(
+                &ready,
+                Some(head),
+                &hosts,
+                &["openxplay-admin.local".into()]
+            ),
+            expected
+        );
         let not_ready = crate::public_name::PublicNameStatus {
             trusted_name: None,
             ..ready.clone()
         };
-        assert_eq!(admin_urls(&not_ready, Some(head), &hosts), fallback);
+        assert_eq!(
+            admin_urls(
+                &not_ready,
+                Some(head),
+                &hosts,
+                &["openxplay-admin.local".into()]
+            ),
+            fallback
+        );
         let mismatch = crate::public_name::PublicNameStatus {
             address: Some("10.78.0.1".into()),
             ..ready.clone()
         };
-        assert_eq!(admin_urls(&mismatch, Some(head), &hosts), fallback);
+        assert_eq!(
+            admin_urls(
+                &mismatch,
+                Some(head),
+                &hosts,
+                &["openxplay-admin.local".into()]
+            ),
+            fallback
+        );
         let local_name = crate::public_name::PublicNameStatus {
-            trusted_name: Some("openxplay-linux.local".into()),
+            trusted_name: Some("openxplay-admin.local".into()),
             ..ready.clone()
         };
         assert_eq!(
-            admin_urls(&local_name, Some(head), &hosts),
+            admin_urls(
+                &local_name,
+                Some(head),
+                &hosts,
+                &["openxplay-admin.local".into()]
+            ),
             [
-                "https://openxplay-linux.local:6975/",
+                "https://openxplay-admin.local:6975/",
                 "https://10.77.0.1:6975/",
                 "https://192.168.1.2:6975/",
             ]
         );
         assert_eq!(
-            admin_urls(&ready, None, &[]),
-            ["https://openxplay-linux.local:6975/"]
+            admin_urls(&ready, None, &[], &["openxplay-admin.local".into()]),
+            ["https://openxplay-admin.local:6975/"]
         );
         let renewing = crate::public_name::PublicNameStatus {
             state: "error".into(),
             ..ready
         };
-        assert_eq!(admin_urls(&renewing, Some(head), &hosts), expected);
+        assert_eq!(
+            admin_urls(
+                &renewing,
+                Some(head),
+                &hosts,
+                &["openxplay-admin.local".into()]
+            ),
+            expected
+        );
+    }
+    #[test]
+    fn admin_urls_use_advertised_names_including_conflict_renames() {
+        let urls = admin_urls(
+            &Default::default(),
+            None,
+            &[],
+            &[
+                "openxplay-car-2.local".into(),
+                "openxplay-admin-3.local".into(),
+            ],
+        );
+        assert_eq!(
+            urls,
+            [
+                "https://openxplay-car-2.local:6975/",
+                "https://openxplay-admin-3.local:6975/"
+            ]
+        );
     }
     #[test]
     fn public_name_import_route_validates_auth_errors_size_and_activates_the_provider() {

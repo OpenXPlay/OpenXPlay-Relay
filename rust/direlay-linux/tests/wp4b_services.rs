@@ -834,7 +834,7 @@ fn mdns_record_contract() {
         "192.168.68.1".parse().unwrap(),
     ];
     let info = mdns_host::service_info(&ips, 6975, 8443).unwrap();
-    assert_eq!(info.get_hostname(), "openxplay-linux.local.");
+    assert_eq!(info.get_hostname(), "openxplay-admin.local.");
     assert_eq!(info.get_type(), "_openxplay._tcp.local.");
     assert_eq!(info.get_port(), 6975);
     assert_eq!(info.get_property_val_str("platform"), Some("linux"));
@@ -1776,6 +1776,10 @@ fn plugin_arguments_off_golden_and_on_filtered_in_order() {
         "/var/lib/openxplay/receiver-tls",
         "--tls-san",
         "openxplay-linux.local",
+        "--tls-san",
+        "openxplay-admin.local",
+        "--tls-san",
+        "openxplay-car.local",
         "--web-transcode",
         "auto",
         "--host-ui",

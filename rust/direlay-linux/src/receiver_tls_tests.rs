@@ -153,7 +153,7 @@ fn matching_success_updates_the_complete_set_and_automatic_retry_arguments() {
         let update =
             scope.spawn(|| supervisor.update_web_tls(None, sans.clone(), Duration::from_secs(2)));
         let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert_eq!(request.value["sans"].as_array().unwrap().len(), 17);
+        assert_eq!(request.value["sans"].as_array().unwrap().len(), 19);
         assert_eq!(request.value["sans"][0], "openxplay-linux.local");
         (request.events)(
             json!({"type":"web-tls","id":"unrelated","applied":true,"trustedName":null}),
