@@ -93,7 +93,6 @@ fn admin_keyfile_is_mac_bound_private_and_fixed_without_a_password_in_argv() {
     assert_eq!(keyfiles.len(), 1);
     let text = &keyfiles[0];
     for setting in [
-        "interface-name=\n",
         "mac-address=02:00:00:00:00:09\n",
         "autoconnect=false\n",
         "mode=ap\n",
@@ -111,6 +110,8 @@ fn admin_keyfile_is_mac_bound_private_and_fixed_without_a_password_in_argv() {
     ] {
         assert!(text.contains(setting), "missing {setting:?}");
     }
+    assert!(!text.lines().any(|line| line.starts_with("interface-name=")));
+    assert!(!text.lines().any(|line| line.ends_with('=')));
     let id = text.lines().find_map(|l| l.strip_prefix("id=")).unwrap();
     assert_eq!(id.len(), "oxp-admin-".len() + 16);
     assert!(id
@@ -188,5 +189,25 @@ fn admin_does_not_silently_fall_back_to_another_band() {
             .unwrap()
             .is_empty()
     );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn carplay_keyfile_binds_by_interface_without_empty_properties() {
+    let root = root();
+    let runner = Arc::new(Runner::default());
+    let hotspot = LinuxHotspot::new(root.clone(), runner.clone(), "wlan9".into(), 165)
+        .with_runtime_dirs(
+            root.join("nm-keyfiles"),
+            openxplay_relay::public_name::local_dns::Paths::in_dir(root.join("dnsmasq-shared.d")),
+        );
+    hotspot.start(Duration::from_secs(1)).unwrap();
+    let keyfiles = runner.keyfiles.lock().unwrap();
+    assert_eq!(keyfiles.len(), 1);
+    let text = &keyfiles[0];
+    assert!(text.contains("interface-name=wlan9\n"));
+    assert!(!text.contains("mac-address="));
+    assert!(!text.lines().any(|line| line.ends_with('=')));
+    hotspot.close().unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }

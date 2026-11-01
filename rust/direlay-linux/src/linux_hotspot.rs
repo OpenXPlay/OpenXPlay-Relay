@@ -408,15 +408,15 @@ impl ApKeyfile<'_> {
             &random[20..]
         );
         let binding = if self.mac.is_some() {
-            ""
+            String::new()
         } else {
-            self.interface
+            format!("interface-name={}\n", self.interface)
         };
         let mac = self
             .mac
             .map_or_else(String::new, |mac| format!("mac-address={mac}\n"));
         let security = keyfile_security(self.security, self.password)?;
-        Ok(format!("[connection]\nid={}\nuuid={uuid}\ntype=wifi\nautoconnect=false\ninterface-name={binding}\n\n[wifi]\n{mac}mode=ap\nssid={}\nband={}\nchannel={}\npowersave=2\n\n{security}[ipv4]\nmethod=shared\naddress1={}\n\n[ipv6]\nmethod=disabled\n",
+        Ok(format!("[connection]\nid={}\nuuid={uuid}\ntype=wifi\nautoconnect=false\n{binding}\n[wifi]\n{mac}mode=ap\nssid={}\nband={}\nchannel={}\npowersave=2\n\n{security}[ipv4]\nmethod=shared\naddress1={}\n\n[ipv6]\nmethod=disabled\n",
             self.id, self.ssid.bytes().map(|b| format!("{b};")).collect::<String>(), self.band, self.channel, self.subnet))
     }
 }
