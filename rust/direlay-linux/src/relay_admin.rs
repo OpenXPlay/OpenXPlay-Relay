@@ -724,6 +724,8 @@ impl LinuxRelayAdmin {
             self.admin_hotspot.prepare()?;
         }
         self.inventory.wait_for_probe(timeout);
+        let status = self.network_status(&self.settings.lock().unwrap());
+        crate::network_roles::validate_carlink_cli(&status.plan)?;
         let mut settings = self.effective_options()?.settings;
         if let Some((interface, _)) = self.active_hotspot() {
             settings.wifi_interface = interface;
@@ -865,7 +867,10 @@ impl LinuxRelayAdmin {
         settings.addresses.sort();
         settings.addresses.dedup();
         settings.addresses.truncate(16);
-        if !self.wifi_present(o.carlink_interface()) {
+        if status.probing
+            || !status.plan.carlink.radio_available
+            || !self.wifi_present(o.carlink_interface())
+        {
             settings.carlink = None;
         }
         if let Some(carlink) = &mut settings.carlink {
@@ -927,7 +932,7 @@ impl LinuxRelayAdmin {
             display.disable_view_areas = !o.settings.car_play_view_areas;
         }
         let input = self.input.clone();
-        let shared_radio = o.shared_carlink_radio();
+        let shared_radio = status.plan.carlink.radio_available && o.shared_carlink_radio();
         let follow = self.follow.clone();
         let interface = o.wifi_interface.clone();
         let browser_target = self.browser_target.clone();
@@ -9773,6 +9778,44 @@ esac
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn saved_outputs_follow_radio_hotplug_without_rewriting_settings() {
+        for output in ["carlink", "both"] {
+            let (mut a, dir) = fake();
+            let children = link_children(&mut a);
+            a.settings.lock().unwrap().output = output.into();
+            add_second_radio(&a);
+            trust_carlink(&dir);
+            for present in [false, true, false] {
+                let mut inventory = role_inventory();
+                if !present {
+                    inventory.interfaces.pop();
+                }
+                a.inventory.set(inventory);
+                a.stop_supervisor();
+                a.start_supervisor().unwrap();
+                if output == "both" || present {
+                    let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
+                    assert_eq!(args.iter().any(|arg| arg == "--clink-interface"), present);
+                } else {
+                    assert!(children.recv_timeout(Duration::from_millis(50)).is_err());
+                }
+                assert_eq!(a.settings.lock().unwrap().output, output);
+                assert_eq!(
+                    a.status()
+                        .network
+                        .planned
+                        .unwrap()
+                        .plan
+                        .carlink
+                        .radio_available,
+                    present
+                );
+            }
+            a.shutdown();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
     fn startup_probe_before_timeout_starts_chosen_outputs_without_a_role_restart() {
         let (mut a, dir) = fake();
         let children = link_children(&mut a);
@@ -9828,9 +9871,7 @@ esac
             assert!(started.elapsed() >= Duration::from_millis(20));
             await_startup(&a);
             let (args, _) = children.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert!(args
-                .windows(2)
-                .any(|a| a[0] == "--clink-interface" && a[1] == "wlan0"));
+            assert!(!args.iter().any(|arg| arg == "--clink-interface"));
             let controller = a
                 .controller
                 .lock()

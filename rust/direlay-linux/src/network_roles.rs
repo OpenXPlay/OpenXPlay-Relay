@@ -182,6 +182,8 @@ pub struct CarlinkPlan {
     #[serde(flatten)]
     pub role: Role,
     pub follow_over: bool,
+    pub radio_available: bool,
+    pub radio_reason: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -427,19 +429,17 @@ fn resolve_with_choices(
             )
         } else if custom {
             (
-                roles
-                    .carlink
-                    .as_ref()
-                    .and_then(|r| r.interface.as_deref())
-                    .or(Some(iphone_ref)),
+                roles.carlink.as_ref().and_then(|r| r.interface.as_deref()),
                 "custom",
             )
         } else if !legacy.carlink_interface.is_empty() {
             (Some(legacy.carlink_interface), "legacy")
         } else {
             (
-                kept.and_then(|p| p.carlink.role.name())
-                    .or_else(|| Some(candidates.first().map_or(iphone_ref, |i| i.name.as_str()))),
+                kept.map_or_else(
+                    || candidates.first().map(|i| i.name.as_str()),
+                    |p| p.carlink.role.name(),
+                ),
                 "auto",
             )
         };
@@ -512,7 +512,10 @@ fn resolve_with_choices(
     };
     let time_shared_with =
         (admin.enabled && same_phy(inventory, &admin_role, &carlink)).then(|| "carlink".into());
-    let follow_over = same_interface(&iphone, &carlink);
+    let same_radio = same_interface(&iphone, &carlink) || same_phy(inventory, &iphone, &carlink);
+    let radio_available = !same_radio
+        && entry(inventory, &carlink).is_some_and(|i| i.kind == "wifi" && i.phy.is_some())
+        && iphone_entry.is_some_and(|i| i.phy.is_some());
     Plan {
         source: roles.mode.clone(),
         output: output.into(),
@@ -528,7 +531,16 @@ fn resolve_with_choices(
         },
         carlink: CarlinkPlan {
             role: carlink,
-            follow_over,
+            follow_over: false,
+            radio_available,
+            radio_reason: (!radio_available).then(|| {
+                if same_radio {
+                    "carlink-same-radio"
+                } else {
+                    "carlink-radio-missing"
+                }
+                .into()
+            }),
         },
         admin_hotspot: AdminHotspotPlan {
             role: admin_role,
@@ -705,10 +717,10 @@ pub fn checks(plan: &Plan, inventory: &Inventory) -> Vec<Check> {
             add("error", "no-station-mode", &[(name, role)], json!({}));
         }
     }
-    if plan.carlink.follow_over {
+    if plan.carlink.radio_reason.as_deref() == Some("carlink-same-radio") {
         add(
-            "info",
-            "follow-over",
+            "error",
+            "carlink-same-radio",
             &[
                 ("iphone", &plan.iphone.role),
                 ("carlink", &plan.carlink.role),
@@ -909,11 +921,23 @@ pub fn apply_plan(plan: &Plan, options: &mut crate::Options) {
         "device-hotspot"
     }
     .into();
-    options.settings.carlink_interface = if plan.carlink.follow_over {
-        String::new()
-    } else {
-        plan.carlink.role.name().unwrap_or("").into()
-    };
+    options.settings.carlink_interface =
+        if plan.carlink.radio_reason.as_deref() == Some("carlink-same-radio") {
+            String::new()
+        } else {
+            plan.carlink.role.name().unwrap_or("").into()
+        };
+}
+pub fn validate_carlink_cli(plan: &Plan) -> crate::Result<()> {
+    if plan.carlink.role.source == "cli"
+        && plan.carlink.radio_reason.as_deref() == Some("carlink-same-radio")
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "carlink-same-radio: Carlink needs a second Wi-Fi adapter",
+        ));
+    }
+    Ok(())
 }
 pub fn changes(before: &Plan, after: &Plan) -> Vec<String> {
     let mut changes = RunningLinks::from_plan(before, |_| true)
@@ -951,7 +975,11 @@ impl RunningLinks {
             iphone: name(&plan.iphone.role),
             link: plan.iphone.link.clone(),
             hotspot: Some((plan.iphone.band.clone(), plan.iphone.channel)),
-            carlink: name(&plan.carlink.role),
+            carlink: plan
+                .carlink
+                .radio_available
+                .then(|| name(&plan.carlink.role))
+                .flatten(),
             follow_over: plan.carlink.follow_over,
             browser: name(&plan.car_browser.role),
             browser_network: plan.car_browser.network.clone(),
@@ -968,8 +996,8 @@ impl RunningLinks {
             }
             .into(),
             hotspot: None,
-            carlink: name(options.carlink_interface()),
-            follow_over: options.shared_carlink_radio(),
+            carlink: None,
+            follow_over: false,
             browser: name(&options.wifi_interface),
             browser_network: "iphone".into(),
         }

@@ -5,6 +5,9 @@
 export type Language = 'en' | 'zh-CN';
 const messages: Record<Language, Record<string, string>> = {
   "en": {
+    "carlink.radioMissing": "Carlink needs a second Wi-Fi adapter. Use the browser with one adapter.",
+    "carlink.useBrowser": "Use browser",
+    "connections.check.carlink-same-radio": "Carlink needs a second Wi-Fi adapter.",
     "ui.continue": "Continue",
     "menu.admin": "Admin",
     "menu.options": "options",
@@ -1564,6 +1567,9 @@ const messages: Record<Language, Record<string, string>> = {
     "hint.field.rfcommChannel": "Leave empty to choose automatically."
   },
   "zh-CN": {
+    "carlink.radioMissing": "Carlink 需要第二个 Wi-Fi 适配器。只有一个适配器时请使用浏览器。",
+    "carlink.useBrowser": "使用浏览器",
+    "connections.check.carlink-same-radio": "Carlink 需要第二个 Wi-Fi 适配器。",
     "ui.continue": "继续",
     "menu.admin": "管理页面",
     "menu.options": "项",

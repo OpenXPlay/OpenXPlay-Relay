@@ -55,7 +55,7 @@ export interface NetworkPlan {
   source: 'auto' | 'custom'; output: string;
   iphone: PlannedRole & { link: 'hotspot' | 'saved-network'; band: string; channel: number };
   carBrowser: PlannedRole & { network: 'iphone' | 'interface' };
-  carlink: PlannedRole & { followOver: boolean };
+  carlink: PlannedRole & { followOver: boolean; radioAvailable?: boolean; radioReason?: string | null };
   adminHotspot: PlannedRole & { enabled: boolean; ssid: string; band: string; channel: number; timeSharedWith: 'carlink' | null; passwordSet: boolean };
 }
 export interface NetworkInterface {

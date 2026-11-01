@@ -120,10 +120,10 @@ fn hardware_plan_table() {
             legacy_carlink: "",
             cli: BTreeMap::new(),
             iphone: "wlan0",
-            carlink: "wlan0",
+            carlink: "",
             admin: None,
-            follow: true,
-            present: vec!["follow-over", "carlink-band-gap"],
+            follow: false,
+            present: vec![],
             absent: vec!["roles-conflict", "admin-hotspot-nat"],
         },
         Case {
@@ -159,10 +159,10 @@ fn hardware_plan_table() {
             legacy_carlink: "",
             cli: BTreeMap::new(),
             iphone: "wlan0",
-            carlink: "wlan0",
+            carlink: "",
             admin: None,
-            follow: true,
-            present: vec!["carlink-no-5ghz"],
+            follow: false,
+            present: vec![],
             absent: vec!["no-ap-channel", "no-ap-mode"],
         },
         Case {
@@ -187,7 +187,7 @@ fn hardware_plan_table() {
             iphone: "wlan0",
             carlink: "wlan0",
             admin: Some("wlan0"),
-            follow: true,
+            follow: false,
             present: vec!["roles-conflict"],
             absent: vec!["no-ap-mode"],
         },
@@ -213,9 +213,9 @@ fn hardware_plan_table() {
             iphone: "wlan0",
             carlink: "wlan0",
             admin: None,
-            follow: true,
-            present: vec!["follow-over", "carlink-band-gap"],
-            absent: vec!["roles-conflict"],
+            follow: false,
+            present: vec!["carlink-same-radio", "carlink-band-gap"],
+            absent: vec![],
         },
         Case {
             name: "CLI overrides custom",
@@ -267,9 +267,9 @@ fn hardware_plan_table() {
             legacy_carlink: "",
             cli: BTreeMap::new(),
             iphone: "wlan0",
-            carlink: "wlan0",
+            carlink: "",
             admin: None,
-            follow: true,
+            follow: false,
             present: vec!["no-ap-channel"],
             absent: vec!["roles-conflict"],
         },
@@ -296,7 +296,7 @@ fn hardware_plan_table() {
         );
         assert_eq!(
             name(&p.carlink.role).as_deref(),
-            Some(case.carlink),
+            (!case.carlink.is_empty()).then_some(case.carlink),
             "{}",
             case.name
         );
@@ -692,8 +692,8 @@ fn automatic_choices_survive_activity_but_reselect_on_adapter_and_capability_cha
     }
     inv.interfaces.retain(|i| i.name != "wlan1");
     let next = cached_plan(&mut choices, &inv, &settings);
-    assert_eq!(next.carlink.role.name(), Some("wlan0"));
-    assert!(next.carlink.follow_over);
+    assert_eq!(next.carlink.role.name(), None);
+    assert!(!next.carlink.radio_available);
     assert_eq!(next.admin_hotspot.role.name(), None);
     assert_eq!(changes(&previous, &next), ["carlink", "adminHotspot"]);
     previous = next;
@@ -712,7 +712,7 @@ fn automatic_choices_survive_activity_but_reselect_on_adapter_and_capability_cha
         .station = false;
     inv.interfaces[1].wifi.as_mut().unwrap().capabilities.ap = false;
     let next = cached_plan(&mut choices, &inv, &settings);
-    assert_eq!(next.carlink.role.name(), Some("wlan0"));
+    assert_eq!(next.carlink.role.name(), None);
     assert_eq!(next.admin_hotspot.role.name(), None);
     assert_eq!(changes(&previous, &next), ["carlink", "adminHotspot"]);
     inv.interfaces[1] = usb();
@@ -723,22 +723,23 @@ fn automatic_choices_survive_activity_but_reselect_on_adapter_and_capability_cha
 }
 
 #[test]
-fn automatic_follow_over_stays_until_a_fresh_selection() {
+fn automatic_missing_radio_waits_for_topology_or_fresh_selection() {
     let settings = Settings::default();
     let mut inv = inventory(vec![n1(), usb()]);
     inv.probed_at = Some(1);
     inv.interfaces[1].activity.kind = "other-ap".into();
     let mut choices = AutomaticChoices::default();
     let before = cached_plan(&mut choices, &inv, &settings);
-    assert!(before.carlink.follow_over);
+    assert!(!before.carlink.radio_available);
     inv.interfaces[1].activity.kind = "idle".into();
     let kept = cached_plan(&mut choices, &inv, &settings);
-    assert!(changes(&before, &kept).is_empty());
-    assert_eq!(kept.carlink.role.name(), Some("wlan0"));
-    let fresh = cached_plan(&mut AutomaticChoices::default(), &inv, &settings);
-    assert_eq!(fresh.carlink.role.name(), Some("wlan1"));
-    assert_eq!(changes(&kept, &fresh), ["carlink"]);
+    assert!(!kept.carlink.radio_available);
+    let ready = cached_plan(&mut AutomaticChoices::default(), &inv, &settings);
+    assert!(ready.carlink.radio_available);
+    assert_eq!(ready.carlink.role.name(), Some("wlan1"));
+    assert_eq!(changes(&before, &ready), ["carlink"]);
 }
+
 #[test]
 fn browser_address_and_phy_hold_follow_selected_network() {
     let mut ethernet = Interface {
@@ -853,4 +854,44 @@ fn admin_default_password_busy_country_and_restart_checks_are_independent() {
     next = p.clone();
     next.iphone.channel = 165;
     assert_eq!(changes(&p, &next), ["controller", "carBrowserAddress"]);
+}
+
+#[test]
+fn carlink_radio_rule_and_hotplug_preserve_saved_outputs() {
+    for output in ["web", "carlink", "both"] {
+        let settings = Settings {
+            output: output.into(),
+            ..Default::default()
+        };
+        let mut choices = AutomaticChoices::default();
+        for (interfaces, available) in [
+            (vec![n1()], false),
+            (vec![n1(), usb()], true),
+            (vec![n1()], false),
+        ] {
+            let inv = inventory(interfaces);
+            let p = cached_plan(&mut choices, &inv, &settings);
+            assert_eq!(p.carlink.radio_available, available);
+            assert!(!p.carlink.follow_over);
+            assert_eq!(settings.output, output);
+        }
+    }
+    let mut virtual_interface = usb();
+    virtual_interface.phy = Some("phy0".into());
+    for interface in ["wlan0", "wlan1"] {
+        let inv = inventory(vec![n1(), virtual_interface.clone()]);
+        let settings = Settings {
+            network_roles: custom("wlan0", Some(interface), Default::default()),
+            ..Default::default()
+        };
+        let p = plan(&inv, &settings, &BTreeMap::new());
+        assert!(checks(&p, &inv)
+            .iter()
+            .any(|c| c.code == "carlink-same-radio" && c.level == "error"));
+        let cli = BTreeMap::from([("--carlink-interface".into(), interface.into())]);
+        assert!(validate_carlink_cli(&plan(&inv, &settings, &cli))
+            .unwrap_err()
+            .to_string()
+            .contains("carlink-same-radio"));
+    }
 }
