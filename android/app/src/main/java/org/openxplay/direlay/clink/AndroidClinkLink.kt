@@ -90,7 +90,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         var scanner: BluetoothLeScanner? = null
         var scanRenewal: Runnable? = null
         var rawScan: ScanCallback? = null
-        var rawCapture: BleAdvertisementTrace.Scan? = null
+        var rawCapture: BleRawCapture? = null
         var gatt: BluetoothGatt? = null
         var closingGatt: BluetoothGatt? = null
         var bleClosed = CompletableFuture.completedFuture(Unit)
@@ -226,13 +226,12 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                 } else diagnostics.traceLink("ble_raw_skipped", mapOf(
                     "reason" to "scan_budget", "count" to scanStartBudget.count(now).toString()))
             }
-            val rawCallback = advertisements?.scan()?.let { capture ->
+            val rawCallback = advertisements?.scan()?.let { trace ->
+                val capture = BleRawCapture(trace)
                 run.rawCapture = capture
                 val rawCallback = object : ScanCallback() {
                     override fun onScanResult(type: Int, scan: ScanResult) {
-                        if (!run.cancelled && !result.isDone && run.rawScan === this) try {
-                            capture.record(BleRawAdvertisement.from(scan), SystemClock.elapsedRealtime())
-                        } catch (_: Exception) { capture.failed(-1) }
+                        if (!run.cancelled && !result.isDone && run.rawScan === this) capture.record(scan)
                     }
                     override fun onBatchScanResults(results: MutableList<ScanResult>) {
                         results.forEach { onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, it) }

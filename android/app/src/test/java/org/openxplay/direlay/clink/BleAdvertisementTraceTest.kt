@@ -12,6 +12,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.openxplay.stream.clink.ble.BleCodec
+import java.util.concurrent.AbstractExecutorService
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE, application = Application::class)
@@ -28,9 +30,41 @@ class BleAdvertisementTraceTest {
         override fun emit(event: ClinkDiagnostic) { trail.add(event.line()) }
         override fun traceLink(stage: String, fields: Map<String, String>) { links.add(stage to fields) }
     }
+    private class QueuedExecutor : AbstractExecutorService() {
+        private val tasks = java.util.ArrayDeque<Runnable>()
+        private var closed = false
+        override fun execute(command: Runnable) { check(!closed); tasks.addLast(command) }
+        override fun shutdown() { closed = true }
+        override fun shutdownNow(): MutableList<Runnable> = tasks.toMutableList().also { tasks.clear(); shutdown() }
+        override fun isShutdown() = closed
+        override fun isTerminated() = closed && tasks.isEmpty()
+        override fun awaitTermination(timeout: Long, unit: TimeUnit) = isTerminated()
+        fun runNext() { tasks.removeFirst().run() }
+        fun runAll() { while (tasks.isNotEmpty()) runNext() }
+    }
     private fun raw() = BleRawAdvertisement("AA:BB:CC:DD:EE:FF", 1, -71, true, false, -8, "Nearby device",
         listOf(BleCodec.ADVERTISEMENT_SERVICE), mapOf(BleCodec.NAME_SERVICE to byteArrayOf(0, 0x7f, 0xff.toByte())),
         mapOf(76 to byteArrayOf(0xab.toByte(), 0x01)), byteArrayOf(0, 0x80.toByte(), 0xff.toByte()))
+
+    @Test fun hexMatchesFormatterForEveryByteAndEmptyPayloads() {
+        val bytes = ByteArray(256) { it.toByte() }
+        assertEquals(bytes.joinToString("") { "%02x".format(it.toInt() and 255) }, BleRawAdvertisement.hex(bytes))
+        assertEquals("", BleRawAdvertisement.hex(byteArrayOf()))
+    }
+
+    @Test fun recordKeepsTheGoldenTraceFields() {
+        val diagnostics = Diagnostics()
+        val identity = ByteArray(15) { it.toByte() }.apply { this[0] = 1; this[1] = 9; this[2] = 7 }
+        BleAdvertisementTrace(diagnostics, History()).scan().record(raw().copy(serviceData = mapOf(
+            BleCodec.NAME_SERVICE to "Car".toByteArray(), BleCodec.IDENTITY_SERVICE to identity)), 0)
+        assertEquals(listOf("ble_raw" to mapOf(
+            "address" to "AA:BB:CC:DD:EE:FF", "addressType" to "1", "rssi" to "-71",
+            "connectable" to "true", "legacy" to "false", "txPower" to "-8", "localName" to "Nearby device",
+            "serviceUuids" to "[\"0000fcfb-0000-1000-8000-00805f9b34fb\"]",
+            "serviceData" to "{\"00000001-0000-1000-8000-00805f9b34fb\":\"010907030405060708090a0b0c0d0e\",\"00000002-0000-1000-8000-00805f9b34fb\":\"436172\"}",
+            "manufacturerData" to "{\"76\":\"ab01\"}", "raw" to "0080ff",
+            "carId" to "030405060708", "serial" to "7", "serialSame" to "false")), diagnostics.links)
+    }
 
     @Test fun rawFormattingKeepsAllAvailableFieldsAndHexPayloads() {
         val fields = raw().fields()
@@ -97,5 +131,53 @@ class BleAdvertisementTraceTest {
         trace.sessionDiagnostic("auth repin reason=peer_key_changed")
         trace.sessionDiagnostic("audio queue reset")
         assertEquals(listOf("auth repin reason=peer_key_changed"), diagnostics.trail)
+    }
+
+    @Test fun captureDefersExtractionAndOrdersRecordsFailuresAndFinish() {
+        val diagnostics = Diagnostics()
+        val executor = QueuedExecutor()
+        val capture = BleRawCapture(BleAdvertisementTrace(diagnostics, History()).scan(), executor) { 0L }
+        val reads = mutableListOf<String>()
+        capture.record { reads.add("first"); raw() }
+        capture.failed(4)
+        capture.record { reads.add("second"); raw().copy(address = "second") }
+        capture.record { reads.add("bad"); throw IllegalArgumentException("bad scan") }
+        capture.finish(); capture.finish()
+        capture.record { reads.add("late"); raw() }; capture.failed(5)
+        assertTrue(reads.isEmpty()); assertTrue(diagnostics.links.isEmpty())
+        assertTrue(executor.isShutdown())
+        executor.runAll()
+        assertEquals(listOf("first", "second", "bad"), reads)
+        assertEquals(listOf("ble_raw", "ble_raw_failed", "ble_raw", "ble_raw_failed", "ble_raw_dropped"),
+            diagnostics.links.map { it.first })
+        assertEquals("AA:BB:CC:DD:EE:FF", diagnostics.links[0].second["address"])
+        assertEquals(mapOf("errorCode" to "4"), diagnostics.links[1].second)
+        assertEquals("second", diagnostics.links[2].second["address"])
+        assertEquals(mapOf("errorCode" to "-1"), diagnostics.links[3].second)
+        assertEquals(mapOf("count" to "0"), diagnostics.links.last().second)
+        capture.record { reads.add("finished"); raw() }; capture.failed(6); capture.finish()
+        executor.runAll()
+        assertEquals(3, reads.size); assertEquals(5, diagnostics.links.size)
+        assertTrue(executor.isTerminated())
+    }
+
+    @Test fun captureBoundsPendingResultsAndCountsOverflowWithThrottleDrops() {
+        val diagnostics = Diagnostics()
+        val executor = QueuedExecutor()
+        val capture = BleRawCapture(BleAdvertisementTrace(diagnostics, History()).scan(), executor) { 0L }
+        var reads = 0
+        repeat(256) { index -> capture.record { reads++; raw().copy(address = "$index") } }
+        var overflowRead = false
+        capture.record { overflowRead = true; raw() }
+        executor.runNext()
+        assertEquals(1, reads)
+        capture.record { reads++; raw().copy(address = "another") }
+        capture.failed(7); capture.finish()
+        executor.runAll()
+        assertFalse(overflowRead); assertEquals(257, reads)
+        assertEquals(50, diagnostics.links.count { it.first == "ble_raw" })
+        assertEquals(listOf("ble_raw_failed" to mapOf("errorCode" to "7"),
+            "ble_raw_dropped" to mapOf("count" to "208")), diagnostics.links.takeLast(2))
+        assertTrue(executor.isTerminated())
     }
 }
