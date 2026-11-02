@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-14
 package org.openxplay.direlay.bridge
 
+import android.util.Log
 import com.shilapi.xcertplay.airplay.AudioCodecKind
 import com.shilapi.xcertplay.airplay.AudioStreamId
 import com.shilapi.xcertplay.airplay.AudioFormat as CarPlayAudioFormat
@@ -41,14 +42,25 @@ internal class AudioClock(private val rate: Int) {
     private var sample: Int? = null
     private var anchorUs = 0L
     private var elapsed = 0L
+    private var resets = 0L
+    private var reportedAt = 0L
     fun pts(sample: Int, arrivalUs: Long): Long {
         val previous = this.sample
         if (previous == null) { anchorUs = arrivalUs; elapsed = 0 }
         else elapsed += (sample - previous).toLong()
         this.sample = sample
         var pts = anchorUs + elapsed * 1_000_000L / rate
-        if (kotlin.math.abs(pts - arrivalUs) > 100_000) {
+        // Re-anchor only on a sustained drift. Network bursts make arrivalUs jump by >100 ms while
+        // the sample-derived PTS stays smooth, so the old 100 ms threshold re-anchored on jitter and
+        // stepped the PTS (measured: 26 jumps per 10 s, up to 355 ms each — audible dropouts).
+        if (kotlin.math.abs(pts - arrivalUs) > 500_000) {
             anchorUs = arrivalUs; elapsed = 0; pts = arrivalUs
+            resets++
+            val now = System.currentTimeMillis()
+            if (now - reportedAt >= 1_000) {
+                reportedAt = now
+                Log.i("OXP-Audio", "clock_reanchor total=$resets")
+            }
         }
         return pts
     }

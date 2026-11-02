@@ -106,6 +106,18 @@
             <intent-filter tools:node="removeAll" />
         </activity>
 
+        <!--
+          DiPlay ships CarPlayHostActivity with screenOrientation="fullSensor": rotating the relay
+          phone re-lays-out the host, which tears down and rebuilds the CarPlay media session and
+          silences audio until the next reconnect. The relay is a fixed-orientation device, so pin
+          it to portrait and let configChanges absorb the rest.
+        -->
+        <activity
+            android:name="com.shilapi.xcertplay.CarPlayHostActivity"
+            android:screenOrientation="portrait"
+            android:resizeableActivity="false"
+            tools:replace="android:screenOrientation,android:resizeableActivity" />
+
 
         <activity
             android:name=".RelayActivity"
@@ -113,6 +125,8 @@
             android:taskAffinity="${applicationId}.relay"
             android:theme="@style/Theme.DiRelay"
             android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:screenOrientation="portrait"
             android:label="@string/direlay_app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
