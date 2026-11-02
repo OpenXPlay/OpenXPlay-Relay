@@ -85,14 +85,16 @@ internal sealed interface StageCommand {
     data object Connect : StageCommand
     data object Stop : StageCommand
     data object CancelArrival : StageCommand
+    data object ShowCarPlay : StageCommand
     data class Step(val action: StepAction, val step: PathStep) : StageCommand
 }
 
 /** Resolve against the current path, including while an outgoing action animates away. */
-internal fun stageCommand(action: StageAction, path: ConnectionPath): StageCommand? = when (action) {
+internal fun stageCommand(action: StageAction, path: ConnectionPath, phoneControl: Boolean = false): StageCommand? = when (action) {
     StageAction.Connect -> StageCommand.Connect.takeUnless { path.running }
     StageAction.Stop -> StageCommand.Stop.takeIf { path.running }
     StageAction.NotNow -> StageCommand.CancelArrival
+    StageAction.ShowCarPlay -> StageCommand.ShowCarPlay.takeIf { path.running && path.live != null && phoneControl }
     is StageAction.Step -> path.steps.firstOrNull { it.id == action.step }?.let { StageCommand.Step(action.action, it) }
 }
 

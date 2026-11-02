@@ -90,9 +90,10 @@ class SettingsDraftSaverTest {
 
     @Test fun wirelessDisplaysSurviveParcelRoundTripWithoutExtendingLegacyFlags() {
         for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
-            for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
-                val value = base.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
+            for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                val value = base.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaRenderer = receiver)
                 val saved = bundle(value)
+                assertFalse(saved.containsKey("dlnaPicture"))
                 assertEquals(7, requireNotNull(saved.getBooleanArray("flags")).size)
                 val parcel = Parcel.obtain()
                 try {
@@ -104,9 +105,9 @@ class SettingsDraftSaverTest {
             listOf("outputs", "dlnaRendererUdn", "dlnaRendererName", "dlnaPicture").forEach { remove(it) }
         }
         val remembered = base.copy(outputs = setOf(RelayOutput.BROWSER, RelayOutput.DLNA, RelayOutput.MIRACAST),
-            dlnaPicture = DlnaPicture.P1080, dlnaRenderer = DlnaRendererChoice("uuid:remembered", "Remembered"))
+            dlnaRenderer = DlnaRendererChoice("uuid:remembered", "Remembered"))
         assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
-        old.putString("dlnaPicture", "future")
+        old.putInt("dlnaPicture", 1080)
         assertEquals(base, relaySettingsSaver(base).restore(old))
         assertEquals(base, relaySettingsSaver(remembered).restore(bundle(base)))
     }

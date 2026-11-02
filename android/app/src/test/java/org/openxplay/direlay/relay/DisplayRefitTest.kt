@@ -9,6 +9,20 @@ import org.openxplay.direlay.settings.*
 import org.openxplay.stream.core.*
 
 class DisplayRefitTest {
+    @Test fun dlnaOnlyFollowResolutionChangeRestartsEvenWhenTheWideCanvasStaysTheSame() {
+        val settings = RelaySettings(ConnectionMode.USB, com.shilapi.xcertplay.orchestration.MfiTarget.LOCAL,
+            "", "", "", null, FrameRatePreference.AUTO, false, false, false, null,
+            outputs = setOf(RelayOutput.DLNA))
+        val picture = WirelessPictureResolution(WirelessPictureSize(1920, 720), WirelessPictureSource.BROWSER)
+        val applied = DisplayTarget(checkNotNull(WirelessPicturePolicy.canvas(settings, picture)), CarPlayResolution.AUTO, settings.carplayScreenWidth)
+        val nextSettings = settings.copy(carplayResolution = CarPlayResolution.P720)
+        val desired = DisplayTarget(checkNotNull(WirelessPicturePolicy.canvas(nextSettings, picture)), nextSettings.carplayResolution, settings.carplayScreenWidth)
+        assertEquals(applied.profile, desired.profile)
+        val refit = DisplayRefit()
+        assertFalse(refit.due(0, true, settings.displayMode, applied, desired, false))
+        assertFalse(refit.due(999, true, settings.displayMode, applied, desired, false))
+        assertTrue(refit.due(1000, true, settings.displayMode, applied, desired, false))
+    }
     @Test fun nativeAlwaysUsesWholeScreenAndExplicitChangesRestartBothWays() {
         val native = checkNotNull(fitDisplay(display, CarPlayResolution.NATIVE))
         assertEquals(DisplayProfile(2400, 1200, 300), native)

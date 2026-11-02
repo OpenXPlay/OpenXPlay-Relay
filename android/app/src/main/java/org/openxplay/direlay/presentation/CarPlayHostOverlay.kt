@@ -23,10 +23,13 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.RelayActivity
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.relay.RelayRuntime
+import org.openxplay.direlay.relay.WirelessStandIn
 import org.openxplay.direlay.ui.*
 
 fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime): ComposeView? =
-    hostOverlayUnlessPreview(runtime.settingsStore.snapshot.value?.localPreview ?: runtime.localPreview) {
+    hostOverlayUnlessPreview(runtime.settingsStore.snapshot.value?.let {
+        WirelessStandIn.effective(it, runtime.settingsStore.developerOverrides.value).localPreview
+    } ?: runtime.localPreview) {
         ComposeView(activity).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent { RelayTheme { RuntimeHostOverlay(activity, runtime) } }

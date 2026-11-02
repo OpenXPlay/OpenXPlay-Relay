@@ -9,6 +9,9 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.openxplay.direlay.relay.RelayRuntime
+import org.openxplay.direlay.presentation.createCarPlayHostOverlay
+import org.openxplay.direlay.presentation.HostOverlayProducer
+import org.openxplay.direlay.settings.*
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -34,10 +37,40 @@ class HostOverlayProviderTest {
         } finally { runtime.close() }
     }
 
+    @Test fun all15OutputSetsUseEffectivePreviewBeforeRuntimeReloadWithoutSavingIt() {
+        val context = RuntimeEnvironment.getApplication()
+        val runtime = RelayRuntime(context)
+        try {
+            val store = runtime.settingsStore
+            val base = store.awaitSnapshot()
+            val activity = Robolectric.buildActivity(ComponentActivity::class.java).get()
+            val producer = HostOverlayProducer(context, runtime)
+            assertEquals(4, RelayOutput.entries.size)
+            for (mask in 1..15) for (active in listOf(false, true)) for (preview in listOf(false, true)) {
+                val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
+                val developer = DeveloperOverrides(active = active, localPreview = preview)
+                store.save(base.copy(outputs = outputs, carBluetoothAudio = false), developer)
+                val settings = store.awaitSnapshot()
+                val effectivePreview = active && preview || RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs
+                val overlay = createCarPlayHostOverlay(activity, runtime)
+                assertEquals("$outputs $developer", effectivePreview, overlay == null)
+                overlay?.disposeComposition()
+                assertEquals(effectivePreview, producer.sample(0, false)?.localPreview)
+                assertEquals(active && preview, settings.localPreview)
+                assertFalse(settings.playCarPlayAudio)
+                assertEquals(MicrophoneSource.HEAD_UNIT, settings.microphoneSource)
+                assertEquals(settings, store.load())
+                assertEquals(developer, store.developerOverrides.value)
+            }
+        } finally { runtime.close() }
+    }
+
     @Test fun overlayCopyIsAvailableInBothLocales() {
         val context = RuntimeEnvironment.getApplication()
         val keys = listOf(R.string.host_connecting, R.string.host_running, R.string.host_keep_running,
-            R.string.host_back, R.string.host_cancel, R.string.host_stopped)
+            R.string.host_back, R.string.host_cancel, R.string.host_stopped, R.string.stage_show_carplay,
+            R.string.setup_wireless_display_hint, R.string.option_wireless_display_hint,
+            R.string.audio_wireless_forwarding)
         for (tag in listOf("en", "zh-CN")) {
             val configuration = android.content.res.Configuration(context.resources.configuration).apply {
                 setLocale(Locale.forLanguageTag(tag))

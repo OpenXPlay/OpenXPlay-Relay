@@ -31,7 +31,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     val pinRejected: Int = 0, val pairingSuccess: Int = 0, val displayMismatch: Boolean = false,
     val currentWifi: String? = null, val networkReadings: NetworkReadings = NetworkReadings(),
     val pathInput: PathInput? = null, val path: ConnectionPath = presentPath(pathInput ?: PathInput()), val stepProblems: List<HomeProblem> = emptyList(),
-    val highPerformance: Boolean = true)
+    val highPerformance: Boolean = true, val phoneControl: Boolean = false)
 
 @Composable fun HomeScreen(value: HomeContent, onSettings: (String) -> Unit, onStartStop: () -> Unit,
     onAutomatic: (Boolean) -> Unit, onCopy: (String) -> Unit, onStepAction: (StepAction, PathStep) -> Unit,
@@ -42,7 +42,7 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     BackHandler(countdown) { onCancelCountdown(ArrivalEnd.BACK) }
     StageHome(value.path, StageFlags(countdown = countdown, busy = value.busy,
         displayChanged = value.displayMismatch && value.path.running, carIncomplete = carRequired,
-        setupCompleted = setupCompleted), value.addresses, value.stepProblems, onStepAction, onRecheck, onCopy,
+        setupCompleted = setupCompleted, phoneControl = value.phoneControl), value.addresses, value.stepProblems, onStepAction, onRecheck, onCopy,
         onStartStop, onSettings = onSettings, onGuide = onGuide, onRestart = onRestart,
         onCancelCountdown = onCancelCountdown, onCountdownComplete = onCountdownComplete,
         automatic = value.automatic, onAutomatic = onAutomatic,

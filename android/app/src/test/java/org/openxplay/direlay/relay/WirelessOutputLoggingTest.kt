@@ -5,8 +5,28 @@ package org.openxplay.direlay.relay
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.openxplay.direlay.settings.*
+import org.openxplay.stream.core.DisplayInfo
+import org.openxplay.stream.core.FrameRatePreference
+import com.shilapi.xcertplay.orchestration.MfiTarget
 
 class WirelessOutputLoggingTest {
+    @Test fun canvasLineRecordsTheFrozenSizeDeclarationAndRequestedControls() {
+        val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, FrameRatePreference.AUTO, false, false, false, null,
+            outputs = setOf(RelayOutput.DLNA))
+        for ((resolution, wire) in listOf(CarPlayResolution.AUTO to "auto", CarPlayResolution.NATIVE to "native",
+            CarPlayResolution.P1080 to "1080p", CarPlayResolution.P720 to "720p", CarPlayResolution.SCREEN to "screen"))
+            for (mode in WirelessPictureMode.entries) for (source in listOf("car screen", "remembered", "built-in model", "default", "fixed", "carlink picture")) {
+                val settings = base.copy(carplayResolution = resolution, wirelessPicture = mode)
+                val screen = CarPlayScreen(DisplayProfile(1920, 720, 240), source)
+                val picture = if (mode == WirelessPictureMode.AUTO) "auto" else "custom"
+                val label = if (source == "carlink picture") "fixed" else source
+                assertEquals("canvas 1920x720 source=$label declared=2560x1440 resolution=$wire picture=$picture",
+                    wirelessLogLine(wirelessCanvasLogLine(screen, DisplayInfo(2560, 1440, 240, 30.0), settings)))
+                assertEquals("canvas 1920x720 source=$label declared=- resolution=$wire picture=$picture",
+                    wirelessLogLine(wirelessCanvasLogLine(screen, null, settings)))
+            }
+    }
     @Test fun statisticsLogImmediatelyThenAtMostEveryTenSecondsWithoutSlidingTheDeadline() {
         val limiter = WirelessStatisticsLogLimiter()
         assertTrue(limiter.allow(0))

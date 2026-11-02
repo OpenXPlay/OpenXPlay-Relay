@@ -4,13 +4,10 @@
 package org.openxplay.direlay.ui
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import org.openxplay.direlay.ui.design.*
@@ -37,22 +34,11 @@ import org.openxplay.direlay.settings.*
             }
             if (draft.wirelessPicture == WirelessPictureMode.AUTO) {
                 if (draft.dlnaOutput) {
-                    SmallHeading(stringResource(R.string.dlna_picture))
-                    Column(Modifier.selectableGroup()) {
-                        DlnaPicture.entries.forEach { picture ->
-                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).selectable(draft.dlnaPicture == picture,
-                                role = Role.RadioButton, onClick = { editor.draft.value = draft.copy(dlnaPicture = picture) }),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(draft.dlnaPicture == picture, onClick = null, modifier = Modifier.padding(horizontal = 12.dp))
-                                Text(stringResource(if (picture == DlnaPicture.P720) R.string.dlna_picture_720 else R.string.dlna_picture_1080))
-                            }
-                        }
-                    }
                     automatic?.let { picture -> Text(stringResource(when (picture.source) {
                         WirelessPictureSource.BROWSER -> R.string.wireless_picture_browser
                         WirelessPictureSource.CAR_MODEL -> R.string.wireless_picture_model
                         else -> R.string.wireless_picture_default
-                    }, picture.size.width, picture.size.height)) }
+                    }, view.canvas?.width ?: picture.size.width, view.canvas?.height ?: picture.size.height)) }
                 }
             } else {
                 listOf("wirelessPictureWidth" to R.string.direlay_width, "wirelessPictureHeight" to R.string.direlay_height).forEach { (key, label) ->

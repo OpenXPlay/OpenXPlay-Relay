@@ -14,6 +14,7 @@ import org.openxplay.direlay.path.*
     val carIncomplete: Boolean = false,
     val setupCompleted: Boolean = true,
     val overlay: Boolean = false,
+    val phoneControl: Boolean = false,
 )
 
 @Immutable data class StageView(
@@ -59,6 +60,7 @@ import org.openxplay.direlay.path.*
     @Immutable data object Connect : StageAction
     @Immutable data object Stop : StageAction
     @Immutable data object NotNow : StageAction
+    @Immutable data object ShowCarPlay : StageAction
     @Immutable data class Step(val action: StepAction, val step: StepId, val label: Int?) : StageAction
 }
 
@@ -117,6 +119,7 @@ fun presentStage(path: ConnectionPath, flags: StageFlags = StageFlags()): StageV
             fix to StageAction.Connect.takeIf { path.canStart }
         !path.running && path.canStart -> StageAction.Connect to null
         !path.running -> null to null
+        live != null && flags.phoneControl -> StageAction.ShowCarPlay to StageAction.Stop
         live != null -> null to StageAction.Stop
         fix != null -> fix to StageAction.Stop
         else -> null to StageAction.Stop
