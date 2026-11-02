@@ -622,6 +622,7 @@
     <string name="public_name_error_dns_not_updated">The provider\'s name servers didn\'t show the change in time</string>
     <string name="public_name_error_acme_rejected">Let\'s Encrypt rejected the request: %1$s</string>
     <string name="public_name_error_acme_rate_limited">Let\'s Encrypt asked to wait</string>
+    <string name="public_name_error_acme_rate_limited_detail">Let\'s Encrypt asked to wait: %1$s</string>
     <string name="public_name_error_no_address">No head-unit network address yet</string>
     <string name="public_name_choose">Select a configuration file (.json)</string>
     <string name="public_name_imported">Imported: %1$s, %2$s</string>
@@ -841,4 +842,6 @@
     <string name="hotspot_no_password">No password</string>
     <string name="hotspot_system_options">In system settings, select %1$s and the hotspot band chosen below. You still need to save the changes and turn on the hotspot.</string>
     <string name="logs_capture_incomplete">Capture is incomplete; see the export summary.</string>
+    <string name="public_name_certificate_due">Certificate renewal is due. The relay retries when it has internet access.</string>
+    <string name="public_name_certificate_expired">The certificate has expired. The relay requests a new one when it has internet access.</string>
 </resources>

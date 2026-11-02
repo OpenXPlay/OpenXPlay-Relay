@@ -27,6 +27,7 @@ import org.openxplay.direlay.publicname.DnsProviderId
 import org.openxplay.direlay.publicname.PublicNameEdit
 import org.openxplay.direlay.publicname.PublicNameError
 import org.openxplay.direlay.publicname.PublicNameFile
+import org.openxplay.direlay.publicname.PublicNamePolicy
 import org.openxplay.direlay.publicname.PublicNameState
 import org.openxplay.direlay.publicname.PublicNameStatus
 import org.openxplay.direlay.publicname.PublicNameView
@@ -106,6 +107,7 @@ internal val publicNameProviderResources = mapOf(
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(publicNameStatusText(context, status, url), Modifier.padding(vertical = 8.dp),
                     color = if (status.state == PublicNameState.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                publicNameCertificateWarning(context, status)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (status.state == PublicNameState.ERROR) {
                     OutlinedButton(onClick = renew, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = view.configured && view.enabled && !busy) {
                         Text(stringResource(R.string.public_name_renew))
@@ -166,13 +168,24 @@ fun publicNameStatusText(context: Context, status: PublicNameStatus, url: String
         status.nextAttempt?.let { nextTry(it) } ?: "—")
 }
 
+internal fun publicNameCertificateWarning(context: Context, status: PublicNameStatus, now: Long = System.currentTimeMillis()): String? {
+    val before = status.notBefore ?: return null
+    val after = status.notAfter ?: return null
+    return when (PublicNamePolicy.expiryWarning(before, after, status.renewAt, now)) {
+        PublicNamePolicy.CertificateWarning.DUE -> context.getString(R.string.public_name_certificate_due)
+        PublicNamePolicy.CertificateWarning.EXPIRED -> context.getString(R.string.public_name_certificate_expired)
+        null -> null
+    }
+}
+
 fun publicNameErrorText(context: Context, error: PublicNameError?, detail: String?): String = when (error) {
     PublicNameError.TOKEN_REJECTED -> context.getString(R.string.public_name_error_token_rejected)
     PublicNameError.NAME_NOT_FOUND -> context.getString(R.string.public_name_error_name_not_found)
     PublicNameError.PROVIDER_RATE_LIMITED -> context.getString(R.string.public_name_error_provider_rate_limited)
     PublicNameError.DNS_NOT_UPDATED -> context.getString(R.string.public_name_error_dns_not_updated)
     PublicNameError.ACME_REJECTED -> context.getString(R.string.public_name_error_acme_rejected, detail.orEmpty())
-    PublicNameError.ACME_RATE_LIMITED -> context.getString(R.string.public_name_error_acme_rate_limited)
+    PublicNameError.ACME_RATE_LIMITED -> if (detail.isNullOrBlank()) context.getString(R.string.public_name_error_acme_rate_limited)
+        else context.getString(R.string.public_name_error_acme_rate_limited_detail, detail)
     PublicNameError.NO_ADDRESS -> context.getString(R.string.public_name_error_no_address)
     PublicNameError.PROVIDER_UNREACHABLE, null -> context.getString(R.string.public_name_error_provider_unreachable)
 }

@@ -79,10 +79,12 @@ class PublicNameServiceTest {
         val ca = TestCa()
         val replaced = mutableListOf<String?>()
         var failure: PublicNameFailure? = null
+        var lifetimeDays = 90L
         var window: RenewalWindow? = null
         /** The window applies to this certificate only, as a CA's suggestion would. */
         var windowFor: String? = null
         var windowRequests = 0
+        var windowFailure: PublicNameFailure? = null
         /** Runs inside the attempt, before it pauses: simulates the user changing something meanwhile. */
         var during: ((Pause) -> Unit)? = null
         override fun issue(config: PublicNameConfig, provider: DnsProvider, replaces: String?, pause: Pause,
@@ -92,12 +94,13 @@ class PublicNameServiceTest {
             during?.invoke(pause)
             failure?.let { throw it }
             val key = TestCa.keyPair()
-            // Second-aligned like real certificates, and a 90-day lifetime.
-            val leaf = ca.leaf(config.name, key.public, notBefore = now / 1000 * 1000 - 1000, notAfter = now / 1000 * 1000 + 90 * DAY)
+            // Second-aligned like real certificates.
+            val leaf = ca.leaf(config.name, key.public, notBefore = now / 1000 * 1000 - 1000, notAfter = now / 1000 * 1000 + lifetimeDays * DAY)
             return IssuedCertificate(listOf(leaf, ca.certificate), key.private)
         }
         override fun renewalWindow(config: PublicNameConfig, certId: String): RenewalWindow? {
             windowRequests++
+            windowFailure?.let { throw it }
             return window?.takeIf { windowFor == null || windowFor == certId }
         }
     }
@@ -310,6 +313,110 @@ class PublicNameServiceTest {
         assertEquals(PublicNameState.READY, status.state)
     }
 
+    @Test fun nameAndEnvironmentHoldsKeepTheirDetailsAndSurviveReturningAndRestarting() {
+        issuer.failure = PublicNameFailure(PublicNameError.ACME_RATE_LIMITED, 400 * DAY, "too many certificates")
+        configure()
+        assertEquals(start + 30 * DAY, status.nextAttempt)
+        assertEquals("too many certificates", status.detail)
+        configure(name = "fresh.duckdns.org")
+        assertEquals(2, issuer.replaced.size)
+        service.import(PublicNameFile.encode(store.config()!!.copy(acme = AcmeEnvironment.STAGING))); runQueued()
+        assertEquals(3, issuer.replaced.size)
+        configure(name = name)
+        assertEquals(4, issuer.replaced.size)
+        service.import(PublicNameFile.encode(store.config()!!.copy(acme = AcmeEnvironment.PRODUCTION))); runQueued()
+        assertEquals(4, issuer.replaced.size)
+        assertEquals("too many certificates", status.detail)
+        service.close()
+        service = PublicNameService(store, certificates, { provider }, issuer, internet, { addresses }, { now }, worker)
+        service.start(); runQueued()
+        assertEquals(4, issuer.replaced.size)
+        assertEquals("too many certificates", status.detail)
+    }
+
+    @Test fun accountAndEnvironmentLimitsCoverFreshNamesButNeverTheOtherEnvironment() {
+        for (scope in listOf(AcmeLimitScope.ACCOUNT, AcmeLimitScope.ENVIRONMENT)) {
+            service.remove(); runQueued()
+            val sent = issuer.replaced.size
+            issuer.failure = PublicNameFailure(PublicNameError.ACME_RATE_LIMITED, 3 * HOUR, "broader limit", scope)
+            configure()
+            configure(name = "fresh.duckdns.org")
+            assertEquals(sent + 1, issuer.replaced.size)
+            assertEquals("broader limit", status.detail)
+            store.importAccount(TestCa.keyPair(), store.config()!!.acme.directory, null)
+            service.renewNow(); runQueued()
+            val afterKeyChange = if (scope == AcmeLimitScope.ACCOUNT) sent + 2 else sent + 1
+            assertEquals(afterKeyChange, issuer.replaced.size)
+            service.import(PublicNameFile.encode(store.config()!!.copy(acme = AcmeEnvironment.STAGING))); runQueued()
+            assertEquals(afterKeyChange + 1, issuer.replaced.size)
+        }
+    }
+
+    @Test fun shorterCertificatesRenewByTheirLifetimeAndKeepWorkingDuringAFailedRenewal() {
+        for (days in listOf(64L, 45L)) {
+            service.remove(); runQueued()
+            issuer.lifetimeDays = days
+            issuer.failure = null
+            val sent = issuer.replaced.size
+            configure()
+            val first = certificates.installed!!
+            val at = PublicNamePolicy.renewalTime(first.second.notBefore.time, first.second.notAfter.time, null)
+            now = at - 1; service.renewNow(); runQueued()
+            assertEquals(sent + 1, issuer.replaced.size)
+            now = at
+            issuer.failure = PublicNameFailure(PublicNameError.ACME_RATE_LIMITED, HOUR, "renewal limit")
+            service.renewNow(); runQueued()
+            assertEquals(sent + 2, issuer.replaced.size)
+            assertEquals(first, certificates.installed)
+            assertEquals(name, status.trustedName)
+            repeat(4) { service.renewNow(); runQueued() }
+            assertEquals(sent + 2, issuer.replaced.size)
+            now += HOUR
+            issuer.failure = null
+            service.renewNow(); runQueued()
+            assertEquals(sent + 3, issuer.replaced.size)
+            assertEquals(PublicNameState.READY, status.state)
+        }
+    }
+
+    @Test fun parkedExpiredShortCertificatesRenewImmediatelyAndWrongClocksNeverReplaceThem() {
+        for (days in listOf(64L, 45L)) {
+            service.remove(); runQueued()
+            now = start
+            issuer.lifetimeDays = days
+            issuer.failure = null
+            configure()
+            val first = certificates.installed!!
+            val sent = issuer.replaced.size
+            now = 1_609_459_200_000L
+            repeat(4) { service.renewNow(); runQueued() }
+            assertEquals(sent, issuer.replaced.size)
+            assertEquals(first, certificates.installed)
+            assertNull(status.trustedName)
+            assertEquals(PublicNameState.WAITING_NETWORK, status.state)
+            now = first.second.notBefore.time + DAY
+            internet.validate(); runQueued()
+            assertEquals(sent, issuer.replaced.size)
+            assertEquals(PublicNameState.READY, status.state)
+            now = first.second.notAfter.time + DAY
+            issuer.failure = PublicNameFailure(PublicNameError.PROVIDER_UNREACHABLE)
+            internet.available = false
+            service.renewNow(); runQueued()
+            assertEquals(sent + 1, issuer.replaced.size)
+            assertEquals(first, certificates.installed)
+            assertNull(status.trustedName)
+            assertEquals(PublicNameState.WAITING_NETWORK, status.state)
+            val retry = worker.next()!!.at
+            service.cycle()
+            assertEquals(sent + 1, issuer.replaced.size)
+            assertEquals(retry, worker.next()!!.at)
+            issuer.failure = null
+            internet.validate(); runQueued()
+            assertEquals(sent + 2, issuer.replaced.size)
+            assertEquals(PublicNameState.READY, status.state)
+        }
+    }
+
     @Test fun requestCertificateNowWithAValidCertificateOnlyRefreshesTheAddress() {
         configure()
         service.renewNow(); runQueued()
@@ -349,6 +456,38 @@ class PublicNameServiceTest {
         assertTrue("ARI is polled at most every 12 h", issuer.windowRequests in 1..60)
         fireUntil(start + 31 * DAY + 12 * HOUR)
         assertEquals(listOf(null, AcmeCrypto.certId(first)), issuer.replaced)
+    }
+
+    @Test fun shortCertificateAriWindowsArePlannedAndAriFailuresDoNotSpamTheCa() {
+        for (days in listOf(64L, 45L)) {
+            service.remove(); runQueued()
+            now = start
+            issuer.lifetimeDays = days
+            issuer.windowFailure = null
+            issuer.failure = null
+            issuer.window = null
+            val sent = issuer.replaced.size
+            configure()
+            val first = certificates.installed!!.second
+            issuer.windowFor = AcmeCrypto.certId(first)
+            issuer.window = RenewalWindow(now + 10 * DAY, now + 11 * DAY, HOUR)
+            service.renewNow(); runQueued()
+            val planned = checkNotNull(store.record().ari?.renewAt)
+            assertTrue(planned >= start + 10 * DAY && planned < start + 11 * DAY)
+            now = planned - 1
+            issuer.windowFailure = PublicNameFailure(PublicNameError.ACME_RATE_LIMITED, HOUR, "ARI limit")
+            val polls = issuer.windowRequests
+            service.renewNow(); runQueued()
+            assertEquals(polls + 1, issuer.windowRequests)
+            repeat(3) { service.renewNow(); runQueued() }
+            assertEquals(polls + 1, issuer.windowRequests)
+            assertEquals(planned, store.record().ari?.renewAt)
+            assertEquals(sent + 1, issuer.replaced.size)
+            now = planned
+            service.renewNow(); runQueued()
+            assertEquals(sent + 2, issuer.replaced.size)
+            assertEquals(AcmeCrypto.certId(first), issuer.replaced.last())
+        }
     }
 
     @Test fun aChangeDuringAnAttemptCancelsItBeforeAnythingIsInstalled() {

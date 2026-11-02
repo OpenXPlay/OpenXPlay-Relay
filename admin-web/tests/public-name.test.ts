@@ -414,3 +414,33 @@ it('provides a fine mock with three issuances and production-shaped gallery stat
     expect(html.match(new RegExp(`<dd class="${tone}">`, 'g'))).toHaveLength(2);
   }
 });
+
+
+it.each([64, 45])('shows warnings and actual renewal cycles for %i-day certificates', lifetime => {
+  const before = viewerNow;
+  const after = before + lifetime * day;
+  const renewal = after - lifetime * day / 3;
+  for (const [t, language] of [[en, 'en'], [zh, 'zh-CN']] as const) {
+    const cert = { notBefore: before, notAfter: after, renewAt: renewal, issued: [] };
+    expect(publicNameCertificate(cert, t, language, renewal + day - 1)).not.toContain('class="notice"');
+    expect(publicNameCertificate(cert, t, language, renewal + day)).toContain('class="notice"');
+    expect(publicNameCertificate({ ...cert, renewAt: after }, t, language, after - 7 * day)).toContain('class="notice"');
+    const expired = publicNameCertificate(cert, t, language, after);
+    expect(expired).toContain('class="error"');
+    expect(expired).toContain(t('publicName.cert.cycleValue', { lifetime, interval: Math.round((renewal - before) / day) }));
+    expect(expired).not.toMatch(/…|\.\.\./);
+  }
+});
+it.each([
+  ['en', en, "Let's Encrypt asked to wait: too many new orders <account>"],
+  ['zh-CN', zh, "Let's Encrypt 要求稍后再试：too many new orders <account>"],
+] as const)('shows the CA rate-limit detail with localized punctuation (%s)', (language, t, expected) => {
+  const status = { publicName: { state: 'error', error: 'acme-rate-limited', errorDetail: 'too many new orders <account>' } } as Status;
+  expect(publicNameLine(status, t, language)).toContain(expected);
+  for (const detail of [undefined, '']) {
+    const withoutDetail = { publicName: { ...status.publicName, errorDetail: detail } } as Status;
+    expect(publicNameLine(withoutDetail, t, language)).toBe(t('publicName.status.error', {
+      problem: t('publicName.error.acme-rate-limited'), time: '—',
+    }));
+  }
+});
