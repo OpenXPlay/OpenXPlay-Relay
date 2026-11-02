@@ -11,6 +11,7 @@ import android.net.*
 import android.net.wifi.WifiNetworkSpecifier
 import android.net.wifi.p2p.*
 import android.os.*
+import android.util.Log
 import org.openxplay.stream.clink.*
 import org.openxplay.stream.clink.ble.*
 import org.openxplay.direlay.network.readWifiEnabled
@@ -38,6 +39,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         private val reconnect = LinkReconnect()
         internal val retryBackoff = LinkBackoff()
         private val scanStartBudget = BleScanStartBudget()
+        /** WifiNetworkSpecifier request window; the platform gives up on its own after this. */
+        private const val REQUEST_TIMEOUT_MS = 12_000L
+        /** Never hand the request less than this, even if priming ate most of the stage budget. */
+        private const val MIN_REQUEST_TIMEOUT_MS = 5_000L
+        /** How often a link the platform brought up on its own is checked for adoption. */
+        private const val ADOPT_POLL_MS = 100L
+        /** How long a freshly started scan is given to deliver results before the request goes out. */
+        private const val PRIME_BUDGET_MS = 3_000L
     }
     private val peerStore = object : BlePeerPolicy.Store, BlePeerPolicy.SubscriptionStore {
         private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkPeers", Context.MODE_PRIVATE)
@@ -102,6 +111,8 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         var expectedSsid: String? = null
         var receiver: BroadcastReceiver? = null
         var networkCallback: ConnectivityManager.NetworkCallback? = null
+        var linkWatcher: Runnable? = null
+        var adoptedCallback: ConnectivityManager.NetworkCallback? = null
         var monitor: Runnable? = null
         var bound: Network? = null
         var previousBinding: Network? = null
@@ -597,7 +608,17 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         return await(run, result, 7)
     }
     private fun joinSpecifier(run: Run, reply: HeadUnitReply): Pair<String, String> {
+        // The car network is a saved network, so the platform joins it on its own as soon as the AP
+        // shows up — around the moment this stage starts. A WifiNetworkSpecifier request issued into
+        // that window never attaches: the link completes under the system's uid, the request matches
+        // nothing, and it expires unfulfilled after 12 s. That is the measured "first attempt after
+        // getting in the car always fails, the retry succeeds", so adopt the platform's link whenever
+        // it exists and keep watching for it while the request is pending.
+        adoptHeadUnitLink(run, reply.ssid)?.let { return it }
+        // A fresh scan is what makes the platform start its own join, so ask for one before asking
+        // for a network of our own — then look again in case it already built the link.
         primeScanCache(run, reply.ssid)
+        adoptHeadUnitLink(run, reply.ssid)?.let { return it }
         val result = CompletableFuture<Pair<String, String>>()
         main {
             check(!run.cancelled)
@@ -624,13 +645,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                     if (expected != null && endpoints != expected) { lost(run); return }
                     if (endpoints == null) return
                     if (!result.isDone) {
-                        if (!isolateNetwork) {
-                            run.previousBinding = manager.boundNetworkForProcess
-                            if (!manager.bindProcessToNetwork(network)) {
-                                result.completeExceptionally(ClinkFailure(ClinkFailureReason.WIFI_BIND)); return
-                            }
-                            run.bound = network
-                        }
+                        bindNetwork(manager, network, run)
                         run.selectedNetwork = network
                         expected = endpoints
                         result.complete(endpoints)
@@ -648,9 +663,120 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             val specifier = WifiNetworkSpecifier.Builder().setSsid(reply.ssid).setWpa2Passphrase(reply.psk).build()
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).setNetworkSpecifier(specifier).build()
-            manager.requestNetwork(request, callback, handler, 12000)
+            manager.requestNetwork(request, callback, handler,
+                REQUEST_TIMEOUT_MS.toInt())
+            // The system's own join of this saved AP is invisible to the request, so adopt it the
+            // moment it gets an IPv4 lease instead of waiting out the request timeout.
+            val watcher = object : Runnable {
+                override fun run() {
+                    if (result.isDone || run.cancelled) return
+                    val endpoints = runCatching { adoptHeadUnitLink(run, reply.ssid) }.getOrNull()
+                    if (endpoints != null) {
+                        Log.i("DiRelayCarlink", "join_adopted local=${endpoints.second} peer=${endpoints.first}")
+                        runCatching { manager.unregisterNetworkCallback(callback) }
+                        result.complete(endpoints)
+                        return
+                    }
+                    handler.postDelayed(this, ADOPT_POLL_MS)
+                }
+            }
+            run.linkWatcher = watcher
+            handler.postDelayed(watcher, ADOPT_POLL_MS)
         }
-        return await(run, result, 13)
+        try {
+            return await(run, result, 15)
+        } finally {
+            main { run.linkWatcher?.let { handler.removeCallbacks(it) }; run.linkWatcher = null }
+        }
+    }
+
+    /**
+     * Take over a Wi-Fi link the platform already brought up for the head unit's SSID. The relay only
+     * needs the gateway address on that L2, so reusing the link is equivalent to owning a request on
+     * it — and it is the only way to reach a connection the system created for itself.
+     */
+    private fun adoptHeadUnitLink(run: Run, ssid: String): Pair<String, String>? {
+        val manager = connectivity ?: return null
+        val network = headUnitNetwork(manager, ssid) ?: return null
+        val endpoints = endpointsOf(manager, network) ?: return null
+        bindNetwork(manager, network, run)
+        run.selectedNetwork = network
+        return endpoints
+    }
+
+    private fun bindNetwork(manager: ConnectivityManager, network: Network, run: Run) {
+        if (isolateNetwork || run.bound === network) return
+        run.previousBinding = manager.boundNetworkForProcess
+        if (!manager.bindProcessToNetwork(network)) throw ClinkFailure(ClinkFailureReason.WIFI_BIND)
+        run.bound = network
+        watchAdoptedLink(manager, network, run)
+    }
+
+    /**
+     * A link we adopted carries no request callback, so nothing would report its loss: the session
+     * would sit there until TCP noticed. Listen for that network disappearing and report it exactly
+     * as the request path does.
+     */
+    private fun watchAdoptedLink(manager: ConnectivityManager, network: Network, run: Run) {
+        if (run.adoptedCallback != null) return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(gone: Network) {
+                if (gone != network) return
+                run.adoptedCallback?.let { runCatching { manager.unregisterNetworkCallback(it) } }
+                run.adoptedCallback = null
+                run.bound = null
+                lost(run)
+            }
+        }
+        val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
+        runCatching { manager.registerNetworkCallback(request, callback) }
+            .onSuccess { run.adoptedCallback = callback }
+    }
+
+    /**
+     * The Wi-Fi network that currently carries [ssid] with an IPv4 lease, if any.
+     *
+     * Stock Android answers this through the default network's transport info. MIUI 10 attaches no
+     * transport info to these agents, so fall back to WifiManager for the SSID and match the lease by
+     * address — that keeps the choice correct on devices running two concurrent STA links.
+     */
+    @Suppress("DEPRECATION")
+    private fun headUnitNetwork(manager: ConnectivityManager, ssid: String): Network? {
+        fun wifiWithIpv4(network: Network): Boolean =
+            manager.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                manager.getLinkProperties(network)?.linkAddresses?.any { it.address is Inet4Address } == true
+
+        manager.activeNetwork?.takeIf(::wifiWithIpv4)?.let { active ->
+            val activeInfo = manager.getNetworkCapabilities(active)?.transportInfo as? android.net.wifi.WifiInfo
+            if (activeInfo?.ssid?.trim('"') == ssid) return active
+        }
+        val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return null
+        val info = runCatching { wifi.connectionInfo }.getOrNull() ?: return null
+        if (info.ssid?.trim('"') != ssid) return null
+        val currentIp = info.ipAddress.takeIf { it != 0 }?.let { address ->
+            (0..3).joinToString(".") { ((address ushr (it * 8)) and 255).toString() }
+        }
+        return manager.allNetworks.firstOrNull { network ->
+            wifiWithIpv4(network) && (currentIp == null ||
+                manager.getLinkProperties(network)?.linkAddresses
+                    ?.any { it.address.hostAddress == currentIp } == true)
+        }
+    }
+
+    private fun endpointsOf(manager: ConnectivityManager, network: Network): Pair<String, String>? {
+        val properties = manager.getLinkProperties(network) ?: return null
+        val local = properties.linkAddresses.firstOrNull { it.address is Inet4Address }?.address?.hostAddress
+        val peer = (properties.routes.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }?.gateway
+            as? Inet4Address)?.hostAddress ?: dhcpServer()
+        return WifiJoinPolicy.endpoints(peer, local)
+    }
+
+    /** API 29 has no LinkProperties.dhcpServerAddress; the lease carries the same gateway. */
+    @Suppress("DEPRECATION")
+    private fun dhcpServer(): String? {
+        val lease = context.getSystemService(android.net.wifi.WifiManager::class.java)?.dhcpInfo ?: return null
+        if (lease.serverAddress == 0) return null
+        return (0..3).joinToString(".") { ((lease.serverAddress ushr (it * 8)) and 255).toString() }
     }
 
     /**
@@ -661,6 +787,8 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
      *
      * Gated to the combination observed failing: other vendors match silently on their own, and
      * HyperOS ships Android 14+, where the framework handles the match itself.
+     *
+     * Returns how long the wait took, so the caller can keep the whole stage inside its budget.
      */
     @Suppress("DEPRECATION")
     private fun primeScanCache(run: Run, ssid: String) {
@@ -723,6 +851,8 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         }
     }
     private fun releaseNetwork(run: Run) {
+        run.adoptedCallback?.let { runCatching { connectivity?.unregisterNetworkCallback(it) } }
+        run.adoptedCallback = null
         run.networkCallback?.let {
             // unregisterNetworkCallback releases the request synchronously. Android does not send
             // onLost for an unregistered callback, so waiting for it would stall every reconnect.
