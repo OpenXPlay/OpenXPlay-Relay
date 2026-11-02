@@ -576,6 +576,7 @@
     <string name="audio_title">声音</string>
     <string name="audio_car_bluetooth">通过车辆蓝牙播放 CarPlay 音频（实验性）</string>
     <string name="audio_car_bluetooth_hint">中继不向 iPhone 提供 CarPlay 音频，音乐、导航和通话改由 iPhone 自己与车辆的蓝牙连接播放。请保持 iPhone 与车辆配对，并将车辆音源设为蓝牙。</string>
+    <string name="audio_wireless_forwarding">声音随投屏送到车机，DLNA 会和画面一样延迟几秒。Siri 和通话使用本机麦克风。</string>
     <string name="audio_bluetooth_tip">如果声音从手机播放，请在车辆中控屏打开蓝牙设置，找到 iPhone，把它右侧的图标从静音改为播放。仍从手机播放时，再关闭上面的选项。</string>
     <string name="public_name_title">可信 HTTPS</string>
     <string name="public_name_summary">用免费域名，让车机打开网页时不再出现证书警告。</string>
@@ -613,6 +614,7 @@
     <string name="public_name_error_dns_not_updated">服务商的域名服务器未及时生效</string>
     <string name="public_name_error_acme_rejected">Let\'s Encrypt 拒绝了请求：%1$s</string>
     <string name="public_name_error_acme_rate_limited">Let\'s Encrypt 要求稍后再试</string>
+    <string name="public_name_error_acme_rate_limited_detail">Let\'s Encrypt 要求稍后再试：%1$s</string>
     <string name="public_name_error_no_address">还没有车机网络地址</string>
     <string name="public_name_choose">选择配置文件（.json）</string>
     <string name="public_name_imported">已导入：%1$s，%2$s</string>
@@ -685,9 +687,6 @@
     <string name="dlna_receiver">接收端</string>
     <string name="dlna_choose_receiver">选择接收端</string>
     <string name="dlna_network_hint">请让车机连接本机热点，或与本机连接同一 Wi-Fi，并打开车机上的投屏接收应用。</string>
-    <string name="dlna_picture">画面尺寸</string>
-    <string name="dlna_picture_720">720p</string>
-    <string name="dlna_picture_1080">1080p</string>
     <string name="dlna_searching">正在搜索接收端…</string>
     <string name="dlna_search_again">重新搜索</string>
     <string name="dlna_no_receivers">未找到接收端。请检查网络和车机上的接收应用，然后重新搜索。</string>
@@ -721,11 +720,13 @@
     <string name="miracast_error_display">外接屏幕已断开，请重新启动系统投屏。</string>
     <string name="wireless_picture">画面</string>
     <string name="wireless_picture_auto">跟随车机屏幕</string>
-    <string name="wireless_picture_auto_hint">Miracast 使用与车机协商的屏幕尺寸。DLNA 使用浏览器测量并保存的车机屏幕，或所选车型的屏幕；都没有时使用 16:9。720p/1080p 档位仅用于 DLNA。</string>
+    <string name="wireless_picture_auto_hint">DLNA 使用浏览器测量并保存的车机屏幕或所选车型的屏幕，没有时用 16:9，大小由 CarPlay 画面 › 分辨率 决定。Miracast 使用 Android 与车机协商的尺寸。</string>
+    <string name="wireless_miracast_clarity">车机收到的是系统投屏发送的画面；这里的设置只改变 CarPlay 在其中的比例，不改变清晰度。</string>
+    <string name="wireless_custom_resolution">无线投屏使用自定义尺寸 %1$d × %2$d。</string>
     <string name="wireless_picture_custom_hint">忽略车机提供的尺寸，自行设置画面比例。请使用偶数：横屏宽 640–1920、高 360–1080 像素，竖屏的宽高范围对调。</string>
-    <string name="wireless_picture_browser">当前 %1$d×%2$d，来自浏览器测量</string>
-    <string name="wireless_picture_model">当前 %1$d×%2$d，来自车型数据</string>
-    <string name="wireless_picture_default">当前 %1$d×%2$d，使用默认比例</string>
+    <string name="wireless_picture_browser">当前 %1$d × %2$d，来自浏览器测量</string>
+    <string name="wireless_picture_model">当前 %1$d × %2$d，来自车型数据</string>
+    <string name="wireless_picture_default">当前 %1$d × %2$d，使用默认比例</string>
     <string name="wireless_picture_priority">车载浏览器等可交互输出连接后，会优先决定 CarPlay 的画面尺寸。车机屏幕设置中的固定尺寸优先于所有输出提供的尺寸。</string>
     <string name="wireless_picture_fixed">CarPlay 正在使用车机屏幕设置中的固定尺寸。</string>
     <string name="miracast_fill_screen">铺满屏幕</string>
@@ -831,4 +832,15 @@
     <string name="hotspot_password_copied">密码已复制，打开设置</string>
     <string name="hotspot_no_password">无密码</string>
     <string name="hotspot_system_options">在系统设置中选择%1$s，热点频段与下方选择保持一致。还需要保存设置并开启热点。</string>
+    <string name="logs_capture_incomplete">日志采集不完整，请查看导出摘要。</string>
+    <string name="public_name_certificate_due">证书需要续期。中继联网后会重试。</string>
+    <string name="public_name_certificate_expired">证书已过期。中继联网后会申请新证书。</string>
+    <string name="ui_carlife">CarLife</string>
+    <string name="carlife_hint">打开车机的 CarLife，并接入同一 Wi-Fi 或本机热点。CarLife 传输画面和触控，声音通过 iPhone 蓝牙直连车机。也支持 USB 附件连接。</string>
+    <string name="carlife_target">CarLife 车机 IP 地址（可选）</string>
+    <string name="carlife_address_error">请输入 IPv4 地址，或留空以自动发现。</string>
+    <string name="path_carlife">CarLife 连接</string>
+    <string name="path_carlife_wait">打开车机 CarLife，接入同一网络或连接 USB。</string>
+    <string name="path_carlife_streaming">正在发送 CarPlay 画面</string>
+    <string name="path_carlife_picture">正在向 CarLife 发送视频，请在车机上确认画面。</string>
 </resources>

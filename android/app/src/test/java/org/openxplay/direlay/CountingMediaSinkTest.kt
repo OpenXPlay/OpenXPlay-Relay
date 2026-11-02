@@ -54,6 +54,8 @@ class CountingMediaSinkTest {
         sink.onMicrophoneStarted(audioId, microphoneConfig)
         sink.onMicrophoneStopped(audioId)
         sink.onIapMessage(bytes)
+        sink.onAudioDuck(true)
+        sink.onAudioDuck(false)
         assertEquals(emptyMap<Int, Long>(), sink.frameCounts)
 
         sink.onVideoFrame(110, bytes)
@@ -73,6 +75,8 @@ class CountingMediaSinkTest {
                 "onMicrophoneStarted" to listOf(audioId, microphoneConfig),
                 "onMicrophoneStopped" to listOf(audioId),
                 "onIapMessage" to listOf(bytes),
+                "onAudioDuck" to listOf(true),
+                "onAudioDuck" to listOf(false),
                 "onVideoFrame" to listOf(110, bytes),
                 "onVideoFrame" to listOf(110, bytes, 123L, 456L),
                 "onVideoFrame" to listOf(111, bytes, 789L, 987L),

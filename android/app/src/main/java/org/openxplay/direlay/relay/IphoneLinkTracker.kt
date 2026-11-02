@@ -37,10 +37,11 @@ class IphoneLinkTracker(private val wireless: () -> Boolean = { true },
             val error = diagnostics()
             val code = classifyIphoneFailure(status.message, error?.code ?: status.startupFailure?.name?.lowercase(Locale.ROOT), status.wifiResetRequired)
             val retryable = wireless() && !status.wifiResetRequired && code !in setOf(
-                "hotspot_configuration", "bluetooth_unusable", "wifi_reset_required", "usb_trust_denied", "iphone_locked")
+                "hotspot_configuration", "bluetooth_unusable", "wifi_direct_beside_hotspot", "wifi_reset_required",
+                "usb_trust_denied", "iphone_locked")
             val retrying = retryable && ++failures <= WirelessStartupPolicy.MAX_STARTUP_RETRIES
             val step = when (code) {
-                "hotspot_not_ready", "hotspot_configuration", "wifi_off", "wifi_reset_required" -> LinkStep.STARTING
+                "hotspot_not_ready", "hotspot_configuration", "wifi_direct_beside_hotspot", "wifi_off", "wifi_reset_required" -> LinkStep.STARTING
                 "bluetooth_off", "bluetooth_unusable", "iphone_unpaired", "rfcomm_timeout" -> LinkStep.BLUETOOTH
                 "first_tcp_timeout" -> LinkStep.JOINING
                 "usb_trust_denied", "iphone_locked" -> LinkStep.USB_TRUST
@@ -60,7 +61,8 @@ class IphoneLinkTracker(private val wireless: () -> Boolean = { true },
             CarPlayStatus.ConnectingBluetooth -> LinkStep.BLUETOOTH
             CarPlayStatus.RunningWireless -> LinkStep.AUTH
             CarPlayStatus.WirelessActive, CarPlayStatus.WirelessActiveFallback -> LinkStep.JOINING
-            CarPlayStatus.DiscoveringIphone, CarPlayStatus.WaitingForIphone -> LinkStep.USB_DETECT
+            CarPlayStatus.DiscoveringIphone, CarPlayStatus.WaitingForIphone,
+            is CarPlayStatus.IphoneNotListed -> LinkStep.USB_DETECT
             CarPlayStatus.RequestingIphonePermission -> LinkStep.USB_PERMISSION
             CarPlayStatus.WaitingForReenumeration, CarPlayStatus.SelectingConfiguration,
             CarPlayStatus.OpeningDataPaths -> LinkStep.USB_DETECT

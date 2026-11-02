@@ -84,7 +84,8 @@ export function publicNameLine(status: Status, t: Translate, language: string): 
     return url ? t('publicName.status.ready', { address: url }) : t('publicName.state.ready');
   }
   if (p.state === 'error') {
-    const problem = t(`publicName.error.${p.error ?? 'provider-unreachable'}`, { detail: p.errorDetail ?? '' });
+    const error = p.error === 'acme-rate-limited' && p.errorDetail ? 'acme-rate-limited-detail' : p.error ?? 'provider-unreachable';
+    const problem = t(`publicName.error.${error}`, { detail: p.errorDetail ?? '' });
     return t('publicName.status.error', { problem, time: p.nextAttempt ? time(p.nextAttempt, language, false) : '—' });
   }
   return t(`publicName.status.${p.state}`);

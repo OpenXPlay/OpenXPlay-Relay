@@ -42,6 +42,7 @@ object AdminSettingsMapping {
     fun output(s: RelaySettings) = when (OutputSelection.choice(s.outputs)) {
         OutputChoice.BROWSER -> "web"
         OutputChoice.CARLINK -> "carlink"
+        OutputChoice.CARLIFE -> "multiple"
         OutputChoice.WIRELESS -> "wireless"
         null -> "multiple"
     }

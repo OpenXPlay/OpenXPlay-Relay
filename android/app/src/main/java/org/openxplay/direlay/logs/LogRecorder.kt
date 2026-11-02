@@ -14,15 +14,20 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class LogRecorder(val store: LogSegmentStore, private val redactor: LogRedactor,
-    private val clock: () -> Long = SystemClock::elapsedRealtime, private val silenceLimit: Long = 90_000) : Closeable {
+    private val clock: () -> Long = SystemClock::elapsedRealtime, private val silenceLimit: Long = 90_000,
+    val probe: LogcatProbe = LogcatProbe(clock)) : Closeable {
     @Volatile private var running = false
     @Volatile private var process: Process? = null
     private var thread: Thread? = null
     private val timer = Executors.newSingleThreadScheduledExecutor { Thread(it, "relay-log-flush").apply { isDaemon = true } }
     private var retryWriteAt = 0L
     private var warned = false
+    @Volatile var captureFailures = 0L
+        private set
     @Volatile private var lastLineAt = 0L
     private var lastTimerAt = 0L
+    private val stream = LogRedactorStream(redactor)
+    private var previousLine: Long? = null
     @Volatile private var startedAt: Long? = null
     @Volatile private var restarts = 0
     @Volatile private var gaps = 0
@@ -37,13 +42,14 @@ class LogRecorder(val store: LogSegmentStore, private val redactor: LogRedactor,
         timer.scheduleWithFixedDelay({ synchronized(this) {
             if (running) { writeSafely { store.maintenance() }; checkSilence() }
         } }, 1, 1, TimeUnit.SECONDS)
+        runCatching { probe.start { priority, marker -> Log.println(when (priority) {
+            'V' -> Log.VERBOSE; 'D' -> Log.DEBUG; 'I' -> Log.INFO; 'W' -> Log.WARN; else -> Log.ERROR
+        }, LogcatProbe.TAG, marker) } }
         thread = Thread({ record() }, "relay-logcat").apply { isDaemon = true; start() }
         Log.i("OXP-Logs", "Recorder started: OpenXPlay Relay $version ($code), pid ${android.os.Process.myPid()}")
     }
     private fun record() {
         val failures = ArrayDeque<Long>()
-        val stream = LogRedactorStream(redactor)
-        var previousLine: Long? = null
         while (running) {
             var lines = 0L
             val opened = clock()
@@ -51,24 +57,14 @@ class LogRecorder(val store: LogSegmentStore, private val redactor: LogRedactor,
             try {
                 val command = mutableListOf("logcat", "-b", "main", "-b", "system", "-b", "crash", "-v", "threadtime", "-v", "year", "-v", "UTC")
                 store.lastTimestamp?.let { command += listOf("-T", String.format(Locale.ROOT, "%.3f", (it + 1) / 1000.0)) }
+                command += "*:V"
                 val child = ProcessBuilder(command).redirectErrorStream(true).start()
                 process = child
                 if (!running) child.destroy()
                 child.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                     while (running) {
                         val line = reader.readLine() ?: break
-                        lastLineAt = clock()
-                        if (line.startsWith("---------")) continue
-                        val cleaned = runCatching { stream.redact(line) }.getOrNull() ?: continue
-                        lines++
-                        val at = LogLine.timestamp(cleaned)
-                        val gap = if (at != null && previousLine != null) at - previousLine!! else 0L
-                        if (at != null) previousLine = at
-                        synchronized(this) {
-                            // Logcat still had lines on both sides: nothing of this app was logged in between.
-                            if (gap > GAP) { gaps++; writeSafely(writing = true) { store.append(note(at!!, "no log lines for ${gap / 1000} s, since ${stamp(at - gap)}")) } }
-                            writeSafely(writing = true) { store.append(cleaned) }
-                        }
+                        if (capture(line)) lines++
                     }
                 }
                 exit = runCatching { if (child.waitFor(1, TimeUnit.SECONDS)) "exit=${child.exitValue()}" else "running" }.getOrDefault("unknown")
@@ -88,6 +84,22 @@ class LogRecorder(val store: LogSegmentStore, private val redactor: LogRedactor,
             }
             try { Thread.sleep(2_000) } catch (_: InterruptedException) { break }
         }
+    }
+    /** Raw capture boundary: observe the probe before redaction or storage can alter a marker. */
+    internal fun capture(line: String): Boolean {
+        lastLineAt = clock()
+        if (line.startsWith("---------")) return false
+        probe.observe(line)
+        val cleaned = try { stream.redact(line) } catch (_: Exception) { captureFailures++; return false }
+        val at = LogLine.timestamp(cleaned)
+        val gap = if (at != null && previousLine != null) at - previousLine!! else 0L
+        if (at != null) previousLine = at
+        synchronized(this) {
+            // A quiet interval says nothing about connectivity or capture completeness.
+            if (gap > GAP) { gaps++; writeSafely(writing = true) { store.append(note(at!!, "no log lines for ${gap / 1000} s, since ${stamp(at - gap)}")) } }
+            writeSafely(writing = true) { store.append(cleaned) }
+        }
+        return true
     }
     /** Runs on the timer under this lock. A paused timer means a paused process, not a silent logcat. */
     private fun checkSilence() {
@@ -109,8 +121,9 @@ class LogRecorder(val store: LogSegmentStore, private val redactor: LogRedactor,
         writeSafely(writing = true) { store.append(note(store.lastTimestamp ?: System.currentTimeMillis(), "$message (at ${stamp(System.currentTimeMillis())})")) }
     }
     private fun writeSafely(writing: Boolean = false, action: () -> Unit) {
-        if (System.currentTimeMillis() < retryWriteAt) return
+        if (System.currentTimeMillis() < retryWriteAt) { if (writing) captureFailures++; return }
         try { action(); if (writing) warned = false } catch (_: Exception) {
+            if (writing) captureFailures++
             runCatching { store.close() }
             retryWriteAt = System.currentTimeMillis() + 30_000
             if (!warned) { warned = true; Log.w("OXP-Logs", "Log storage unavailable; retrying in 30 seconds") }

@@ -18,8 +18,19 @@ import java.security.spec.X509EncodedKeySpec
 data class AriState(val certId: String, val renewAt: Long?, val windowStart: Long?, val windowEnd: Long?, val nextPoll: Long)
 
 /** Scheduler facts that must survive a restart: recent new orders (for the local guard) and ARI. */
-data class PublicNameRecord(val orders: List<Pair<String, Long>> = emptyList(), val ari: AriState? = null) {
+data class PublicNameRecord(val orders: List<Pair<String, Long>> = emptyList(), val ari: AriState? = null,
+    val acmeHolds: List<AcmeHold> = emptyList()) {
     fun orders(name: String): List<Long> = orders.filter { it.first == name }.map { it.second }
+}
+
+/** A CA hold, independent of provider credentials and of the currently selected configuration. */
+data class AcmeHold(val environment: AcmeEnvironment, val scope: AcmeLimitScope, val subject: String,
+    val until: Long, val detail: String?) {
+    fun applies(config: PublicNameConfig, account: String, now: Long): Boolean = environment == config.acme && now < until && when (scope) {
+        AcmeLimitScope.NAME -> subject == config.name
+        AcmeLimitScope.ACCOUNT -> subject == account
+        AcmeLimitScope.ENVIRONMENT -> true
+    }
 }
 
 /** Only these fields belong to a provider; tokens stay in the private store. */
@@ -139,7 +150,13 @@ class PublicNameStore(noBackupFilesDir: File) {
                 AriState(it.getString("certId"), it.optLongOrNull("renewAt"), it.optLongOrNull("start"),
                     it.optLongOrNull("end"), it.getLong("nextPoll"))
             }
-            PublicNameRecord(orders, ari)
+            val holds = json.optJSONArray("acmeHolds")?.let { array ->
+                (0 until array.length()).map { array.getJSONObject(it).let { h ->
+                    AcmeHold(AcmeEnvironment.valueOf(h.getString("environment")), AcmeLimitScope.valueOf(h.getString("scope")),
+                        h.getString("subject"), h.getLong("until"), h.optString("detail").takeIf { it.isNotEmpty() })
+                } }
+            }.orEmpty()
+            PublicNameRecord(orders, ari, holds)
         }.getOrDefault(PublicNameRecord())
     }
 
@@ -147,7 +164,10 @@ class PublicNameStore(noBackupFilesDir: File) {
         if (!configured()) return
         val orders = JSONArray()
         record.orders.takeLast(MAX_ORDERS).forEach { (name, at) -> orders.put(JSONObject().put("name", name).put("at", at)) }
-        val json = JSONObject().put("orders", orders)
+        val holds = JSONArray()
+        record.acmeHolds.forEach { h -> holds.put(JSONObject().put("environment", h.environment.name).put("scope", h.scope.name)
+            .put("subject", h.subject).put("until", h.until).put("detail", h.detail.orEmpty())) }
+        val json = JSONObject().put("orders", orders).put("acmeHolds", holds)
         record.ari?.let {
             json.put("ari", JSONObject().put("certId", it.certId).put("renewAt", it.renewAt ?: JSONObject.NULL)
                 .put("start", it.windowStart ?: JSONObject.NULL).put("end", it.windowEnd ?: JSONObject.NULL).put("nextPoll", it.nextPoll))

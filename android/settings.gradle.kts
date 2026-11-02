@@ -73,5 +73,6 @@ includeBuild(streamDir) {
         // Carlink output uses the same local Stream composite as core and web-server.
         substitute(module("org.openxplay.stream:clink")).using(project(":clink"))
         substitute(module("org.openxplay.stream:cast")).using(project(":cast"))
+        substitute(module("org.openxplay.stream:carlife")).using(project(":carlife"))
     }
 }

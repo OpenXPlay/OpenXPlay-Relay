@@ -4,6 +4,7 @@
      Created by riko chen on 2026-10-25 -->
 <resources>
     <string name="stage_not_now">暂不</string>
+    <string name="stage_show_carplay">显示 CarPlay</string>
     <string name="stage_steps">全部步骤</string>
     <string name="stage_link_progress">%1$s，已完成 %2$d / %3$d 步</string>
     <string name="stage_progress_count">%1$d/%2$d</string>

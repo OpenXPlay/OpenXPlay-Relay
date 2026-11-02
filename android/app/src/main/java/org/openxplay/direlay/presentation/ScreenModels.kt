@@ -22,7 +22,7 @@ data class CarScreenView(val models: CarModels? = null, val detected: DetectedCa
     val savedCanvas: CarPlayScreen? = null, val version: String = "", val phoneAddresses: Set<String> = emptySet(),
     val publicName: PublicNameView = PublicNameView())
 data class WirelessPictureView(val automatic: WirelessPictureResolution? = null, val negotiated: Viewport? = null,
-    val overlayAllowed: Boolean = false)
+    val overlayAllowed: Boolean = false, val canvas: DisplayProfile? = null)
 data class AreaSwitchView(val time: Long, val index: Int, val accepted: Boolean)
 data class ViewAreasView(val areas: List<ViewAreaSize> = emptyList(), val preference: Boolean? = null,
     val records: List<WindowSizeRecord> = emptyList(), val exits: List<ReceiverDiagnostics.FullscreenExit> = emptyList(),

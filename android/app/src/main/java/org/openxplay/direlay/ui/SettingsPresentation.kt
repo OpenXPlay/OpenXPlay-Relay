@@ -19,7 +19,11 @@ fun teslaBrowserOption(mode: TeslaBrowserMode) = teslaBrowserOptions.first { it.
 
 val outputOptions = listOf(RadioOption(R.string.ui_browser, R.string.option_browser_hint),
     RadioOption(R.string.ui_carlink, R.string.option_carlink_hint),
-    RadioOption(R.string.wireless_display, R.string.option_wireless_display_hint))
+    RadioOption(R.string.wireless_display, R.string.option_wireless_display_hint),
+    RadioOption(R.string.ui_carlife, R.string.carlife_hint))
+internal fun audioFooter(settings: RelaySettings): Int =
+    if (org.openxplay.direlay.relay.WirelessStandIn.wirelessOnly(settings.outputs) && !settings.carBluetoothAudio)
+        R.string.audio_wireless_forwarding else R.string.audio_car_bluetooth_hint
 val connectionOptions = listOf(RadioOption(R.string.direlay_wireless, R.string.option_wireless_hint),
     RadioOption(R.string.ui_usb, R.string.option_usb_hint))
 fun networkOption(choice: WirelessNetworkChoice) = when (choice) {

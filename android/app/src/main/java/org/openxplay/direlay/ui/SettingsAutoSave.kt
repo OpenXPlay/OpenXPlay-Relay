@@ -20,6 +20,7 @@ fun settingsErrors(value: RelaySettings, wireless: Boolean, allowEmptySharedWifi
         WirelessNetworkChoice.EXISTING_WIFI -> if (!allowEmptySharedWifi && value.wirelessNetwork.sharedWifiNetworks.isEmpty()) put("ssid", R.string.shared_wifi_empty)
         else -> Unit
     }
+    if (!validCarlifeAddress(value.carlifeTargetAddress)) put("carlifeTargetAddress", R.string.carlife_address_error)
     if (value.experimental.invalidAddress) put("experimental.bluetoothAddress", R.string.experimental_address_error)
     if (value.carlinkDeviceName.isBlank() || value.carlinkDeviceName.toByteArray(Charsets.UTF_8).size > 128 ||
         value.carlinkDeviceName.any { Character.isISOControl(it) }) put("name", R.string.settings_name_error)
@@ -50,7 +51,8 @@ fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (
         if (settingsSaveErrors(candidate, wireless(candidate)).isNotEmpty()) add(page)
     }
     check("settings/output", saved.copy(carlinkDeviceName = value.carlinkDeviceName,
-        wirelessPicture = value.wirelessPicture, wirelessPictureSize = value.wirelessPictureSize))
+        wirelessPicture = value.wirelessPicture, wirelessPictureSize = value.wirelessPictureSize,
+        carlifeTargetAddress = value.carlifeTargetAddress))
     check("settings/tesla", saved.copy(teslaBrowser = value.teslaBrowser,
         teslaVirtualAddress = value.teslaVirtualAddress, teslaPublicAddress = value.teslaPublicAddress,
         teslaMirrorAddress = value.teslaMirrorAddress, teslaAndroidAddress = value.teslaAndroidAddress))

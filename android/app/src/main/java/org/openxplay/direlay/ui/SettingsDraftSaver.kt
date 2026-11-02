@@ -69,10 +69,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("hotspotSetupMethod", value.wirelessNetwork.hotspotSetupMethod.name)
         putBoolean("highPerformance", value.highPerformance)
         putIntArray("numbers", intArrayOf(0, value.webPort ?: 0, value.wirelessNetwork.channel))
+        putString("carlifeTargetAddress", value.carlifeTargetAddress)
         putStringArray("outputs", RelayOutput.entries.filter { it in value.outputs }.map { it.wire }.toTypedArray())
         putString("dlnaRendererUdn", value.dlnaRenderer?.udn)
         putString("dlnaRendererName", value.dlnaRenderer?.name)
-        putString("dlnaPicture", value.dlnaPicture.name)
         putString("wirelessPicture", value.wirelessPicture.name)
         putInt("wirelessPictureWidth", value.wirelessPictureSize.width)
         putInt("wirelessPictureHeight", value.wirelessPictureSize.height)
@@ -162,12 +162,12 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         teslaPublicAddress = bundle.getString("teslaPublicAddress") ?: base.teslaPublicAddress,
         teslaMirrorAddress = bundle.getString("teslaMirrorAddress") ?: base.teslaMirrorAddress,
         teslaAndroidAddress = bundle.getString("teslaAndroidAddress") ?: base.teslaAndroidAddress,
+        carlifeTargetAddress = bundle.getString("carlifeTargetAddress") ?: base.carlifeTargetAddress,
         outputs = bundle.getStringArray("outputs")?.takeIf { wires -> wires.isNotEmpty() &&
             wires.all { wire -> RelayOutput.entries.any { it.wire == wire } } }
             ?.map { wire -> RelayOutput.entries.first { it.wire == wire } }?.toSet() ?: base.outputs,
         dlnaRenderer = if (bundle.containsKey("dlnaRendererUdn")) bundle.getString("dlnaRendererUdn")?.let {
             DlnaRendererChoice(it, bundle.getString("dlnaRendererName").orEmpty()) } else base.dlnaRenderer,
-        dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == bundle.getString("dlnaPicture") } ?: base.dlnaPicture,
         wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == bundle.getString("wirelessPicture") } ?: base.wirelessPicture,
         wirelessPictureSize = WirelessPictureSize(bundle.getInt("wirelessPictureWidth", base.wirelessPictureSize.width),
             bundle.getInt("wirelessPictureHeight", base.wirelessPictureSize.height)),

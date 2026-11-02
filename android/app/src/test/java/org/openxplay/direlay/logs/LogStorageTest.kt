@@ -168,6 +168,20 @@ class LogStorageTest {
             }
         }
     }
+    @Test fun exportSummaryExplainsUnknownCaptureRatherThanAssumingNoConnection() = runBlocking {
+        LogSegmentStore(temporary.newFolder(), { time }).use { store ->
+            store.append(line(time, "only error evidence").replace(" I Test:", " E Test:"))
+            val file = checkNotNull(LogExporter(temporary.newFolder(), store, { "App: Test" }, { time })
+                .export(LogRange.LAST_10_MINUTES))
+            ZipFile(file).use { zip ->
+                val info = zip.getInputStream(zip.getEntry("info.txt")).bufferedReader().readText()
+                assertTrue(info.contains("Capture completeness"))
+                assertTrue(info.contains("Logcat capture: 1 lines"))
+                assertTrue(info.contains("not started; capture completeness unknown"))
+                assertTrue(info.contains("absence of events does not establish car connectivity"))
+            }
+        }
+    }
     @Test fun emptyRangeProducesNoZipAndDeletesOldExports() = runBlocking {
         val cache = temporary.newFolder()
         File(cache, "old.zip").writeText("old")

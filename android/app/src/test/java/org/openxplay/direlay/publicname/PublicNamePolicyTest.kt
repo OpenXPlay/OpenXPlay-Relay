@@ -41,6 +41,27 @@ class PublicNamePolicyTest {
         assertFalse("the ARI window replaces the one-third rule", PublicNamePolicy.renewalDue(notBefore, notAfter, 80 * DAY, 70 * DAY))
     }
 
+    @Test fun shorterLifetimesUseAriOrOneThirdAndWarnAtRenewalGraceAndExpiry() {
+        val before = 100 * DAY
+        for (days in listOf(64, 45)) {
+            val after = before + days * DAY
+            val renewal = after - days * DAY / 3
+            assertEquals(renewal, PublicNamePolicy.renewalTime(before, after, null))
+            assertFalse(PublicNamePolicy.renewalDue(before, after, null, renewal - 1))
+            assertTrue(PublicNamePolicy.renewalDue(before, after, null, renewal))
+            assertEquals(OrderDecision.Allowed, PublicNamePolicy.orderDecision(emptyList(), after, true, renewal))
+            val window = RenewalWindow(before + 10 * DAY, before + 11 * DAY, HOUR)
+            val plan = PublicNamePolicy.ariPlan("id", window, null, before, Random(7))
+            assertTrue(checkNotNull(plan.renewAt) >= window.start && plan.renewAt < window.end)
+            assertEquals(plan.renewAt, PublicNamePolicy.renewalTime(before, after, plan.renewAt))
+            assertNull(PublicNamePolicy.expiryWarning(before, after, null, renewal + DAY - 1))
+            assertEquals(PublicNamePolicy.CertificateWarning.DUE, PublicNamePolicy.expiryWarning(before, after, null, renewal + DAY))
+            assertEquals(PublicNamePolicy.CertificateWarning.DUE, PublicNamePolicy.expiryWarning(before, after, after, after - 7 * DAY))
+            assertEquals(PublicNamePolicy.CertificateWarning.EXPIRED, PublicNamePolicy.expiryWarning(before, after, null, after))
+            assertNull(PublicNamePolicy.expiryWarning(before, after, null, before - 1))
+        }
+    }
+
     @Test fun ariPicksATimeInsideTheWindowAndKeepsItWhileTheWindowStays() {
         val window = RenewalWindow(50 * DAY, 52 * DAY, null)
         val plan = PublicNamePolicy.ariPlan("id", window, null, 10 * DAY, Random(1))

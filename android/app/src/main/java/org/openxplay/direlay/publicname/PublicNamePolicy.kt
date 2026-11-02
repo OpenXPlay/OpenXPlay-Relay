@@ -41,6 +41,16 @@ object PublicNamePolicy {
     /** When renewal becomes due, for the next check. */
     fun renewalTime(notBefore: Long, notAfter: Long, ariRenewAt: Long?): Long = ariRenewAt ?: (notAfter - (notAfter - notBefore) / 3)
 
+    enum class CertificateWarning { DUE, EXPIRED }
+
+    /** Same grace and expiry warning as the admin page, using the certificate's actual lifetime. */
+    fun expiryWarning(notBefore: Long, notAfter: Long, ariRenewAt: Long?, now: Long): CertificateWarning? = when {
+        now < notBefore -> null
+        now >= notAfter -> CertificateWarning.EXPIRED
+        now >= renewalTime(notBefore, notAfter, ariRenewAt) + DAY || notAfter - now <= 7 * DAY -> CertificateWarning.DUE
+        else -> null
+    }
+
     /** A random time inside the suggested window, kept while the window stays the same. */
     fun ariPlan(certId: String, window: RenewalWindow, previous: AriState?, now: Long, random: Random): AriState {
         val nextPoll = now + (window.retryAfterMillis ?: CHECK_INTERVAL).coerceIn(HOUR, DAY)

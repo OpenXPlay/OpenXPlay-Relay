@@ -79,7 +79,7 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
         wirelessPicture = sampled(WirelessPictureView()) {
             val settings = (draft.value ?: store.awaitSnapshot()).copy(wirelessPicture = WirelessPictureMode.AUTO)
             WirelessPictureView(runtime.wirelessPicture(settings), runtime.miracastDisplay?.let { Viewport(it.width, it.height) },
-                MiracastSystem.canDrawOverlays(this.context))
+                MiracastSystem.canDrawOverlays(this.context), runtime.wirelessPictureCanvas(settings))
         },
         areas = sampled(ViewAreasView()) {
             ViewAreasView(runtime.declaredViewAreas, runtime.viewAreaPreference, runtime.windowRecords.snapshot(),
@@ -164,7 +164,8 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
             { uri, privacy -> withContext(commands) { configFiles.import(uri, privacy).also { runtime.reloadSettings(); refresh() } } }),
         LogActions({ range -> withContext(Dispatchers.IO) { runtime.logs.export(range) } },
             { file, uri -> withContext(Dispatchers.IO) { runtime.logs.save(file, uri) } },
-            { failure -> withContext(Dispatchers.IO) { runtime.logs.failureMessage(failure) } }),
+            { failure -> withContext(Dispatchers.IO) { runtime.logs.failureMessage(failure) } },
+            captureIncomplete = { runtime.logs.captureIncomplete }),
         UploadActions({ withContext(NonCancellable + Dispatchers.IO) { uploader.latestReceipt() } },
             { file, name, progress ->
                 val service = withContext(Dispatchers.IO) { uploader }

@@ -13,14 +13,18 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class LogFiles(private val context: Context, secrets: LogSecrets, traceDirectory: () -> File? = { null }) {
+class LogFiles(private val context: Context, secrets: LogSecrets, traceDirectory: () -> File? = { null },
+    journal: TimelineJournal? = null, flushTimeline: () -> Unit = {}, timelineDropped: () -> Long = { 0 }) {
     /** Facts other components add to the export summary; must not block for long. */
     @Volatile var details: () -> String = { "" }
     private val redactor = LogRedactor(secrets)
     private val store = LogSegmentStore(File(context.noBackupFilesDir, "logs"))
     val recorder = LogRecorder(store, redactor)
     private val exporter = LogExporter(File(context.cacheDir, "log-exports"), store, ::metadata,
-        flush = recorder::flush, traceDirectory = traceDirectory)
+        flush = { flushTimeline(); recorder.flush() }, traceDirectory = traceDirectory,
+        journal = journal, probe = { recorder.probe.result() }, timelineDropped = timelineDropped,
+        recorderFailures = { recorder.captureFailures })
+    val captureIncomplete: Boolean get() = exporter.captureIncomplete
     suspend fun export(range: LogRange) = exporter.export(range)
     fun failureMessage(failure: Exception): String = runCatching {
         failure.message.orEmpty().lineSequence().take(4).joinToString("\n") { redactor.redact(it) }

@@ -24,11 +24,69 @@ pub enum AcmeError {
     /// No usable response from the CA.
     Unreachable,
     /// `rateLimited` or HTTP 429, with the `Retry-After` delay in seconds.
-    RateLimited(Option<u64>),
+    RateLimited(RateLimit),
     /// The CA refused; the problem's detail, for the status line.
     Rejected(String),
     /// The saved account URL names no account at this CA.
     AccountMissing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LimitScope {
+    Name,
+    Account,
+    Environment,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateLimit {
+    pub retry_after: Option<u64>,
+    pub detail: String,
+    pub scope: LimitScope,
+}
+/// RFC 8555 has no scope field. Recognize broader CA limits conservatively; an identifier
+/// subproblem (including failed authorizations per account per identifier) remains name-scoped.
+fn limit_scope(body: &Value) -> LimitScope {
+    let detail = body["detail"].as_str().unwrap_or("").to_ascii_lowercase();
+    if detail.contains("new accounts")
+        || detail.contains("registrations")
+        || detail.contains("ip address")
+        || detail.contains("per ip")
+        || detail.contains("registration")
+    {
+        return LimitScope::Environment;
+    }
+    let identifier = body["identifier"]["type"] == "dns"
+        || detail.contains("identifier")
+        || detail.contains("domain")
+        || detail.contains("certificates")
+        || detail.contains("authorizations");
+    if !identifier && (detail.contains("account") || detail.contains("new orders")) {
+        return LimitScope::Account;
+    }
+    body["subproblems"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(limit_scope)
+        .max_by_key(|scope| match scope {
+            LimitScope::Name => 0,
+            LimitScope::Account => 1,
+            LimitScope::Environment => 2,
+        })
+        .unwrap_or(LimitScope::Name)
+}
+fn rate_limit(response: &Response, now: u64) -> AcmeError {
+    let body = response.json().unwrap_or(Value::Null);
+    let details = std::iter::once(&body)
+        .chain(body["subproblems"].as_array().into_iter().flatten())
+        .filter_map(|p| p["detail"].as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    AcmeError::RateLimited(RateLimit {
+        retry_after: response.retry_after(now),
+        detail: shown(&details, "rateLimited"),
+        scope: limit_scope(&body),
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,8 +164,8 @@ impl<'a> Client<'a> {
         let response = http
             .send(Request::get(url))
             .map_err(|_| AcmeError::Unreachable)?;
-        if response.status == 429 {
-            return Err(AcmeError::RateLimited(response.retry_after(now)));
+        if response.status == 429 || problem(&response).kind == "rateLimited" {
+            return Err(rate_limit(&response, now));
         }
         let body = response
             .json()
@@ -147,6 +205,9 @@ impl<'a> Client<'a> {
             .http
             .send(request)
             .map_err(|_| AcmeError::Unreachable)?;
+        if !response.success() {
+            return Err(self.error(&response, problem(&response)));
+        }
         response
             .header("replay-nonce")
             .map(str::to_owned)
@@ -154,7 +215,7 @@ impl<'a> Client<'a> {
     }
     fn error(&self, response: &Response, problem: Problem) -> AcmeError {
         if response.status == 429 || problem.kind == "rateLimited" {
-            AcmeError::RateLimited(response.retry_after(self.now))
+            rate_limit(response, self.now)
         } else if problem.kind == "accountDoesNotExist" {
             AcmeError::AccountMissing
         } else if response.status >= 500 && problem.kind.is_empty() {
@@ -606,6 +667,113 @@ mod tests {
         }
     }
     #[test]
+    fn directory_and_nonce_rate_limits_keep_the_problem_and_scope() {
+        struct LimitedHttp {
+            directory_limited: bool,
+        }
+        impl Http for LimitedHttp {
+            fn send(&self, request: Request) -> Result<Response, super::super::http::Failure> {
+                if request.url == "http://ca/directory" && !self.directory_limited {
+                    return Ok(Response { status: 200, body: json!({"newNonce":"http://ca/nonce", "newAccount":"http://ca/account", "newOrder":"http://ca/order"}).to_string().into_bytes(), ..Default::default() });
+                }
+                Ok(Response { status: if self.directory_limited { 400 } else { 429 },
+                    headers: vec![("Retry-After".into(), "7200".into())],
+                    body: json!({"type":format!("{PROBLEM}rateLimited"), "detail":"too many registrations from this IP address"}).to_string().into_bytes(),
+                })
+            }
+        }
+        let key = AccountKey::generate().unwrap();
+        let expected = AcmeError::RateLimited(RateLimit {
+            retry_after: Some(7200),
+            detail: "too many registrations from this IP address".into(),
+            scope: LimitScope::Environment,
+        });
+        let http = LimitedHttp {
+            directory_limited: true,
+        };
+        assert!(
+            matches!(Client::connect(&http, "http://ca/directory", &key, None, 0), Err(e) if e == expected)
+        );
+        let http = LimitedHttp {
+            directory_limited: false,
+        };
+        let mut client = Client::connect(&http, "http://ca/directory", &key, None, 0).unwrap();
+        assert_eq!(client.nonce(), Err(expected));
+    }
+
+    #[test]
+    fn rate_limit_problems_keep_details_and_choose_the_narrowest_known_scope() {
+        for (detail, scope) in [
+            (
+                "too many certificates already issued for this exact set of domains",
+                LimitScope::Name,
+            ),
+            (
+                "too many failed authorizations for this identifier per account",
+                LimitScope::Name,
+            ),
+            ("too many new orders recently", LimitScope::Account),
+            ("too many new orders for this account", LimitScope::Account),
+            (
+                "too many registrations for this IP address",
+                LimitScope::Environment,
+            ),
+            (
+                "too many new accounts from this IP",
+                LimitScope::Environment,
+            ),
+            ("an unknown limit", LimitScope::Name),
+        ] {
+            let response = Response {
+                status: 429,
+                body: json!({"type": format!("{PROBLEM}rateLimited"), "detail": detail})
+                    .to_string()
+                    .into_bytes(),
+                ..Default::default()
+            };
+            assert_eq!(
+                rate_limit(&response, 0),
+                AcmeError::RateLimited(RateLimit {
+                    retry_after: None,
+                    detail: detail.into(),
+                    scope
+                })
+            );
+        }
+        let response = Response { status: 429, body: json!({"type": format!("{PROBLEM}rateLimited"), "subproblems": [
+            {"type": format!("{PROBLEM}rateLimited"), "identifier": {"type":"dns", "value":"car.duckdns.org"}, "detail":"limit for this account\nidentifier"}
+        ]}).to_string().into_bytes(), ..Default::default() };
+        assert_eq!(
+            rate_limit(&response, 0),
+            AcmeError::RateLimited(RateLimit {
+                retry_after: None,
+                detail: "limit for this account identifier".into(),
+                scope: LimitScope::Name
+            })
+        );
+        // A problem on HTTP 400 is rateLimited too; a non-JSON HTTP 429 gets the safe fallback.
+        let key = AccountKey::generate().unwrap();
+        let acme = FakeAcme::start(FakeAcmeOptions::default());
+        let http = UreqHttp::new(false);
+        let client = Client::connect(&http, &acme.directory(), &key, None, 0).unwrap();
+        let mut response = response;
+        response.status = 400;
+        assert!(matches!(
+            client.error(&response, problem(&response)),
+            AcmeError::RateLimited(_)
+        ));
+        response.status = 429;
+        response.body.clear();
+        assert_eq!(
+            rate_limit(&response, 0),
+            AcmeError::RateLimited(RateLimit {
+                retry_after: None,
+                detail: "rateLimited".into(),
+                scope: LimitScope::Name
+            })
+        );
+    }
+    #[test]
     fn rate_limits_and_rejections_map_to_their_errors() {
         let acme = FakeAcme::start(FakeAcmeOptions {
             rate_limited: Some(3600),
@@ -615,7 +783,11 @@ mod tests {
         let (result, _, dns, orders) = order(&acme, &key, None, None);
         assert_eq!(
             result.err(),
-            Some(IssueError::Acme(AcmeError::RateLimited(Some(3600))))
+            Some(IssueError::Acme(AcmeError::RateLimited(RateLimit {
+                retry_after: Some(3600),
+                detail: "too many certificates already issued".into(),
+                scope: LimitScope::Name,
+            })))
         );
         assert_eq!(orders, 1, "a rate-limited newOrder counts too");
         assert!(dns.1.is_empty());

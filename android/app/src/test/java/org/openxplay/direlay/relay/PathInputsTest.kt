@@ -17,11 +17,26 @@ import org.openxplay.stream.core.*
 import java.util.Locale
 
 class PathInputsTest {
+    @Test fun carlifeProgressNeverClaimsReceiverRenderingFromSentFrames() {
+        val status = org.openxplay.stream.carlife.CarlifeStatus(
+            org.openxplay.stream.carlife.CarlifeState.STREAMING, peer = "car", frames = 50)
+        assertEquals(OutputPhase.WAITING_VIDEO, carlifePathInput(true, status, 123).phase)
+        assertEquals(OutputPhase.OFF, carlifePathInput(false, status, 123).phase)
+        val ready = PathInput(setup = SetupInput(outputs = setOf(CarOutput.CARLIFE)),
+            car = CarInput(carlife = carlifePathInput(true, status, 123)),
+            iphone = IphoneInput(step = LinkStep.VIDEO, started = true))
+        val path = presentPath(ready)
+        assertEquals(StepState.OK, path.steps.single { it.id == StepId.CARLIFE }.state)
+        assertEquals(StepState.WAITING, path.steps.single { it.id == StepId.PICTURE }.state)
+        assertNull(path.live)
+        assertFalse(path.steps.any { it.id in setOf(StepId.CARLINK_FIND, StepId.CARLINK_LINK, StepId.WEB_SERVER, StepId.CAR_PAGE) })
+    }
+
     private val phone = BondedDevice("00:11:22:33:44:55", "iPhone 15", true, false, false)
     @Test fun setupOutputsFollowTheSelectionAndAddOnlyTheTeslaRoute() {
         val settings = RelaySettings(ConnectionMode.USB, com.shilapi.xcertplay.orchestration.MfiTarget.LOCAL, "", "", "", null,
             autoStartOnBoot = false, autoStartWhenReady = true, localPreview = false, webPort = null)
-        for (mask in 1..15) for (tesla in TeslaBrowserMode.entries) {
+        for (mask in 1 until (1 shl RelayOutput.entries.size)) for (tesla in TeslaBrowserMode.entries) {
             val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
             val selected = settings.copy(outputs = outputs, teslaBrowser = tesla)
             val expected = outputs.map { CarOutput.valueOf(it.name) }.toSet() +

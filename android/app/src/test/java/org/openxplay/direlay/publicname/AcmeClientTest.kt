@@ -132,8 +132,41 @@ class AcmeClientTest {
         val failure = failure { issue() }
         assertEquals(PublicNameError.ACME_RATE_LIMITED, failure.error)
         assertEquals(3_600_000L, failure.retryAfterMillis)
+        assertEquals("too many new orders", failure.detail)
+        assertEquals(AcmeLimitScope.ACCOUNT, failure.scope)
         assertTrue(provider.events.isEmpty())
         assertEquals("the guard counts the order that was sent", 1, orders)
+    }
+
+    @Test fun rateLimitedDirectoryKeepsSubproblemDetailAndIdentifierScope() {
+        val child = JSONObject().put("type", "urn:ietf:params:acme:error:rateLimited")
+            .put("identifier", JSONObject().put("type", "dns").put("value", name)).put("detail", "limit for this account")
+        val body = JSONObject().put("type", "urn:ietf:params:acme:error:rateLimited").put("detail", "try again\nsoon")
+            .put("subproblems", org.json.JSONArray().put(child)).toString().toByteArray()
+        val http = PublicNameHttp { HttpResponse(429, mapOf("Retry-After" to listOf("600")), body) }
+        val limited = AcmeIssuer(http, store, TxtLookup { _, _ -> emptyList() })
+        val failure = failure { limited.issue(config, provider, null, Pause { }) { orders++ } }
+        assertEquals(PublicNameError.ACME_RATE_LIMITED, failure.error)
+        assertEquals("try again soon; limit for this account", failure.detail)
+        assertEquals(600_000L, failure.retryAfterMillis)
+        assertEquals(AcmeLimitScope.NAME, failure.scope)
+        assertTrue(provider.events.isEmpty())
+        assertEquals(0, orders)
+    }
+
+    @Test fun rateLimitScopeUsesIdentifierSubproblemsAndRecognizesAccountAndRegistrationLimits() {
+        for ((detail, expected) in listOf(
+            "too many certificates for this exact set of domains" to AcmeLimitScope.NAME,
+            "too many failed authorizations for this identifier per account" to AcmeLimitScope.NAME,
+            "too many new orders for this account" to AcmeLimitScope.ACCOUNT,
+            "too many registrations from this IP address" to AcmeLimitScope.ENVIRONMENT,
+            "too many new accounts" to AcmeLimitScope.ENVIRONMENT,
+            "unknown limit" to AcmeLimitScope.NAME)) {
+            assertEquals(expected, AcmeClient.limitScope(JSONObject().put("type", "urn:ietf:params:acme:error:rateLimited").put("detail", detail)))
+        }
+        val child = JSONObject().put("identifier", JSONObject().put("type", "dns").put("value", "car.duckdns.org"))
+            .put("detail", "limit for this account")
+        assertEquals(AcmeLimitScope.NAME, AcmeClient.limitScope(JSONObject().put("subproblems", org.json.JSONArray().put(child))))
     }
 
     @Test fun unknownAccountIsRegisteredAgain() {

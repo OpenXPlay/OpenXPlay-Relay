@@ -582,6 +582,7 @@
     <string name="audio_title">Sound</string>
     <string name="audio_car_bluetooth">CarPlay audio over the car\'s Bluetooth (experimental)</string>
     <string name="audio_car_bluetooth_hint">The relay offers the iPhone no CarPlay audio, so music, navigation and calls play over the iPhone\'s own Bluetooth connection with the car. Keep the iPhone paired with the car and choose Bluetooth as the car\'s audio source.</string>
+    <string name="audio_wireless_forwarding">Sound goes to the car with the wireless display. DLNA plays it a few seconds late, like its picture. Siri and calls use this phone’s microphone.</string>
     <string name="audio_bluetooth_tip">If the sound plays on the phone, open the Bluetooth settings on the car\'s centre screen, find the iPhone and switch the icon on its right from muted to play. If it still plays on the phone, turn off the option above.</string>
     <string name="public_name_title">Trusted HTTPS</string>
     <string name="public_name_summary">Open the head-unit page without a certificate warning, using a free domain name.</string>
@@ -622,6 +623,7 @@
     <string name="public_name_error_dns_not_updated">The provider\'s name servers didn\'t show the change in time</string>
     <string name="public_name_error_acme_rejected">Let\'s Encrypt rejected the request: %1$s</string>
     <string name="public_name_error_acme_rate_limited">Let\'s Encrypt asked to wait</string>
+    <string name="public_name_error_acme_rate_limited_detail">Let\'s Encrypt asked to wait: %1$s</string>
     <string name="public_name_error_no_address">No head-unit network address yet</string>
     <string name="public_name_choose">Select a configuration file (.json)</string>
     <string name="public_name_imported">Imported: %1$s, %2$s</string>
@@ -694,9 +696,6 @@
     <string name="dlna_receiver">Receiver</string>
     <string name="dlna_choose_receiver">Choose a receiver</string>
     <string name="dlna_network_hint">Connect the car to this phone’s hotspot or the same Wi-Fi, and open the receiver app on the car.</string>
-    <string name="dlna_picture">Picture size</string>
-    <string name="dlna_picture_720">720p</string>
-    <string name="dlna_picture_1080">1080p</string>
     <string name="dlna_searching">Searching for receivers…</string>
     <string name="dlna_search_again">Search again</string>
     <string name="dlna_no_receivers">No receivers found. Check the network and the receiver app, then search again.</string>
@@ -730,11 +729,13 @@
     <string name="miracast_error_display">The display disconnected. Start screen casting again.</string>
     <string name="wireless_picture">Picture</string>
     <string name="wireless_picture_auto">Follow the car screen</string>
-    <string name="wireless_picture_auto_hint">Miracast uses the size negotiated with the car. DLNA uses the car screen saved from the browser or the chosen car model, otherwise 16:9. The 720p/1080p size class applies to DLNA.</string>
+    <string name="wireless_picture_auto_hint">DLNA uses the car screen saved from the browser or the chosen car model, otherwise 16:9, at the size set in CarPlay picture › Resolution. Miracast uses the size Android negotiated with the car.</string>
+    <string name="wireless_miracast_clarity">The car receives what Android’s screen casting sends; these settings change CarPlay’s shape inside it, not its clarity.</string>
+    <string name="wireless_custom_resolution">Wireless display uses its custom size %1$d × %2$d.</string>
     <string name="wireless_picture_custom_hint">Ignore the car’s reported size and choose the picture proportions yourself. Use even numbers: landscape 640–1920 × 360–1080 pixels, with the bounds reversed for portrait.</string>
-    <string name="wireless_picture_browser">Now %1$d×%2$d from the browser</string>
-    <string name="wireless_picture_model">Now %1$d×%2$d from the car model</string>
-    <string name="wireless_picture_default">Now %1$d×%2$d (default)</string>
+    <string name="wireless_picture_browser">Now %1$d × %2$d from the browser</string>
+    <string name="wireless_picture_model">Now %1$d × %2$d from the car model</string>
+    <string name="wireless_picture_default">Now %1$d × %2$d (default)</string>
     <string name="wireless_picture_priority">A connected interactive output, such as the car browser, takes priority when choosing the CarPlay canvas. A fixed size in Car screen settings overrides every output’s size.</string>
     <string name="wireless_picture_fixed">CarPlay uses the fixed size from Car screen settings.</string>
     <string name="miracast_fill_screen">Fill the screen</string>
@@ -840,4 +841,15 @@
     <string name="hotspot_password_copied">Password copied · Open settings</string>
     <string name="hotspot_no_password">No password</string>
     <string name="hotspot_system_options">In system settings, select %1$s and the hotspot band chosen below. You still need to save the changes and turn on the hotspot.</string>
+    <string name="logs_capture_incomplete">Capture is incomplete; see the export summary.</string>
+    <string name="public_name_certificate_due">Certificate renewal is due. The relay retries when it has internet access.</string>
+    <string name="public_name_certificate_expired">The certificate has expired. The relay requests a new one when it has internet access.</string>
+    <string name="ui_carlife">CarLife</string>
+    <string name="carlife_hint">Open CarLife on the car and connect it to the same Wi-Fi or this phone’s hotspot. Video and touch use CarLife; sound stays on the iPhone’s Bluetooth link to the car. USB accessory connections are also supported.</string>
+    <string name="carlife_target">CarLife head-unit IP address (optional)</string>
+    <string name="carlife_address_error">Enter an IPv4 address or leave empty for automatic discovery.</string>
+    <string name="path_carlife">CarLife connection</string>
+    <string name="path_carlife_wait">Open CarLife on the car; use the same network or connect USB.</string>
+    <string name="path_carlife_streaming">Sending the CarPlay picture</string>
+    <string name="path_carlife_picture">CarLife is receiving video; confirm the picture on the car.</string>
 </resources>

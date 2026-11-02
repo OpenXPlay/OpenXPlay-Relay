@@ -22,7 +22,7 @@ class CarPlayStageTracker(private val wireless: () -> Boolean = { false }) : Car
             CarPlayStatus.RequestingMfiPermission, CarPlayStatus.MfiReady,
             CarPlayStatus.StartingHotspot, is CarPlayStatus.HotspotReady -> CarPlayStage.NONE
             CarPlayStatus.WaitingForPairedIphone, CarPlayStatus.DiscoveringIphone,
-            CarPlayStatus.WaitingForIphone -> CarPlayStage.WAITING
+            CarPlayStatus.WaitingForIphone, is CarPlayStatus.IphoneNotListed -> CarPlayStage.WAITING
             CarPlayStatus.ConnectingBluetooth -> CarPlayStage.BLUETOOTH
             CarPlayStatus.RunningWireless, CarPlayStatus.WirelessActive,
             CarPlayStatus.WirelessActiveFallback -> CarPlayStage.BLUETOOTH_CONNECTED

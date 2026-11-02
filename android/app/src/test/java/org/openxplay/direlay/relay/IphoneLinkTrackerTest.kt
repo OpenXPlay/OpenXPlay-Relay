@@ -75,6 +75,7 @@ class IphoneLinkTrackerTest {
         wireless = false
         status(CarPlayStatus.DiscoveringMfi, LinkStep.STARTING)
         for (s in listOf(CarPlayStatus.DiscoveringIphone, CarPlayStatus.WaitingForIphone,
+            CarPlayStatus.IphoneNotListed(false), CarPlayStatus.IphoneNotListed(true),
             CarPlayStatus.WaitingForReenumeration, CarPlayStatus.SelectingConfiguration, CarPlayStatus.OpeningDataPaths))
             status(s, LinkStep.USB_DETECT)
         status(CarPlayStatus.RequestingIphonePermission, LinkStep.USB_PERMISSION)
@@ -143,6 +144,18 @@ class IphoneLinkTrackerTest {
         assertEquals(IphoneLinkSnapshot(), tracker.snapshot)
         tracker.onStatus(CarPlayStatus.Failed("coded"))
         assertTrue(tracker.snapshot.failure!!.retrying)
+    }
+    @Test fun wifiDirectBesideHotspotStopsAtStartupWithOrWithoutDiagnostics() {
+        for (withDiagnostics in listOf(false, true)) {
+            tracker.reset()
+            diagnostic = if (withDiagnostics) CarPlayError("safe", "wifi_direct_beside_hotspot", emptyList(), now) else null
+            tracker.onStatus(CarPlayStatus.RunningWireless)
+            tracker.onStatus(CarPlayStatus.Failed("hotspot conflict", startupFailure = WirelessStartupFailure.WIFI_DIRECT_BESIDE_HOTSPOT))
+            val failure = tracker.snapshot.failure!!
+            assertEquals("wifi_direct_beside_hotspot", failure.code)
+            assertEquals(LinkStep.STARTING, failure.step)
+            assertFalse(failure.retrying)
+        }
     }
     @Test fun stableVideoResetsRetryBudgetButAShortSessionDoesNot() {
         repeat(5) { tracker.onStatus(CarPlayStatus.Failed("retry")) }

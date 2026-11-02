@@ -257,7 +257,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             settings.experimental.effective().waitForCarlink)
         if (carlinkFirst.untilMillis != null) waits.begin("carlink", "max=${CarlinkStartGate.MAX_WAIT_MILLIS} carlink=${runtime.carlinkState}")
         if (!carWaitSatisfied && carFirst.request(System.currentTimeMillis(), settings.displayMode == org.openxplay.direlay.settings.DisplayMode.AUTOMATIC,
-            settings.browserOutput, settings.carlinkOutput,
+            settings.browserOutput || settings.carlifeOutput, settings.carlinkOutput,
             runtime.carScreenReported, runtime.savedCarScreen(settings) != null)) waits.begin("car_screen", "max=${CarFirstPolicy.MAX_WAIT_MILLIS}")
         continueStart(launchGeneration, source, networkAccepted)
         return null
