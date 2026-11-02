@@ -840,4 +840,5 @@
     <string name="hotspot_password_copied">Password copied · Open settings</string>
     <string name="hotspot_no_password">No password</string>
     <string name="hotspot_system_options">In system settings, select %1$s and the hotspot band chosen below. You still need to save the changes and turn on the hotspot.</string>
+    <string name="logs_capture_incomplete">Capture is incomplete; see the export summary.</string>
 </resources>

@@ -831,4 +831,5 @@
     <string name="hotspot_password_copied">密码已复制，打开设置</string>
     <string name="hotspot_no_password">无密码</string>
     <string name="hotspot_system_options">在系统设置中选择%1$s，热点频段与下方选择保持一致。还需要保存设置并开启热点。</string>
+    <string name="logs_capture_incomplete">日志采集不完整，请查看导出摘要。</string>
 </resources>

@@ -13,7 +13,7 @@ import java.io.File
 class ConfigActions(val hasPrivateData: suspend () -> Boolean,
     val export: suspend (Uri, Boolean) -> ConfigFileResult, val import: suspend (Uri, Boolean) -> ConfigFileResult)
 class LogActions(val export: suspend (LogRange) -> File?, val save: suspend (File, Uri) -> Unit,
-    val failureMessage: suspend (Exception) -> String)
+    val failureMessage: suspend (Exception) -> String, val captureIncomplete: () -> Boolean = { false })
 class UploadActions(val latestReceipt: suspend () -> UploadResult?,
     val upload: suspend (File, String, suspend (LogUploadProgress) -> Unit) -> UploadResult)
 class UpdateActions(val state: StateFlow<UpdateState>, val check: () -> Unit, val setChannel: (UpdateChannel) -> Unit)

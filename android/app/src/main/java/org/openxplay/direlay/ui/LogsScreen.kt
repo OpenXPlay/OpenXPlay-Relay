@@ -60,6 +60,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
     var job by remember { mutableStateOf<Job?>(null) }
     var message by remember { mutableStateOf("") }
     var uploadError by remember { mutableStateOf(false) }
+    var captureIncomplete by remember(files) { mutableStateOf(files.captureIncomplete()) }
     var receipt by remember(uploader) { mutableStateOf<UploadResult?>(null) }
     LaunchedEffect(uploader) { receipt = uploader.latestReceipt() }
     var qr by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -94,7 +95,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
             }
         }
     }
-    InsetGroup {
+    InsetGroup(footer = if (captureIncomplete) stringResource(R.string.logs_capture_incomplete) else null) {
         InsetRow(R.drawable.symbol_code, IconHue.LOGS, stringResource(R.string.logs_export),
             onClick = if (step == null) ({ range = LogRange.LAST_10_MINUTES; step = LogsStep.PERIOD }) else null)
         receipt?.let { latest ->
@@ -132,6 +133,7 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
                 job = scope.launch {
                     try {
                         file = files.export(range)
+                        captureIncomplete = files.captureIncomplete()
                         if (file == null) result(resources.getString(R.string.logs_empty)) else step = LogsStep.READY
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) { result(resources.getString(R.string.logs_io_error)) }
@@ -172,6 +174,8 @@ private enum class LogsStep { PERIOD, COMPRESS, READY, CONSENT, SAVE, UPLOAD, PR
         LogsStep.READY -> file?.let { archive ->
             RelayDecisionDialog(onDismissRequest = { step = null }, title = { Text(stringResource(R.string.logs_ready)) },
                 text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (captureIncomplete) Text(stringResource(R.string.logs_capture_incomplete), style = RelayTokens.callout,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("${archive.name}\n${Formatter.formatFileSize(context, archive.length())}")
                     Text(stringResource(R.string.logs_upload_hint), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)

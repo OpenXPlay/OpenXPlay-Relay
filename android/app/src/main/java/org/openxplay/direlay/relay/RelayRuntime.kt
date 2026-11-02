@@ -58,7 +58,8 @@ class RelayRuntime(private val context: Context,
     val pairing: org.openxplay.direlay.admin.PairingWindow = org.openxplay.direlay.admin.PairingWindow(
         org.openxplay.direlay.admin.AndroidBluetoothVisibility(context.applicationContext) { false }),
     val keepAlive: RelayKeepAlive = RelayKeepAlive.None,
-    val connectionLog: org.openxplay.direlay.logs.ConnectionLog = org.openxplay.direlay.logs.ConnectionLog()) : AutoCloseable {
+    val connectionLog: org.openxplay.direlay.logs.ConnectionLog = org.openxplay.direlay.logs.ConnectionLog(
+        journal = org.openxplay.direlay.logs.TimelineJournal({ java.io.File(context.noBackupFilesDir, "timeline-journal") }))) : AutoCloseable {
     @Volatile var iphoneBonds: List<BondedDevice> = emptyList()
         private set
     fun refreshIphoneBonds() {
@@ -150,6 +151,7 @@ class RelayRuntime(private val context: Context,
         }.secrets
     }
     val logs: org.openxplay.direlay.logs.LogFiles by lazy { org.openxplay.direlay.logs.LogFiles(context.applicationContext, logSecrets,
+        journal = connectionLog.journal, flushTimeline = connectionLog::awaitIdle, timelineDropped = { connectionLog.dropped },
         traceDirectory = { if (settingsStore.snapshot.value?.carlinkTrace == true) context.getExternalFilesDir("carlink-trace") else null }) }
     val updates: org.openxplay.direlay.update.UpdateChecker by lazy {
         val app = context.applicationContext
