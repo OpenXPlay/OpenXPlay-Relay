@@ -11,6 +11,7 @@ import org.openxplay.direlay.settings.RelayOutput
 fun outputLabel(output: RelayOutput): Int = when (output) {
     RelayOutput.BROWSER -> R.string.ui_browser
     RelayOutput.CARLINK -> R.string.ui_carlink
+    RelayOutput.CARLIFE -> R.string.ui_carlife
     RelayOutput.DLNA -> R.string.wireless_dlna
     RelayOutput.MIRACAST -> R.string.wireless_miracast
 }

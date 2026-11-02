@@ -69,7 +69,7 @@ internal fun visibleSectionSteps(section: PathSectionView, showAllSteps: Boolean
     val expansion = stringResource(if (expanded) R.string.menu_expanded else R.string.menu_collapsed)
     val evidenceIds = when (section.section) {
         PathSection.RELAY -> setOf(StepId.BLUETOOTH, StepId.HOTSPOT, StepId.SHARED_WIFI)
-        PathSection.CAR -> setOf(StepId.CAR_PAGE, StepId.CARLINK_READY, StepId.DLNA, StepId.MIRACAST)
+        PathSection.CAR -> setOf(StepId.CAR_PAGE, StepId.CARLINK_READY, StepId.DLNA, StepId.MIRACAST, StepId.CARLIFE)
         PathSection.IPHONE -> setOf(StepId.IPHONE_PAIRED, StepId.SESSION)
         PathSection.PICTURE -> setOf(StepId.TESLA, StepId.PICTURE)
     }

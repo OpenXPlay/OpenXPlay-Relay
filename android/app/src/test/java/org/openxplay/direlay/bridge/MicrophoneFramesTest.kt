@@ -52,6 +52,17 @@ class MicrophoneFramesTest {
         val packets = mutableListOf<ByteArray>(); frames.tick({ emptyList() }, packets::add)
         assertArrayEquals(ByteArray(1280) { if (it % 2 == 0) 2 else 1 }, body(packets.single(), config))
     }
+    @Test fun aTwentyMillisecondHeadUnitFrameSplitsIntoTenMillisecond48KhzPcmPackets() {
+        val config = config(10).copy(sampleRate = 48_000)
+        val frames = MicrophoneFrames(config)
+        val pcm = ByteArray(1920) { (it % 127).toByte() }
+        assertTrue(frames.offer(pcm))
+        val packets = mutableListOf<ByteArray>()
+        frames.tick({ fail("LPCM must not use an encoder") }, packets::add)
+        assertEquals(listOf(996, 996), packets.map { it.size })
+        assertEquals(listOf(0, 480), packets.map(::timestamp))
+        assertArrayEquals(AudioPolicy.swap(pcm), body(packets[0], config) + body(packets[1], config))
+    }
     @Test fun opusUsesEncodedBodiesAndNegotiatedRtpClockEvenForSilence() {
         val config = config().copy(codec = AudioCodecKind.OPUS, sampleRate = 48000, opusClockRate = 24000)
         val frames = MicrophoneFrames(config)

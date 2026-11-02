@@ -36,7 +36,8 @@ private fun RelayRuntime.overlaySnapshot(activity: android.content.Context, wifi
     val carlink = settings.carlinkOutput
     val input = sampledPathInput(activity, settings, wifi, name, version)
     val path = presentPath(input)
-    return HostOverlaySnapshot(input.copy(nowMillis = 0), headUnitUrls(), settings.localPreview,
+    val preview = WirelessStandIn.effective(settings, settingsStore.developerOverrides.value).localPreview
+    return HostOverlaySnapshot(input.copy(nowMillis = 0), headUnitUrls(), preview,
         homeProblems(visibleHomeFailures(settings, status.failures), carlink && carlinkFailed,
             carlinkDetail, carlinkError, serverReason.takeIf { settings.browserOutput },
             serverState, networkReadiness(settings, networkReadings), teslaFailure, carlinkErrorTrail,

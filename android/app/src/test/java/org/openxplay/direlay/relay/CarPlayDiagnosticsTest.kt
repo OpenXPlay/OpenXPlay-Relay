@@ -55,6 +55,18 @@ class CarPlayDiagnosticsTest {
         listOf("PrivateNetwork", "AA:BB:CC:DD:EE:FF", "192.168.1.1").forEach { assertFalse(trail.contains(it)) }
     }
 
+    @Test fun usbWaitingStatusesRecordNamesAndPreserveTheFrozenError() {
+        val observer = diagnostics()
+        val statuses = listOf(CarPlayStatus.WaitingForIphone,
+            CarPlayStatus.IphoneNotListed(false), CarPlayStatus.IphoneNotListed(true))
+        statuses.forEach { observer.onStatus(it); assertNull(observer.error) }
+        observer.onStatus(CarPlayStatus.Failed("failed"))
+        val error = observer.error!!
+        assertEquals(listOf("WaitingForIphone", "IphoneNotListed", "IphoneNotListed"),
+            error.trail.dropLast(1).map { it.substringAfter("status=") })
+        statuses.forEach { observer.onStatus(it); assertSame(error, observer.error) }
+    }
+
     @Test fun redactsCurrentSecretsAndDropsUnsafeProgressBeforeRecording() {
         var current = listOf("wifi-secret", "remote-secret")
         val observer = diagnostics { current }

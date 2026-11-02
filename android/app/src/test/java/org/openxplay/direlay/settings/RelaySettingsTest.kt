@@ -25,6 +25,22 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 33], manifest = Config.NONE, application = Application::class)
 class RelaySettingsTest {
+    @Test fun carlifeSelectionAndDirectedDiscoverySurviveReloadWithoutChangingExistingOutputs() {
+        store.use { store ->
+            val original = store.load()
+            assertFalse(original.carlifeOutput)
+            assertEquals("", original.carlifeTargetAddress)
+            val chosen = original.copy(outputs = setOf(RelayOutput.CARLIFE), carlifeTargetAddress = "192.168.5.220")
+            store.save(chosen)
+            assertEquals(chosen, store.load())
+            assertEquals(chosen, RelaySettingsStore(context).use { it.load() })
+            val browser = chosen.copy(outputs = setOf(RelayOutput.BROWSER))
+            store.save(browser)
+            assertEquals(browser, store.load())
+            assertFalse(store.load().carlifeOutput)
+        }
+    }
+
     @Test fun frameRateMigratesOnlyAnEnabledValidDeveloperChoiceAndDropsBothKeys() {
         store.use { store ->
             val prefs = context.getSharedPreferences("direlay", 0)
@@ -123,10 +139,10 @@ class RelaySettingsTest {
         store.use { store ->
             val initial = store.load()
             assertFalse(initial.dlnaOutput); assertFalse(initial.miracastOutput)
-            assertNull(initial.dlnaRenderer); assertEquals(DlnaPicture.P720, initial.dlnaPicture)
+            assertNull(initial.dlnaRenderer)
             for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
-                for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
-                    val value = initial.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
+                for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                    val value = initial.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaRenderer = receiver)
                     value.validate(wireless = false)
                     store.save(value)
                     assertEquals(value, store.load())
@@ -136,10 +152,13 @@ class RelaySettingsTest {
                     for (key in listOf("carlinkOutput", "bothOutputs", "dlnaOutput", "miracastOutput")) assertFalse(prefs.contains(key))
                     assertEquals(receiver?.udn, prefs.getString("dlnaRendererUdn", null))
                     assertEquals(receiver?.name, prefs.getString("dlnaRendererName", null))
-                    assertEquals(picture.name, prefs.getString("dlnaPicture", null))
+                    assertFalse(prefs.contains("dlnaPicture"))
                 }
-            context.getSharedPreferences("direlay", 0).edit().putString("dlnaPicture", "future").commit()
-            assertEquals(DlnaPicture.P720, store.load().dlnaPicture)
+            store.save(initial)
+            context.getSharedPreferences("direlay", 0).edit().putInt("dlnaPicture", 1080).commit()
+            assertEquals(initial, store.load())
+            store.save(initial)
+            assertFalse(context.getSharedPreferences("direlay", 0).contains("dlnaPicture"))
         }
     }
 

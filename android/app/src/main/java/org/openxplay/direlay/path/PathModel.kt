@@ -40,6 +40,7 @@ enum class StepId(val section: PathSection, val code: String) {
     CARLINK_READY(PathSection.CAR, "CL"),
     DLNA(PathSection.CAR, "DLNA"),
     MIRACAST(PathSection.CAR, "MC"),
+    CARLIFE(PathSection.CAR, "CF"),
 
     IPHONE_PAIRED(PathSection.IPHONE, "PAIR"),
     USB_HOST(PathSection.IPHONE, "USB"),

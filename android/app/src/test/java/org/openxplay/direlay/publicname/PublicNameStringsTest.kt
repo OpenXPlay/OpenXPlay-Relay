@@ -9,6 +9,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.openxplay.direlay.R
+import org.openxplay.direlay.ui.publicNameCertificateWarning
 import org.openxplay.direlay.ui.publicNameErrorText
 import org.openxplay.direlay.ui.publicNameImportProblems
 import org.openxplay.direlay.ui.publicNameStatusText
@@ -29,6 +30,8 @@ class PublicNameStringsTest {
     }
 
     private val labels = mapOf(
+        R.string.public_name_certificate_due to ("Certificate renewal is due. The relay retries when it has internet access." to "证书需要续期。中继联网后会重试。"),
+        R.string.public_name_certificate_expired to ("The certificate has expired. The relay requests a new one when it has internet access." to "证书已过期。中继联网后会申请新证书。"),
         R.string.public_name_title to ("Trusted HTTPS" to "可信 HTTPS"),
         R.string.public_name_summary to ("Open the head-unit page without a certificate warning, using a free domain name." to "用免费域名，让车机打开网页时不再出现证书警告。"),
         R.string.public_name_enabled to ("Use a free domain name" to "使用免费域名"),
@@ -116,6 +119,32 @@ class PublicNameStringsTest {
         assertTrue(error, error.startsWith("Problem: Let's Encrypt rejected the request: Incorrect TXT record. Next try at "))
         assertEquals("Can't reach the provider", publicNameErrorText(english, null, null))
         assertEquals("Off", publicNameStatusText(english, PublicNameStatus(PublicNameState.OFF), null))
+    }
+
+    @Test fun rateLimitedDetailAndShortCertificateWarningsAppearInBothLanguagesWithoutEllipsis() {
+        val day = PublicNamePolicy.DAY
+        val before = 1_800_000_000_000L
+        for (language in listOf("en", "zh-CN")) {
+            val context = localized(language)
+            val line = publicNameErrorText(context, PublicNameError.ACME_RATE_LIMITED, "too many new orders")
+            val expected = if (language == "en") "Let's Encrypt asked to wait: too many new orders"
+                else "Let's Encrypt 要求稍后再试：too many new orders"
+            assertEquals(expected, line)
+            for (detail in listOf(null, "", " \t")) {
+                assertEquals(context.getString(R.string.public_name_error_acme_rate_limited),
+                    publicNameErrorText(context, PublicNameError.ACME_RATE_LIMITED, detail))
+            }
+            for (days in listOf(64, 45)) {
+                val after = before + days * day
+                val renewal = PublicNamePolicy.renewalTime(before, after, null)
+                val status = PublicNameStatus(PublicNameState.READY, notBefore = before, notAfter = after, renewAt = renewal)
+                assertNull(publicNameCertificateWarning(context, status, renewal + day - 1))
+                assertEquals(context.getString(R.string.public_name_certificate_due), publicNameCertificateWarning(context, status, renewal + day))
+                val expired = checkNotNull(publicNameCertificateWarning(context, status, after))
+                assertEquals(context.getString(R.string.public_name_certificate_expired), expired)
+                assertFalse(expired.contains("…") || expired.contains("..."))
+            }
+        }
     }
 
     @Test fun importProblemsNameTheKeyAndTheStableCode() {

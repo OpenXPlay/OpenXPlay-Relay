@@ -29,7 +29,8 @@ class LogsPresentationTest {
     @Test fun dialogsAndAcknowledgementsHaveEnglishAndSimplifiedChineseCopy() {
         val context = RuntimeEnvironment.getApplication()
         val chinese = context.createConfigurationContext(Configuration(context.resources.configuration).apply { setLocale(Locale.SIMPLIFIED_CHINESE) })
-        val labels = mapOf(R.string.logs_privacy_local to "日志默认只保存在这部手机上，保留最近约 24 小时。只有你选择“联网上传并显示二维码”并确认同意后，日志才会上传。",
+        val labels = mapOf(R.string.logs_capture_incomplete to "日志采集不完整，请查看导出摘要。",
+            R.string.logs_privacy_local to "日志默认只保存在这部手机上，保留最近约 24 小时。只有你选择“联网上传并显示二维码”并确认同意后，日志才会上传。",
             R.string.logs_title to "日志", R.string.logs_10_minutes to "过去 10 分钟", R.string.logs_30_minutes to "过去 30 分钟",
             R.string.logs_24_hours to "过去 24 小时", R.string.logs_upload to "联网上传并显示二维码", R.string.logs_compressing to "正在压缩日志…",
             R.string.logs_copy to "复制链接", R.string.logs_empty to "这段时间没有记录到日志。", R.string.logs_no_internet to "没有可用的互联网连接。",

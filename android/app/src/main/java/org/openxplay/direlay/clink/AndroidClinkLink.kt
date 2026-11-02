@@ -439,9 +439,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                             machine.connected()
                             // When another app's GATT keeps the LE link up, Android reuses it and may never
                             // report the MTU; continue without it (mtu() ignores a late or duplicate call).
+                            // The fallback must outlast a slow head unit: issuing discover() while the MTU
+                            // exchange is still queued leaves the search stranded in DISCOVER_ST, and the
+                            // session then dies on its 15 s budget with no services at all. 1.8 s responses
+                            // were measured on a G9 (1.5 s fallback fired 318 ms early), so wait well past
+                            // that before giving up on the MTU.
                             handler.postDelayed({ event(gatt) { if (machine.state == BleExchange.State.MTU) {
                                 diagnostics.emit(ClinkDiagnostic.Mtu(null, null)); machine.mtu(false)
-                            } } }, 1500)
+                            } } }, 4000)
                         }
                     }
                 }

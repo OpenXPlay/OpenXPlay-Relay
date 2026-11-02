@@ -54,6 +54,26 @@ class PublicNameStoreTest {
         assertTrue(File(directory, "providers.json").readText().contains("secret-token"))
     }
 
+    @Test fun caHoldsRoundTripWithoutBecomingGlobalAndOldRecordsRemainReadable() {
+        val root = temporary.newFolder()
+        val store = PublicNameStore(root)
+        store.save(config)
+        assertTrue(store.record().acmeHolds.isEmpty())
+        val holds = listOf(
+            AcmeHold(AcmeEnvironment.PRODUCTION, AcmeLimitScope.NAME, config.name, 1000, "identifier limit"),
+            AcmeHold(AcmeEnvironment.PRODUCTION, AcmeLimitScope.ACCOUNT, "account", 1000, "account limit"),
+            AcmeHold(AcmeEnvironment.STAGING, AcmeLimitScope.ENVIRONMENT, "", 1000, "IP limit"))
+        store.saveRecord(PublicNameRecord(acmeHolds = holds))
+        assertEquals(holds, PublicNameStore(root).record().acmeHolds)
+        assertTrue(holds[0].applies(config, "account", 999))
+        assertFalse(holds[0].applies(config.copy(name = "other.dynv6.net"), "account", 999))
+        assertFalse(holds[0].applies(config.copy(acme = AcmeEnvironment.STAGING), "account", 999))
+        assertFalse(holds[0].applies(config, "account", 1000))
+        assertTrue(holds[1].applies(config.copy(name = "other.dynv6.net"), "account", 999))
+        assertFalse(holds[1].applies(config, "different-account", 999))
+        assertTrue(holds[2].applies(config.copy(acme = AcmeEnvironment.STAGING), "different-account", 999))
+    }
+
     @Test fun firstReadMigratesTheSingleConfigWithoutChangingItsFormatOrSharedFiles() {
         val root = temporary.newFolder()
         val legacy = PrivateStore(root, "public-name")

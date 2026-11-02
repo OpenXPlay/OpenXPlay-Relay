@@ -94,6 +94,7 @@ fun sampleStepTitle(id: StepId): Int = when (id) {
     StepId.CARLINK_READY -> R.string.design_step_carlink_ready
     StepId.DLNA -> R.string.design_step_dlna
     StepId.MIRACAST -> R.string.design_step_miracast
+    StepId.CARLIFE -> R.string.path_carlife
     StepId.IPHONE_PAIRED -> R.string.design_step_iphone_paired
     StepId.USB_HOST -> R.string.design_step_usb_host
     StepId.CARPLAY_START -> R.string.design_step_carplay_start

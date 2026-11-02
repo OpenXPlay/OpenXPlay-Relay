@@ -61,7 +61,7 @@ fun DeveloperConnection(state: SettingsEditorState, wireless: (RelaySettings) ->
         InsetGroup(header = stringResource(R.string.dev_outputs_combine), footer = stringResource(R.string.dev_outputs_combine_hint)) {
             RelayOutput.entries.forEachIndexed { index, output ->
                 if (index > 0) InsetDivider()
-                InsetToggleRow(if (output == RelayOutput.BROWSER) R.drawable.symbol_monitor else if (output == RelayOutput.CARLINK)
+                InsetToggleRow(if (output == RelayOutput.BROWSER) R.drawable.symbol_monitor else if (output == RelayOutput.CARLINK || output == RelayOutput.CARLIFE)
                     R.drawable.symbol_car_front else R.drawable.symbol_cast, IconHue.CAR, stringResource(outputLabel(output)),
                     output in draft.outputs, { on ->
                         val next = OutputSelection.toggle(draft, output, on, wireless(draft))

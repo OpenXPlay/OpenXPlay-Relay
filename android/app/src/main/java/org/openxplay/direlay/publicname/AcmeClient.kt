@@ -16,7 +16,7 @@ import java.security.spec.ECGenParameterSpec
 import java.time.OffsetDateTime
 
 /** An RFC 8555 problem document; [type] without the `urn:ietf:params:acme:error:` prefix. */
-internal class AcmeProblem(val type: String, val detail: String?, val status: Int, val retryAfterMillis: Long?) : Exception(type)
+internal class AcmeProblem(val type: String, val detail: String?, val status: Int, val retryAfterMillis: Long?, val scope: AcmeLimitScope = AcmeLimitScope.NAME) : Exception(type)
 
 internal class AcmeResource(val url: String?, val json: JSONObject, val retryAfterMillis: Long?)
 
@@ -113,11 +113,28 @@ internal class AcmeClient(private val http: PublicNameHttp, private val director
         val json = runCatching { JSONObject(response.text) }.getOrNull()
         val type = json?.optString("type").orEmpty().removePrefix(ERROR_PREFIX)
             .ifEmpty { if (response.status == 429) "rateLimited" else "http-${response.status}" }
-        return AcmeProblem(type, json?.optString("detail")?.takeIf { it.isNotEmpty() }, response.status,
-            retryAfterMillis(response.header("Retry-After"), clock()))
+        return AcmeProblem(type, json?.let { body ->
+            val children = body.optJSONArray("subproblems")
+            (listOf(body.optString("detail")) + (0 until (children?.length() ?: 0)).map {
+                children!!.optJSONObject(it)?.optString("detail").orEmpty()
+            }).filter { it.isNotEmpty() }.joinToString("; ").takeIf { it.isNotEmpty() }
+        }, response.status,
+            retryAfterMillis(response.header("Retry-After"), clock()), limitScope(json))
     }
 
-    companion object { const val ERROR_PREFIX = "urn:ietf:params:acme:error:" }
+    companion object {
+        /** RFC 8555 has no scope field; unknown limits stay scoped to the requested name. */
+        internal fun limitScope(problem: JSONObject?): AcmeLimitScope {
+            val text = problem?.optString("detail").orEmpty().lowercase(java.util.Locale.ROOT)
+            if (listOf("registration", "new accounts", "ip address", "per ip").any { it in text }) return AcmeLimitScope.ENVIRONMENT
+            val identifier = problem?.optJSONObject("identifier")?.optString("type") == "dns" ||
+                listOf("identifier", "domain", "certificates", "authorizations").any { it in text }
+            if (!identifier && ("account" in text || "new orders" in text)) return AcmeLimitScope.ACCOUNT
+            val children = problem?.optJSONArray("subproblems") ?: return AcmeLimitScope.NAME
+            return (0 until children.length()).map { limitScope(children.optJSONObject(it)) }.maxByOrNull { it.ordinal } ?: AcmeLimitScope.NAME
+        }
+        const val ERROR_PREFIX = "urn:ietf:params:acme:error:"
+    }
 }
 
 fun interface Pause { fun pause(millis: Long) }
@@ -226,7 +243,8 @@ class AcmeIssuer(private val http: PublicNameHttp, private val store: PublicName
     private inline fun <T> mapped(block: () -> T): T = try { block() } catch (problem: AcmeProblem) {
         throw when {
             problem.type == "rateLimited" || problem.status == 429 ->
-                PublicNameFailure(PublicNameError.ACME_RATE_LIMITED, problem.retryAfterMillis)
+                PublicNameFailure(PublicNameError.ACME_RATE_LIMITED, problem.retryAfterMillis,
+                    printable(problem.detail ?: problem.type), problem.scope)
             else -> rejected(problem.detail ?: problem.type)
         }
     } catch (_: JSONException) { throw rejected("unreadable response") }
@@ -238,6 +256,7 @@ class AcmeIssuer(private val http: PublicNameHttp, private val store: PublicName
 
         /** CA wording is shown to the user: one short printable line. */
         internal fun rejected(detail: String) = PublicNameFailure(PublicNameError.ACME_REJECTED,
-            detail = detail.map { if (it < ' ' || it == '\u007f') ' ' else it }.joinToString("").trim().take(200))
+            detail = printable(detail))
+        private fun printable(detail: String) = detail.map { if (it.isISOControl()) ' ' else it }.joinToString("").trim().take(200)
     }
 }

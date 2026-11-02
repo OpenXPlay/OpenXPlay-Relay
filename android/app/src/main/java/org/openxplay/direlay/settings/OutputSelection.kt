@@ -3,14 +3,15 @@
 // Created by riko chen on 2026-10-25
 package org.openxplay.direlay.settings
 
-enum class RelayOutput(val wire: String) { BROWSER("web"), CARLINK("carlink"), DLNA("dlna"), MIRACAST("miracast") }
-enum class OutputChoice { BROWSER, CARLINK, WIRELESS }
+enum class RelayOutput(val wire: String) { BROWSER("web"), CARLINK("carlink"), DLNA("dlna"), MIRACAST("miracast"), CARLIFE("carlife") }
+enum class OutputChoice { BROWSER, CARLINK, WIRELESS, CARLIFE }
 enum class WirelessDisplayKind(val output: RelayOutput) { DLNA(RelayOutput.DLNA), MIRACAST(RelayOutput.MIRACAST) }
 
 object OutputSelection {
     fun choice(outputs: Set<RelayOutput>): OutputChoice? = when (outputs.singleOrNull()) {
         RelayOutput.BROWSER -> OutputChoice.BROWSER
         RelayOutput.CARLINK -> OutputChoice.CARLINK
+        RelayOutput.CARLIFE -> OutputChoice.CARLIFE
         RelayOutput.DLNA, RelayOutput.MIRACAST -> OutputChoice.WIRELESS
         null -> null
     }
@@ -19,6 +20,7 @@ object OutputSelection {
     fun outputs(choice: OutputChoice, kind: WirelessDisplayKind = WirelessDisplayKind.DLNA): Set<RelayOutput> = setOf(when (choice) {
         OutputChoice.BROWSER -> RelayOutput.BROWSER
         OutputChoice.CARLINK -> RelayOutput.CARLINK
+        OutputChoice.CARLIFE -> RelayOutput.CARLIFE
         OutputChoice.WIRELESS -> kind.output
     })
     fun choose(settings: RelaySettings, choice: OutputChoice, kind: WirelessDisplayKind, wireless: Boolean): RelaySettings {
@@ -40,4 +42,13 @@ object OutputSelection {
         if (dlnaOutput) add(RelayOutput.DLNA)
         if (miracastOutput) add(RelayOutput.MIRACAST)
     }
+}
+
+/** Numeric-only discovery targets keep configuration validation free of DNS/network I/O. */
+fun validCarlifeAddress(value: String): Boolean {
+    if (value.isEmpty()) return true
+    val parts = value.split('.')
+    return parts.size == 4 && parts.all { part ->
+        part.isNotEmpty() && part.length <= 3 && part.all { it in '0'..'9' } && (part.toIntOrNull() ?: -1) in 0..255
+    } && (parts.first().toIntOrNull() ?: -1) in 1..223 && value != "0.0.0.0"
 }

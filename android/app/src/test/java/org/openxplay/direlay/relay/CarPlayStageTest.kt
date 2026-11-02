@@ -48,7 +48,8 @@ class CarPlayStageTest {
 
     @Test fun wiredSequenceTracksUsbSetupSessionAndControlEnd() {
         val tracker = CarPlayStageTracker()
-        for (status in listOf(CarPlayStatus.DiscoveringIphone, CarPlayStatus.WaitingForIphone)) {
+        for (status in listOf(CarPlayStatus.DiscoveringIphone, CarPlayStatus.WaitingForIphone,
+            CarPlayStatus.IphoneNotListed(false), CarPlayStatus.IphoneNotListed(true))) {
             tracker.onSessionEnded()
             tracker.onStatus(status)
             assertEquals(CarPlayStage.WAITING, tracker.stage)

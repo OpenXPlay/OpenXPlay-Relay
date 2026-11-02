@@ -54,6 +54,7 @@ private fun CarInput.json() = obj(
     "dlna" to dlna.json(),
     "miracast" to miracast.json(),
     "tesla" to tesla.json(),
+    "carlife" to carlife.json(),
 )
 
 private fun WebServerInput.json() = obj(

@@ -18,7 +18,7 @@
     <string name="menu_selected_summary">Selected · %1$s</string>
     <string name="menu_outputs_summary">%1$s · Web port: %2$s</string>
     <string name="menu_diagnostics_summary">%1$d runtime values · %2$d URLs</string>
-    <string name="option_wireless_display_hint">Picture only, through the car’s DLNA or Miracast receiver.</string>
+    <string name="option_wireless_display_hint">The car shows the picture through its DLNA or Miracast receiver; operate CarPlay on this phone.</string>
     <string name="output_multiple">Several outputs</string>
     <string name="output_multiple_hint">Set in Developer settings. Choosing an output above replaces them.</string>
     <string name="dev_outputs_combine">Combine outputs</string>

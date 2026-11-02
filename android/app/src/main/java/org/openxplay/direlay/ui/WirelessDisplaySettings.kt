@@ -36,6 +36,7 @@ import org.openxplay.stream.cast.CastRenderer
             }
         }
         if (draft.miracastOutput) {
+            Hint(stringResource(R.string.wireless_miracast_clarity))
             SettingsToggleGroup(stringResource(R.string.miracast_fill_screen), draft.miracastStretch, R.drawable.symbol_monitor, IconHue.PICTURE,
                 footer = stringResource(R.string.miracast_fill_screen_hint)) { change(draft.copy(miracastStretch = it)) }
             NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI)
