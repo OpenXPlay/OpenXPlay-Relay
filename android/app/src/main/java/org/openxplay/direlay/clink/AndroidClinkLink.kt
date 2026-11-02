@@ -43,6 +43,8 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         private const val REQUEST_TIMEOUT_MS = 12_000L
         /** Never hand the request less than this, even if priming ate most of the stage budget. */
         private const val MIN_REQUEST_TIMEOUT_MS = 5_000L
+        /** Quiet window granted to the platform's own join before asking for a network. */
+        private const val QUIET_JOIN_MS = 2_500L
         /** How often a link the platform brought up on its own is checked for adoption. */
         private const val ADOPT_POLL_MS = 100L
         /** How long a freshly started scan is given to deliver results before the request goes out. */
@@ -128,6 +130,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
      * dialog. One priming per throttle window keeps the remaining requests for the dialog.
      */
     @Volatile private var lastPrimeAt = 0L
+    /** Whether the last priming actually saw the head unit's SSID in the scan results. */
+    @Volatile private var lastPrimeSawTarget = false
+    /**
+     * The confirmation dialog, and the scan-cache workaround for it, are MIUI/Android 10-11 specific.
+     * Everything else here is generic AOSP behaviour and must not be slowed down for other vendors.
+     */
+    private val miuiRequestsNeedCache = Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true) &&
+        Build.VERSION.SDK_INT <= 30
     internal fun redactFailureMessage(text: String): String = failurePassphrase.let {
         if (it.isEmpty()) text else text.replace(it, "[redacted]")
     }
@@ -615,10 +625,27 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         // getting in the car always fails, the retry succeeds", so adopt the platform's link whenever
         // it exists and keep watching for it while the request is pending.
         adoptHeadUnitLink(run, reply.ssid)?.let { return it }
-        // A fresh scan is what makes the platform start its own join, so ask for one before asking
-        // for a network of our own — then look again in case it already built the link.
-        primeScanCache(run, reply.ssid)
+        // Let the platform see the AP first: a scan result is what makes it start its own join — and
+        // what makes MIUI match the request silently when there is nothing to adopt.
+        val primed = primeScanCache(run, reply.ssid)
         adoptHeadUnitLink(run, reply.ssid)?.let { return it }
+        // When the scan did show the AP the platform joins it within a second. Adopting that link is
+        // both faster and silent: requestNetwork is what raises MIUI's unanswerable dialog, so give
+        // the platform a quiet window before asking for a network of our own.
+        var quiet = 0L
+        if (lastPrimeSawTarget && miuiRequestsNeedCache) {
+            val started = SystemClock.elapsedRealtime()
+            while (!run.cancelled) {
+                adoptHeadUnitLink(run, reply.ssid)?.let {
+                    Log.i("DiRelayCarlink", "join_adopted waited=${SystemClock.elapsedRealtime() - started}ms")
+                    return it
+                }
+                if (SystemClock.elapsedRealtime() - started >= QUIET_JOIN_MS) break
+                try { Thread.sleep(100) } catch (_: InterruptedException) { break }
+            }
+            quiet = SystemClock.elapsedRealtime() - started
+        }
+        val consumed = primed + quiet
         val result = CompletableFuture<Pair<String, String>>()
         main {
             check(!run.cancelled)
@@ -664,7 +691,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).setNetworkSpecifier(specifier).build()
             manager.requestNetwork(request, callback, handler,
-                REQUEST_TIMEOUT_MS.toInt())
+                (REQUEST_TIMEOUT_MS - consumed).coerceAtLeast(MIN_REQUEST_TIMEOUT_MS).toInt())
             // The system's own join of this saved AP is invisible to the request, so adopt it the
             // moment it gets an IPv4 lease instead of waiting out the request timeout.
             val watcher = object : Runnable {
@@ -791,28 +818,39 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
      * Returns how long the wait took, so the caller can keep the whole stage inside its budget.
      */
     @Suppress("DEPRECATION")
-    private fun primeScanCache(run: Run, ssid: String) {
-        if (!Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true) || Build.VERSION.SDK_INT > 30) return
+    private fun primeScanCache(run: Run, ssid: String): Long {
+        if (!miuiRequestsNeedCache) return 0
         // One priming per throttle window: the relay retries with a fresh connect() each attempt, so
-        // priming on every attempt would spend the whole shared scan budget and leave the system
-        // dialog with nothing to list.
+        // priming on every attempt would spend the whole shared scan budget.
         val now = SystemClock.elapsedRealtime()
-        if (now - lastPrimeAt < 120_000) return
+        if (now - lastPrimeAt < 120_000) return 0
         lastPrimeAt = now
-        val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return
-        if (!wifi.isWifiEnabled) return
-        val deadline = System.currentTimeMillis() + 2_500
-        while (!run.cancelled) {
-            // A null list means the location permission is missing; waiting would only add delay.
-            val results = wifi.scanResults ?: return
-            if (results.any { it.SSID == ssid }) return
-            // A refused startScan means the scan throttle is exhausted: retrying cannot succeed and
-            // only burns the budget of the next attempt. Stop here and let the framework dialog (or
-            // the next attempt) take over.
-            if (!wifi.startScan()) return
-            if (System.currentTimeMillis() >= deadline) return
-            try { Thread.sleep(350) } catch (_: InterruptedException) { return }
+        val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return 0
+        if (!wifi.isWifiEnabled) return 0
+        // A null list means the location permission is missing; waiting would only add delay.
+        lastPrimeSawTarget = false
+        val cached = wifi.scanResults ?: return 0
+        if (cached.any { it.SSID == ssid }) {
+            lastPrimeSawTarget = true
+            Log.i("DiRelayCarlink", "scan_primed hit=cached waited=0")
+            return 0
         }
+        // Exactly one scan, then wait for *its* results. Asking again before those arrive is coalesced
+        // or refused by the platform, and a refused re-scan says nothing about the scan already in
+        // flight: treating it as failure is what left the cache cold and forced the dialog above.
+        // Spending one scan instead of four also keeps the next attempt's budget intact.
+        val started = SystemClock.elapsedRealtime()
+        val issued = wifi.startScan()
+        var hit = false
+        while (issued && !run.cancelled) {
+            if (SystemClock.elapsedRealtime() - started >= PRIME_BUDGET_MS) break
+            val results = wifi.scanResults ?: break
+            if (results.any { it.SSID == ssid }) { hit = true; lastPrimeSawTarget = true; break }
+            try { Thread.sleep(100) } catch (_: InterruptedException) { break }
+        }
+        val waited = SystemClock.elapsedRealtime() - started
+        Log.i("DiRelayCarlink", "scan_primed hit=$hit issued=$issued waited=${waited}ms")
+        return waited
     }
     private fun lost(run: Run, radioOff: Boolean = false) {
         if (run.cancelled) return
