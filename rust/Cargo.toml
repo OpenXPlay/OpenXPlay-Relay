@@ -63,3 +63,4 @@ strip = true
 # Keep the socket owner responsible for RFC 6762 negative host answers.
 [patch.crates-io]
 mdns-sd = { path = "vendor/mdns-sd" }
+
