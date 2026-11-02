@@ -25,6 +25,22 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 33], manifest = Config.NONE, application = Application::class)
 class RelaySettingsTest {
+    @Test fun carlifeSelectionAndDirectedDiscoverySurviveReloadWithoutChangingExistingOutputs() {
+        store.use { store ->
+            val original = store.load()
+            assertFalse(original.carlifeOutput)
+            assertEquals("", original.carlifeTargetAddress)
+            val chosen = original.copy(outputs = setOf(RelayOutput.CARLIFE), carlifeTargetAddress = "192.168.5.220")
+            store.save(chosen)
+            assertEquals(chosen, store.load())
+            assertEquals(chosen, RelaySettingsStore(context).use { it.load() })
+            val browser = chosen.copy(outputs = setOf(RelayOutput.BROWSER))
+            store.save(browser)
+            assertEquals(browser, store.load())
+            assertFalse(store.load().carlifeOutput)
+        }
+    }
+
     @Test fun frameRateMigratesOnlyAnEnabledValidDeveloperChoiceAndDropsBothKeys() {
         store.use { store ->
             val prefs = context.getSharedPreferences("direlay", 0)

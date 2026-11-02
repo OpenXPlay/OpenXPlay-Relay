@@ -154,6 +154,12 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     }
                     if (selected == null) InsetRow(R.drawable.symbol_link, IconHue.DEVELOPER,
                         stringResource(R.string.output_multiple), outputSummary(draft), onClick = { open("developer") })
+                    if (draft.carlifeOutput) {
+                        SettingField(stringResource(R.string.carlife_target), draft.carlifeTargetAddress,
+                            if (validCarlifeAddress(draft.carlifeTargetAddress)) null else R.string.carlife_address_error) {
+                            draft = draft.copy(carlifeTargetAddress = it.trim())
+                        }
+                    }
                     if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.carlink_wifi_direct_constraint))
                     AnimatedVisibility(draft.carlinkOutput, enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

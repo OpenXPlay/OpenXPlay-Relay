@@ -160,14 +160,15 @@ class SettingsAutoSaveTest {
     @Test fun radioRowsHaveDistinctTitlesAndSupportingCopyForEveryChoice() {
         assertEquals(listOf(RadioOption(R.string.ui_browser, R.string.option_browser_hint),
             RadioOption(R.string.ui_carlink, R.string.option_carlink_hint),
-            RadioOption(R.string.wireless_display, R.string.option_wireless_display_hint)), outputOptions)
+            RadioOption(R.string.wireless_display, R.string.option_wireless_display_hint),
+            RadioOption(R.string.ui_carlife, R.string.carlife_hint)), outputOptions)
         assertEquals(listOf(R.string.option_wireless_hint, R.string.option_usb_hint), connectionOptions.map { it.supporting })
         val network = WirelessNetworkChoice.entries.map(::networkOption)
         assertEquals(listOf(R.string.ui_wifi_direct_recommended, R.string.direlay_car_hotspot,
             R.string.direlay_existing_wifi), network.map { it.title })
         assertEquals(listOf(R.string.option_direct_hint, R.string.option_hotspot_hint,
             R.string.option_wifi_hint), network.map { it.supporting })
-        assertEquals(8, (outputOptions + connectionOptions + network).map { it.supporting }.distinct().size)
+        assertEquals(9, (outputOptions + connectionOptions + network).map { it.supporting }.distinct().size)
     }
 
     @Test fun onlyDeferredChangesHaveNoticesAndRunningSessionsOfferAnAction() {

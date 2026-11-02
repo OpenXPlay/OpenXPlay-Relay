@@ -31,7 +31,7 @@ class WirelessDisplayPresentationTest {
     @Test fun singleWirelessOutputSummariesDoNotIncludeABrowser() {
         assertEquals(listOf(R.string.wireless_dlna), outputSummaryLabels(base.copy(outputs = setOf(RelayOutput.DLNA))))
         assertEquals(listOf(R.string.wireless_miracast), outputSummaryLabels(base.copy(outputs = setOf(RelayOutput.MIRACAST))))
-        assertEquals(listOf(R.string.ui_browser, R.string.ui_carlink, R.string.wireless_dlna, R.string.wireless_miracast),
+        assertEquals(listOf(R.string.ui_browser, R.string.ui_carlink, R.string.wireless_dlna, R.string.wireless_miracast, R.string.ui_carlife),
             outputSummaryLabels(base.copy(outputs = RelayOutput.entries.reversed().toSet())))
     }
 

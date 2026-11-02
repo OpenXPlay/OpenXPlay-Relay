@@ -207,20 +207,20 @@ class StagePresentationTest {
             }
     }
 
-    @Test fun all15OutputSetsKeepBrowserAndCarlinkHomeEvenWithDeveloperPreview() {
+    @Test fun allOutputSetsKeepBrowserAndCarlinkHomeEvenWithDeveloperPreview() {
         val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null,
             FrameRatePreference.AUTO, false, false, false, null)
         val input = path(running = true, live = LiveSummary(since, emptyList()))
         val before = presentStage(input)
-        assertEquals(4, RelayOutput.entries.size)
-        for (mask in 1..15) for (preview in listOf(false, true)) for (direct in listOf(false, true)) {
+        assertEquals(5, RelayOutput.entries.size)
+        for (mask in 1 until (1 shl RelayOutput.entries.size)) for (preview in listOf(false, true)) for (direct in listOf(false, true)) {
             val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
             val developer = DeveloperOverrides(localPreview = preview)
             val settings = developer.effectiveSettings(base.copy(outputs = outputs, carBluetoothAudio = direct))
             val effective = WirelessStandIn.effective(settings, developer)
             val control = effective.localPreview && WirelessStandIn.wirelessOnly(outputs)
             val view = presentStage(input, StageFlags(phoneControl = control))
-            if (RelayOutput.BROWSER in outputs || RelayOutput.CARLINK in outputs) {
+            if (RelayOutput.BROWSER in outputs || RelayOutput.CARLINK in outputs || RelayOutput.CARLIFE in outputs) {
                 assertEquals(outputs.toString(), before, view)
                 assertNull(stageCommand(StageAction.ShowCarPlay, input, control))
             } else {
@@ -228,7 +228,7 @@ class StagePresentationTest {
                 assertEquals(StageAction.Stop, view.secondary)
                 assertEquals(StageCommand.ShowCarPlay, stageCommand(StageAction.ShowCarPlay, input, control))
             }
-            assertEquals(outputs.toString(), if (!direct && RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs)
+            assertEquals(outputs.toString(), if (!direct && RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs && RelayOutput.CARLIFE !in outputs)
                 R.string.audio_wireless_forwarding else R.string.audio_car_bluetooth_hint, audioFooter(settings))
         }
     }

@@ -38,6 +38,7 @@ enum class SetupChoiceTag(val label: Int, val warning: Boolean = false) {
 fun setupOutputTag(choice: OutputChoice): SetupChoiceTag? = when (choice) {
     OutputChoice.BROWSER -> SetupChoiceTag.RECOMMENDED
     OutputChoice.CARLINK -> null
+    OutputChoice.CARLIFE -> SetupChoiceTag.EXPERIMENTAL
     OutputChoice.WIRELESS -> SetupChoiceTag.EXPERIMENTAL
 }
 fun setupConnectionTag(settings: RelaySettings, wireless: Boolean): SetupChoiceTag? = when {
@@ -59,12 +60,14 @@ fun modeRows(settings: RelaySettings, wireless: Boolean): List<ModeRow> = listOf
     ModeRow(R.string.setup_summary_output, when (OutputSelection.choice(settings.outputs)) {
         OutputChoice.BROWSER -> R.string.ui_browser
         OutputChoice.CARLINK -> R.string.ui_carlink
+        OutputChoice.CARLIFE -> R.string.ui_carlife
         OutputChoice.WIRELESS -> if (OutputSelection.wirelessKind(settings.outputs) == WirelessDisplayKind.MIRACAST)
             R.string.wireless_miracast else R.string.wireless_dlna
         null -> R.string.output_multiple
     }, when (OutputSelection.choice(settings.outputs)) {
         OutputChoice.BROWSER -> R.drawable.symbol_monitor
         OutputChoice.CARLINK -> R.drawable.symbol_car_front
+        OutputChoice.CARLIFE -> R.drawable.symbol_car_front
         OutputChoice.WIRELESS -> R.drawable.symbol_cast
         null -> R.drawable.symbol_link
     }, SetupStep.OUTPUT),

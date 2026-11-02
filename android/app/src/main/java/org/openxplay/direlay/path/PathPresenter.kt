@@ -52,7 +52,7 @@ fun presentPath(input: PathInput, zone: ZoneId = ZoneId.systemDefault()): Connec
         if (live) LiveSummary(input.live.sessionSinceMillis, input.live.chips.toList()) else null,
         PathNodes(input.iphone.name, input.relay.bluetoothName,
             input.car.carlink.carName ?: input.car.screen
-                ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name ?: input.car.miracast.name),
+                ?: input.car.address?.takeIf { CarOutput.BROWSER in input.setup.outputs } ?: input.car.dlna.name ?: input.car.miracast.name ?: input.car.carlife.name),
         diagnostic(sections, input, zone), input.version)
 }
 
@@ -69,6 +69,7 @@ private fun PathInput.stepIds(): List<StepId> = buildList {
     if (CarOutput.CARLINK in setup.outputs) addAll(listOf(CARLINK_FIND, CARLINK_LINK, CARLINK_PIN, CARLINK_READY))
     if (CarOutput.DLNA in setup.outputs) add(DLNA)
     if (CarOutput.MIRACAST in setup.outputs) add(MIRACAST)
+    if (CarOutput.CARLIFE in setup.outputs) add(CARLIFE)
     if (setup.wireless) addAll(listOf(IPHONE_PAIRED, CARPLAY_START, IPHONE_BLUETOOTH, IPHONE_AUTH, IPHONE_WIFI, SESSION))
     else addAll(listOf(USB_HOST, CARPLAY_START, USB_IPHONE, USB_TRUST, USB_CONTROL, SESSION))
     if (CarOutput.TESLA in setup.outputs) add(TESLA)
@@ -137,6 +138,7 @@ private fun PathInput.presentStep(id: StepId, canStart: Boolean, running: Boolea
         CARLINK_READY -> carlinkReadyStep()
         DLNA -> dlnaStep()
         MIRACAST -> miracastStep()
+        CARLIFE -> carlifeStep()
         IPHONE_PAIRED -> iphonePairedStep()
         USB_HOST -> usbHostStep()
         CARPLAY_START -> carplayStartStep(canStart)
@@ -307,6 +309,13 @@ private fun PathInput.dlnaStep() = when (car.dlna.phase) {
         action = CHOOSE_RENDERER, since = car.dlna.sinceMillis)
 }
 
+private fun PathInput.carlifeStep() = when (car.carlife.phase) {
+    OutputPhase.READY, OutputPhase.WAITING_VIDEO -> pathStep(CARLIFE, OK, evidence = raw(car.carlife.name), since = car.carlife.sinceMillis)
+    OutputPhase.STARTING -> pathStep(CARLIFE, WORKING, text(R.string.path_negotiating), since = car.carlife.sinceMillis)
+    OutputPhase.FAILED -> pathStep(CARLIFE, FAILED, raw(car.carlife.code), code = car.carlife.code, since = car.carlife.sinceMillis)
+    else -> pathStep(CARLIFE, WAITING, text(R.string.path_carlife_wait), since = car.carlife.sinceMillis)
+}
+
 private fun PathInput.miracastStep() = when (car.miracast.phase) {
     OutputPhase.PLAYING -> pathStep(MIRACAST, OK, evidence = raw(car.miracast.name))
     OutputPhase.FAILED -> pathStep(MIRACAST, FAILED, raw(car.miracast.code), code = car.miracast.code, since = car.miracast.sinceMillis)
@@ -412,6 +421,7 @@ private fun PathInput.teslaStep(): PathStep {
 private fun PathInput.pictureStep() = when {
     iphone.step != LinkStep.VIDEO -> pathStep(PICTURE, BLOCKED, text(R.string.path_picture_after_session))
     live.pictureOnCar -> pathStep(PICTURE, OK, evidence = raw(live.chips.joinToString(" · ")))
+    car.carlife.phase == OutputPhase.WAITING_VIDEO -> pathStep(PICTURE, WAITING, text(R.string.path_carlife_picture), since = live.sessionSinceMillis)
     else -> pathStep(PICTURE, WAITING, text(R.string.path_waiting_car_picture), since = live.sessionSinceMillis)
 }
 

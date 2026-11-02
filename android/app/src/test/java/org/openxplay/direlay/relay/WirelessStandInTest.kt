@@ -13,22 +13,22 @@ class WirelessStandInTest {
     private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null,
         FrameRatePreference.AUTO, false, false, false, null)
     private val booleans = listOf(false, true)
-    private val outputSets = (1..15).map { mask ->
+    private val outputSets = (1 until (1 shl RelayOutput.entries.size)).map { mask ->
         RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
     }
     private val wirelessSets = setOf(setOf(RelayOutput.DLNA), setOf(RelayOutput.MIRACAST),
         setOf(RelayOutput.DLNA, RelayOutput.MIRACAST))
 
     @Test fun wirelessOnlyRecognizesExactlyTheThreeWirelessSetsAndRejectsEmpty() {
-        assertEquals(4, RelayOutput.entries.size)
-        assertEquals(15, outputSets.distinct().size)
+        assertEquals(5, RelayOutput.entries.size)
+        assertEquals(31, outputSets.distinct().size)
         assertEquals(wirelessSets, outputSets.filter(WirelessStandIn::wirelessOnly).toSet())
         assertFalse(WirelessStandIn.wirelessOnly(emptySet()))
         val empty = base.copy(outputs = emptySet())
         assertSame(empty, WirelessStandIn.effective(empty, DeveloperOverrides()))
     }
 
-    @Test fun all15OutputSetsCoverBothAudioSchemesAndEveryDeveloperChoice() {
+    @Test fun allOutputSetsCoverBothAudioSchemesAndEveryDeveloperChoice() {
         for (outputs in outputSets) for (direct in booleans) for (active in booleans)
             for (preview in booleans) for (audio in booleans) for (micEnabled in booleans)
                 for (mic in MicrophoneSource.entries) {

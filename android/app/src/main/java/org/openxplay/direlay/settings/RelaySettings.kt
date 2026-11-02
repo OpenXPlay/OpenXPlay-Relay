@@ -95,15 +95,19 @@ data class RelaySettings(
     val miracastStretch: Boolean = false,
     val experimental: ExperimentalOptions = ExperimentalOptions(),
     val highPerformance: Boolean = true,
+    /** Optional IPv4 address for directed CarLife discovery; empty uses LAN broadcast. */
+    val carlifeTargetAddress: String = "",
 ) {
     val browserOutput get() = RelayOutput.BROWSER in outputs
     val carlinkOutput get() = RelayOutput.CARLINK in outputs
     val dlnaOutput get() = RelayOutput.DLNA in outputs
     val miracastOutput get() = RelayOutput.MIRACAST in outputs
+    val carlifeOutput get() = RelayOutput.CARLIFE in outputs
 
     fun validate(wireless: Boolean = connectionMode == ConnectionMode.WIRELESS, allowEmptySharedWifi: Boolean = false,
         phoneAddresses: Set<String> = emptySet()) {
         require(outputs.isNotEmpty()) { "Choose an output." }
+        require(validCarlifeAddress(carlifeTargetAddress)) { "Enter a CarLife head-unit IPv4 address, or leave it empty for discovery." }
         teslaAddress()?.let { require(TeslaAddressPolicy.valid(it, phoneAddresses)) { "Invalid or already assigned Tesla address: $it" } }
         if (wireless) wirelessNetwork.validate(allowEmptySharedWifi, allowIncompleteHotspot = allowEmptySharedWifi && CarlinkConnectionPolicy.usesWifiDirect(this))
         for (value in listOf(carlinkDeviceName, carlinkDeviceModel)) {
@@ -276,6 +280,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             miracastStretch = relay.getBoolean("miracastStretch", false),
             experimental = loadExperimentalOptions(),
             highPerformance = relay.getBoolean("highPerformance", true),
+            carlifeTargetAddress = relay.getString("carlifeTargetAddress", "").orEmpty(),
             carlinkTrace = relay.getBoolean("carlinkTrace", false),
             carlinkHevc = ClinkHevcMode.entries.firstOrNull { it.name == relay.getString("carlinkHevc", null) } ?: ClinkHevcMode.STREAM_ONLY,
             carlinkPictureSize = ClinkPictureSize.entries.firstOrNull { it.name == relay.getString("carlinkPictureSize", null) } ?: ClinkPictureSize.WINDOW,
@@ -372,6 +377,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         AirPlayPersistence.saveCarBluetoothAudio(context, settings.carBluetoothAudio)
         val edit = relay.edit().putString("frameRate", settings.frameRate.name)
             .putBoolean("highPerformance", settings.highPerformance)
+            .putString("carlifeTargetAddress", settings.carlifeTargetAddress.trim())
             .putBoolean("localPreview", settings.localPreview)
             .putBoolean("playCarPlayAudio", settings.playCarPlayAudio)
             .putString("microphoneSource", settings.microphoneSource.name)

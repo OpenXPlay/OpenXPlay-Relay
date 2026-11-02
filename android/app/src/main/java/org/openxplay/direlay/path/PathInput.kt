@@ -22,7 +22,7 @@ data class PathInput(
 enum class NetworkPlan { WIFI_DIRECT, PHONE_HOTSPOT, SHARED_WIFI, USB }
 
 /** Outputs towards the car; TESLA is the browser output through the Tesla address. */
-enum class CarOutput { BROWSER, CARLINK, DLNA, MIRACAST, TESLA }
+enum class CarOutput { BROWSER, CARLINK, DLNA, MIRACAST, TESLA, CARLIFE }
 
 data class SetupInput(
     val network: NetworkPlan = NetworkPlan.WIFI_DIRECT,
@@ -114,6 +114,8 @@ data class CarInput(
     val dlna: OutputInput = OutputInput(),
     val miracast: OutputInput = OutputInput(),
     val tesla: OutputInput = OutputInput(),
+    /** CarLife reports sent frames, without claiming a receiver rendering acknowledgement. */
+    val carlife: OutputInput = OutputInput(),
 )
 
 /** Which iPhone CarPlay will use. NOT_IPHONE: the only bonded device does not look like an iPhone. */

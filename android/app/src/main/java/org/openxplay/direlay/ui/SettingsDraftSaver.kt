@@ -69,6 +69,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("hotspotSetupMethod", value.wirelessNetwork.hotspotSetupMethod.name)
         putBoolean("highPerformance", value.highPerformance)
         putIntArray("numbers", intArrayOf(0, value.webPort ?: 0, value.wirelessNetwork.channel))
+        putString("carlifeTargetAddress", value.carlifeTargetAddress)
         putStringArray("outputs", RelayOutput.entries.filter { it in value.outputs }.map { it.wire }.toTypedArray())
         putString("dlnaRendererUdn", value.dlnaRenderer?.udn)
         putString("dlnaRendererName", value.dlnaRenderer?.name)
@@ -161,6 +162,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         teslaPublicAddress = bundle.getString("teslaPublicAddress") ?: base.teslaPublicAddress,
         teslaMirrorAddress = bundle.getString("teslaMirrorAddress") ?: base.teslaMirrorAddress,
         teslaAndroidAddress = bundle.getString("teslaAndroidAddress") ?: base.teslaAndroidAddress,
+        carlifeTargetAddress = bundle.getString("carlifeTargetAddress") ?: base.carlifeTargetAddress,
         outputs = bundle.getStringArray("outputs")?.takeIf { wires -> wires.isNotEmpty() &&
             wires.all { wire -> RelayOutput.entries.any { it.wire == wire } } }
             ?.map { wire -> RelayOutput.entries.first { it.wire == wire } }?.toSet() ?: base.outputs,

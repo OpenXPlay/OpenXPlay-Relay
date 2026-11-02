@@ -17,7 +17,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 
 /**
  * Version-1 key catalogue (enum strings are pinned in enumWires below):
- * - outputs: non-empty unique array of web/carlink/dlna/miracast; wins over legacy output keys.
+ * - outputs: non-empty unique array of web/carlink/dlna/miracast/carlife; wins over legacy output keys.
+ * - carlifeTargetAddress: empty for broadcast discovery, or a numeric IPv4 head-unit address.
  * - Legacy output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
  * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string}.
  *   Legacy dlnaPicture is silently skipped.
@@ -97,6 +98,7 @@ object UserConfigCodec {
         ConfigEnvelope.finish(ConfigEnvelope.create(FORMAT, meta).put("settings", values(settings, developer)))
 
     private fun values(s: RelaySettings, d: DeveloperOverrides): JSONObject = JSONObject()
+        .put("carlifeTargetAddress", s.carlifeTargetAddress)
         .put("outputs", org.json.JSONArray(RelayOutput.entries.filter { it in s.outputs }.map { it.wire }))
         .put("output", when { s.browserOutput && s.carlinkOutput -> "both"; s.carlinkOutput -> "carlink"; s.browserOutput -> "web"; else -> null })
         .put("dlnaOutput", s.dlnaOutput)
@@ -242,6 +244,7 @@ object UserConfigCodec {
         val legacyOutputs = setOf("output", "dlnaOutput", "miracastOutput")
         for (key in j.keys().asSequence().toList().filterNot { j.has("outputs") && it in legacyOutputs }) try {
             when (key) {
+                "carlifeTargetAddress" -> { val value = j.string(key); require(validCarlifeAddress(value)); s = s.copy(carlifeTargetAddress = value) }
                 "outputs" -> {
                     val array = j.getJSONArray(key)
                     val wires = (0 until array.length()).map { require(array.get(it) is String); array.getString(it) }
@@ -401,6 +404,7 @@ object UserConfigCodec {
             val address = checkNotNull(s.teslaAddress())
             require(TeslaAddressPolicy.valid(address, if (address != current.teslaAddress()) phoneAddresses else emptySet()))
         }
+        check("carlifeTargetAddress") { require(validCarlifeAddress(s.carlifeTargetAddress)) }
         check("receiverPort") { require(s.webPort?.let { it in 1024..65535 } != false) }
         check("iphone") { require(s.iphoneAddress == null || Regex("[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}").matches(s.iphoneAddress!!)) }
         check("pluginsEnabled") { require(org.openxplay.direlay.plugins.RelayPlugins.validIds(s.pluginsEnabled)) }
