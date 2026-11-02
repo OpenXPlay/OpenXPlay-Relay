@@ -752,7 +752,7 @@ class RelayRuntime(private val context: Context,
         hub.start()
         setup.execute {
             loadRememberedDisplay()
-            val initial = settingsStore.awaitSnapshot()
+            val initial = WirelessStandIn.effective(settingsStore.awaitSnapshot(), settingsStore.developerOverrides.value)
             connectionLog.event("relay", "settings_loaded")
             connectionLog.event("network", "radio_concurrency", radioFacts())
             configuredPlugins = initial.plugins to initial.pluginsEnabled
@@ -963,7 +963,7 @@ class RelayRuntime(private val context: Context,
             publicName.refreshAddress()
         } }
         catch (_: java.util.concurrent.RejectedExecutionException) { }
-        val settings = requested
+        val settings = WirelessStandIn.effective(requested, settingsStore.developerOverrides.value)
         localPreview = settings.localPreview
         playCarPlayAudio = settings.playCarPlayAudio
         microphoneSource = settings.microphoneSource

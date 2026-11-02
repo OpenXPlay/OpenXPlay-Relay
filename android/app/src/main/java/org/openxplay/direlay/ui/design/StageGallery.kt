@@ -27,6 +27,7 @@ import org.openxplay.direlay.ui.*
     var notice by rememberSaveable { mutableIntStateOf(0) }
     var drawer by rememberSaveable { mutableStateOf(false) }
     var highPerformance by rememberSaveable { mutableStateOf(false) }
+    var phoneControl by rememberSaveable { mutableStateOf(false) }
     Text(stringResource(R.string.stage_gallery), style = RelayTokens.title)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         samples.forEachIndexed { index, sample ->
@@ -42,6 +43,8 @@ import org.openxplay.direlay.ui.*
         InsetToggleRow(title = stringResource(R.string.stage_drawer_open), checked = drawer, onChange = { drawer = it })
         InsetDivider()
         InsetToggleRow(title = stringResource(R.string.stage_high_performance), checked = highPerformance, onChange = { highPerformance = it })
+        InsetDivider()
+        InsetToggleRow(title = stringResource(R.string.stage_show_carplay), checked = phoneControl, onChange = { phoneControl = it })
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         listOf(R.string.car_none, R.string.stage_notice_display, R.string.stage_notice_car, R.string.home2_setup).forEachIndexed { index, label ->
@@ -50,7 +53,7 @@ import org.openxplay.direlay.ui.*
     }
     val sample = samples[selected.coerceIn(samples.indices)]
     val flags = StageFlags(countdown = countdown, busy = busy, displayChanged = notice == 1,
-        carIncomplete = notice == 2, setupCompleted = notice != 3)
+        carIncomplete = notice == 2, setupCompleted = notice != 3, phoneControl = phoneControl)
     val view = presentStage(sample.path, flags)
     val complete: () -> Unit = {
         if (countdown) { countdown = false; onPreview() }

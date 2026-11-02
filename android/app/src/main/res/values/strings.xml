@@ -582,6 +582,7 @@
     <string name="audio_title">Sound</string>
     <string name="audio_car_bluetooth">CarPlay audio over the car\'s Bluetooth (experimental)</string>
     <string name="audio_car_bluetooth_hint">The relay offers the iPhone no CarPlay audio, so music, navigation and calls play over the iPhone\'s own Bluetooth connection with the car. Keep the iPhone paired with the car and choose Bluetooth as the car\'s audio source.</string>
+    <string name="audio_wireless_forwarding">Sound goes to the car with the wireless display. DLNA plays it a few seconds late, like its picture. Siri and calls use this phone’s microphone.</string>
     <string name="audio_bluetooth_tip">If the sound plays on the phone, open the Bluetooth settings on the car\'s centre screen, find the iPhone and switch the icon on its right from muted to play. If it still plays on the phone, turn off the option above.</string>
     <string name="public_name_title">Trusted HTTPS</string>
     <string name="public_name_summary">Open the head-unit page without a certificate warning, using a free domain name.</string>

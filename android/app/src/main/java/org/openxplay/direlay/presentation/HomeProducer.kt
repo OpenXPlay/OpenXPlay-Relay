@@ -93,7 +93,8 @@ internal class HomeProducer(private val context: Context, private val runtime: R
             pinRejected = runtime.pinRejected, pairingSuccess = runtime.pairingSuccess,
             displayMismatch = runtime.displayMismatch(presentation.running, settings), currentWifi = flags.wifi,
             pathInput = path, path = presentation, networkReadings = network, stepProblems = problems,
-            highPerformance = settings.highPerformance)
+            highPerformance = settings.highPerformance,
+            phoneControl = runtime.localPreview && WirelessStandIn.wirelessOnly(settings.outputs))
         return HomeSample(publishHome(path, presentation, home), AutoStartSnapshot(networkReadiness.problems.isEmpty(), runtime.networkStart.pending != null,
             presentation.canStart, runtime.sessionActions.restarting, runtime.startRequest.pending, presentation.running,
             runtime.status.failure != null, runtime.autoStartGate.paused, runtime.autoStartSessions.tracker.observed,

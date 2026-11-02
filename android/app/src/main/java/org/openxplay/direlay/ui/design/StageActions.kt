@@ -101,6 +101,7 @@ internal class StageTapGuard(private var action: StageAction?) {
     StageAction.Connect -> R.string.home2_connect
     StageAction.Stop -> R.string.design_stop
     StageAction.NotNow -> R.string.stage_not_now
+    StageAction.ShowCarPlay -> R.string.stage_show_carplay
     is StageAction.Step -> action.label ?: R.string.design_open
 })
 

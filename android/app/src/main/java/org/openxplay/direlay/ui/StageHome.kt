@@ -3,6 +3,8 @@
 // Created by riko chen on 2026-10-25
 package org.openxplay.direlay.ui
 
+import android.content.Intent
+import com.shilapi.xcertplay.CarPlayHostActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -69,13 +71,15 @@ import org.openxplay.direlay.vehicle.VehicleView
         add("diagnostic")
     }
     StagePage(path, view, onAction = { action ->
-        when (val command = stageCommand(action, path)) {
+        when (val command = stageCommand(action, path, flags.phoneControl)) {
             StageCommand.Connect -> onStartStop()
             StageCommand.Stop -> {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onStop()
             }
             StageCommand.CancelArrival -> onCancelCountdown(ArrivalEnd.NOT_NOW)
+            StageCommand.ShowCarPlay -> context.startActivity(
+                Intent(context, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             is StageCommand.Step -> stepAction(command.action, command.step)
             null -> Unit
         }

@@ -221,7 +221,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             }
             "settings/audio" -> {
                 SettingsToggleGroup(stringResource(R.string.audio_car_bluetooth), draft.carBluetoothAudio, R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
-                    footer = stringResource(R.string.audio_car_bluetooth_hint)) { draft = draft.copy(carBluetoothAudio = it) }
+                    footer = stringResource(audioFooter(draft))) { draft = draft.copy(carBluetoothAudio = it) }
                 AnimatedVisibility(draft.carBluetoothAudio, enter = expandVertically(tween(ms), expandFrom = Alignment.Top) + fadeIn(tween(ms)),
                     exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top) + fadeOut(tween(ms))) {
                     InsetTip(stringResource(R.string.audio_bluetooth_tip))

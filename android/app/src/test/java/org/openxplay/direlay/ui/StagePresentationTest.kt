@@ -7,6 +7,10 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
+import com.shilapi.xcertplay.orchestration.MfiTarget
+import org.openxplay.direlay.relay.WirelessStandIn
+import org.openxplay.direlay.settings.*
+import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.direlay.ui.design.StageTapGuard
 import org.openxplay.direlay.ui.design.stageTapSettled
 
@@ -67,7 +71,7 @@ class StagePresentationTest {
     }
 
     @Test fun freshlyComposedActionSlotsAreImmediatelySettled() {
-        listOf(null, StageAction.Connect, StageAction.Stop, StageAction.NotNow,
+        listOf(null, StageAction.Connect, StageAction.Stop, StageAction.NotNow, StageAction.ShowCarPlay,
             StageAction.Step(StepAction.OPEN_HOTSPOT, StepId.HOTSPOT, null)).forEach { action ->
             val guard = StageTapGuard(action)
             guard.update(action, 0)
@@ -80,6 +84,7 @@ class StagePresentationTest {
     @Test fun changedActionSlotsSettleAfter500MillisWithoutResettingOnTheSameAction() {
         val step = StageAction.Step(StepAction.OPEN_HOTSPOT, StepId.HOTSPOT, null)
         listOf(StageAction.Connect to StageAction.Stop, StageAction.Stop to StageAction.Connect,
+            StageAction.ShowCarPlay to null, null to StageAction.ShowCarPlay,
             step to step.copy(action = StepAction.RETRY), null to StageAction.Connect,
             StageAction.Connect to null).forEach { (before, after) ->
             val guard = StageTapGuard(before)
@@ -184,6 +189,48 @@ class StagePresentationTest {
         val empty = presentStage(path(running = true))
         assertNull(empty.primary)
         assertEquals(StageAction.Stop, empty.secondary)
+    }
+
+    @Test fun showCarPlayRequiresRunningLiveAndPhoneControlAndRejectsOutgoingTaps() {
+        for (running in listOf(false, true)) for (live in listOf(false, true))
+            for (control in listOf(false, true)) for (busy in listOf(false, true)) {
+                val input = path(step(action = StepAction.RETRY), running = running,
+                    live = if (live) LiveSummary(since, emptyList()) else null)
+                val before = presentStage(input, StageFlags(busy = busy))
+                val view = presentStage(input, StageFlags(phoneControl = control, busy = busy))
+                val offered = running && live && control
+                assertEquals("$running $live $control $busy", offered, view.primary == StageAction.ShowCarPlay)
+                assertEquals(if (offered) before.copy(primary = StageAction.ShowCarPlay, secondary = StageAction.Stop) else before, view)
+                assertEquals(if (offered) StageCommand.ShowCarPlay else null,
+                    stageCommand(StageAction.ShowCarPlay, input, control))
+                assertEquals(!busy, view.primaryEnabled)
+            }
+    }
+
+    @Test fun all15OutputSetsKeepBrowserAndCarlinkHomeEvenWithDeveloperPreview() {
+        val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null,
+            FrameRatePreference.AUTO, false, false, false, null)
+        val input = path(running = true, live = LiveSummary(since, emptyList()))
+        val before = presentStage(input)
+        assertEquals(4, RelayOutput.entries.size)
+        for (mask in 1..15) for (preview in listOf(false, true)) for (direct in listOf(false, true)) {
+            val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
+            val developer = DeveloperOverrides(localPreview = preview)
+            val settings = developer.effectiveSettings(base.copy(outputs = outputs, carBluetoothAudio = direct))
+            val effective = WirelessStandIn.effective(settings, developer)
+            val control = effective.localPreview && WirelessStandIn.wirelessOnly(outputs)
+            val view = presentStage(input, StageFlags(phoneControl = control))
+            if (RelayOutput.BROWSER in outputs || RelayOutput.CARLINK in outputs) {
+                assertEquals(outputs.toString(), before, view)
+                assertNull(stageCommand(StageAction.ShowCarPlay, input, control))
+            } else {
+                assertEquals(outputs.toString(), StageAction.ShowCarPlay, view.primary)
+                assertEquals(StageAction.Stop, view.secondary)
+                assertEquals(StageCommand.ShowCarPlay, stageCommand(StageAction.ShowCarPlay, input, control))
+            }
+            assertEquals(outputs.toString(), if (!direct && RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs)
+                R.string.audio_wireless_forwarding else R.string.audio_car_bluetooth_hint, audioFooter(settings))
+        }
     }
 
     @Test fun everyActionExceptCopyIsFixFirstAndKeepsStepAndOptionalLabel() {
