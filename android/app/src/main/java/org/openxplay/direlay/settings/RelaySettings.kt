@@ -88,7 +88,6 @@ data class RelaySettings(
     val teslaMirrorAddress: String = TeslaAddressPolicy.DEFAULT_MIRROR,
     val teslaAndroidAddress: String = TeslaAddressPolicy.DEFAULT_ANDROID,
     val dlnaRenderer: DlnaRendererChoice? = null,
-    val dlnaPicture: DlnaPicture = DlnaPicture.P720,
     val wirelessPicture: WirelessPictureMode = WirelessPictureMode.AUTO,
     val wirelessPictureSize: WirelessPictureSize = WirelessPictureSize(),
     val carlinkPictureSizes: List<PictureSize> = emptyList(),
@@ -269,7 +268,6 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             displayMode = mode,
             iphoneAddress = relay.getString("iphoneAddress", null),
             dlnaRenderer = relay.getString("dlnaRendererUdn", null)?.let { DlnaRendererChoice(it, relay.getString("dlnaRendererName", "").orEmpty()) },
-            dlnaPicture = DlnaPicture.entries.firstOrNull { it.name == relay.getString("dlnaPicture", null) } ?: DlnaPicture.P720,
             wirelessPicture = WirelessPictureMode.entries.firstOrNull { it.name == relay.getString("wirelessPicture", null) } ?: WirelessPictureMode.AUTO,
             wirelessPictureSize = WirelessPictureSize(relay.getInt("wirelessPictureWidth", 1280), relay.getInt("wirelessPictureHeight", 720))
                 .takeIf { runCatching { it.validate() }.isSuccess } ?: WirelessPictureSize(),
@@ -381,7 +379,7 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
             .remove("carlinkOutput").remove("bothOutputs").remove("dlnaOutput").remove("miracastOutput")
             .putString("dlnaRendererUdn", settings.dlnaRenderer?.udn)
             .putString("dlnaRendererName", settings.dlnaRenderer?.name)
-            .putString("dlnaPicture", settings.dlnaPicture.name)
+            .remove("dlnaPicture")
             .putString("wirelessPicture", settings.wirelessPicture.name)
             .putInt("wirelessPictureWidth", settings.wirelessPictureSize.width)
             .putInt("wirelessPictureHeight", settings.wirelessPictureSize.height)

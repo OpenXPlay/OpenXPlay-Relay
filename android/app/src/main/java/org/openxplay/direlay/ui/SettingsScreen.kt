@@ -25,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
 import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.direlay.relay.CarPlayFrameRate
+import org.openxplay.direlay.relay.WirelessPicturePolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -183,12 +184,16 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     openOutput = { open("settings/output") }) { draft = it }
             }
             "settings/picture" -> {
+                val customWireless = WirelessPicturePolicy.customCanvas(draft)
                 SettingsGroup("resolution", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_resolution), resolutionSummary(draft),
                     initiallyExpanded = target.isEmpty() || target == "resolution", targeted = target == "resolution",
-                    footer = if (draft.carplayResolution == CarPlayResolution.NATIVE) stringResource(R.string.picture_native_hint) else null) {
+                    footer = if (customWireless) stringResource(R.string.wireless_custom_resolution,
+                        draft.wirelessPictureSize.width, draft.wirelessPictureSize.height)
+                        else if (draft.carplayResolution == CarPlayResolution.NATIVE) stringResource(R.string.picture_native_hint) else null) {
                     Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
                         CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
                 }
+                if (customWireless) TextButton(onClick = { open("settings/output") }) { Text(stringResource(R.string.ui_output)) }
                 val picture by sources.carlinkPicture.screenState()
                 val trial = picture.trial
                 val selectPicture = actions.tryCarlinkPicture

@@ -687,9 +687,6 @@
     <string name="dlna_receiver">接收端</string>
     <string name="dlna_choose_receiver">选择接收端</string>
     <string name="dlna_network_hint">请让车机连接本机热点，或与本机连接同一 Wi-Fi，并打开车机上的投屏接收应用。</string>
-    <string name="dlna_picture">画面尺寸</string>
-    <string name="dlna_picture_720">720p</string>
-    <string name="dlna_picture_1080">1080p</string>
     <string name="dlna_searching">正在搜索接收端…</string>
     <string name="dlna_search_again">重新搜索</string>
     <string name="dlna_no_receivers">未找到接收端。请检查网络和车机上的接收应用，然后重新搜索。</string>
@@ -723,11 +720,13 @@
     <string name="miracast_error_display">外接屏幕已断开，请重新启动系统投屏。</string>
     <string name="wireless_picture">画面</string>
     <string name="wireless_picture_auto">跟随车机屏幕</string>
-    <string name="wireless_picture_auto_hint">Miracast 使用与车机协商的屏幕尺寸。DLNA 使用浏览器测量并保存的车机屏幕，或所选车型的屏幕；都没有时使用 16:9。720p/1080p 档位仅用于 DLNA。</string>
+    <string name="wireless_picture_auto_hint">DLNA 使用浏览器测量并保存的车机屏幕或所选车型的屏幕，没有时用 16:9，大小由 CarPlay 画面 › 分辨率 决定。Miracast 使用 Android 与车机协商的尺寸。</string>
+    <string name="wireless_miracast_clarity">车机收到的是系统投屏发送的画面；这里的设置只改变 CarPlay 在其中的比例，不改变清晰度。</string>
+    <string name="wireless_custom_resolution">无线投屏使用自定义尺寸 %1$d × %2$d。</string>
     <string name="wireless_picture_custom_hint">忽略车机提供的尺寸，自行设置画面比例。请使用偶数：横屏宽 640–1920、高 360–1080 像素，竖屏的宽高范围对调。</string>
-    <string name="wireless_picture_browser">当前 %1$d×%2$d，来自浏览器测量</string>
-    <string name="wireless_picture_model">当前 %1$d×%2$d，来自车型数据</string>
-    <string name="wireless_picture_default">当前 %1$d×%2$d，使用默认比例</string>
+    <string name="wireless_picture_browser">当前 %1$d × %2$d，来自浏览器测量</string>
+    <string name="wireless_picture_model">当前 %1$d × %2$d，来自车型数据</string>
+    <string name="wireless_picture_default">当前 %1$d × %2$d，使用默认比例</string>
     <string name="wireless_picture_priority">车载浏览器等可交互输出连接后，会优先决定 CarPlay 的画面尺寸。车机屏幕设置中的固定尺寸优先于所有输出提供的尺寸。</string>
     <string name="wireless_picture_fixed">CarPlay 正在使用车机屏幕设置中的固定尺寸。</string>
     <string name="miracast_fill_screen">铺满屏幕</string>

@@ -202,7 +202,7 @@ class RelayRuntime(private val context: Context,
         setup.execute { observeWindow(display) }
     }, wholeScreen = { settingsStore.snapshot.value?.let { it.viewAreas && it.displayMode == DisplayMode.AUTOMATIC } == true },
         secondary = carDisplayMemory::isWireless) {
-        settingsStore.snapshot.value?.carplayResolution ?: CarPlayResolution.AUTO
+        settingsStore.snapshot.value?.let(WirelessPicturePolicy::resolution) ?: CarPlayResolution.AUTO
     }
     private val hub = ProjectionHub(input, policy = displayPolicy, listener = status)
     private val preferences = context.getSharedPreferences("direlay", Context.MODE_PRIVATE)
@@ -267,6 +267,10 @@ class RelayRuntime(private val context: Context,
         loadRememberedDisplay()
         WirelessPicturePolicy.resolve(settings, savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car))
     }
+
+    fun wirelessPictureCanvas(settings: RelaySettings): DisplayProfile? =
+        if (WirelessStandIn.wirelessOnly(settings.outputs))
+            WirelessPicturePolicy.canvas(settings, wirelessPicture(settings), displayPolicy.decoderLimit) else null
 
     private fun planningDisplay(settings: RelaySettings) = planningDisplay(
         displayPolicy.primaryDisplay?.let(HeadUnitDisplay::from), savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car))
@@ -356,8 +360,8 @@ class RelayRuntime(private val context: Context,
         carlinkPictureScreen(settings, trial, carlinkPrimary(), starting,
             if (displayPolicy.primaryOutput == null) savedHeadUnitForCar(savedHeadUnit, settings.car)?.maxMacroblocks
             else displayPolicy.decoderLimit)
-    private fun automaticCarPlayScreen(settings: RelaySettings) = startupCarPlayScreen(settings, displayPolicy.carDisplay,
-        savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car))
+    private fun automaticCarPlayScreen(settings: RelaySettings) = WirelessPicturePolicy.startupScreen(settings, displayPolicy.carDisplay,
+        savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car), displayPolicy.decoderLimit)
     private fun selectedCarPlayScreen(settings: RelaySettings, starting: Boolean = false): CarPlayScreen? =
         selectedCarlinkPicture(settings, starting) ?: automaticCarPlayScreen(settings)
     private fun carlinkPictureInEffect(settings: RelaySettings) =
@@ -458,6 +462,13 @@ class RelayRuntime(private val context: Context,
             appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth, preparedPlanningDisplay?.screen) }
             carPlayScreen = it
             screenPrepared = true
+            if (settings.dlnaOutput || settings.miracastOutput) {
+                val canvas = it ?: context.resources.displayMetrics.let { metrics ->
+                    CarPlayScreen(DisplayProfile(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi), "fixed")
+                }
+                val line = wirelessLogMessage(wirelessCanvasLogLine(canvas, displayPolicy.primaryDisplay, settings))
+                Log.i(if (settings.dlnaOutput) "OpenXPlay DLNA" else "OpenXPlay Miracast", line)
+            }
         }
     }
 
@@ -1066,7 +1077,7 @@ class RelayRuntime(private val context: Context,
         try {
             val output = CastOutput(CastOutputConfig(plan.udn, plan.size.width, plan.size.height, fps = 30, audio = true),
                 castNetwork, listener)
-            hub.addOutput(carDisplayMemory.exclude(output))
+            hub.addOutput(carDisplayMemory.exclude(WirelessOutputPolicy.declareDlna(output, plan)))
         } catch (failure: Exception) {
             connectionLog.linkEnded("cast", org.openxplay.direlay.logs.LinkEnd("renderer", "opening", "local", "connect_failed",
                 "${failure.javaClass.simpleName}: ${redactFailureMessage(failure.message.orEmpty())}"), logConnection)

@@ -79,7 +79,7 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
         wirelessPicture = sampled(WirelessPictureView()) {
             val settings = (draft.value ?: store.awaitSnapshot()).copy(wirelessPicture = WirelessPictureMode.AUTO)
             WirelessPictureView(runtime.wirelessPicture(settings), runtime.miracastDisplay?.let { Viewport(it.width, it.height) },
-                MiracastSystem.canDrawOverlays(this.context))
+                MiracastSystem.canDrawOverlays(this.context), runtime.wirelessPictureCanvas(settings))
         },
         areas = sampled(ViewAreasView()) {
             ViewAreasView(runtime.declaredViewAreas, runtime.viewAreaPreference, runtime.windowRecords.snapshot(),

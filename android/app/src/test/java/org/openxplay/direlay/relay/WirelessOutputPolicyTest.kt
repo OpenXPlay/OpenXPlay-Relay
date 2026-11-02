@@ -9,18 +9,39 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.miracast.MiracastPicture
-import org.openxplay.stream.core.Viewport
+import org.openxplay.stream.core.*
 
 class WirelessOutputPolicyTest {
     private val base = RelaySettings(ConnectionMode.USB, MfiTarget.LOCAL, "", "", "", null, FrameRatePreference.AUTO, false, false, false, null)
     private val receiver = DlnaRendererChoice("uuid:car", "Car")
 
+    @Test fun wirelessOnlyDefaultDeclares1080And240DpiWithoutChangingTheCastTransport() {
+        val settings = base.copy(outputs = setOf(RelayOutput.DLNA), dlnaRenderer = receiver)
+        val plan = checkNotNull(WirelessOutputPolicy.dlna(settings))
+        assertEquals(DlnaOutputPlan(receiver.udn, WirelessPictureSize(1920, 1080), 240), plan)
+        val caps = OutputCapabilities(LatencyClass.BUFFERED, listOf(DecoderSupport("avc1.64002a", true)),
+            mapOf(ScreenId.MAIN to DisplayInfo(1920, 1080, 160, 30.0)), 0, emptySet(), emptySet(), false)
+        val inner = RecordingOutput("cast", caps)
+        val memory = CarDisplayMemory()
+        val output = memory.exclude(WirelessOutputPolicy.declareDlna(inner, plan))
+        val forwarded = mutableListOf<OutputCapabilities>()
+        output.open(object : OutputHost {
+            override fun capabilities(capabilities: OutputCapabilities) { forwarded.add(capabilities) }
+            override fun control(event: ControlEvent) {}
+            override fun stats(stats: OutputStats) {}
+        })
+        assertEquals("cast", output.id)
+        assertEquals(caps.copy(displays = mapOf(ScreenId.MAIN to DisplayInfo(1920, 1080, 240, 30.0))), forwarded.single())
+        assertNull(memory.measuredDisplay(forwarded.single()))
+        output.close(); assertTrue(inner.closed)
+    }
+
     @Test fun dlnaNeedsBothTheSwitchAndAReceiverWhileMiracastNeedsOnlyItsSwitch() {
         for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
-            for (choice in listOf(null, receiver)) for (picture in DlnaPicture.entries)
+            for (choice in listOf(null, receiver))
                 for (carlink in listOf(false, true)) for (both in listOf(false, true)) {
-                    val settings = base.copy(outputs = OutputSelection.legacy(carlink, both, dlna, miracast), dlnaRenderer = choice, dlnaPicture = picture)
-                    assertEquals(if (dlna && choice != null) DlnaOutputPlan(choice.udn, if (picture == DlnaPicture.P720) WirelessPictureSize(1280, 720) else WirelessPictureSize(1920, 1080)) else null,
+                    val settings = base.copy(outputs = OutputSelection.legacy(carlink, both, dlna, miracast), dlnaRenderer = choice)
+                    assertEquals(if (dlna && choice != null) DlnaOutputPlan(choice.udn, WirelessPictureSize(1280, 720)) else null,
                         WirelessOutputPolicy.dlna(settings))
                     assertEquals(if (miracast) MiracastPicture() else null, WirelessOutputPolicy.miracast(settings))
                 }
@@ -36,7 +57,7 @@ class WirelessOutputPolicyTest {
         val custom = settings.copy(wirelessPicture = WirelessPictureMode.CUSTOM, wirelessPictureSize = WirelessPictureSize(1280, 480))
         assertEquals(WirelessPictureSize(1280, 480), WirelessOutputPolicy.dlna(custom)?.size)
         assertEquals(MiracastPicture(Viewport(1280, 480)), WirelessOutputPolicy.miracast(custom))
-        assertEquals(WirelessOutputPolicy.dlna(custom), WirelessOutputPolicy.dlna(custom.copy(dlnaPicture = DlnaPicture.P1080, miracastStretch = true)))
+        assertEquals(WirelessOutputPolicy.dlna(custom), WirelessOutputPolicy.dlna(custom.copy(miracastStretch = true)))
         assertEquals(MiracastPicture(size = null, stretch = true), WirelessOutputPolicy.miracast(settings.copy(miracastStretch = true)))
         val miracast = RetiringOutputPolicy<MiracastPicture>()
         assertEquals(OutputChange.ADD, miracast.update(WirelessOutputPolicy.miracast(settings)))
@@ -53,7 +74,7 @@ class WirelessOutputPolicyTest {
         for (same in listOf(settings, settings.copy(dlnaRenderer = receiver.copy(name = "New name")),
             settings.copy(outputs = settings.outputs + setOf(RelayOutput.CARLINK, RelayOutput.MIRACAST), frameRate = FrameRatePreference.FPS_60)))
             assertEquals(OutputChange.KEEP, policy.update(WirelessOutputPolicy.dlna(same)))
-        for (changed in listOf(settings.copy(dlnaPicture = DlnaPicture.P1080),
+        for (changed in listOf(settings.copy(wirelessPicture = WirelessPictureMode.CUSTOM, wirelessPictureSize = WirelessPictureSize(1920, 1080)),
             settings.copy(dlnaRenderer = receiver.copy(udn = "uuid:new")))) {
             assertEquals(OutputChange.REMOVE, policy.update(WirelessOutputPolicy.dlna(changed)))
             assertTrue(policy.retiring)

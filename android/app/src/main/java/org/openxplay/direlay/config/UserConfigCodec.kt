@@ -19,8 +19,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  * Version-1 key catalogue (enum strings are pinned in enumWires below):
  * - outputs: non-empty unique array of web/carlink/dlna/miracast; wins over legacy output keys.
  * - Legacy output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
- * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string};
- *   dlnaPicture: 720p/1080p.
+ * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string}.
+ *   Legacy dlnaPicture is silently skipped.
  * - wirelessPicture: auto/custom; wirelessPictureSize: {width, height}, even pixels in
  *   landscape 640–1920 × 360–1080 (portrait bounds reversed); miracastStretch: boolean.
  * - carlinkPictureSizes: up to five unique valid custom sizes; carlinkPictureDefault: a preset, saved size or null.
@@ -75,7 +75,6 @@ object UserConfigCodec {
         HotspotSetupMethod.COPY_TO_SYSTEM to "copy-to-system", HotspotSetupMethod.EXISTING to "existing",
         ClinkHevcMode.STREAM_ONLY to "stream-only", ClinkHevcMode.OFF to "off", ClinkHevcMode.SIGNAL to "signal",
         ClinkPictureSize.WINDOW to "window", ClinkPictureSize.MODE to "mode",
-        DlnaPicture.P720 to "720p", DlnaPicture.P1080 to "1080p",
         WirelessPictureMode.AUTO to "auto", WirelessPictureMode.CUSTOM to "custom",
         DisplayMode.AUTOMATIC to "automatic", DisplayMode.RELAY_SCREEN to "relay-screen", DisplayMode.FIXED to "fixed",
         MicrophoneSource.HEAD_UNIT to "head-unit", MicrophoneSource.THIS_DEVICE to "this-device",
@@ -102,7 +101,6 @@ object UserConfigCodec {
         .put("output", when { s.browserOutput && s.carlinkOutput -> "both"; s.carlinkOutput -> "carlink"; s.browserOutput -> "web"; else -> null })
         .put("dlnaOutput", s.dlnaOutput)
         .put("dlnaRenderer", s.dlnaRenderer?.let { JSONObject().put("udn", it.udn).put("name", it.name) } ?: JSONObject.NULL)
-        .put("dlnaPicture", wire(s.dlnaPicture))
         .put("miracastOutput", s.miracastOutput)
         .put("wirelessPicture", wire(s.wirelessPicture))
         .put("wirelessPictureSize", JSONObject().put("width", s.wirelessPictureSize.width).put("height", s.wirelessPictureSize.height))
@@ -257,7 +255,7 @@ object UserConfigCodec {
                 }
                 "dlnaOutput" -> { s = s.copy(outputs = if (j.bool(key)) s.outputs + RelayOutput.DLNA else s.outputs - RelayOutput.DLNA) }
                 "dlnaRenderer" -> { val value = if (j.isNull(key)) null else j.getJSONObject(key).let { DlnaRendererChoice(it.string("udn"), it.string("name")) }; s = s.copy(dlnaRenderer = value) }
-                "dlnaPicture" -> { val value = enumValue<DlnaPicture>(j.string(key)); s = s.copy(dlnaPicture = value) }
+                "dlnaPicture" -> Unit
                 "wirelessPicture" -> { val value = enumValue<WirelessPictureMode>(j.string(key)); s = s.copy(wirelessPicture = value) }
                 "wirelessPictureSize" -> { val value = j.getJSONObject(key).let { WirelessPictureSize(it.integer("width"), it.integer("height")).also(WirelessPictureSize::validate) }; s = s.copy(wirelessPictureSize = value) }
                 "carlinkPictureSizes" -> { s = s.copy(carlinkPictureSizes = CarlinkPictureSizes.readSaved(j.getJSONArray(key))) }

@@ -221,14 +221,14 @@ class UserConfigCodecTest {
 
     @Test fun wirelessDisplaysRoundTripAtVersionOneAndMissingKeysKeepChoices() {
         for (dlna in listOf(false, true)) for (miracast in listOf(false, true))
-            for (picture in DlnaPicture.entries) for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
-                val value = base.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaPicture = picture, dlnaRenderer = receiver)
+            for (receiver in listOf(null, DlnaRendererChoice("uuid:car", "车机"))) {
+                val value = base.copy(outputs = OutputSelection.legacy(false, false, dlna, miracast), dlnaRenderer = receiver)
                 val text = UserConfigCodec.encode(value, DeveloperOverrides(), meta)
                 val root = JSONObject(text)
                 assertEquals(1, root.getInt("version"))
                 val json = root.getJSONObject("settings")
                 assertEquals("web", json.getString("output"))
-                assertEquals(if (picture == DlnaPicture.P720) "720p" else "1080p", json.getString("dlnaPicture"))
+                assertFalse(json.has("dlnaPicture"))
                 assertEquals(receiver == null, json.isNull("dlnaRenderer"))
                 val imported = UserConfigCodec.decode(text, base)
                 assertTrue(imported.errors.toString(), imported.errors.isEmpty())
@@ -241,11 +241,20 @@ class UserConfigCodecTest {
             base.copy(dlnaRenderer = DlnaRendererChoice("uuid:old", "Old")))
         assertTrue(clear.errors.isEmpty()); assertNull(clear.settings.dlnaRenderer)
     }
+    @Test fun retiredDlnaPictureIsSilentlyAcceptedWithoutChangesOrExport() {
+        for (value in listOf("720p", "1080p", "future", 1080, false, JSONObject.NULL, JSONObject().put("future", true))) {
+            val result = decode(JSONObject().put("dlnaPicture", value))
+            assertTrue(result.errors.toString(), result.errors.isEmpty())
+            assertTrue(result.ignoredKeys.toString(), result.ignoredKeys.isEmpty())
+            assertEquals(base, result.settings); assertEquals(0, result.changedCount)
+            assertFalse(JSONObject(UserConfigCodec.encode(result.settings, result.developer, meta)).getJSONObject("settings").has("dlnaPicture"))
+        }
+    }
+
     @Test fun wirelessDisplayInvalidTypesRejectAtomicallyAndNestedUnknownKeysAreReported() {
         val cases = mapOf(
             "dlnaOutput" to listOf<Any>("true", 1, JSONObject.NULL),
             "miracastOutput" to listOf<Any>("false", 0, JSONObject.NULL),
-            "dlnaPicture" to listOf<Any>("P720", "4k", 720, JSONObject.NULL),
             "dlnaRenderer" to listOf<Any>("uuid:car", false, org.json.JSONArray(), JSONObject(),
                 JSONObject().put("udn", "uuid:car"), JSONObject().put("udn", 1).put("name", "Car"),
                 JSONObject().put("udn", "uuid:car").put("name", JSONObject.NULL)))
