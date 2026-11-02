@@ -90,8 +90,7 @@ internal class RelayAudioStream(
             }
             while (running.get()) {
                 val packet = queue.poll(5, TimeUnit.MILLISECONDS)
-                // Local playback only. The forwarding path below (output) and the stream's
-                // registration (StreamBridgeSink.onAudioStarted) are independent of this flag.
+                if (!playLocally() && localStarted) { delegate.onAudioStopped(id); localStarted = false }
                 if (packet != null && playLocally()) {
                     if (!localStarted) { delegate.onAudioStarted(id, source, packet.sample); localStarted = true }
                     delegate.onAudioRtp(id, source, packet.rtp, packet.sample)
