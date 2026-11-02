@@ -55,7 +55,9 @@ class DiRelayApplication : Application(), com.shilapi.xcertplay.orchestration.Ca
     @Volatile private var connectionContext: org.openxplay.direlay.logs.AndroidConnectionContext? = null
     @Volatile private var startedActivities = 0
     override fun onCreate() {
-        val connectionLog = org.openxplay.direlay.logs.ConnectionLog(context = {
+        val connectionLog = org.openxplay.direlay.logs.ConnectionLog(journal = org.openxplay.direlay.logs.TimelineJournal({
+            java.io.File(noBackupFilesDir, "timeline-journal")
+        }), context = {
             connectionContext?.snapshot()?.line() ?: org.openxplay.direlay.logs.ConnectionContext().line()
         })
         connectionLog.event("relay", "process_start")

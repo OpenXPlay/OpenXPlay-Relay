@@ -9,16 +9,20 @@ import android.util.Log
 /** Android delivery boundary. No callback reads settings, secrets or another component's locks. */
 class ConnectionLog(private val clock: () -> Long = SystemClock::elapsedRealtime,
     private val write: (String, String) -> Unit = { tag, line -> Log.i(tag, line); Unit },
-    private val context: () -> String = { ConnectionContext().line() }) : AutoCloseable {
+    private val context: () -> String = { ConnectionContext().line() },
+    val journal: TimelineJournal? = null, private val wallClock: () -> Long = System::currentTimeMillis) : AutoCloseable {
     private val redactor = LogRedactor()
     @Volatile private var redact: (String) -> String = redactor::redact
     private val timeline = ConnectionTimeline(clock, context = { context() })
     private val worker = BoundedLogWorker("relay-timeline", warning = { detail ->
-        timeline.event("relay", "logging", detail).forEach { write("OXP-Timeline", it) }
+        timeline.event("relay", "logging", detail).forEach { deliver("OXP-Timeline", it, wallClock()) }
     })
     private val timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor {
         Thread(it, "relay-timeline-flaps").apply { isDaemon = true }
-    }.apply { scheduleWithFixedDelay({ submit { at -> timeline.flush(at) } }, 1, 1, java.util.concurrent.TimeUnit.SECONDS) }
+    }.apply { scheduleWithFixedDelay({
+        submit { at -> timeline.flush(at) }
+        runCatching { worker.offer { journal?.maintenance() } }
+    }, 1, 1, java.util.concurrent.TimeUnit.SECONDS) }
     fun filterWith(filter: (String) -> String) { redact = filter }
     fun linkEnded(domain: String, end: LinkEnd, connection: Long = 0) = submit { at -> timeline.linkEnded(domain, end.filtered(redact), at, connection) }
     fun phoneDecision(end: LinkEnd, next: String) = submit { at -> timeline.phoneDecision(end.filtered(redact), next, at) }
@@ -33,10 +37,21 @@ class ConnectionLog(private val clock: () -> Long = SystemClock::elapsedRealtime
     fun carlinkDiagnostic(message: String, connection: Long) = submit { at -> timeline.carlinkDiagnostic(message.take(4096), connection, at) }
     fun cast(message: String, connection: Long = 0) = submit { at -> timeline.cast(message.take(4096), connection, at) }
     fun castEvent(event: String, detail: String = "", connection: Long) = submit { at -> timeline.castEvent(event, detail, connection, at) }
-    fun diagnostic(message: String) { runCatching { worker.offer { write("DiRelayCarlink", redact(message)) } } }
+    fun diagnostic(message: String) { runCatching {
+        val at = wallClock(); worker.offer { deliver("DiRelayCarlink", message, at) }
+    } }
+    private fun deliver(tag: String, line: String, at: Long) {
+        val cleaned = redact(line)
+        journal?.append(tag, cleaned, at)
+        runCatching { write(tag, cleaned) }
+    }
+    val dropped: Long get() = worker.dropped.get()
     private fun submit(action: (Long) -> List<String>) {
-        runCatching { val at = clock(); worker.offer { action(at).forEach { write("OXP-Timeline", redact(it)) } } }
+        runCatching { val at = clock(); val wall = wallClock(); worker.offer { action(at).forEach { deliver("OXP-Timeline", it, wall) } } }
     }
     internal fun awaitIdle() = worker.awaitIdle()
-    override fun close() { timer.shutdownNow(); submit { at -> timeline.flush(at, force = true) }; worker.close() }
+    override fun close() {
+        timer.shutdownNow(); submit { at -> timeline.flush(at, force = true) }
+        runCatching { worker.offer { journal?.close() } }; worker.close()
+    }
 }
