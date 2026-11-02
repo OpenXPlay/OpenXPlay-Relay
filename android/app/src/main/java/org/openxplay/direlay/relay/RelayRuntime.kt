@@ -1071,7 +1071,7 @@ class RelayRuntime(private val context: Context,
                     if (dlnaStatisticsLog.allow(System.nanoTime())) Log.i("OpenXPlay DLNA", wirelessLogMessage(
                         "stats clients=${statistics.clients} video=${statistics.videoFrames} audio=${statistics.audioFrames} " +
                             "silent=${statistics.silentFrames} bytes=${statistics.bytesSent} dropped=${statistics.droppedFrames} " +
-                            "overflows=${statistics.overflows} renderer=${statistics.rendererState ?: "-"}"))
+                            "overflows=${statistics.overflows} renderer=${statistics.rendererState ?: "-"} lag=${statistics.rendererLagMs ?: "-"}"))
                 }
             }
         }
