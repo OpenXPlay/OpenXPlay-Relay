@@ -37,6 +37,7 @@ import org.openxplay.stream.core.DecoderSupport
 import org.openxplay.stream.core.VideoCodecDecision
 import org.openxplay.stream.core.VideoCodecPolicy
 import org.openxplay.stream.core.VideoCodecRestartLimiter
+import org.openxplay.stream.core.ProjectionOutput
 import org.openxplay.stream.core.ProjectionHub
 import org.openxplay.stream.web.WebOutput
 import org.openxplay.stream.web.WebOutputConfig
@@ -603,6 +604,15 @@ class RelayRuntime(private val context: Context,
     private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean, val hevc: ClinkHevcMode, val pictureSize: ClinkPictureSize)
     private var carlinkConfig: CarlinkConfig? = null
     private val carlinkBlock = CarlinkWifiDirectBlock()
+    private val carlifeLifecycle = RetiringOutputPolicy<String>()
+    private val carlifeGeneration = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var carlifeConnection = 0L
+    @Volatile private var carlifeToken: Any? = null
+    @Volatile var carlifeStatus: org.openxplay.stream.carlife.CarlifeStatus? = null
+        private set
+    @Volatile var carlifeStateSinceMillis: Long? = null
+        private set
+    @Volatile private var carlifeAccessory: org.openxplay.direlay.carlife.AndroidCarlifeAccessory? = null
     @Volatile private var carlink: ClinkOutput? = null
     @Volatile private var carlinkVideoOutput: TranscodingOutput? = null
     @Volatile var carlinkGeometry: CarlinkGeometry? = null
@@ -783,7 +793,7 @@ class RelayRuntime(private val context: Context,
             publicName.start()
             configureVehicle()
             configureCarlink()
-            configureDlna(); configureMiracast()
+            configureDlna(); configureMiracast(); configureCarlife()
             connectionLog.event("relay", "runtime_ready")
         }
         setup.scheduleWithFixedDelay({
@@ -970,7 +980,7 @@ class RelayRuntime(private val context: Context,
         val vehicleEnabled = requested.vehicleInformation
         collectVehicle = vehicleEnabled || sampleVehicleData
         try { setup.execute {
-            configureVehicle(vehicleEnabled); configureCarlink(); configureDlna(); configureMiracast()
+            configureVehicle(vehicleEnabled); configureCarlink(); configureDlna(); configureMiracast(); configureCarlife()
             refreshTeslaAddress()
             publicName.refreshAddress()
         } }
@@ -1000,7 +1010,7 @@ class RelayRuntime(private val context: Context,
 
     private fun updateKeepAlive(settings: RelaySettings) = synchronized(lifecycle) {
         keepAlive.update(RelayKeepAlivePolicy.needed(!closed, webEnabled, settings.carlinkOutput,
-            settings.dlnaOutput, settings.miracastOutput))
+            settings.dlnaOutput, settings.miracastOutput, settings.carlifeOutput))
     }
 
     /** Blocking discovery; callers must use an I/O worker. */
@@ -1011,6 +1021,92 @@ class RelayRuntime(private val context: Context,
         catch (_: java.util.concurrent.RejectedExecutionException) { }
     }
     private fun wirelessLogMessage(message: String): String = wirelessLogLine(redactFailureMessage(message))
+
+    private fun carlifeLog(connection: Long, event: String, detail: String = "") {
+        connectionLog.event("carlife", event, "connection=$connection " + redactFailureMessage(detail))
+    }
+
+    /** The shell owns platform codecs and USB; CarLife itself only sees OXP media and controls. */
+    private fun configureCarlife() {
+        if (closed) return
+        val settings = settingsStore.awaitSnapshot()
+        val requested = settings.carlifeTargetAddress.takeIf { settings.carlifeOutput }
+        when (carlifeLifecycle.update(requested)) {
+            OutputChange.KEEP -> return
+            OutputChange.REMOVE -> {
+                carlifeLog(carlifeConnection, "output_remove", "cause=${if (requested == null) "disabled" else "target_changed"}")
+                carlifeAccessory?.close(); carlifeAccessory = null
+                hub.removeOutput("carlife")
+                return
+            }
+            OutputChange.ADD -> Unit
+        }
+        val token = Any()
+        val connection = carlifeGeneration.incrementAndGet()
+        carlifeConnection = connection
+        carlifeToken = token
+        carlifeLog(connection, "output_config", "transport=tcp+usb discovery=${if (requested.isNullOrBlank()) "broadcast" else "directed"} " +
+            "target=${requested?.takeIf(String::isNotBlank) ?: "-"} fpsCeiling=60 " +
+            "sourceCodec=${settings.videoCodec.wire} sourceFps=${settings.frameRate} " +
+            "selectedScreen=${carPlayScreen?.profile?.let { "${it.width}x${it.height}" } ?: "-"}")
+        carlifeStatus = null
+        carlifeStateSinceMillis = System.currentTimeMillis()
+        val destination = org.openxplay.stream.carlife.CarlifeOutput(
+            org.openxplay.stream.carlife.CarlifeConfig(targetAddress = requested?.takeIf(String::isNotBlank), fps = 60),
+            org.openxplay.stream.carlife.CarlifeDeviceInfo(android.os.Build.BRAND, android.os.Build.MODEL, android.os.Build.VERSION.SDK),
+            object : org.openxplay.stream.carlife.CarlifeListener {
+                override fun onStatus(state: org.openxplay.stream.carlife.CarlifeStatus) = wirelessUpdate {
+                    if (carlifeToken !== token) return@wirelessUpdate
+                    if (carlifeStatus?.state != state.state) {
+                        carlifeStateSinceMillis = System.currentTimeMillis()
+                        carlifeLog(connection, "state", "state=${state.state} frames=${state.frames} " +
+                            "width=${state.width} height=${state.height} reason=${redactFailureMessage(state.reason.orEmpty())}")
+                    } else if (state.frames != carlifeStatus?.frames && (state.frames == 1L || state.frames % 300L == 0L)) {
+                        carlifeLog(connection, "video_sent", "frames=${state.frames} width=${state.width} height=${state.height}")
+                    }
+                    carlifeStatus = state
+                }
+                override fun diagnostic(event: String) {
+                    if (carlifeToken === token) carlifeLog(connection, "protocol", event)
+                }
+            })
+        val accessory = org.openxplay.direlay.carlife.AndroidCarlifeAccessory(context.applicationContext, destination) { message ->
+            carlifeLog(connection, "usb", message)
+        }
+        carlifeAccessory = accessory
+        val converted = carlifeVideoOutput(destination) { event, detail ->
+            if (carlifeToken === token) carlifeLog(connection, event, detail)
+        }
+        val output = object : ProjectionOutput by converted {
+            override fun open(host: org.openxplay.stream.core.OutputHost) {
+                carlifeLog(connection, "output_open", "transport=tcp+usb")
+                converted.open(host)
+                accessory.start()
+            }
+            override fun close() {
+                carlifeLog(connection, "output_close", "by=local")
+                try { accessory.close(); converted.close() }
+                finally { wirelessUpdate {
+                    if (carlifeToken === token) {
+                        carlifeToken = null
+                        carlifeAccessory = null
+                        carlifeStatus = null
+                        carlifeLifecycle.ended()
+                        configureCarlife()
+                    }
+                } }
+            }
+        }
+        try {
+            carlifeLog(connection, "output_add", "id=${output.id}")
+            hub.addOutput(output)
+        }
+        catch (failure: Exception) {
+            accessory.close()
+            carlifeLifecycle.ended()
+            carlifeLog(connection, "start_failed", "error=${failure.javaClass.simpleName} ${failure.message.orEmpty()}")
+        }
+    }
 
     private var dlnaLogConnection = 0L
     private fun configureDlna() {
@@ -1662,6 +1758,7 @@ class RelayRuntime(private val context: Context,
             collectVehicle = false
             vehicleRegistration?.close()
             vehicleRegistration = null
+            carlifeAccessory?.close(); carlifeAccessory = null
             setup.shutdownNow()
             pluginContext.close()
             if (traceCapture.isInitialized()) carlinkMediaCapture.close()

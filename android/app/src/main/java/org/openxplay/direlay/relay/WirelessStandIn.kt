@@ -8,7 +8,7 @@ import org.openxplay.direlay.settings.*
 /** Wireless displays return no touch or microphone; the relay phone stands in for the car. */
 object WirelessStandIn {
     fun wirelessOnly(outputs: Set<RelayOutput>): Boolean =
-        outputs.isNotEmpty() && RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs
+        outputs.isNotEmpty() && RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs && RelayOutput.CARLIFE !in outputs
 
     /** [settings] already includes the user's Developer choices; derived values are never persisted. */
     fun effective(settings: RelaySettings, developer: DeveloperOverrides): RelaySettings {

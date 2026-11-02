@@ -418,6 +418,8 @@ import org.openxplay.direlay.ui.design.*
                 }
                 if (kind == WirelessDisplayKind.MIRACAST) NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI)
             }) { choose(OutputChoice.WIRELESS, kind) }
+        ChoiceCard(stringResource(R.string.ui_carlife), stringResource(R.string.carlife_hint), R.drawable.symbol_car_front, IconHue.CAR,
+            selected == OutputChoice.CARLIFE, setupOutputTag(OutputChoice.CARLIFE), order = 3) { choose(OutputChoice.CARLIFE, kind) }
     }
 }
 

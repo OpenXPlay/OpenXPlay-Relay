@@ -23,6 +23,7 @@ fun StepId.titleResource(): Int = when (this) {
     StepId.CARLINK_READY -> R.string.path_carlink_ready
     StepId.DLNA -> R.string.path_dlna
     StepId.MIRACAST -> R.string.path_miracast
+    StepId.CARLIFE -> R.string.path_carlife
     StepId.IPHONE_PAIRED -> R.string.path_iphone_paired
     StepId.USB_HOST -> R.string.path_usb_host
     StepId.CARPLAY_START -> R.string.path_carplay_start

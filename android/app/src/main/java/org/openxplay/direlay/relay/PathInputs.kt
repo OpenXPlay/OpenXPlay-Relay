@@ -58,7 +58,8 @@ fun RelayRuntime.pathInput(local: PathLocal): PathInput {
                     else -> null
                 }, carlinkTrusted, carlinkPins.pending != null,
                 clink?.let { negotiatedPicture(it.width, it.height, it.codec) }, carlinkTrail()),
-            dlna, cast, teslaPathInput(settings.teslaBrowser != TeslaBrowserMode.OFF, teslaUrl(), teslaFailure, teslaStateSinceMillis)),
+            dlna, cast, teslaPathInput(settings.teslaBrowser != TeslaBrowserMode.OFF, teslaUrl(), teslaFailure, teslaStateSinceMillis),
+            carlifePathInput(settings.carlifeOutput, carlifeStatus, carlifeStateSinceMillis)),
         iphone = IphoneInput(iphonePick(selection), iphoneName(selection), when (networkReadings.usb) {
             UsbConnectionState.HOST -> UsbRole.HOST
             UsbConnectionState.DEVICE -> UsbRole.DEVICE
@@ -166,4 +167,16 @@ internal fun pathOutputs(settings: RelaySettings): Set<CarOutput> = settings.out
     RelayOutput.CARLINK -> CarOutput.CARLINK
     RelayOutput.DLNA -> CarOutput.DLNA
     RelayOutput.MIRACAST -> CarOutput.MIRACAST
+    RelayOutput.CARLIFE -> CarOutput.CARLIFE
 } }.apply { if (settings.teslaBrowser != TeslaBrowserMode.OFF) add(CarOutput.TESLA) }
+
+internal fun carlifePathInput(enabled: Boolean, status: org.openxplay.stream.carlife.CarlifeStatus?, sinceMillis: Long?): OutputInput =
+    OutputInput(when {
+        !enabled -> OutputPhase.OFF
+        status?.state == org.openxplay.stream.carlife.CarlifeState.FAILED -> OutputPhase.FAILED
+        status?.state == org.openxplay.stream.carlife.CarlifeState.STREAMING && status.frames > 0 -> OutputPhase.WAITING_VIDEO
+        status?.state == org.openxplay.stream.carlife.CarlifeState.AUTHENTICATED ||
+            status?.state == org.openxplay.stream.carlife.CarlifeState.STREAMING -> OutputPhase.READY
+        status?.state == org.openxplay.stream.carlife.CarlifeState.CONNECTED -> OutputPhase.STARTING
+        else -> OutputPhase.SEARCHING
+    }, status?.peer, status?.reason, sinceMillis.takeIf { enabled })

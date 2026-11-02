@@ -44,7 +44,7 @@ class HostOverlayProviderTest {
         } finally { runtime.close() }
     }
 
-    @Test fun all15OutputSetsUseEffectivePreviewBeforeRuntimeReloadWithoutSavingIt() {
+    @Test fun allOutputSetsUseEffectivePreviewBeforeRuntimeReloadWithoutSavingIt() {
         val context = RuntimeEnvironment.getApplication()
         val runtime = RelayRuntime(context)
         try {
@@ -52,13 +52,13 @@ class HostOverlayProviderTest {
             val base = store.awaitSnapshot()
             val activity = Robolectric.buildActivity(ComponentActivity::class.java).get()
             val producer = HostOverlayProducer(context, runtime)
-            assertEquals(4, RelayOutput.entries.size)
-            for (mask in 1..15) for (active in listOf(false, true)) for (preview in listOf(false, true)) {
+            assertEquals(5, RelayOutput.entries.size)
+            for (mask in 1 until (1 shl RelayOutput.entries.size)) for (active in listOf(false, true)) for (preview in listOf(false, true)) {
                 val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
                 val developer = DeveloperOverrides(active = active, localPreview = preview)
                 store.save(base.copy(outputs = outputs, carBluetoothAudio = false), developer)
                 val settings = store.awaitSnapshot()
-                val effectivePreview = active && preview || RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs
+                val effectivePreview = active && preview || RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs && RelayOutput.CARLIFE !in outputs
                 val overlay = createCarPlayHostOverlay(activity, runtime)
                 assertEquals("$outputs $developer", effectivePreview, overlay is FrameLayout)
                 assertEquals("$outputs $developer", !effectivePreview, overlay is ComposeView)

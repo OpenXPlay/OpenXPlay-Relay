@@ -8,11 +8,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class OutputSelectionTest {
+    @Test fun carlifeIsExplicitAndNeverInheritedFromLegacySelections() {
+        assertEquals(setOf(RelayOutput.BROWSER), base.outputs)
+        assertFalse(base.carlifeOutput)
+        for (mask in 0..15) assertFalse(RelayOutput.CARLIFE in OutputSelection.legacy(
+            mask and 1 != 0, mask and 2 != 0, mask and 4 != 0, mask and 8 != 0))
+        val next = OutputSelection.choose(base, OutputChoice.CARLIFE, WirelessDisplayKind.DLNA, true)
+        assertEquals(setOf(RelayOutput.CARLIFE), next.outputs)
+        assertEquals(base.wirelessNetwork, next.wirelessNetwork)
+        assertEquals(base.videoCodec, next.videoCodec)
+        assertFalse(org.openxplay.direlay.relay.WirelessStandIn.wirelessOnly(next.outputs))
+    }
+
+    @Test fun carlifeDiscoveryTargetsAreNumericAndBoundedWithoutNetworkLookup() {
+        for (value in listOf("", "192.168.5.220", "10.0.0.2", "169.254.1.2")) assertTrue(value, validCarlifeAddress(value))
+        for (value in listOf("localhost", "http://192.168.1.2", "192.168.1.2:7999", "192.168.1.256", "192.168.1", " 192.168.1.2", "224.0.0.1", "0.0.0.0"))
+            assertFalse(value, validCarlifeAddress(value))
+    }
+
     private val base = RelaySettings(ConnectionMode.WIRELESS, MfiTarget.LOCAL, "", "", "", null,
         autoStartOnBoot = false, autoStartWhenReady = true, localPreview = false, webPort = null)
 
     @Test fun singleChoicesAndWirelessDefaultsDoNotCollapseCombinations() {
-        val choices = listOf(OutputChoice.BROWSER, OutputChoice.CARLINK, OutputChoice.WIRELESS, OutputChoice.WIRELESS)
+        val choices = listOf(OutputChoice.BROWSER, OutputChoice.CARLINK, OutputChoice.WIRELESS, OutputChoice.WIRELESS, OutputChoice.CARLIFE)
         RelayOutput.entries.forEachIndexed { index, output ->
             assertEquals(choices[index], OutputSelection.choice(setOf(output)))
             assertEquals(setOf(output), OutputSelection.outputs(choices[index],
@@ -20,7 +38,7 @@ class OutputSelectionTest {
         }
         assertEquals(setOf(RelayOutput.DLNA), OutputSelection.outputs(OutputChoice.WIRELESS))
         assertNull(OutputSelection.choice(emptySet()))
-        for (mask in 0..15) {
+        for (mask in 0 until (1 shl RelayOutput.entries.size)) {
             val outputs = RelayOutput.entries.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
             if (outputs.size > 1) assertNull(OutputSelection.choice(outputs))
             assertEquals(if (RelayOutput.MIRACAST in outputs && RelayOutput.DLNA !in outputs)

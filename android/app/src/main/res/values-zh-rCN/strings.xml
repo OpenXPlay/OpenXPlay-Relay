@@ -835,4 +835,12 @@
     <string name="logs_capture_incomplete">日志采集不完整，请查看导出摘要。</string>
     <string name="public_name_certificate_due">证书需要续期。中继联网后会重试。</string>
     <string name="public_name_certificate_expired">证书已过期。中继联网后会申请新证书。</string>
+    <string name="ui_carlife">CarLife</string>
+    <string name="carlife_hint">打开车机的 CarLife，并接入同一 Wi-Fi 或本机热点。CarLife 传输画面和触控，声音通过 iPhone 蓝牙直连车机。也支持 USB 附件连接。</string>
+    <string name="carlife_target">CarLife 车机 IP 地址（可选）</string>
+    <string name="carlife_address_error">请输入 IPv4 地址，或留空以自动发现。</string>
+    <string name="path_carlife">CarLife 连接</string>
+    <string name="path_carlife_wait">打开车机 CarLife，接入同一网络或连接 USB。</string>
+    <string name="path_carlife_streaming">正在发送 CarPlay 画面</string>
+    <string name="path_carlife_picture">正在向 CarLife 发送视频，请在车机上确认画面。</string>
 </resources>

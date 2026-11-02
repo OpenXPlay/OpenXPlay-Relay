@@ -85,7 +85,7 @@ class AdminSettingsMappingTest {
     }
     @Test fun outputChoicesKindsVisibilityAndPhoneOnlyCombinations() {
         val before = initial()
-        val expected = listOf("web", "carlink", "wireless", "wireless")
+        val expected = listOf("web", "carlink", "wireless", "wireless", "multiple")
         RelayOutput.entries.forEachIndexed { index, output ->
             val values = AdminSettingsMapping.values(before.copy(outputs = setOf(output)))
             assertEquals(expected[index], values["output"])

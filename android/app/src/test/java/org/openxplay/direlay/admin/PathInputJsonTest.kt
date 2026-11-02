@@ -31,7 +31,8 @@ class PathInputJsonTest {
                 picture = "1280×720 H.265", trail = listOf("scan", "join", "scan")),
             dlna = OutputInput(OutputPhase.FAILED, "Renderer", "renderer_stopped", 1793000000003),
             miracast = OutputInput(OutputPhase.PLAYING, "Car display", "display_recovered", 1793000000004),
-            tesla = OutputInput(OutputPhase.READY, "https://7.0.0.1/", "address_recovered", 1793000000005)),
+            tesla = OutputInput(OutputPhase.READY, "https://7.0.0.1/", "address_recovered", 1793000000005),
+            carlife = OutputInput(OutputPhase.WAITING_VIDEO, "CarLife receiver", null, 1793000000009)),
         iphone = IphoneInput(pick = IphonePick.PICKED, name = "Riko's iPhone", usb = UsbRole.HOST, started = true, armed = true,
             carWaitUntilMillis = 1793000020000, step = LinkStep.JOINING, stepSinceMillis = 1793000000006,
             stepDetail = "Waiting for the iPhone",
@@ -57,7 +58,8 @@ class PathInputJsonTest {
                     "picture": "1280×720 H.265", "trail": ["scan", "join", "scan"]},
                 "dlna": {"phase": "FAILED", "name": "Renderer", "code": "renderer_stopped", "sinceMillis": 1793000000003},
                 "miracast": {"phase": "PLAYING", "name": "Car display", "code": "display_recovered", "sinceMillis": 1793000000004},
-                "tesla": {"phase": "READY", "name": "https://7.0.0.1/", "code": "address_recovered", "sinceMillis": 1793000000005}},
+                "tesla": {"phase": "READY", "name": "https://7.0.0.1/", "code": "address_recovered", "sinceMillis": 1793000000005},
+                "carlife": {"phase": "WAITING_VIDEO", "name": "CarLife receiver", "code": null, "sinceMillis": 1793000000009}},
             "iphone": {"pick": "PICKED", "name": "Riko's iPhone", "usb": "HOST", "started": true, "armed": true,
                 "carWaitUntilMillis": 1793000020000, "step": "JOINING", "stepSinceMillis": 1793000000006,
                 "stepDetail": "Waiting for the iPhone",
@@ -84,8 +86,9 @@ class PathInputJsonTest {
             rich.copy(car = rich.car.copy(carlink = rich.car.carlink.copy(phase = phase))).json().getJSONObject("car").getJSONObject("carlink").getString("phase"))
         for (phase in OutputPhase.entries) {
             val car = rich.copy(car = rich.car.copy(dlna = rich.car.dlna.copy(phase = phase),
-                miracast = rich.car.miracast.copy(phase = phase), tesla = rich.car.tesla.copy(phase = phase))).json().getJSONObject("car")
-            for (output in listOf("dlna", "miracast", "tesla")) assertEquals(phase.name, car.getJSONObject(output).getString("phase"))
+                miracast = rich.car.miracast.copy(phase = phase), tesla = rich.car.tesla.copy(phase = phase),
+                carlife = rich.car.carlife.copy(phase = phase))).json().getJSONObject("car")
+            for (output in listOf("dlna", "miracast", "tesla", "carlife")) assertEquals(phase.name, car.getJSONObject(output).getString("phase"))
         }
         for (pick in IphonePick.entries) assertEquals(pick.name,
             rich.copy(iphone = rich.iphone.copy(pick = pick)).json().getJSONObject("iphone").getString("pick"))
@@ -107,7 +110,7 @@ class PathInputJsonTest {
         assertNullFields(car, "address", "pageUrl", "screen", "savedScreen")
         assertNullFields(car.getJSONObject("web"), "port", "code", "trustedName", "sinceMillis")
         assertNullFields(car.getJSONObject("carlink"), "sinceMillis", "code", "error", "carName", "joinMethod", "picture")
-        for (output in listOf("dlna", "miracast", "tesla")) assertNullFields(car.getJSONObject(output), "name", "code", "sinceMillis")
+        for (output in listOf("dlna", "miracast", "tesla", "carlife")) assertNullFields(car.getJSONObject(output), "name", "code", "sinceMillis")
         assertNullFields(json.getJSONObject("iphone"), "name", "carWaitUntilMillis", "stepSinceMillis", "stepDetail", "failure")
         assertNullFields(json.getJSONObject("live"), "sessionSinceMillis")
     }
@@ -143,6 +146,7 @@ class PathInputJsonTest {
         assertProperties(rich.car.dlna, car.getJSONObject("dlna"))
         assertProperties(rich.car.miracast, car.getJSONObject("miracast"))
         assertProperties(rich.car.tesla, car.getJSONObject("tesla"))
+        assertProperties(rich.car.carlife, car.getJSONObject("carlife"))
         assertProperties(rich.iphone, json.getJSONObject("iphone"))
         assertProperties(rich.iphone.failure!!, json.getJSONObject("iphone").getJSONObject("failure"))
         assertProperties(rich.live, json.getJSONObject("live"))

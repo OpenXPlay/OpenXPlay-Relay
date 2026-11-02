@@ -19,6 +19,19 @@ import org.openxplay.stream.clink.ClinkPictureSize
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class UserConfigCodecTest {
+    @Test fun carlifeConfigRoundTripsAndMalformedTargetRejectsAtomically() {
+        val chosen = base.copy(outputs = setOf(RelayOutput.CARLIFE), carlifeTargetAddress = "192.168.5.220")
+        val restored = UserConfigCodec.decode(UserConfigCodec.encode(chosen, DeveloperOverrides(), meta), base)
+        assertTrue(restored.errors.toString(), restored.errors.isEmpty())
+        assertTrue(restored.ignoredKeys.toString(), restored.ignoredKeys.isEmpty())
+        assertEquals(chosen, restored.settings)
+        for (target in listOf<Any>("example.com", "192.168.1.999", JSONObject.NULL, 123)) {
+            val bad = decode(JSONObject().put("carlifeTargetAddress", target).put("autoStartOnBoot", true))
+            assertEquals(mapOf("carlifeTargetAddress" to "invalid"), bad.errors)
+            assertEquals(base, bad.settings)
+        }
+    }
+
     @Test fun hotspotSetupMethodRoundTripsAndLegacyCredentialsRemainCustom() {
         for (method in HotspotSetupMethod.entries) {
             val chosen = base.copy(wirelessNetwork = base.wirelessNetwork.copy(
@@ -311,7 +324,7 @@ class UserConfigCodecTest {
             val json = JSONObject().put("output", output).put("dlnaOutput", dlna).put("miracastOutput", miracast)
             val imported = UserConfigCodec.decode(wrapped(json), base.copy(outputs = RelayOutput.entries.toSet()))
             assertTrue(imported.errors.toString(), imported.errors.isEmpty())
-            assertEquals(OutputSelection.legacy(output != "web", output == "both", dlna, miracast), imported.settings.outputs)
+            assertEquals(OutputSelection.legacy(output != "web", output == "both", dlna, miracast) + RelayOutput.CARLIFE, imported.settings.outputs)
         }
         val existing = base.copy(outputs = setOf(RelayOutput.CARLINK, RelayOutput.DLNA))
         assertEquals(setOf(RelayOutput.BROWSER, RelayOutput.DLNA),

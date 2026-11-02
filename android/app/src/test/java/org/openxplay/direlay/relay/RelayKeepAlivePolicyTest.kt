@@ -7,6 +7,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RelayKeepAlivePolicyTest {
+    @Test fun carlifeAloneKeepsTheAccessoryAndNetworkListenerAliveOnlyWhileOpen() {
+        assertTrue(RelayKeepAlivePolicy.needed(true, false, false, carlifeOutput = true))
+        assertFalse(RelayKeepAlivePolicy.needed(false, false, false, carlifeOutput = true))
+        assertFalse(RelayKeepAlivePolicy.needed(true, false, false))
+    }
+
     private var starts = 0
     private var stops = 0
     private var accepted = true

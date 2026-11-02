@@ -20,7 +20,7 @@ fun stepIcon(id: StepId): Int = when (id) {
     StepId.CARLINK_FIND -> R.drawable.symbol_scan_search
     StepId.CARLINK_LINK -> R.drawable.symbol_cable
     StepId.CARLINK_PIN -> R.drawable.symbol_key_round
-    StepId.CARLINK_READY -> R.drawable.symbol_car_front
+    StepId.CARLINK_READY, StepId.CARLIFE -> R.drawable.symbol_car_front
     StepId.DLNA, StepId.MIRACAST -> R.drawable.symbol_cast
     StepId.IPHONE_PAIRED, StepId.USB_IPHONE -> R.drawable.symbol_smartphone
     StepId.USB_HOST -> R.drawable.symbol_usb
@@ -38,7 +38,7 @@ fun stepHue(id: StepId): IconHue = when (id) {
     StepId.BLUETOOTH, StepId.IPHONE_BLUETOOTH -> IconHue.BLUETOOTH
     StepId.WIFI, StepId.HOTSPOT, StepId.SHARED_WIFI, StepId.CAR_NETWORK, StepId.IPHONE_WIFI -> IconHue.NETWORK
     StepId.WEB_SERVER, StepId.CAR_PAGE, StepId.CARLINK_FIND, StepId.CARLINK_LINK, StepId.CARLINK_PIN,
-    StepId.CARLINK_READY, StepId.DLNA, StepId.MIRACAST -> IconHue.CAR
+    StepId.CARLINK_READY, StepId.DLNA, StepId.MIRACAST, StepId.CARLIFE -> IconHue.CAR
     StepId.IPHONE_PAIRED, StepId.USB_HOST, StepId.CARPLAY_START, StepId.USB_IPHONE, StepId.USB_CONTROL -> IconHue.IPHONE
     StepId.SESSION, StepId.TESLA, StepId.PICTURE -> IconHue.PICTURE
 }

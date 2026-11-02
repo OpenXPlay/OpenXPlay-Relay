@@ -144,8 +144,8 @@ class SetupPresentationTest {
     }
 
     @Test fun wirelessAndCombinationModeRowsUseEnumOrder() {
-        val labels = listOf(R.string.ui_browser, R.string.ui_carlink, R.string.wireless_dlna, R.string.wireless_miracast)
-        val icons = listOf(R.drawable.symbol_monitor, R.drawable.symbol_car_front, R.drawable.symbol_cast, R.drawable.symbol_cast)
+        val labels = listOf(R.string.ui_browser, R.string.ui_carlink, R.string.wireless_dlna, R.string.wireless_miracast, R.string.ui_carlife)
+        val icons = listOf(R.drawable.symbol_monitor, R.drawable.symbol_car_front, R.drawable.symbol_cast, R.drawable.symbol_cast, R.drawable.symbol_car_front)
         RelayOutput.entries.forEachIndexed { index, output ->
             val chosen = settings.copy(outputs = setOf(output))
             assertEquals(labels[index], modeRows(chosen, true).first().value)
@@ -216,7 +216,7 @@ class SetupPresentationTest {
     }
 
     @Test fun choicesHaveAtMostOneTagAndOnlyRecommendationsUseThePrimaryHue() {
-        assertEquals(listOf(SetupChoiceTag.RECOMMENDED, null, SetupChoiceTag.EXPERIMENTAL),
+        assertEquals(listOf(SetupChoiceTag.RECOMMENDED, null, SetupChoiceTag.EXPERIMENTAL, SetupChoiceTag.EXPERIMENTAL),
             OutputChoice.entries.map(::setupOutputTag))
         assertEquals(SetupChoiceTag.RECOMMENDED, setupConnectionTag(settings, true))
         assertEquals(SetupChoiceTag.NOT_RECOMMENDED, setupConnectionTag(settings, false))

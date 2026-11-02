@@ -844,4 +844,12 @@
     <string name="logs_capture_incomplete">Capture is incomplete; see the export summary.</string>
     <string name="public_name_certificate_due">Certificate renewal is due. The relay retries when it has internet access.</string>
     <string name="public_name_certificate_expired">The certificate has expired. The relay requests a new one when it has internet access.</string>
+    <string name="ui_carlife">CarLife</string>
+    <string name="carlife_hint">Open CarLife on the car and connect it to the same Wi-Fi or this phone’s hotspot. Video and touch use CarLife; sound stays on the iPhone’s Bluetooth link to the car. USB accessory connections are also supported.</string>
+    <string name="carlife_target">CarLife head-unit IP address (optional)</string>
+    <string name="carlife_address_error">Enter an IPv4 address or leave empty for automatic discovery.</string>
+    <string name="path_carlife">CarLife connection</string>
+    <string name="path_carlife_wait">Open CarLife on the car; use the same network or connect USB.</string>
+    <string name="path_carlife_streaming">Sending the CarPlay picture</string>
+    <string name="path_carlife_picture">CarLife is receiving video; confirm the picture on the car.</string>
 </resources>
