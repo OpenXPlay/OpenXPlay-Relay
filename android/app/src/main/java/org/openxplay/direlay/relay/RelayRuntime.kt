@@ -27,6 +27,7 @@ import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 import com.shilapi.xcertplay.orchestration.MfiTarget
 import com.shilapi.xcertplay.AirPlayPersistence
 import org.openxplay.direlay.bridge.DiPlayInput
+import org.openxplay.direlay.bridge.CastAudioMix
 import org.openxplay.direlay.video.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1077,7 +1078,7 @@ class RelayRuntime(private val context: Context,
         try {
             val output = CastOutput(CastOutputConfig(plan.udn, plan.size.width, plan.size.height, fps = 30, audio = true),
                 castNetwork, listener)
-            hub.addOutput(carDisplayMemory.exclude(WirelessOutputPolicy.declareDlna(output, plan)))
+            hub.addOutput(carDisplayMemory.exclude(WirelessOutputPolicy.declareDlna(CastAudioMix(output), plan)))
         } catch (failure: Exception) {
             connectionLog.linkEnded("cast", org.openxplay.direlay.logs.LinkEnd("renderer", "opening", "local", "connect_failed",
                 "${failure.javaClass.simpleName}: ${redactFailureMessage(failure.message.orEmpty())}"), logConnection)
