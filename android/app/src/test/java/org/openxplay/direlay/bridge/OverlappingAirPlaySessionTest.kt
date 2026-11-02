@@ -4,6 +4,8 @@
 package org.openxplay.direlay.bridge
 
 import com.shilapi.xcertplay.airplay.*
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Socket
 import org.junit.Assert.*
 import org.junit.Test
@@ -16,7 +18,11 @@ import org.openxplay.stream.core.SessionPhase
 @Config(sdk = [29], manifest = Config.NONE)
 class OverlappingAirPlaySessionTest {
     private fun session(engine: CarPlayMediaEngine) = AirPlaySession(
-        socket = Socket(),
+        socket = object : Socket() {
+            private val peer = InetSocketAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 7000)
+            override fun getInetAddress(): InetAddress = peer.address
+            override fun getRemoteSocketAddress(): InetSocketAddress = peer
+        },
         config = AirPlayConfig(deviceName = "test", deviceId = "02:00:00:00:00:02", btMac = "02:00:00:00:00:01",
             sourceVersion = "1.0", main = AirPlayDisplayConfig(widthPixels = 800, heightPixels = 480)),
         identity = AirPlayIdentity.generate(), pairings = PairingStore(), mfi = null,

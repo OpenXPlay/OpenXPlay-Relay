@@ -13,6 +13,22 @@ import java.lang.reflect.Proxy
 import java.net.InetAddress
 
 class StreamBridgeSinkTest {
+    @Test fun audioDuckingReachesTheLocalSinkWithoutStartingStreamMedia() {
+        DiPlayInput().use { input ->
+            val capture = CapturingInputSink()
+            input.start(configuration, capture)
+            val calls = mutableListOf<Boolean>()
+            val delegate = object : MediaSink {
+                override fun onAudioDuck(ducked: Boolean) { calls.add(ducked) }
+            }
+            val bridge = StreamBridgeSink(input, delegate, SessionControl { false })
+            bridge.onAudioDuck(true)
+            bridge.onAudioDuck(false)
+            assertEquals(listOf(true, false), calls)
+            assertTrue(capture.states.isEmpty())
+        }
+    }
+
     @Test fun readsTheAppliedRateWhenCreatingEachFormatInsteadOfAtSinkConstruction() {
         DiPlayInput().use { input ->
             val capture = CapturingInputSink()

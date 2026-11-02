@@ -11,6 +11,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CompositeCarPlayObserverTest {
+    @Test fun usbWaitingStatusesReachEveryObserverUnchanged() {
+        val calls = mutableListOf<Pair<String, CarPlayStatus>>()
+        fun recording(name: String) = object : CarPlayEventObserver {
+            override fun onStatus(status: CarPlayStatus) { calls.add(name to status) }
+        }
+        val observer = CompositeCarPlayObserver(recording("diagnostics"), recording("plugins"),
+            recording("stage"), recording("link"), recording("startup"))
+        val statuses = listOf(CarPlayStatus.WaitingForIphone,
+            CarPlayStatus.IphoneNotListed(false), CarPlayStatus.IphoneNotListed(true))
+        statuses.forEach(observer::onStatus)
+        assertEquals(statuses.flatMap { status ->
+            listOf("diagnostics", "stage", "link", "plugins", "startup").map { it to status }
+        }, calls)
+    }
+
     private class Recording(private val name: String, private val calls: MutableList<String>,
         private val throwing: Boolean = false) : CarPlayEventObserver {
         private fun record(event: String) { calls.add("$name:$event"); if (throwing) error("observer failed") }
