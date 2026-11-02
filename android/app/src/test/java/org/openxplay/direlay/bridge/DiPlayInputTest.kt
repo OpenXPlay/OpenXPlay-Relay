@@ -7,9 +7,11 @@ import com.shilapi.xcertplay.airplay.AirPlayContact
 import com.shilapi.xcertplay.airplay.MediaSink
 import com.shilapi.xcertplay.airplay.SessionControl
 import com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler
+import com.shilapi.xcertplay.orchestration.CarPlayStatus
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.openxplay.direlay.DiRelayApplication
+import org.openxplay.direlay.relay.StartupObserver
 import org.openxplay.stream.core.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -61,6 +63,21 @@ class DiPlayInputTest {
             enabled = false
             input.startupProgress("startup/failed")
             assertEquals("startup/waiting-media", states.last().reason)
+        }
+    }
+
+    @Test fun startupObserverIgnoresUsbWaitingStatuses() {
+        DiPlayInput(startupStatus = { true }).use { input ->
+            val capture = CapturingInputSink()
+            input.start(configuration, capture)
+            input.begin(SessionControl { false })
+            val observer = StartupObserver(input)
+            observer.onStatus(CarPlayStatus.ConnectingControl)
+            val before = capture.states.toList()
+            assertEquals("startup/connecting", before.last().reason)
+            listOf(CarPlayStatus.WaitingForIphone, CarPlayStatus.IphoneNotListed(false),
+                CarPlayStatus.IphoneNotListed(true)).forEach { observer.onStatus(it) }
+            assertEquals(before, capture.states)
         }
     }
 
