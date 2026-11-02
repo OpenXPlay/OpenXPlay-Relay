@@ -613,6 +613,7 @@
     <string name="public_name_error_dns_not_updated">服务商的域名服务器未及时生效</string>
     <string name="public_name_error_acme_rejected">Let\'s Encrypt 拒绝了请求：%1$s</string>
     <string name="public_name_error_acme_rate_limited">Let\'s Encrypt 要求稍后再试</string>
+    <string name="public_name_error_acme_rate_limited_detail">Let\'s Encrypt 要求稍后再试：%1$s</string>
     <string name="public_name_error_no_address">还没有车机网络地址</string>
     <string name="public_name_choose">选择配置文件（.json）</string>
     <string name="public_name_imported">已导入：%1$s，%2$s</string>
@@ -832,4 +833,6 @@
     <string name="hotspot_no_password">无密码</string>
     <string name="hotspot_system_options">在系统设置中选择%1$s，热点频段与下方选择保持一致。还需要保存设置并开启热点。</string>
     <string name="logs_capture_incomplete">日志采集不完整，请查看导出摘要。</string>
+    <string name="public_name_certificate_due">证书需要续期。中继联网后会重试。</string>
+    <string name="public_name_certificate_expired">证书已过期。中继联网后会申请新证书。</string>
 </resources>

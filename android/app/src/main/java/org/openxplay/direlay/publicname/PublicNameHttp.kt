@@ -19,8 +19,11 @@ enum class PublicNameError(val key: String) {
     ACME_RATE_LIMITED("acme-rate-limited"), NO_ADDRESS("no-address"),
 }
 
+enum class AcmeLimitScope { NAME, ACCOUNT, ENVIRONMENT }
+
 /** The message is only the error code: request URLs and provider bodies may carry the token. */
-class PublicNameFailure(val error: PublicNameError, val retryAfterMillis: Long? = null, val detail: String? = null) :
+class PublicNameFailure(val error: PublicNameError, val retryAfterMillis: Long? = null, val detail: String? = null,
+    val scope: AcmeLimitScope = AcmeLimitScope.NAME) :
     Exception(error.key)
 
 /** URLs may carry the token, so neither class prints them. */

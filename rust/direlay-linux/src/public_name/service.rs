@@ -13,7 +13,7 @@ use super::{
     local_dns, privacy,
     providers::{self, Endpoints, ProviderClient, ProviderError},
     schedule,
-    store::{self, ErrorRecord, Issuance, Meta, Store},
+    store::{self, AcmeHold, ErrorRecord, HoldScope, Issuance, Meta, Store},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -643,6 +643,7 @@ impl Runtime {
 /// wall-clock seconds), also across configuration changes and "Request certificate now".
 type ProviderHold = Option<(Provider, Instant, u64)>;
 enum Check {
+    WaitingClock,
     /// Nothing to order, or a new certificate is stored.
     Done,
     /// The CA's `Retry-After` or the local guard holds the order back until this time.
@@ -662,7 +663,11 @@ fn describe(error: &IssueError) -> (&'static str, Option<String>, Option<u64>) {
             },
         ),
         IssueError::DnsNotUpdated => ("dns-not-updated", None, None),
-        IssueError::Acme(AcmeError::RateLimited(s)) => ("acme-rate-limited", None, *s),
+        IssueError::Acme(AcmeError::RateLimited(limit)) => (
+            "acme-rate-limited",
+            Some(limit.detail.clone()),
+            limit.retry_after,
+        ),
         IssueError::Acme(AcmeError::Rejected(detail)) => {
             ("acme-rejected", Some(detail.clone()), None)
         }
@@ -1202,6 +1207,13 @@ impl Inner {
                 .is_none_or(|at| at.elapsed().as_secs() >= schedule::CHECK_EVERY);
         if check {
             match self.check_certificate(config, provider, name, token, now, rt) {
+                Check::WaitingClock => {
+                    self.report(
+                        rt.version,
+                        self.base_status(config, Some(address), "waiting-network", rt),
+                    );
+                    return;
+                }
                 Check::Done => {
                     rt.check_due = false;
                     rt.last_check = Some(Instant::now());
@@ -1259,7 +1271,7 @@ impl Inner {
         let current = self
             .store
             .certificate()
-            .and_then(|(chain, key)| cert::check(&chain, &key, name, Some(now)).ok())
+            .and_then(|(chain, key)| cert::check(&chain, &key, name, None).ok())
             .filter(|_| meta.acme.as_deref() == Some(config.acme.id()));
         let directory = match config.acme {
             AcmeEnvironment::Production => self.network.production.as_str(),
@@ -1279,6 +1291,18 @@ impl Inner {
                 }
             }
         };
+        if let Some(leaf) = &current {
+            if now < leaf.not_before {
+                return Check::WaitingClock;
+            }
+        }
+        let account_id = account.thumbprint();
+        let held = meta
+            .acme_holds
+            .iter()
+            .filter(|h| h.applies(name, config.acme.id(), &account_id, now))
+            .max_by_key(|h| h.until)
+            .cloned();
         let http = self.network.http.as_ref();
         let mut client = None;
         let mut due = false;
@@ -1290,7 +1314,10 @@ impl Inner {
                 meta.renew_at = None;
                 meta.ari_next_poll = None;
             }
-            if leaf.cert_id.is_some() && meta.ari_next_poll.is_none_or(|at| now >= at) {
+            if held.is_none()
+                && leaf.cert_id.is_some()
+                && meta.ari_next_poll.is_none_or(|at| now >= at)
+            {
                 let result = acme::Client::connect(
                     http,
                     directory,
@@ -1318,12 +1345,12 @@ impl Inner {
                             meta.ari_window = None;
                             meta.renew_at = None;
                         }
-                        Err(AcmeError::RateLimited(seconds)) => retry = seconds,
+                        Err(AcmeError::RateLimited(limit)) => retry = limit.retry_after,
                         Err(_) => {}
                     }
                     client = Some(c);
-                } else if let Err(AcmeError::RateLimited(seconds)) = result {
-                    retry = seconds;
+                } else if let Err(AcmeError::RateLimited(limit)) = result {
+                    retry = limit.retry_after;
                 }
                 meta.ari_next_poll = Some(now + schedule::ari_poll_delay(retry));
                 let saved = meta.clone();
@@ -1332,7 +1359,8 @@ impl Inner {
             let renew_at = meta
                 .renew_at
                 .filter(|_| meta.cert_id.is_some() && meta.cert_id == leaf.cert_id);
-            due = schedule::renewal_due(leaf.not_before, leaf.not_after, now, renew_at);
+            due = now >= leaf.not_after
+                || schedule::renewal_due(leaf.not_before, leaf.not_after, now, renew_at);
         }
         let changed = meta.provider.as_deref() != Some(provider.id());
         match &current {
@@ -1340,8 +1368,14 @@ impl Inner {
             Some(leaf) if (due || changed) && schedule::may_replace(leaf.not_after, now, due) => {}
             Some(_) => return Check::Done,
         }
-        if let Some(until) = meta.retry_after.filter(|t| *t > now) {
-            return Check::Blocked(until, rate_limited());
+        if let Some(hold) = held {
+            return Check::Blocked(
+                hold.until,
+                ErrorRecord {
+                    code: "acme-rate-limited".into(),
+                    detail: Some(hold.detail),
+                },
+            );
         }
         let allowed = schedule::next_order_allowed(&meta.order_times(name), now);
         if allowed > now {
@@ -1363,7 +1397,9 @@ impl Inner {
                 now,
             ) {
                 Ok(c) => c,
-                Err(e) => return self.acme_failed(version, now, IssueError::Acme(e)),
+                Err(e) => {
+                    return self.acme_failed(config, &account, version, now, IssueError::Acme(e))
+                }
             },
         };
         let pause = |d: Duration| self.pause(version, d);
@@ -1401,7 +1437,7 @@ impl Inner {
         }
         let issued = match issued {
             Ok(issued) => issued,
-            Err(e) => return self.acme_failed(version, now, e),
+            Err(e) => return self.acme_failed(config, &account, version, now, e),
         };
         let stored = self.write(version, |store| {
             store.save_certificate(&issued.chain, &issued.key_pem)?;
@@ -1417,7 +1453,6 @@ impl Inner {
             meta.ari_window = None;
             meta.renew_at = None;
             meta.ari_next_poll = None;
-            meta.retry_after = None;
             meta.last_error = None;
             store.save_meta(&meta)?;
             self.shared
@@ -1435,18 +1470,52 @@ impl Inner {
     }
     /// Let's Encrypt's `rateLimited` holds certificate requests (persisted, so that a restart
     /// obeys it too); other failures back off.
-    fn acme_failed(&self, version: u64, now: u64, error: IssueError) -> Check {
-        if let IssueError::Acme(AcmeError::RateLimited(seconds)) = &error {
+    fn acme_failed(
+        &self,
+        config: &Config,
+        account: &super::jws::AccountKey,
+        version: u64,
+        now: u64,
+        error: IssueError,
+    ) -> Check {
+        if let IssueError::Acme(AcmeError::RateLimited(limit)) = &error {
+            eprintln!("Public name: acme-rate-limited: {}", limit.detail);
             let until = now
-                + seconds
+                + limit
+                    .retry_after
                     .unwrap_or(schedule::backoff(1))
                     .min(schedule::MAX_RETRY_AFTER);
             self.write(version, |store| {
                 let mut meta = store.meta();
-                meta.retry_after = Some(until);
+                let scope = match limit.scope {
+                    acme::LimitScope::Name => {
+                        HoldScope::Name(config.name.clone().unwrap_or_default())
+                    }
+                    acme::LimitScope::Account => HoldScope::Account(account.thumbprint()),
+                    acme::LimitScope::Environment => HoldScope::Environment,
+                };
+                meta.acme_holds.retain(|h| {
+                    h.until > now && !(h.environment == config.acme.id() && h.scope == scope)
+                });
+                meta.acme_holds.push(AcmeHold {
+                    environment: config.acme.id().into(),
+                    scope,
+                    until,
+                    detail: limit.detail.clone(),
+                });
+                meta.last_error = Some(ErrorRecord {
+                    code: "acme-rate-limited".into(),
+                    detail: Some(limit.detail.clone()),
+                });
                 store.save_meta(&meta)
             });
-            return Check::Blocked(until, rate_limited());
+            return Check::Blocked(
+                until,
+                ErrorRecord {
+                    code: "acme-rate-limited".into(),
+                    detail: Some(limit.detail.clone()),
+                },
+            );
         }
         Check::Failed(error)
     }
@@ -1597,6 +1666,339 @@ mod tests {
         while !done() {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn rate_limit_detail_survives_restart_and_name_and_environment_changes_contact_the_ca() {
+        let world = World::new(FakeAcmeOptions {
+            rate_limited: Some(400 * DAY),
+            ..Default::default()
+        });
+        world.configure();
+        let mut network = world.network();
+        network.staging = network.production.clone();
+        let service = PublicNameService::new(&world.state.0, network);
+        let mut config = service.inner.shared.lock().unwrap().config.clone().unwrap();
+        let version = service.inner.shared.lock().unwrap().version;
+        let mut rt = Runtime::new(version);
+        let now = world.host.clock().unwrap();
+        let check = |config: &Config, rt: &mut Runtime| {
+            service.inner.check_certificate(
+                config,
+                Provider::DuckDns,
+                config.name.as_deref().unwrap(),
+                TOKEN,
+                now,
+                rt,
+            )
+        };
+        match check(&config, &mut rt) {
+            Check::Blocked(until, error) => {
+                assert_eq!(until, now + schedule::MAX_RETRY_AFTER);
+                assert_eq!(
+                    error.detail.as_deref(),
+                    Some("too many certificates already issued")
+                );
+            }
+            _ => panic!("expected a CA hold"),
+        }
+        assert_eq!(world.new_orders(), 1);
+        assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+        assert_eq!(world.new_orders(), 1, "same name remains held");
+        config.name = Some("fresh.duckdns.org".into());
+        assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+        assert_eq!(world.new_orders(), 2, "a fresh name contacts the CA");
+        config.acme = AcmeEnvironment::Staging;
+        assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+        assert_eq!(world.new_orders(), 3, "staging contacts its CA");
+        // Returning to production still observes its original name's hold, also after restart.
+        drop(service);
+        let restarted = PublicNameService::new(&world.state.0, world.network());
+        config.name = Some(NAME.into());
+        config.acme = AcmeEnvironment::Production;
+        let mut rt = Runtime::new(restarted.inner.shared.lock().unwrap().version);
+        match restarted.inner.check_certificate(
+            &config,
+            Provider::DuckDns,
+            NAME,
+            TOKEN,
+            now,
+            &mut rt,
+        ) {
+            Check::Blocked(_, error) => assert_eq!(
+                error.detail.as_deref(),
+                Some("too many certificates already issued")
+            ),
+            _ => panic!("expected persisted hold"),
+        }
+        assert_eq!(world.new_orders(), 3);
+    }
+
+    #[test]
+    fn broader_ca_holds_follow_the_account_or_environment_and_not_the_name() {
+        for detail in [
+            "too many new orders for this account",
+            "too many registrations for this IP address",
+        ] {
+            let world = World::new(FakeAcmeOptions {
+                rate_limited: Some(3600),
+                rate_limit_detail: Some(detail.into()),
+                ..Default::default()
+            });
+            world.configure();
+            let mut network = world.network();
+            network.staging = network.production.clone();
+            let service = PublicNameService::new(&world.state.0, network);
+            let mut config = service.inner.shared.lock().unwrap().config.clone().unwrap();
+            let mut rt = Runtime::new(service.inner.shared.lock().unwrap().version);
+            let now = world.host.clock().unwrap();
+            let check = |config: &Config, rt: &mut Runtime| {
+                service.inner.check_certificate(
+                    config,
+                    Provider::DuckDns,
+                    config.name.as_deref().unwrap(),
+                    TOKEN,
+                    now,
+                    rt,
+                )
+            };
+            assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+            assert_eq!(world.new_orders(), 1);
+            config.name = Some("fresh.duckdns.org".into());
+            assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+            assert_eq!(
+                world.new_orders(),
+                1,
+                "a broader hold covers the fresh name"
+            );
+            // A new account bypasses only an account hold, never an IP/registration hold.
+            let store = Store::new(&world.state.0);
+            let replacement = super::super::jws::AccountKey::generate().unwrap();
+            store
+                .save_account(replacement.pem(), &world.acme.directory(), None)
+                .unwrap();
+            assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+            assert_eq!(
+                world.new_orders(),
+                if detail.contains("registrations") {
+                    1
+                } else {
+                    2
+                }
+            );
+            config.acme = AcmeEnvironment::Staging;
+            let before = world.new_orders();
+            assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+            assert_eq!(world.new_orders(), before + 1);
+        }
+    }
+
+    #[test]
+    fn identifier_holds_do_not_block_a_fresh_name_or_staging() {
+        let world = World::new(FakeAcmeOptions {
+            rate_limited: Some(3600),
+            ..Default::default()
+        });
+        world.configure();
+        let mut network = world.network();
+        network.staging = network.production.clone();
+        let service = PublicNameService::new(&world.state.0, network);
+        let mut config = service.inner.shared.lock().unwrap().config.clone().unwrap();
+        let mut rt = Runtime::new(service.inner.shared.lock().unwrap().version);
+        let now = world.host.clock().unwrap();
+        let check = |config: &Config, rt: &mut Runtime| {
+            service.inner.check_certificate(
+                config,
+                Provider::DuckDns,
+                config.name.as_deref().unwrap(),
+                TOKEN,
+                now,
+                rt,
+            )
+        };
+        assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+        config.name = Some("fresh.duckdns.org".into());
+        assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+        assert_eq!(world.new_orders(), 2);
+        config.acme = AcmeEnvironment::Staging;
+        assert!(matches!(check(&config, &mut rt), Check::Blocked(_, _)));
+        assert_eq!(world.new_orders(), 3);
+    }
+
+    fn save_short_certificate(world: &World, before: u64, days: u64) -> Vec<u8> {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec![NAME.into()]).unwrap();
+        let epoch = rcgen::date_time_ymd(1970, 1, 1);
+        params.use_authority_key_identifier_extension = true;
+        params.not_before = epoch + Duration::from_secs(before);
+        params.not_after = epoch + Duration::from_secs(before + days * DAY);
+        let chain = params.self_signed(&key).unwrap().pem().into_bytes();
+        let store = Store::new(&world.state.0);
+        store
+            .save_certificate(&chain, &key.serialize_pem())
+            .unwrap();
+        store
+            .save_meta(&Meta {
+                name: Some(NAME.into()),
+                acme: Some("production".into()),
+                provider: Some("duckdns".into()),
+                not_before: Some(before),
+                not_after: Some(before + days * DAY),
+                ..Default::default()
+            })
+            .unwrap();
+        chain
+    }
+
+    #[test]
+    fn shorter_certificates_survive_a_clock_before_not_before_without_new_orders() {
+        for days in [64, 45] {
+            let world = World::new(FakeAcmeOptions::default());
+            world.configure();
+            let now = world.host.clock().unwrap();
+            let chain = save_short_certificate(&world, now, days);
+            let service = PublicNameService::new(&world.state.0, world.network());
+            let config = service.inner.shared.lock().unwrap().config.clone().unwrap();
+            let mut rt = Runtime::new(service.inner.shared.lock().unwrap().version);
+            for clock in [1_609_459_200, now - 1, now] {
+                let _ = service.inner.check_certificate(
+                    &config,
+                    Provider::DuckDns,
+                    NAME,
+                    TOKEN,
+                    clock,
+                    &mut rt,
+                );
+                assert_eq!(
+                    world.new_orders(),
+                    0,
+                    "no replacement before notBefore or renewal"
+                );
+                assert_eq!(Store::new(&world.state.0).certificate().unwrap().0, chain);
+            }
+            service.inner.refresh_served(None);
+            assert!(
+                service.served().is_some(),
+                "a head unit with the right clock can use the stored certificate"
+            );
+            service.inner.refresh_served(Some(1_609_459_200));
+            assert!(
+                service.served().is_none(),
+                "normal TLS fallback while the relay clock is wrong"
+            );
+        }
+    }
+
+    #[test]
+    fn usable_short_certificates_stay_served_while_renewal_is_rate_limited() {
+        for days in [64, 45] {
+            let world = World::new(FakeAcmeOptions::default());
+            world.configure();
+            let now = world.host.clock().unwrap();
+            let before = now - (days * DAY - days * DAY / 3);
+            let chain = save_short_certificate(&world, before, days);
+            let service = PublicNameService::new(&world.state.0, world.network());
+            let config = service.inner.shared.lock().unwrap().config.clone().unwrap();
+            let mut rt = Runtime::new(service.inner.shared.lock().unwrap().version);
+            rt.last_address = world.host.address();
+            rt.published = Some((world.host.address().unwrap(), Instant::now()));
+            world.acme.set_rate_limited(Some(3600));
+            service.inner.step(
+                world.host.as_ref(),
+                &config,
+                world.host.address(),
+                &mut rt,
+                &mut None,
+            );
+            assert_eq!(world.new_orders(), 1);
+            assert_eq!(service.status().error.as_deref(), Some("acme-rate-limited"));
+            assert!(
+                service.served().is_some(),
+                "valid material remains served during a failed renewal"
+            );
+            assert_eq!(Store::new(&world.state.0).certificate().unwrap().0, chain);
+            for _ in 0..4 {
+                service.inner.step(
+                    world.host.as_ref(),
+                    &config,
+                    world.host.address(),
+                    &mut rt,
+                    &mut None,
+                );
+            }
+            assert_eq!(world.new_orders(), 1);
+        }
+    }
+
+    #[test]
+    fn parked_short_certificates_renew_promptly_keep_material_and_back_off_without_ca_spam() {
+        for days in [64, 45] {
+            let world = World::new(FakeAcmeOptions::default());
+            world.configure();
+            let now = world.host.clock().unwrap();
+            let chain = save_short_certificate(&world, now - (days + 1) * DAY, days);
+            let service = PublicNameService::new(&world.state.0, world.network());
+            let config = service.inner.shared.lock().unwrap().config.clone().unwrap();
+            let mut rt = Runtime::new(service.inner.shared.lock().unwrap().version);
+            rt.last_address = world.host.address();
+            rt.published = Some((world.host.address().unwrap(), Instant::now()));
+            let store = Store::new(&world.state.0);
+            let mut meta = store.meta();
+            meta.cert_id = cert::leaf(&chain).unwrap().cert_id;
+            assert!(meta.cert_id.is_some());
+            meta.renew_at = Some(now + DAY);
+            meta.ari_next_poll = Some(now + DAY);
+            store.save_meta(&meta).unwrap();
+            world.acme.set_rate_limited(Some(3600));
+            service.inner.step(
+                world.host.as_ref(),
+                &config,
+                world.host.address(),
+                &mut rt,
+                &mut None,
+            );
+            assert_eq!(
+                world.new_orders(),
+                1,
+                "renew immediately after reconnecting past expiry"
+            );
+            assert_eq!(
+                Store::new(&world.state.0).certificate().unwrap().0,
+                chain,
+                "failed renewal preserves stored material"
+            );
+            assert!(
+                service.served().is_none(),
+                "expired material uses the normal TLS fallback"
+            );
+            for _ in 0..4 {
+                service.inner.step(
+                    world.host.as_ref(),
+                    &config,
+                    world.host.address(),
+                    &mut rt,
+                    &mut None,
+                );
+            }
+            assert_eq!(world.new_orders(), 1, "no CA spam during hold");
+            world.acme.set_rate_limited(None);
+            // Simulate the hold expiring, without a timing assertion or sleep.
+            let store = Store::new(&world.state.0);
+            let mut meta = store.meta();
+            meta.acme_holds.clear();
+            store.save_meta(&meta).unwrap();
+            rt.cert_hold = None;
+            service.inner.step(
+                world.host.as_ref(),
+                &config,
+                world.host.address(),
+                &mut rt,
+                &mut None,
+            );
+            assert_eq!(world.new_orders(), 2);
+            assert_eq!(service.status().state, "ready");
+            assert!(service.served().is_some());
         }
     }
 
@@ -2232,7 +2634,11 @@ mod tests {
         assert_eq!(world.acme.orders(), 0);
         let meta = Store::new(&world.state.0).meta();
         assert_eq!(meta.order_times(NAME).len(), 1);
-        assert!(meta.retry_after.unwrap() >= now + 3_590);
+        assert!(meta.acme_holds[0].until >= now + 3_590);
+        assert_eq!(
+            service.status().error_detail.as_deref(),
+            Some("too many certificates already issued")
+        );
         world.acme.set_rate_limited(None);
         let published = world.published().len();
         service.renew();

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import java.security.PrivateKey
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.security.interfaces.ECPublicKey
 import java.util.Random
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -34,7 +35,8 @@ enum class PublicNameState(val key: String) {
  */
 data class PublicNameStatus(val state: PublicNameState, val name: String? = null, val address: String? = null,
     val notAfter: Long? = null, val error: PublicNameError? = null, val detail: String? = null,
-    val nextAttempt: Long? = null, val trustedName: String? = null)
+    val nextAttempt: Long? = null, val trustedName: String? = null,
+    val notBefore: Long? = null, val renewAt: Long? = null)
 
 /** A provider's saved fields that may leave the store; never the token itself. */
 data class PublicNameProviderView(val name: String = "", val tokenSet: Boolean = false)
@@ -279,11 +281,21 @@ class PublicNameService(
         val now = clock()
         if (resetBackoff.getAndSet(false)) { failures = 0; retryAt = null }
         val bypass = bypassWait.getAndSet(false)
-        val held = hold?.takeIf { it.key == key && now < it.until }
+        val account = accountId()
+        val stored = store.record().acmeHolds.filter { it.applies(config, account, now) }.maxByOrNull { it.until }
+        val held = stored?.let { Hold(key, it.until, PublicNameFailure(PublicNameError.ACME_RATE_LIMITED,
+            detail = it.detail, scope = it.scope), true) } ?: hold?.takeIf { !it.certificateOnly && it.key == key && now < it.until }
         hold = held
         retryAt?.let { if (now < it && !bypass) { schedule(it); return } }
         // The provider asked to wait: nothing goes to it until then, whatever triggered this attempt.
         if (held != null && !held.certificateOnly) { settle(config, Long.MAX_VALUE, held); return }
+        val saved = certificates.acmeCertificate()?.takeIf { it.name == config.name }
+        if (saved != null && now < saved.notBefore) {
+            networkBlocked = true
+            set(config, PublicNameStatus(PublicNameState.WAITING_NETWORK, config.name, target))
+            schedule(minOf(saved.notBefore, now + PublicNamePolicy.CHECK_INTERVAL))
+            return
+        }
         try {
             val provider = providers(config)
             if (target != null) publish(config, provider, target, run)
@@ -355,8 +367,11 @@ class PublicNameService(
         val record = store.record()
         val previous = record.ari?.takeIf { it.certId == certId }
         if (previous != null && now < previous.nextPoll) return previous.takeIf { it.renewAt != null }
-        val window = try { issuer.renewalWindow(config, certId) } catch (_: PublicNameFailure) {
-            return previous?.takeIf { it.renewAt != null }
+        val window = try { issuer.renewalWindow(config, certId) } catch (failure: PublicNameFailure) {
+            val nextPoll = now + (failure.retryAfterMillis ?: PublicNamePolicy.CHECK_INTERVAL).coerceIn(PublicNamePolicy.HOUR, PublicNamePolicy.DAY)
+            val retry = previous?.copy(nextPoll = nextPoll) ?: AriState(certId, null, null, null, nextPoll)
+            guarded(run) { store.saveRecord(store.record().copy(ari = retry)) }
+            return retry.takeIf { it.renewAt != null }
         }
         val plan = if (window == null) AriState(certId, null, null, null, now + PublicNamePolicy.CHECK_INTERVAL)
             else PublicNamePolicy.ariPlan(certId, window, previous, now, random)
@@ -398,9 +413,18 @@ class PublicNameService(
         val now = clock()
         val retryAfter = failure.retryAfterMillis
         val at: Long
-        if (retryAfter != null) {
-            at = now + retryAfter.coerceAtLeast(PublicNamePolicy.MINUTE)
-            hold = Hold(key(config), at, failure, certificateOnly = failure.error == PublicNameError.ACME_RATE_LIMITED)
+        if (retryAfter != null || failure.error == PublicNameError.ACME_RATE_LIMITED) {
+            at = now + (retryAfter ?: PublicNamePolicy.MINUTE).coerceIn(PublicNamePolicy.MINUTE, 30 * PublicNamePolicy.DAY)
+            if (failure.error == PublicNameError.ACME_RATE_LIMITED) {
+                val subject = when (failure.scope) {
+                    AcmeLimitScope.NAME -> config.name
+                    AcmeLimitScope.ACCOUNT -> accountId()
+                    AcmeLimitScope.ENVIRONMENT -> ""
+                }
+                val record = store.record()
+                val holds = record.acmeHolds.filter { it.until > now && !(it.environment == config.acme && it.scope == failure.scope && it.subject == subject) }
+                store.saveRecord(record.copy(acmeHolds = holds + AcmeHold(config.acme, failure.scope, subject, at, failure.detail)))
+            } else hold = Hold(key(config), at, failure, certificateOnly = false)
         } else {
             failures++
             at = now + PublicNamePolicy.backoff(failures)
@@ -410,7 +434,7 @@ class PublicNameService(
         val offline = networkBlocked && !internet.available()
         set(config, if (offline) PublicNameStatus(PublicNameState.WAITING_NETWORK, config.name, address, nextAttempt = at)
             else PublicNameStatus(PublicNameState.ERROR, config.name, address, error = failure.error, detail = failure.detail, nextAttempt = at))
-        Log.i(TAG, "Public name: ${if (offline) "waiting for internet" else failure.error.key}, next try in ${(at - now) / 1000} s")
+        Log.i(TAG, "Public name: ${if (offline) "waiting for internet" else failure.error.key}, next try in ${(at - now) / 1000} s${failure.detail?.let { ": $it" }.orEmpty()}")
         schedule(at)
     }
 
@@ -425,7 +449,12 @@ class PublicNameService(
     }
 
     private fun set(config: PublicNameConfig?, status: PublicNameStatus) {
-        mutableStatus.value = status.copy(trustedName = config?.let(::trustedName))
+        val certificate = config?.takeIf { it.enabled }?.let { selected -> certificates.acmeCertificate()?.takeIf { it.name == selected.name } }
+        val plan = store.record().ari?.takeIf { it.certId == certificate?.certId }
+        mutableStatus.value = status.copy(trustedName = config?.let(::trustedName), notBefore = certificate?.notBefore,
+            notAfter = certificate?.notAfter ?: status.notAfter, renewAt = certificate?.let {
+                PublicNamePolicy.renewalTime(it.notBefore, it.notAfter, plan?.renewAt)
+            })
     }
 
     /** The name while its certificate is valid and the address it points at is the current one. */
@@ -434,6 +463,8 @@ class PublicNameService(
         published?.takeIf { it.key == key(config) && it.address == target } ?: return null
         return config.name.takeIf { validCertificate(config, clock()) != null }
     }
+
+    private fun accountId(): String = store.accountKey()?.let { AcmeCrypto.thumbprint(it.public as ECPublicKey) }.orEmpty()
 
     private fun stale(run: Long) = closed || generation.get() != run
 

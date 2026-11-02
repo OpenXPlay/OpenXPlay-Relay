@@ -274,6 +274,7 @@ pub struct FakeAcmeOptions {
     pub bad_nonces: u32,
     /// `newOrder` answers 429 `rateLimited` with this `Retry-After`.
     pub rate_limited: Option<u64>,
+    pub rate_limit_detail: Option<String>,
     /// The TXT record never matches, so the challenge fails.
     pub wrong_txt: bool,
     /// ARI: the directory offers `renewalInfo` with this suggested window (RFC 3339).
@@ -619,8 +620,12 @@ impl AcmeState {
                 let account = account.unwrap();
                 self.log.push("newOrder kid".into());
                 if let Some(seconds) = self.options.rate_limited {
-                    let mut reply =
-                        self.problem(429, "rateLimited", "too many certificates already issued");
+                    let detail = self
+                        .options
+                        .rate_limit_detail
+                        .clone()
+                        .unwrap_or_else(|| "too many certificates already issued".into());
+                    let mut reply = self.problem(429, "rateLimited", &detail);
                     reply.1.push(("Retry-After".into(), seconds.to_string()));
                     return reply;
                 }

@@ -163,6 +163,26 @@ mod tests {
         assert_eq!(next_order_allowed(&four, now), now - 3_000 + DAY);
     }
     #[test]
+    fn shorter_certificates_use_their_lifetime_and_ari_and_wake_after_parking() {
+        let issued = 1_800_000_000;
+        for days in [64, 45] {
+            let expires = issued + days * DAY;
+            let at = expires - days * DAY / 3;
+            assert_eq!(planned_renewal(issued, expires, None), at);
+            assert!(!renewal_due(issued, expires, at - 1, None));
+            assert!(renewal_due(issued, expires, at, None));
+            assert!(may_replace(expires, at, true));
+            let ari = ari_time(issued + 10 * DAY, issued + 11 * DAY, 1234);
+            assert_eq!(planned_renewal(issued, expires, Some(ari)), ari);
+            assert!(renewal_due(issued, expires, ari, Some(ari)));
+            assert_eq!(
+                next_check(expires + DAY, Some(issued), Some(expires), None, None),
+                Some(expires + DAY)
+            );
+            assert!(!renewal_due(issued, expires, issued - 1, None));
+        }
+    }
+    #[test]
     fn renewal_by_ari_window_or_one_third_of_the_lifetime() {
         let (issued, expires) = (1_800_000_000, 1_800_000_000 + 90 * DAY);
         assert_eq!(planned_renewal(issued, expires, None), issued + 60 * DAY);

@@ -101,6 +101,32 @@ pub struct Issuance {
     pub not_before: u64,
     pub not_after: u64,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HoldScope {
+    Name(String),
+    Account(String),
+    Environment,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcmeHold {
+    pub environment: String,
+    pub scope: HoldScope,
+    pub until: u64,
+    pub detail: String,
+}
+impl AcmeHold {
+    pub fn applies(&self, name: &str, environment: &str, account: &str, now: u64) -> bool {
+        self.until > now
+            && self.environment == environment
+            && match &self.scope {
+                HoldScope::Name(held) => held == name,
+                HoldScope::Account(held) => held == account,
+                HoldScope::Environment => true,
+            }
+    }
+}
 /// What the relay remembers about its name and certificate. Times are wall-clock Unix seconds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -124,8 +150,9 @@ pub struct Meta {
     pub published_at: Option<u64>,
     /// New orders, for the local guard.
     pub orders: Vec<OrderRecord>,
-    /// The CA's `Retry-After`, as the time before which no order is sent.
-    pub retry_after: Option<u64>,
+    /// Active CA holds. Legacy `retryAfter` is ignored: its issuing configuration was never
+    /// recorded (the certificate's name and CA may belong to an earlier configuration).
+    pub acme_holds: Vec<AcmeHold>,
     pub last_error: Option<ErrorRecord>,
 }
 impl Meta {
@@ -337,6 +364,19 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_global_hold_is_dropped_because_its_configuration_is_unknown() {
+        let meta: super::Meta = serde_json::from_value(serde_json::json!({
+            "name":"old.duckdns.org", "acme":"production", "retryAfter": 4_000_000_000u64
+        }))
+        .unwrap();
+        assert!(meta.acme_holds.is_empty());
+        assert!(serde_json::to_value(meta)
+            .unwrap()
+            .get("retryAfter")
+            .is_none());
+    }
+
     use super::*;
     use crate::public_name::testing::TempDir;
     use std::os::unix::fs::PermissionsExt;
