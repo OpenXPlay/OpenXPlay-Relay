@@ -21,6 +21,6 @@ fun presentHostOverlay(value: HostOverlaySnapshot): HostOverlayPresentation {
         value.displayChanged, value.carIncomplete, value.setupCompleted, value.highPerformance)
 }
 
-/** Keep the view factory lazy: preview must not create a covering view or start its polling. */
+/** Keep the full host UI lazy: preview needs only a back button, without runtime polling. */
 internal fun <T> hostOverlayUnlessPreview(localPreview: Boolean, create: () -> T): T? =
     if (localPreview) null else create()

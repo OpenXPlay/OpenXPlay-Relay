@@ -5,6 +5,7 @@ package org.openxplay.direlay.presentation
 
 import android.content.Intent
 import android.provider.Settings
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -26,7 +27,7 @@ import org.openxplay.direlay.relay.RelayRuntime
 import org.openxplay.direlay.relay.WirelessStandIn
 import org.openxplay.direlay.ui.*
 
-fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime): ComposeView? =
+fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime): View =
     hostOverlayUnlessPreview(runtime.settingsStore.snapshot.value?.let {
         WirelessStandIn.effective(it, runtime.settingsStore.developerOverrides.value).localPreview
     } ?: runtime.localPreview) {
@@ -34,7 +35,7 @@ fun createCarPlayHostOverlay(activity: ComponentActivity, runtime: RelayRuntime)
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent { RelayTheme { RuntimeHostOverlay(activity, runtime) } }
         }
-    }
+    } ?: PreviewHostOverlay(activity) { runtime.carPlayScreen?.profile?.let { it.width to it.height } }
 
 @Composable private fun RuntimeHostOverlay(activity: ComponentActivity, runtime: RelayRuntime) {
     val model = remember(activity) {

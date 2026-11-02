@@ -4,7 +4,10 @@
 package org.openxplay.direlay
 
 import android.app.Application
+import android.widget.FrameLayout
+import android.widget.ImageButton
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.ComposeView
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,19 +24,23 @@ import java.util.Locale
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], qualifiers = "en", application = Application::class)
 class HostOverlayProviderTest {
-    @Test fun applicationProviderReturnsNullWhenLocalPreviewIsEnabled() {
+    @Test fun applicationProviderReturnsOnlyABackButtonWhenLocalPreviewIsEnabled() {
         val context = RuntimeEnvironment.getApplication()
         val runtime = RelayRuntime(context)
         try {
             runtime.settingsStore.awaitSnapshot()
-            runtime.settingsStore.saveDeveloperOverrides(runtime.settingsStore.developerOverrides.value.copy(localPreview = true))
+            runtime.settingsStore.saveDeveloperOverrides(runtime.settingsStore.developerOverrides.value.copy(active = true, localPreview = true))
             runtime.settingsStore.awaitSnapshot()
             val application = DiRelayApplication()
             // Avoid starting a second runtime (web servers, discovery) for the Application under test.
             DiRelayApplication::class.java.getDeclaredField("runtime").apply { isAccessible = true }
                 .set(application, runtime)
             val activity = Robolectric.buildActivity(ComponentActivity::class.java).get()
-            assertNull(application.carPlayHostOverlay(activity))
+            val overlay = application.carPlayHostOverlay(activity) as FrameLayout
+            assertFalse(overlay.isClickable)
+            assertEquals(1, overlay.childCount)
+            assertTrue(overlay.getChildAt(0) is ImageButton)
+            assertEquals(activity.getString(R.string.host_back), overlay.getChildAt(0).contentDescription)
         } finally { runtime.close() }
     }
 
@@ -53,8 +60,9 @@ class HostOverlayProviderTest {
                 val settings = store.awaitSnapshot()
                 val effectivePreview = active && preview || RelayOutput.BROWSER !in outputs && RelayOutput.CARLINK !in outputs
                 val overlay = createCarPlayHostOverlay(activity, runtime)
-                assertEquals("$outputs $developer", effectivePreview, overlay == null)
-                overlay?.disposeComposition()
+                assertEquals("$outputs $developer", effectivePreview, overlay is FrameLayout)
+                assertEquals("$outputs $developer", !effectivePreview, overlay is ComposeView)
+                (overlay as? ComposeView)?.disposeComposition()
                 assertEquals(effectivePreview, producer.sample(0, false)?.localPreview)
                 assertEquals(active && preview, settings.localPreview)
                 assertFalse(settings.playCarPlayAudio)
