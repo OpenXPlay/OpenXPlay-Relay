@@ -9,6 +9,7 @@ internal enum class ExperimentalOption {
     AWAIT_IPHONE_RECONNECT,
     RADIO_CONFLICT_PROMPT,
     STALL_WATCHDOG,
+    SCAN_ADOPT_JOIN,
     SCREEN_SESSION_ISOLATION,
     SCREEN_RECONNECT_RESET,
     SCREEN_DELIVERY_SERIALIZATION,
@@ -23,6 +24,8 @@ internal enum class ExperimentalOption {
 internal data class ExperimentalSection(val version: String, val options: List<ExperimentalOption>)
 
 internal val experimentalSections = listOf(
+    ExperimentalSection("0.2.5", listOf(
+        ExperimentalOption.SCAN_ADOPT_JOIN)),
     ExperimentalSection("0.2.3", listOf(
         ExperimentalOption.IAP_CHANNEL_WHEN_OFFERED,
         ExperimentalOption.RELEASE_BLUETOOTH_ON_REQUEST,

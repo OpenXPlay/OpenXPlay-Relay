@@ -831,6 +831,8 @@
     <string name="experimental_radio_conflict_prompt_hint">On a phone that turns Wi-Fi off while its hotspot is on, ask to switch when the current mode cannot start CarPlay. Off: the conflict is only written to the log.</string>
     <string name="experimental_stall_watchdog">Watch for stalls</string>
     <string name="experimental_stall_watchdog_hint">Checks the relay every second and logs pauses, blocked threads and connection steps that stop moving; keeps a heartbeat for the next start and restarts a silent log recorder. Uses a little more battery.</string>
+    <string name="experimental_scan_adopt_join">Join without the Wi-Fi dialog</string>
+    <string name="experimental_scan_adopt_join_hint">On MIUI, ask for one scan and let the phone join the head-unit saved network, then take that link over. Avoids the Wi-Fi picker dialog that can never be answered on this build, and is about three seconds faster. Falls back to the network request when the phone does not join.</string>
     <string name="hotspot_copy_method">Copy to settings (recommended)</string>
     <string name="hotspot_copy_hint">Copy each value below into this phone\'s hotspot settings, then turn on the hotspot. Return here to copy the other value.</string>
     <string name="hotspot_existing_method">Use my existing hotspot</string>

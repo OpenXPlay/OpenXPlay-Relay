@@ -188,6 +188,7 @@ object UserConfigCodec {
         .put("releaseBluetoothOnRequest", e.releaseBluetoothOnRequest)
         .put("awaitIphoneReconnect", e.awaitIphoneReconnect)
         .put("radioConflictPrompt", e.radioConflictPrompt)
+        .put("scanAdoptJoin", e.scanAdoptJoin)
         .put("stallWatchdog", e.stallWatchdog)
         .put("sendBluetoothAddress", e.sendBluetoothAddress)
         .put("bluetoothAddress", e.bluetoothAddress)
@@ -334,6 +335,7 @@ object UserConfigCodec {
                             "releaseBluetoothOnRequest" -> e.copy(releaseBluetoothOnRequest = objectValue.bool(field))
                             "awaitIphoneReconnect" -> e.copy(awaitIphoneReconnect = objectValue.bool(field))
                             "radioConflictPrompt" -> e.copy(radioConflictPrompt = objectValue.bool(field))
+                            "scanAdoptJoin" -> e.copy(scanAdoptJoin = objectValue.bool(field))
                             "stallWatchdog" -> e.copy(stallWatchdog = objectValue.bool(field))
                             "rememberSubscription" -> { objectValue.bool(field); e }
                             "keepScanning" -> { objectValue.bool(field); e }

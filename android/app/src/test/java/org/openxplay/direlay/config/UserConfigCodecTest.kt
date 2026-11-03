@@ -471,7 +471,7 @@ class UserConfigCodecTest {
             val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
             val json = JSONObject(text).getJSONObject("settings").getJSONObject("experimental")
             assertEquals(setOf("version", "active", "remotePlaybackProof", "cancelRecoveredRetries", "startupStatus", "startupDiagnostics", "networkObservationBackoff", "screenSessionIsolation", "screenReconnectReset", "screenDeliverySerialization",
-                "iapChannelWhenOffered", "releaseBluetoothOnRequest", "awaitIphoneReconnect", "radioConflictPrompt", "stallWatchdog",
+                "iapChannelWhenOffered", "releaseBluetoothOnRequest", "awaitIphoneReconnect", "radioConflictPrompt", "scanAdoptJoin", "stallWatchdog",
                 "sendBluetoothAddress", "bluetoothAddress"),
                 json.keys().asSequence().toSet())
             val result = UserConfigCodec.decode(text, base.copy(experimental = ExperimentalOptions.OFF))

@@ -14,7 +14,7 @@ class ExperimentalOptionsTest {
     @Test fun newLaboratoryOptionsDefaultOnAndPromotedFeaturesSurviveMasterOff() {
         val defaults = ExperimentalOptions()
         assertTrue(defaults.active); assertFalse(defaults.sendBluetoothAddress)
-        assertEquals(13, defaults.optionCount)
+        assertEquals(14, defaults.optionCount)
         assertEquals(ExperimentalOptions.OFF, defaults.copy(active = false).effective())
         val disabled = selected.copy(active = false).effective()
         assertEquals(ExperimentalOptions.OFF, disabled)
@@ -39,7 +39,7 @@ class ExperimentalOptionsTest {
         assertTrue(invalid.effective().recordAdvertisements)
         assertFalse(invalid.copy(active = false).invalidAddress)
         assertFalse(invalid.copy(sendBluetoothAddress = false).invalidAddress)
-        assertEquals(20, selected.effective().names().size)
+        assertEquals(21, selected.effective().names().size)
     }
 
     @Test fun addressRequiresSixHexUnicastOctetsAndRejectsHiddenAndZeroAddresses() {
@@ -87,7 +87,7 @@ class ExperimentalOptionsTest {
                 releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)
             val enabled = selected.effective()
             assertEquals(selected, enabled)
-            assertEquals(10 + Integer.bitCount(bits), enabled.optionCount)
+            assertEquals(11 + Integer.bitCount(bits), enabled.optionCount)
             assertEquals(names.filterIndexed { index, _ -> bits and (1 shl index) != 0 }, enabled.names().filter { it in names })
             val disabled = selected.copy(active = false).effective()
             assertEquals(ExperimentalOptions.OFF, disabled)
@@ -106,7 +106,7 @@ class ExperimentalOptionsTest {
             val selected = defaults.copy(radioConflictPrompt = bits and 1 != 0, stallWatchdog = bits and 2 != 0)
             val enabled = selected.effective()
             assertEquals(selected, enabled)
-            assertEquals(11 + Integer.bitCount(bits), enabled.optionCount)
+            assertEquals(12 + Integer.bitCount(bits), enabled.optionCount)
             assertEquals(names.filterIndexed { index, _ -> bits and (1 shl index) != 0 }, enabled.names().filter { it in names })
             val disabled = selected.copy(active = false).effective()
             assertFalse(disabled.radioConflictPrompt || disabled.stallWatchdog)

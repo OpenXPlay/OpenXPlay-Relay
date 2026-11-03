@@ -92,6 +92,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putBoolean("experimental.releaseBluetoothOnRequest", value.experimental.releaseBluetoothOnRequest)
         putBoolean("experimental.awaitIphoneReconnect", value.experimental.awaitIphoneReconnect)
         putBoolean("experimental.radioConflictPrompt", value.experimental.radioConflictPrompt)
+        putBoolean("experimental.scanAdoptJoin", value.experimental.scanAdoptJoin)
         putBoolean("experimental.stallWatchdog", value.experimental.stallWatchdog)
         putBoolean("experimental.rememberSubscription", value.experimental.rememberSubscription)
         putBoolean("experimental.keepScanning", value.experimental.keepScanning)
@@ -140,6 +141,7 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         releaseBluetoothOnRequest = bundle.getBoolean("experimental.releaseBluetoothOnRequest", base.experimental.releaseBluetoothOnRequest),
         awaitIphoneReconnect = bundle.getBoolean("experimental.awaitIphoneReconnect", base.experimental.awaitIphoneReconnect),
         radioConflictPrompt = bundle.getBoolean("experimental.radioConflictPrompt", base.experimental.radioConflictPrompt),
+        scanAdoptJoin = bundle.getBoolean("experimental.scanAdoptJoin", base.experimental.scanAdoptJoin),
         stallWatchdog = bundle.getBoolean("experimental.stallWatchdog", base.experimental.stallWatchdog),
         rememberSubscription = bundle.getBoolean("experimental.rememberSubscription", base.experimental.rememberSubscription),
         keepScanning = bundle.getBoolean("experimental.keepScanning", base.experimental.keepScanning),

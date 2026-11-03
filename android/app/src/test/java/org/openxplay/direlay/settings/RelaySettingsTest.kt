@@ -807,7 +807,7 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { migrated ->
             val value = migrated.load()
             assertTrue(value.experimental.active)
-            assertEquals(13, value.experimental.optionCount)
+            assertEquals(14, value.experimental.optionCount)
             assertTrue(value.experimental.effective().keepScanning)
             assertFalse(value.experimental.sendBluetoothAddress)
             migrated.save(value.copy(experimental = value.experimental.copy(active = false, startupDiagnostics = false)))

@@ -10,8 +10,9 @@ import java.util.Locale
 
 class ExperimentalSectionsTest {
     @Test fun sectionsAreNewestFirstAndTheirOptionsFollowReleaseOrder() {
-        assertEquals(listOf("0.2.3", "0.2.2", "0.2.1", "0.2.0"), experimentalSections.map { it.version })
+        assertEquals(listOf("0.2.5", "0.2.3", "0.2.2", "0.2.1", "0.2.0"), experimentalSections.map { it.version })
         assertEquals(listOf(
+            listOf(ExperimentalOption.SCAN_ADOPT_JOIN),
             listOf(ExperimentalOption.IAP_CHANNEL_WHEN_OFFERED, ExperimentalOption.RELEASE_BLUETOOTH_ON_REQUEST,
                 ExperimentalOption.AWAIT_IPHONE_RECONNECT, ExperimentalOption.RADIO_CONFLICT_PROMPT, ExperimentalOption.STALL_WATCHDOG),
             listOf(ExperimentalOption.SCREEN_SESSION_ISOLATION, ExperimentalOption.SCREEN_RECONNECT_RESET,

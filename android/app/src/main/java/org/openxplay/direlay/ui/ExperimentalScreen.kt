@@ -58,6 +58,11 @@ fun ExperimentalScreen(state: SettingsEditorState, back: () -> Unit, wireless: (
             footer = stringResource(R.string.experimental_stall_watchdog_hint), enabled = options.active, header = header) { enabled ->
             state.changeExperimental { it.copy(stallWatchdog = enabled) }
         }
+        ExperimentalOption.SCAN_ADOPT_JOIN -> SettingsToggleGroup(stringResource(R.string.experimental_scan_adopt_join), options.scanAdoptJoin,
+            R.drawable.symbol_wifi, IconHue.NETWORK,
+            footer = stringResource(R.string.experimental_scan_adopt_join_hint), enabled = options.active, header = header) { enabled ->
+            state.changeExperimental { it.copy(scanAdoptJoin = enabled) }
+        }
         ExperimentalOption.SCREEN_SESSION_ISOLATION -> SettingsToggleGroup(stringResource(R.string.experimental_screen_session_isolation), options.screenSessionIsolation,
             R.drawable.symbol_activity, IconHue.DEVELOPER,
             footer = stringResource(R.string.experimental_screen_session_isolation_hint), enabled = options.active, header = header) { enabled ->

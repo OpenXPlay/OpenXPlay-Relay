@@ -11,6 +11,7 @@ data class ExperimentalOptions(
     val active: Boolean = true,
     val rememberSubscription: Boolean = true,
     val keepScanning: Boolean = true,
+    val scanAdoptJoin: Boolean = true,
     val recordAdvertisements: Boolean = true,
     val sendBluetoothAddress: Boolean = false,
     val bluetoothAddress: String = "",
@@ -49,6 +50,7 @@ data class ExperimentalOptions(
             releaseBluetoothOnRequest = active && releaseBluetoothOnRequest,
             awaitIphoneReconnect = active && awaitIphoneReconnect,
             radioConflictPrompt = active && radioConflictPrompt,
+            scanAdoptJoin = active && scanAdoptJoin,
             stallWatchdog = active && stallWatchdog)
     }
 
@@ -56,10 +58,11 @@ data class ExperimentalOptions(
     val optionCount: Int get() = listOf(remotePlaybackProof, cancelRecoveredRetries, startupStatus, startupDiagnostics,
         networkObservationBackoff, screenSessionIsolation, screenReconnectReset, screenDeliverySerialization,
         iapChannelWhenOffered, releaseBluetoothOnRequest, awaitIphoneReconnect, radioConflictPrompt, stallWatchdog,
-        sendBluetoothAddress).count { it }
+        scanAdoptJoin, sendBluetoothAddress).count { it }
 
     fun names(): List<String> = listOf(rememberSubscription to "remember_subscription", keepScanning to "keep_scanning",
         recordAdvertisements to "record_advertisements", sendBluetoothAddress to "send_bluetooth_address",
+        scanAdoptJoin to "scan_adopt_join",
         isolateCarlinkNetwork to "isolate_carlink_network", waitForCarlink to "wait_for_carlink",
         recoverWirelessNetwork to "recover_wireless_network",
         remotePlaybackProof to "remote_playback_proof",
@@ -91,7 +94,8 @@ data class ExperimentalOptions(
             releaseBluetoothOnRequest = false,
             awaitIphoneReconnect = false,
             radioConflictPrompt = false,
-            stallWatchdog = false)
+            stallWatchdog = false,
+            scanAdoptJoin = false)
 
         fun normalizedBluetoothAddress(value: String): String? {
             val octets = value.split(':')
