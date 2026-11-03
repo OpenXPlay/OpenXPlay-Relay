@@ -245,7 +245,7 @@ class DiPlayInputTest {
             assertEquals(setOf(ScreenId.MAIN), input.capabilities.screens)
             assertTrue(input.capabilities.touch)
             assertTrue(input.capabilities.keyFrameRequests)
-            assertTrue(input.capabilities.keys.isEmpty())
+            assertEquals(KeyCode.entries.toSet(), input.capabilities.keys)
             assertFalse(input.capabilities.microphone)
             assertEquals(ReconfigureCost.RESTART_SESSION, input.capabilities.reconfigure)
             assertEquals(ReconfigureResult.RESTART_SESSION, input.reconfigure(configuration))
