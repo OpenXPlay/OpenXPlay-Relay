@@ -86,7 +86,7 @@
     <string name="path_connecting_iphone">正在连接 %1$s</string>
     <string name="path_iphone_joining_wifi">等待 iPhone 加入 %1$s</string>
     <string name="path_iphone_joining_car_hotspot">等待 iPhone 加入车机热点</string>
-    <string name="path_iphone_did_not_join">iPhone 没连上，请检查热点密码</string>
+    <string name="path_iphone_did_not_join">iPhone 没连上，请检查密码，并关闭 iPhone 的低数据模式</string>
     <string name="path_plug_unlock_iphone">插上并解锁 iPhone</string>
     <string name="path_allow_usb">在本机允许 USB 访问</string>
     <string name="path_trust_iphone">在 iPhone 上点“信任”</string>

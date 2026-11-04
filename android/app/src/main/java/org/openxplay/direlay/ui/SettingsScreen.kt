@@ -319,7 +319,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
 }
 @Composable fun NetworkFields(network: WirelessNetworkSettings, choice: WirelessNetworkChoice,
     errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit,
-    credentialsModifier: Modifier = Modifier, compactHints: Boolean = false, change: (WirelessNetworkSettings) -> Unit) {
+    credentialsModifier: Modifier = Modifier, compactHints: Boolean = false,
+    hotspotMethod: HotspotSetupMethod? = network.hotspotSetupMethod, hotspotMethodError: Int? = null,
+    onHotspotMethodSelected: () -> Unit = {}, change: (WirelessNetworkSettings) -> Unit) {
     val hotspot = choice == WirelessNetworkChoice.PHONE_HOTSPOT
     val context = LocalContext.current
     val opener: NetworkSettingsOpener = remember(context) { NetworkSettingsLauncher(context) }
@@ -329,7 +331,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Column(credentialsModifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            HotspotSetupFields(network, errors, opener, change)
+            HotspotSetupFields(network, errors, opener, selected = hotspotMethod, error = hotspotMethodError,
+                onMethodSelected = onHotspotMethodSelected, change = change)
         }
         // Apps cannot read the hotspot band, so the advice is unconditional (2.4 GHz stutters on real cars).
         if (compactHints) {

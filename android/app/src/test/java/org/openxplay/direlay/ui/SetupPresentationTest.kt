@@ -170,16 +170,41 @@ class SetupPresentationTest {
             network = WirelessNetworkChoice.WIFI_DIRECT)
         assertEquals(SetupCheckState.CHECKING, checks.single { it.title == R.string.setup_check_identity }.state)
     }
+    @Test fun hotspotNextRequiresAnExplicitMethodEvenWithValidSavedCredentials() {
+        for (method in HotspotSetupMethod.entries) {
+            val hotspot = WirelessNetworkSettings(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
+                manualSsid = "Car", manualPassphrase = "password", hotspotSetupMethod = method)
+            assertEquals(SetupNetworkNext.CHOOSE_METHOD, setupNetworkNext(hotspot, methodChosen = false))
+            assertEquals(SetupNetworkNext.CONFIRM_LOW_DATA, setupNetworkNext(hotspot, methodChosen = true))
+        }
+    }
+
+    @Test fun otherNetworksAlwaysRequireLowDataConfirmation() {
+        for (choice in listOf(WirelessNetworkChoice.WIFI_DIRECT, WirelessNetworkChoice.EXISTING_WIFI))
+            for (chosen in listOf(false, true))
+                assertEquals(SetupNetworkNext.CONFIRM_LOW_DATA, setupNetworkNext(WirelessNetworkSettings(choice = choice), chosen))
+    }
+
+    @Test fun unchosenHotspotMethodsAreRevealedEvenWithValidSavedCredentials() {
+        for (method in HotspotSetupMethod.entries) {
+            val hotspot = WirelessNetworkSettings(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
+                manualSsid = "Car", manualPassphrase = "password", hotspotSetupMethod = method)
+            assertTrue(revealHotspotFields(hotspot, emptyMap(), methodChosen = false))
+            for (choice in listOf(WirelessNetworkChoice.WIFI_DIRECT, WirelessNetworkChoice.EXISTING_WIFI))
+                assertFalse(revealHotspotFields(hotspot.copy(choice = choice), emptyMap(), methodChosen = false))
+        }
+    }
+
     @Test fun hotspotFieldsAreRevealedForMissingCredentialsOrValidationErrors() {
         val hotspot = WirelessNetworkSettings(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
             manualSsid = "Car", manualPassphrase = "password")
-        assertFalse(revealHotspotFields(hotspot, emptyMap()))
-        assertTrue(revealHotspotFields(hotspot.copy(hotspotSetupMethod = HotspotSetupMethod.COPY_TO_SYSTEM), emptyMap()))
-        assertTrue(revealHotspotFields(hotspot.copy(manualSsid = ""), emptyMap()))
-        assertTrue(revealHotspotFields(hotspot.copy(manualPassphrase = ""), emptyMap()))
-        for (field in listOf("ssid", "password")) assertTrue(revealHotspotFields(hotspot, mapOf(field to 1)))
+        assertFalse(revealHotspotFields(hotspot, emptyMap(), methodChosen = true))
+        assertTrue(revealHotspotFields(hotspot.copy(hotspotSetupMethod = HotspotSetupMethod.COPY_TO_SYSTEM), emptyMap(), methodChosen = true))
+        assertTrue(revealHotspotFields(hotspot.copy(manualSsid = ""), emptyMap(), methodChosen = true))
+        assertTrue(revealHotspotFields(hotspot.copy(manualPassphrase = ""), emptyMap(), methodChosen = true))
+        for (field in listOf("ssid", "password")) assertTrue(revealHotspotFields(hotspot, mapOf(field to 1), methodChosen = true))
         for (choice in listOf(WirelessNetworkChoice.WIFI_DIRECT, WirelessNetworkChoice.EXISTING_WIFI))
-            assertFalse(revealHotspotFields(hotspot.copy(choice = choice, manualSsid = ""), mapOf("ssid" to 1)))
+            assertFalse(revealHotspotFields(hotspot.copy(choice = choice, manualSsid = ""), mapOf("ssid" to 1), methodChosen = true))
     }
 
     @Test fun compactButtonsApplyOnlyBelow480Dp() {

@@ -245,6 +245,15 @@
     <string name="usb_confirm_cable">用两头都是 USB-C 的线时，iPhone 常会占用主控，这台手机就识别不到它。可以在这台手机上插一个 USB-C OTG 转接头，再用 USB-A 转 USB-C 线连接 iPhone；Lightning 接口的 iPhone 用 USB-C 转 Lightning 线。只能充电的线不能用，行车中插头松动也会让 CarPlay 断开。</string>
     <string name="usb_confirm_use">仍然使用数据线</string>
     <string name="usb_confirm_keep">继续用无线</string>
+    <string name="low_data_confirm_title">iPhone 连接后检查低数据模式</string>
+    <string name="low_data_confirm_intro">如果 iPhone 对这个 Wi-Fi 开着低数据模式，可能连不上这台手机。</string>
+    <string name="low_data_confirm_steps_named">iPhone 连接之后，在 iPhone 上打开 设置 → 无线局域网，轻点 %1$s 旁边的 ⓘ，确认“低数据模式”已关闭。</string>
+    <string name="low_data_network_car">车机热点</string>
+    <string name="low_data_network_direct">这台手机的 Wi-Fi 直连网络</string>
+    <string name="low_data_confirm_done">知道了</string>
+    <string name="low_data_confirm_back">返回</string>
+    <string name="setup_low_data_hint">iPhone 连接之后，记得在它的无线局域网设置里确认低数据模式已关闭。</string>
+    <string name="setup_hotspot_method_required">请选择热点的设置方式。</string>
     <string name="option_direct_hint">iPhone 直接连接此手机；车机屏幕通过此手机的普通 Wi-Fi 连接，例如车机热点。</string>
     <string name="option_hotspot_hint">打开此手机的个人热点，iPhone 和车机屏幕都连接到它。</string>
     <string name="option_wifi_hint">iPhone 和此手机都连接车机的热点。</string>

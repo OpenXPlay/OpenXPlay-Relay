@@ -71,6 +71,8 @@ import org.openxplay.direlay.ui.design.*
     var lastSaved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var saveFailed by remember { mutableStateOf(false) }
     var confirmUsb by remember { mutableStateOf(false) }
+    var confirmLowData by remember { mutableStateOf(false) }
+    var hotspotMethodChosen by rememberSaveable { mutableStateOf(false) }
     if (confirmUsb) UsbConnectionDialog(confirm = {
         draft = chooseConnection(draft, wireless = false)
         confirmUsb = false
@@ -114,9 +116,20 @@ import org.openxplay.direlay.ui.design.*
         when (step) {
             SetupStep.START -> finish(changed)
             SetupStep.PREPARE -> go(SetupStep.START)
-            else -> if (setupStepErrors(step, errors, draft.car).isEmpty() && !saving && !saveFailed) go(steps[index + 1])
+            else -> if (setupStepErrors(step, errors, draft.car).isEmpty() && !saving && !saveFailed) {
+                if (step == SetupStep.NETWORK) {
+                    when (setupNetworkNext(draft.wirelessNetwork, hotspotMethodChosen)) {
+                        SetupNetworkNext.CHOOSE_METHOD -> Unit
+                        SetupNetworkNext.CONFIRM_LOW_DATA -> confirmLowData = true
+                    }
+                } else go(steps[index + 1])
+            }
         }
     }
+    if (confirmLowData) LowDataModeDialog(draft.wirelessNetwork, confirm = {
+        confirmLowData = false
+        go(steps[index + 1])
+    }, dismiss = { confirmLowData = false })
     BackHandler(index > 0 && Build.VERSION.SDK_INT < 34) { previous() }
     PredictiveBackHandler(index > 0 && Build.VERSION.SDK_INT >= 34) { events ->
         val origin = stepKey
@@ -228,7 +241,8 @@ import org.openxplay.direlay.ui.design.*
                             if (needsUsbConfirmation(draft.connectionMode, mode, isWireless)) confirmUsb = true
                             else draft = chooseConnection(draft, it)
                         }
-                        SetupStep.NETWORK -> NetworkStep(draft, compact, if (attempted) errors else emptyMap(), home.currentWifi, useSharedWifi, nextRequests) { draft = it }
+                        SetupStep.NETWORK -> NetworkStep(draft, compact, if (attempted) errors else emptyMap(), home.currentWifi,
+                            useSharedWifi, nextRequests, hotspotMethodChosen, attempted, { hotspotMethodChosen = true }) { draft = it }
                         SetupStep.PREPARE -> PrepareStep(draft, isWireless, home, preparePath, prepareChecks, prepareComplete,
                             prepareRequests, bondedDevices, onStepAction, { draft = draft.copy(iphoneAddress = it) }) { action ->
                             when (action) {
@@ -435,12 +449,13 @@ import org.openxplay.direlay.ui.design.*
 }
 
 @Composable private fun NetworkStep(draft: RelaySettings, compact: Boolean, errors: Map<String, Int>, currentWifi: String?,
-    useSharedWifi: (String) -> Unit, nextRequests: Int, change: (RelaySettings) -> Unit) {
+    useSharedWifi: (String) -> Unit, nextRequests: Int, hotspotMethodChosen: Boolean, attempted: Boolean,
+    chooseHotspotMethod: () -> Unit, change: (RelaySettings) -> Unit) {
     val fields = remember { BringIntoViewRequester() }
     var revealRequests by remember { mutableIntStateOf(0) }
     val selected = draft.wirelessNetwork.choice
     LaunchedEffect(selected, revealRequests, nextRequests) {
-        if (revealHotspotFields(draft.wirelessNetwork, errors)) {
+        if (revealHotspotFields(draft.wirelessNetwork, errors, hotspotMethodChosen)) {
             withFrameNanos { }
             fields.bringIntoView()
         }
@@ -466,11 +481,15 @@ import org.openxplay.direlay.ui.design.*
             }
         }
     }
+    Hint(stringResource(R.string.setup_low_data_hint))
     if (selected != WirelessNetworkChoice.WIFI_DIRECT) SetupEntrance(4) {
         InsetGroup {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 NetworkFields(draft.wirelessNetwork, selected, errors, currentWifi, false, useSharedWifi,
-                    credentialsModifier = Modifier.bringIntoViewRequester(fields), compactHints = true) {
+                    credentialsModifier = Modifier.bringIntoViewRequester(fields), compactHints = true,
+                    hotspotMethod = draft.wirelessNetwork.hotspotSetupMethod.takeIf { hotspotMethodChosen },
+                    hotspotMethodError = R.string.setup_hotspot_method_required.takeIf { attempted && !hotspotMethodChosen },
+                    onHotspotMethodSelected = chooseHotspotMethod) {
                     change(draft.copy(wirelessNetwork = it))
                 }
             }

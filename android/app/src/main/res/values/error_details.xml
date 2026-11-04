@@ -25,6 +25,6 @@
     <string name="error_explain_ble_exchange_failed">The Bluetooth exchange with the head unit failed.</string>
     <string name="error_explain_hotspot_not_ready">The hotspot for wireless CarPlay did not become ready in time.</string>
     <string name="error_explain_hotspot_configuration">The hotspot for wireless CarPlay is off or cannot be used as set up. Turn on the hotspot or check the network settings.</string>
-    <string name="error_explain_first_tcp_timeout">The iPhone accepted CarPlay over Bluetooth but did not connect over Wi-Fi in time.</string>
+    <string name="error_explain_first_tcp_timeout">The iPhone accepted CarPlay over Bluetooth but did not connect over Wi-Fi in time. On the iPhone, open Settings → Wi-Fi, tap ⓘ next to this network and turn off Low Data Mode.</string>
     <string name="error_explain_bluetooth_unusable">Bluetooth connections from this phone do not reach the iPhone. Turn Bluetooth off and on, or restart the phone.</string>
 </resources>

@@ -25,6 +25,6 @@
     <string name="error_explain_ble_exchange_failed">与车机的蓝牙交换失败。</string>
     <string name="error_explain_hotspot_not_ready">无线 CarPlay 使用的热点没有及时就绪。</string>
     <string name="error_explain_hotspot_configuration">无线 CarPlay 使用的热点没有开启，或当前设置无法使用。请打开热点，或检查网络设置。</string>
-    <string name="error_explain_first_tcp_timeout">iPhone 已通过蓝牙接受 CarPlay，但没有及时通过 Wi-Fi 连上。</string>
+    <string name="error_explain_first_tcp_timeout">iPhone 已通过蓝牙接受 CarPlay，但没有及时通过 Wi-Fi 连上。请在 iPhone 的 设置 → 无线局域网 中轻点这个网络旁的 ⓘ，关闭“低数据模式”。</string>
     <string name="error_explain_bluetooth_unusable">这台手机发出的蓝牙连接到不了 iPhone。请关闭再打开蓝牙，或重启手机。</string>
 </resources>

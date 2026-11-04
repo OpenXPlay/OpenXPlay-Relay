@@ -32,18 +32,22 @@ internal fun copyHotspotValue(context: Context, label: String, value: String, se
 }
 
 @Composable internal fun HotspotSetupFields(network: WirelessNetworkSettings, errors: Map<String, Int>,
-    opener: NetworkSettingsOpener, change: (WirelessNetworkSettings) -> Unit) {
+    opener: NetworkSettingsOpener, selected: HotspotSetupMethod? = network.hotspotSetupMethod, error: Int? = null,
+    onMethodSelected: () -> Unit = {}, change: (WirelessNetworkSettings) -> Unit) {
     Column(Modifier.selectableGroup()) {
         RadioOptionRow(RadioOption(R.string.hotspot_copy_method, R.string.hotspot_copy_hint),
-            network.hotspotSetupMethod == HotspotSetupMethod.COPY_TO_SYSTEM) {
+            selected == HotspotSetupMethod.COPY_TO_SYSTEM) {
+            onMethodSelected()
             change(network.copy(hotspotSetupMethod = HotspotSetupMethod.COPY_TO_SYSTEM))
         }
         RadioOptionRow(RadioOption(R.string.hotspot_existing_method, R.string.hotspot_existing_hint),
-            network.hotspotSetupMethod == HotspotSetupMethod.EXISTING) {
+            selected == HotspotSetupMethod.EXISTING) {
+            onMethodSelected()
             change(network.copy(hotspotSetupMethod = HotspotSetupMethod.EXISTING))
         }
+        error?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error, style = RelayTokens.footnote) }
     }
-    if (network.hotspotSetupMethod == HotspotSetupMethod.EXISTING) {
+    if (selected == HotspotSetupMethod.EXISTING) {
         SettingField(stringResource(R.string.settings_hotspot_name), network.manualSsid, errors["ssid"]) {
             change(network.copy(manualSsid = it))
         }
@@ -52,7 +56,7 @@ internal fun copyHotspotValue(context: Context, label: String, value: String, se
                 security = if (it.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2))
         }
         TextButton(onClick = { opener.open(true) }) { Text(stringResource(R.string.settings_open_hotspot)) }
-    } else {
+    } else if (selected == HotspotSetupMethod.COPY_TO_SYSTEM) {
         CopyHotspotField(stringResource(R.string.settings_hotspot_name), network.manualSsid,
             network.manualSsid, false, errors["ssid"], R.string.hotspot_copy_name, R.string.hotspot_name_copied, opener)
         CopyHotspotField(stringResource(R.string.settings_hotspot_password),

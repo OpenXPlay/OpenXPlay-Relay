@@ -49,6 +49,11 @@ fun setupConnectionTag(settings: RelaySettings, wireless: Boolean): SetupChoiceT
 fun setupNetworkTag(settings: RelaySettings, choice: WirelessNetworkChoice): SetupChoiceTag? =
     SetupChoiceTag.RECOMMENDED.takeIf { choice == recommendedNetwork(settings) }
 
+enum class SetupNetworkNext { CHOOSE_METHOD, CONFIRM_LOW_DATA }
+fun setupNetworkNext(network: WirelessNetworkSettings, methodChosen: Boolean): SetupNetworkNext =
+    if (network.choice == WirelessNetworkChoice.PHONE_HOTSPOT && !methodChosen) SetupNetworkNext.CHOOSE_METHOD
+    else SetupNetworkNext.CONFIRM_LOW_DATA
+
 /** The guide edits an explicit transport; LAST_USED resolves to the transport it would use now. */
 fun setupDraft(settings: RelaySettings, wireless: Boolean) =
     if (settings.connectionMode != ConnectionMode.LAST_USED) settings
@@ -142,7 +147,7 @@ fun setupPrepareComplete(path: ConnectionPath?, checks: List<SetupCheck>): Boole
     steps.isNotEmpty() && setupPrepareSteps(steps).open.isEmpty()
 } else checks.isNotEmpty() && setupPrepareChecks(checks).open.isEmpty()
 
-fun revealHotspotFields(network: WirelessNetworkSettings, errors: Map<String, Int>): Boolean =
+fun revealHotspotFields(network: WirelessNetworkSettings, errors: Map<String, Int>, methodChosen: Boolean): Boolean =
     network.choice == WirelessNetworkChoice.PHONE_HOTSPOT &&
-        (network.hotspotSetupMethod == HotspotSetupMethod.COPY_TO_SYSTEM || network.manualSsid.isBlank() ||
+        (!methodChosen || network.hotspotSetupMethod == HotspotSetupMethod.COPY_TO_SYSTEM || network.manualSsid.isBlank() ||
             network.manualPassphrase.isBlank() || errors.keys.any { it in networkFields })
