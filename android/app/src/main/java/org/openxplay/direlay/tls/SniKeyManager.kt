@@ -18,13 +18,15 @@ import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.X509KeyManager
 
 /**
- * Serves the public name's certificate when the client asks for that name (SNI) and it is still valid;
- * every other connection, IP-address access included, gets [fallback] exactly as before.
+ * Serves the public name's valid certificate for matching SNI. Providers that select certificates
+ * before reading ClientHello must use it as the default instead; the client still verifies the name.
  */
 class SniKeyManager(name: String, private val key: PrivateKey, chain: List<X509Certificate>,
-    private val fallback: X509KeyManager, private val now: () -> Long = System::currentTimeMillis) : X509ExtendedKeyManager() {
+    private val fallback: X509KeyManager, private val now: () -> Long = System::currentTimeMillis,
+    private val useSni: Boolean = true) : X509ExtendedKeyManager() {
     private val name = name.lowercase(Locale.ROOT)
     private val chain = chain.toTypedArray()
+    private val notBefore = chain.first().notBefore.time
     private val notAfter = chain.first().notAfter.time
 
     override fun chooseServerAlias(keyType: String?, issuers: Array<out Principal>?, socket: Socket?): String? =
@@ -38,9 +40,10 @@ class SniKeyManager(name: String, private val key: PrivateKey, chain: List<X509C
                 ?: fallback.chooseServerAlias(keyType, issuers, null)
         }
 
-    /** With the name requested, only the ACME certificate may be chosen: a second key type must not replace it. */
+    /** Once ACME is selected, a second key type must not replace it with the fallback certificate. */
     private fun choose(keyType: String?, session: SSLSession?, default: () -> String?): String? {
-        if (requestedName(session) != name || now() >= notAfter) return default()
+        val time = now()
+        if (time < notBefore || time >= notAfter || useSni && requestedName(session) != name) return default()
         return if (key.algorithm == "EC" && keyType in EC_KEY_TYPES) ALIAS else null
     }
 

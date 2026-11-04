@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-10-14
 package org.openxplay.direlay.tls
 
+import android.os.Build
 import org.openxplay.direlay.storage.MaterialStatus
 import org.openxplay.direlay.storage.PrivateStore
 import java.io.File
@@ -27,6 +28,7 @@ class AcmeMaterial(val name: String, val chain: List<X509Certificate>, val key: 
 }
 
 class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::currentTimeMillis,
+    private val sdkInt: Int = Build.VERSION.SDK_INT,
     private val onChanged: () -> Unit = {}) {
     private val store = PrivateStore(noBackupFilesDir, "tls")
     private val generated = PrivateStore(noBackupFilesDir, "tls-generated")
@@ -149,7 +151,8 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
 
     /**
      * Today's certificate (imported, else generated). While the public name is served, the key manager
-     * hands its Let's Encrypt chain to clients that ask for that name (SNI) and today's to everyone else.
+     * hands its Let's Encrypt chain to matching SNI and today's to everyone else on Android 11+.
+     * Android 10 and earlier select certificates before ClientHello, so ACME becomes the default.
      */
     @Synchronized fun sslContext(): SSLContext? {
         val selected = if (hasImported()) store else generated
@@ -158,7 +161,8 @@ class TlsStore(noBackupFilesDir: File, private val now: () -> Long = System::cur
         catch (_: Exception) { throw IllegalStateException("Stored TLS files failed validation; import again or remove them") }
         val served = servedAcme()
         val chosen = if (served == null) managers else managers.map { manager ->
-            if (manager is X509KeyManager) SniKeyManager(served.name, served.key, served.chain, manager, now) else manager
+            if (manager is X509KeyManager) SniKeyManager(served.name, served.key, served.chain, manager, now,
+                useSni = sdkInt >= Build.VERSION_CODES.R) else manager
         }.toTypedArray()
         return SSLContext.getInstance("TLS").apply { init(chosen, null, SecureRandom()) }
     }
