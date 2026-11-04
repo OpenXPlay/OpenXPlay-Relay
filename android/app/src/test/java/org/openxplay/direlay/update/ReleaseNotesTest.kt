@@ -17,7 +17,7 @@ class ReleaseNotesTest {
         assertTrue(english.blocks.contains(ReleaseNoteBlock.Bullet("A beta option")))
         assertTrue(chinese.blocks.contains(ReleaseNoteBlock.Heading("新增")))
         assertTrue(chinese.blocks.contains(ReleaseNoteBlock.Bullet("测试版选项")))
-        assertTrue(english.blocks.any { it.text == "[Guide](https://openxplay.org/en/)" })
+        assertTrue(english.blocks.any { it.text == "[Guide](https://openxplay.org/)" })
         assertFalse(english.blocks.any { "新增" in it.text || "测试版" in it.text })
         assertFalse(chinese.blocks.any { "Pairing improvements" in it.text || "New" == it.text })
         for (notes in listOf(english, chinese)) assertFalse(notes.blocks.any { "private-build-provenance" in it.text || "SHA256SUMS" in it.text })

@@ -53,7 +53,7 @@ export function publicNameGuidance(values: Values, t: Translate, language: strin
   const provider = values.publicNameProvider;
   if (provider !== 'duckdns' && provider !== 'dynv6') return esc(t('publicName.perProvider'));
   const url = provider === 'duckdns' ? 'https://www.duckdns.org/' : 'https://dynv6.com/';
-  const guide = language === 'zh-CN' ? 'https://openxplay.org/trusted-https' : 'https://openxplay.org/en/trusted-https';
+  const guide = language === 'zh-CN' ? 'https://openxplay.org/zh/trusted-https' : 'https://openxplay.org/trusted-https';
   return `${esc(t('publicName.perProvider'))}<br>${esc(t(`publicName.hint.${provider}`))}<br><a href="${url}" target="_blank" rel="noopener">${esc(t(`publicName.open.${provider}`))}</a> · <a href="${guide}" target="_blank" rel="noopener">${esc(t('publicName.guide'))}</a>`;
 }
 export async function importPublicNameFile(file: Pick<File, 'size' | 'text'>, send = api.publicNameImport): Promise<PublicNameImport> {

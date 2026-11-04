@@ -265,7 +265,7 @@ jobs:
           - \`openxplay-relay.apk\`: the same app under a fixed name, for the latest-download link.
           - \`SHA256SUMS\`: SHA-256 checksums of these files.
 
-          Setup: https://openxplay.org/en/quick-start · 设置：https://openxplay.org/quick-start. No build contains an Apple accessory (MFi) identity; supply your own."
+          Setup: https://openxplay.org/quick-start · 设置：https://openxplay.org/zh/quick-start. No build contains an Apple accessory (MFi) identity; supply your own."
           # Only Android releases become Latest, so the latest-download link always finds the APK.
           flags=()
           [ "$PRERELEASE" != true ] || flags+=(--prerelease)

@@ -18,14 +18,14 @@ internal object ReleaseFixtures {
         - A second option
 
         **Notes**
-        - [Guide](https://openxplay.org/en/)
+        - [Guide](https://openxplay.org/)
 
         **新增**
         - `测试版`选项
         - 第二项
 
         **说明**
-        - [指南](https://openxplay.org/)
+        - [指南](https://openxplay.org/zh/)
         ---
         Commit: private-build-provenance
         Assets: SHA256SUMS

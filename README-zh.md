@@ -16,7 +16,7 @@
 - **Android 应用：**[openxplay-relay.apk](https://github.com/OpenXPlay/OpenXPlay-Relay/releases/latest/download/openxplay-relay.apk)（最新版本）
 - **Linux 中继**（aarch64 设备）及所有版本：[Releases](https://github.com/OpenXPlay/OpenXPlay-Relay/releases)
 
-设置方法见 [openxplay.org/quick-start](https://openxplay.org/quick-start)。
+设置方法见 [openxplay.org/zh/quick-start](https://openxplay.org/zh/quick-start)。
 
 ## 目录结构
 

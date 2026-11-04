@@ -3,7 +3,7 @@
      Created by riko chen on 2026-10-14 -->
 <resources>
     <string name="direlay_app_name">OpenXPlay Relay</string>
-    <string name="direlay_project_url">https://openxplay.org</string>
+    <string name="direlay_project_url">https://openxplay.org/zh/</string>
     <string name="direlay_identity">CarPlay 身份</string>
     <string name="direlay_identity_hint">选择 identity.pk8 和 certificate.p7b，可同时选择或先后选择，顺序不限；也可选择包含它们的 ZIP。</string>
     <string name="direlay_import">导入</string>
@@ -415,7 +415,7 @@
     <string name="setup_browser_hint">在车机自带的浏览器里打开一个网址。浏览器需要支持 WebCodecs，近几年的车机大多支持。</string>
     <string name="setup_carlink_hint">使用车机上已经装好的 Carlink 应用。</string>
     <string name="setup_carlink_android10">这台手机需要 Android 10 或更高版本。</string>
-    <string name="setup_browser_check_tip">不确定车机浏览器能不能用？在车机浏览器里打开 openxplay.org/check 检测一下。</string>
+    <string name="setup_browser_check_tip">不确定车机浏览器能不能用？在车机浏览器里打开 openxplay.org/zh/check 检测一下。</string>
     <string name="setup_connection_title">iPhone 怎么连接这台手机？</string>
     <string name="setup_connection_hint">这台手机是 iPhone 和车机之间的中继。</string>
     <string name="setup_wireless_hint">通过蓝牙和 Wi-Fi 连接，上车后 iPhone 会自动连上。</string>
@@ -597,7 +597,7 @@
     <string name="public_name_open_duckdns">打开 DuckDNS 官网</string>
     <string name="public_name_open_dynv6">打开 dynv6 官网</string>
     <string name="public_name_guide">查看 OpenXPlay 官网教程</string>
-    <string name="public_name_guide_url">https://openxplay.org/trusted-https</string>
+    <string name="public_name_guide_url">https://openxplay.org/zh/trusted-https</string>
     <string name="public_name_name">域名</string>
     <string name="public_name_name_hint_duckdns">例如 myrelay.duckdns.org</string>
     <string name="public_name_name_hint_dynv6">例如 myrelay.dynv6.net</string>
