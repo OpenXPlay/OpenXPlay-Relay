@@ -276,6 +276,15 @@
     <string name="usb_confirm_cable">With a USB-C to USB-C cable, the iPhone often takes control and this phone can’t see it. Use a USB-C OTG adapter on this phone with a USB-A to USB-C cable, or a USB-C to Lightning cable for a Lightning iPhone. Charge-only cables don’t work, and a loose plug drops CarPlay while you drive.</string>
     <string name="usb_confirm_use">Use USB anyway</string>
     <string name="usb_confirm_keep">Keep wireless</string>
+    <string name="low_data_confirm_title">Check Low Data Mode after the iPhone connects</string>
+    <string name="low_data_confirm_intro">With Low Data Mode on for this Wi-Fi, the iPhone may not connect to this phone.</string>
+    <string name="low_data_confirm_steps_named">After the iPhone connects, open Settings → Wi-Fi on the iPhone, tap ⓘ next to %1$s and check that Low Data Mode is off.</string>
+    <string name="low_data_network_car">the car\'s hotspot</string>
+    <string name="low_data_network_direct">this phone\'s Wi-Fi Direct network</string>
+    <string name="low_data_confirm_done">Got it</string>
+    <string name="low_data_confirm_back">Back</string>
+    <string name="setup_low_data_hint">After the iPhone connects, check in its Wi-Fi settings that Low Data Mode is off.</string>
+    <string name="setup_hotspot_method_required">Choose how to set up the hotspot.</string>
     <string name="option_direct_hint">The iPhone connects straight to this phone. The car screen uses this phone\'s normal Wi-Fi, for example the car\'s hotspot.</string>
     <string name="option_hotspot_hint">Turn on this phone\'s hotspot. The iPhone and the car screen both join it.</string>
     <string name="option_wifi_hint">The iPhone and this phone both join the car\'s hotspot.</string>
