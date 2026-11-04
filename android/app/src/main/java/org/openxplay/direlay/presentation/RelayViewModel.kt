@@ -74,7 +74,8 @@ class RelayViewModel(context: Context, private val runtime: RelayRuntime) : View
                 DetectedCarScreen(screen, rows.filter(screen::matches), runtime.status.receivers.latestInfo(screen)?.toString())
             }
             CarScreenView(runtime.carModels, detected, runtime.savedCanvas, version,
-                runtime.ipv4 - listOfNotNull(runtime.teslaAddress?.address).toSet(), runtime.publicName.view.value)
+                runtime.ipv4 - listOfNotNull(runtime.teslaAddress?.address).toSet(), runtime.publicName.view.value,
+                referenceCanvas = runtime.referenceCanvas, viewAreaReference = runtime.viewAreaReference(draft.value ?: store.awaitSnapshot()))
         },
         wirelessPicture = sampled(WirelessPictureView()) {
             val settings = (draft.value ?: store.awaitSnapshot()).copy(wirelessPicture = WirelessPictureMode.AUTO)

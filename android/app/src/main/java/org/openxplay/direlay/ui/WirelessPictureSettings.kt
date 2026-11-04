@@ -15,7 +15,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.relay.*
 import org.openxplay.direlay.settings.*
 
-@Composable fun WirelessPictureSettings(editor: SettingsEditorState, view: org.openxplay.direlay.presentation.WirelessPictureView, openCarScreen: () -> Unit) {
+@Composable fun WirelessPictureSettings(editor: SettingsEditorState, view: org.openxplay.direlay.presentation.WirelessPictureView, openPictureSize: () -> Unit) {
     val draft by editor.draft
     val automatic = view.automatic
     val negotiated = view.negotiated
@@ -52,7 +52,7 @@ import org.openxplay.direlay.settings.*
             }
             if (draft.displayMode == org.openxplay.direlay.settings.DisplayMode.FIXED) {
                 Hint(stringResource(R.string.wireless_picture_fixed))
-                InsetRow(R.drawable.symbol_car, IconHue.CAR, stringResource(R.string.car_and_screen), onClick = openCarScreen)
+                InsetRow(R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_resolution), onClick = openPictureSize)
             }
         }
     }

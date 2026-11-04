@@ -746,7 +746,7 @@
     <string name="wireless_picture_model">Now %1$d × %2$d from the car model</string>
     <string name="wireless_picture_default">Now %1$d × %2$d (default)</string>
     <string name="wireless_picture_priority">A connected interactive output, such as the car browser, takes priority when choosing the CarPlay canvas. A fixed size in Car screen settings overrides every output’s size.</string>
-    <string name="wireless_picture_fixed">CarPlay uses the fixed size from Car screen settings.</string>
+    <string name="wireless_picture_fixed">CarPlay uses the manual size under Resolution.</string>
     <string name="miracast_fill_screen">Fill the screen</string>
     <string name="miracast_fill_screen_hint">Turn on if the car stretches the picture to its screen; the relay then stretches CarPlay to the whole cast picture so the car shows it in the right proportions.</string>
     <string name="experimental_title">Experimental</string>
@@ -805,7 +805,7 @@
     <string name="carlink_picture_trial">This connection uses %1$s. The next connection goes back to the default, %2$s.</string>
     <string name="carlink_picture_limit">Up to 5 sizes. Delete one to save another.</string>
     <string name="carlink_picture_output_off">Used when the car shows CarPlay through Carlink.</string>
-    <string name="carlink_picture_fixed">The developer display size is in use.</string>
+    <string name="carlink_picture_fixed">The manual size under Resolution is in use.</string>
     <string name="carlink_picture_invalid">Use even pixels: 640–1920 × 360–1080, reversed for portrait.</string>
     <string name="carlink_picture_duplicate">This size is already in the list. Save selects it.</string>
     <string name="dev_screen_carlink_picture">%1$s (Carlink picture size)</string>
@@ -861,4 +861,15 @@
     <string name="path_carlife_wait">Open CarLife on the car; use the same network or connect USB.</string>
     <string name="path_carlife_streaming">Sending the CarPlay picture</string>
     <string name="path_carlife_picture">CarLife is receiving video; confirm the picture on the car.</string>
+    <string name="picture_manual">Manual</string>
+    <string name="picture_size_developer">Developer options set the size.</string>
+    <string name="picture_size_reference">Automatic: %1$d × %2$d · %3$d dpi</string>
+    <string name="picture_use_reference">Use</string>
+    <string name="picture_screen_width_custom">Width (mm, steps of 5)</string>
+    <string name="picture_screen_width_reference">Automatic: %1$d mm</string>
+    <string name="view_areas_manual_required">Enter at least one size.</string>
+    <string name="view_areas_reference">Most used: fullscreen %1$s · windowed %2$s</string>
+    <string name="view_areas_reference_none">none</string>
+    <string name="view_areas_reference_empty">No window sizes recorded yet.</string>
+    <string name="view_areas_manual_size">View areas work only with an automatic CarPlay size.</string>
 </resources>

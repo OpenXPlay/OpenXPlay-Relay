@@ -580,4 +580,50 @@ class UserConfigCodecTest {
             assertEquals(options.copy(radioConflictPrompt = true, stallWatchdog = true), old.settings.experimental)
         }
     }
+
+    @Test fun manualPictureFieldsRoundTripAtVersionOneIncludingNullsAndParkedCanvas() {
+        for (mode in ViewAreasMode.entries) for (full in listOf(null, PictureSize(3840, 2160)))
+            for (window in listOf(null, PictureSize(320, 240))) for (mm in listOf(null, 100, 235, 400)) {
+                val chosen = base.copy(displayMode = DisplayMode.AUTOMATIC, display = DisplayProfile(1600, 900, 200),
+                    carplayScreenWidthCustomMm = mm, viewAreas = full != null || window != null,
+                    viewAreasMode = mode, viewAreasFullscreen = full, viewAreasWindowed = window)
+                val text = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
+                val json = JSONObject(text)
+                assertEquals(1, json.getInt("version"))
+                assertEquals(if (mode == ViewAreasMode.AUTOMATIC) "automatic" else "manual", json.getJSONObject("settings").getString("viewAreasMode"))
+                val result = UserConfigCodec.decode(text, base.copy(carplayScreenWidthCustomMm = 250,
+                    viewAreasFullscreen = PictureSize(800, 600), viewAreasWindowed = PictureSize(1000, 600)))
+                assertTrue(result.errors.toString(), result.errors.isEmpty())
+                assertTrue(result.ignoredKeys.toString(), result.ignoredKeys.isEmpty())
+                assertEquals(chosen, result.settings)
+                assertEquals(0, UserConfigCodec.decode(text, chosen).changedCount)
+                assertEquals(chosen, UserConfigCodec.decode(wrapped(JSONObject()), chosen).settings)
+            }
+    }
+
+    @Test fun invalidManualPictureImportsRejectAtomicallyWithSpecificKeys() {
+        val invalidSizes = listOf<Any>("800x600", JSONObject(),
+            JSONObject().put("width", "800").put("height", 600), JSONObject().put("width", 800.5).put("height", 600)) +
+            listOf(318 to 240, 320 to 238, 3842 to 2160, 3840 to 2162, 801 to 480, 800 to 481)
+                .map { (w, h) -> JSONObject().put("width", w).put("height", h) }
+        for (key in listOf("viewAreasFullscreen", "viewAreasWindowed")) for (bad in invalidSizes) {
+            val result = decode(JSONObject().put(key, bad).put("autoStartOnBoot", true))
+            assertEquals(mapOf(key to "invalid"), result.errors); assertEquals(base, result.settings)
+        }
+        for (bad in listOf<Any>(99, 213, 401, 213.5, "213", true)) {
+            val result = decode(JSONObject().put("carplayScreenWidthCustomMm", bad).put("autoStartOnBoot", true))
+            assertEquals(mapOf("carplayScreenWidthCustomMm" to "invalid"), result.errors)
+            assertEquals(base, result.settings)
+        }
+        for (bad in listOf<Any>("MANUAL", "future", 1, JSONObject.NULL, "manual")) {
+            val result = decode(JSONObject().put("viewAreasMode", bad).put("autoStartOnBoot", true))
+            assertEquals(mapOf("viewAreasMode" to "invalid"), result.errors); assertEquals(base, result.settings)
+        }
+        val disabled = decode(JSONObject().put("viewAreas", false).put("viewAreasMode", "manual"))
+        assertTrue(disabled.errors.toString(), disabled.errors.isEmpty())
+        val future = decode(JSONObject().put("viewAreasFullscreen", JSONObject().put("width", 800).put("height", 600).put("future", true)))
+        assertTrue(future.errors.toString(), future.errors.isEmpty())
+        assertEquals(listOf("viewAreasFullscreen.future"), future.ignoredKeys)
+    }
+
 }

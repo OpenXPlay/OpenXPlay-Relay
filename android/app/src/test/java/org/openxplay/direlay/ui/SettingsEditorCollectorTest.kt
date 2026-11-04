@@ -92,7 +92,7 @@ class SettingsEditorCollectorTest {
             assertEquals(listOf(initial.copy(autoStartOnBoot = true)), published)
             assertEquals("80", state.numberText["port"])
             assertEquals("", state.numberText["width"])
-            assertEquals(setOf("developer/connection", "developer/video"), state.errorPages { true })
+            assertEquals(setOf("developer/connection", "developer/video", "settings/picture"), state.errorPages { true })
             state.synchronize(published.single(), true)
             flushSnapshots()
             assertEquals(1, published.size)

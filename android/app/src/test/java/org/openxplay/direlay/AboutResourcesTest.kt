@@ -95,7 +95,11 @@ class AboutResourcesTest {
             R.string.option_hotspot_hint, R.string.option_wifi_hint, R.string.dev_sample_vehicle,
             R.string.dev_hotspot_security, R.string.dev_security_mixed, R.string.dev_usb_i2c,
             R.string.dev_linux_i2c, R.string.dev_disabled, R.string.dev_unavailable,
-            R.string.direlay_display_profile, R.string.direlay_microphone_source)
+            R.string.direlay_display_profile, R.string.direlay_microphone_source,
+            R.string.picture_manual, R.string.picture_size_developer, R.string.picture_size_reference,
+            R.string.picture_use_reference, R.string.picture_screen_width_custom, R.string.picture_screen_width_reference,
+            R.string.view_areas_manual_required, R.string.view_areas_reference, R.string.view_areas_reference_none,
+            R.string.view_areas_reference_empty, R.string.view_areas_manual_size)
         val chinese = android.content.res.Configuration(context.resources.configuration).apply {
             setLocale(Locale.SIMPLIFIED_CHINESE)
         }

@@ -224,6 +224,8 @@ class RelayRuntime(private val context: Context,
     }
     private var clearedReport: HeadUnitDisplay? = null
     @Volatile private var screenPrepared = false
+    @Volatile private var preparedDisplayMode = DisplayMode.AUTOMATIC
+    @Volatile private var preparedViewAreas: Triple<ViewAreasMode, PictureSize?, PictureSize?>? = null
     @Volatile var carPlayScreen: CarPlayScreen? = null
         private set
     @Volatile var carPlayScreenWidthMm: Int? = null
@@ -263,6 +265,15 @@ class RelayRuntime(private val context: Context,
         val settings = settingsStore.snapshot.value ?: return@synchronized CarPlayScreen(CarDisplayFit.default, "default")
         checkNotNull(startupCarPlayScreen(settings.copy(displayMode = DisplayMode.AUTOMATIC), null,
             savedHeadUnitForCar(savedHeadUnit, settings.car), carModels.year(settings.car)))
+    }
+
+    val referenceCanvas: DisplayProfile get() =
+        referenceCarPlayCanvas(autoStartSessions.tracker.running, preparedDisplayMode, carPlayScreen?.profile, savedCanvas.profile)
+
+    @Synchronized fun viewAreaReference(settings: RelaySettings): ViewAreaReference {
+        loadRememberedDisplay()
+        val screen = planningDisplay(settings)?.screen ?: return ViewAreaReference()
+        return ViewAreaPlanner.mostUsed(ViewAreaPlanner.mergeRecords(windowRecords.snapshot(), carModels.year(settings.car)?.screens.orEmpty(), screen))
     }
 
     fun wirelessPicture(settings: RelaySettings): WirelessPictureResolution = synchronized(this) {
@@ -436,7 +447,9 @@ class RelayRuntime(private val context: Context,
         loadRememberedDisplay()
         val display = if (screenPrepared) preparedPlanningDisplay else planningDisplay(settings)
         viewAreaPreference = display?.preferred
-        val areas = planHeadUnitAreas(width, height, display, windowRecords.snapshot(), carModels.year(settings.car))
+        val (mode, full, window) = preparedViewAreas.takeIf { screenPrepared }
+            ?: Triple(settings.viewAreasMode, settings.viewAreasFullscreen, settings.viewAreasWindowed)
+        val areas = planHeadUnitAreas(width, height, display, windowRecords.snapshot(), carModels.year(settings.car), mode, full, window)
         return areas.also { declaredViewAreas = it; publishArea(0) }
     }
     private val displayRefit = DisplayRefit()
@@ -453,13 +466,15 @@ class RelayRuntime(private val context: Context,
         displayPolicy.refreshDisplay()
         rememberCarDisplay()
         preparedPlanningDisplay = planningDisplay(settings)
+        preparedDisplayMode = settings.displayMode
+        preparedViewAreas = Triple(settings.viewAreasMode, settings.viewAreasFullscreen, settings.viewAreasWindowed)
         val trial = carlinkPictureTrial.value
         val picture = selectedCarlinkPicture(settings, starting = true, trial = trial)
         pictureInUse.value = CarlinkPictureTrial(settings.effectiveCarlinkPicture(trial))
         preparedCarlinkPicture = picture?.profile?.let { PictureSize(it.width, it.height) }
         pictureCanvas.value = preparedCarlinkPicture
         return (picture ?: automaticCarPlayScreen(settings)).also {
-            settingsStore.prepareDisplay(it?.profile, settings.carplayScreenWidth)
+            settingsStore.prepareDisplay(it?.profile, settings.carplayScreenWidth, settings.carplayScreenWidthCustomMm)
             carPlayScreenWidthMm = AirPlayPersistence.loadWidthPhysicalMm(context)
             appliedDisplay = it?.let { DisplayTarget(it.profile, settings.carplayResolution, settings.carplayScreenWidth, preparedPlanningDisplay?.screen) }
             carPlayScreen = it

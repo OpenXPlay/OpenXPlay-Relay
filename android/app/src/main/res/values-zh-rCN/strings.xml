@@ -737,7 +737,7 @@
     <string name="wireless_picture_model">当前 %1$d × %2$d，来自车型数据</string>
     <string name="wireless_picture_default">当前 %1$d × %2$d，使用默认比例</string>
     <string name="wireless_picture_priority">车载浏览器等可交互输出连接后，会优先决定 CarPlay 的画面尺寸。车机屏幕设置中的固定尺寸优先于所有输出提供的尺寸。</string>
-    <string name="wireless_picture_fixed">CarPlay 正在使用车机屏幕设置中的固定尺寸。</string>
+    <string name="wireless_picture_fixed">CarPlay 使用“分辨率”里的手动尺寸。</string>
     <string name="miracast_fill_screen">铺满屏幕</string>
     <string name="miracast_fill_screen_hint">如果车机会把投屏画面拉伸到全屏，请打开此项。中继会将 CarPlay 拉伸铺满投屏画面，让车机显示出正确的比例。</string>
     <string name="experimental_title">实验功能</string>
@@ -796,7 +796,7 @@
     <string name="carlink_picture_trial">本次连接使用 %1$s，下次连接回到默认的 %2$s。</string>
     <string name="carlink_picture_limit">最多保存 5 个，删除一个后再保存。</string>
     <string name="carlink_picture_output_off">车机通过 Carlink 显示 CarPlay 时使用。</string>
-    <string name="carlink_picture_fixed">正在使用开发者设置的显示尺寸。</string>
+    <string name="carlink_picture_fixed">正在使用“分辨率”里的手动尺寸。</string>
     <string name="carlink_picture_invalid">请输入偶数像素：横屏 640–1920 × 360–1080，竖屏宽高互换。</string>
     <string name="carlink_picture_duplicate">列表中已有此尺寸，保存即选中它。</string>
     <string name="dev_screen_carlink_picture">%1$s（Carlink 画面尺寸）</string>
@@ -852,4 +852,15 @@
     <string name="path_carlife_wait">打开车机 CarLife，接入同一网络或连接 USB。</string>
     <string name="path_carlife_streaming">正在发送 CarPlay 画面</string>
     <string name="path_carlife_picture">正在向 CarLife 发送视频，请在车机上确认画面。</string>
+    <string name="picture_manual">手动</string>
+    <string name="picture_size_developer">尺寸由开发者选项决定。</string>
+    <string name="picture_size_reference">自动：%1$d × %2$d · %3$d dpi</string>
+    <string name="picture_use_reference">填入</string>
+    <string name="picture_screen_width_custom">宽度（毫米，5 的倍数）</string>
+    <string name="picture_screen_width_reference">自动：%1$d 毫米</string>
+    <string name="view_areas_manual_required">至少填写一个尺寸。</string>
+    <string name="view_areas_reference">最常用：全屏 %1$s · 窗口 %2$s</string>
+    <string name="view_areas_reference_none">无</string>
+    <string name="view_areas_reference_empty">还没有记录到窗口尺寸。</string>
+    <string name="view_areas_manual_size">视图区域只在 CarPlay 尺寸为自动时生效。</string>
 </resources>

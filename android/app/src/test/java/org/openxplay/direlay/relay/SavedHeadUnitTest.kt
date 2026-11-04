@@ -184,4 +184,25 @@ class SavedHeadUnitTest {
         assertNull(savedHeadUnitForCar(saved, car))
         assertEquals(saved, savedHeadUnitForCar(saved, CarSelection()))
     }
+
+    @Test fun manualPlanningIgnoresLocalBuiltInAndCurrentWindowAndUsesOnlyTheSuppliedPairs() {
+        val full = PictureSize(1000, 1000)
+        val window = PictureSize(1200, 800)
+        val records = listOf(WindowSizeRecord(2401, 1201, 280, 400, 1000, true, 999, 99))
+        for ((fullscreen, windowed) in listOf(full to null, null to window, full to window)) {
+            val synthetic = listOfNotNull(fullscreen?.let { WindowSizeRecord(1920, 960, 160, it.width, it.height, true, 1, 0) },
+                windowed?.let { WindowSizeRecord(1920, 960, 160, it.width, it.height, false, 1, 0) })
+            val expected = ViewAreaPlanner.plan(1920, 960, synthetic)
+            assertEquals(expected, planHeadUnitAreas(1920, 960, report, records, year(), ViewAreasMode.MANUAL, fullscreen, windowed))
+            assertEquals(expected, planHeadUnitAreas(1920, 960, null, emptyList(), null, ViewAreasMode.MANUAL, fullscreen, windowed))
+            assertEquals(1 + synthetic.size, expected.size)
+        }
+        val automatic = planHeadUnitAreas(1920, 960, report, records, year())
+        assertEquals(automatic, planHeadUnitAreas(1920, 960, report, records, year(), ViewAreasMode.AUTOMATIC, full, window))
+        assertEquals(listOf(ViewAreaSize(1920, 960)), planHeadUnitAreas(1920, 960, report, records, year(), ViewAreasMode.MANUAL))
+        // Identical aspects still share a declaration across libraries, just as automatic planning does.
+        val shared = planHeadUnitAreas(1920, 960, null, records, null, ViewAreasMode.MANUAL, full, full)
+        assertEquals(2, shared.size); assertEquals(ViewAreaLibrary.entries.toSet(), shared[1].libraries)
+    }
+
 }

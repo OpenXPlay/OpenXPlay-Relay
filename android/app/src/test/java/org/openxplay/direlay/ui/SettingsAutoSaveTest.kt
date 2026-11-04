@@ -105,7 +105,7 @@ class SettingsAutoSaveTest {
             wirelessNetwork = initial.wirelessNetwork.copy(choice = WirelessNetworkChoice.PHONE_HOTSPOT,
                 manualSsid = "", manualPassphrase = "short"))
         assertEquals(setOf("settings/output", "settings/tesla", "settings/connection/network", "developer/video",
-            "developer/connection", "settings/identity"), settingsInvalidPages(invalid, initial) { true })
+            "developer/connection", "settings/identity", "settings/picture"), settingsInvalidPages(invalid, initial) { true })
         assertTrue(settingsInvalidPages(initial, initial) { true }.isEmpty())
     }
 
@@ -193,4 +193,21 @@ class SettingsAutoSaveTest {
         assertEquals(mapOf("ssid" to R.string.shared_wifi_empty), settingsErrors(wifi, true))
         assertTrue(settingsErrors(wifi.copy(wirelessNetwork = wifi.wirelessNetwork.copy(choice = WirelessNetworkChoice.WIFI_DIRECT)), true).isEmpty())
     }
+
+    @Test fun manualPictureValidationBelongsToItsPageAndValidChangesWaitForNextStart() {
+        val empty = initial.copy(viewAreasMode = ViewAreasMode.MANUAL)
+        assertEquals(mapOf("viewAreasMode" to R.string.view_areas_manual_required), settingsSaveErrors(empty, true))
+        assertEquals(setOf("settings/car"), settingsInvalidPages(empty, initial) { true })
+        for (mm in listOf(401, 213)) assertEquals(setOf("settings/picture"), settingsInvalidPages(initial.copy(carplayScreenWidthCustomMm = mm), initial) { true })
+        assertEquals(setOf("settings/car"), settingsInvalidPages(initial.copy(viewAreasWindowed = PictureSize(801, 480)), initial) { true })
+        for (after in listOf(initial.copy(carplayScreenWidthCustomMm = 235),
+            initial.copy(viewAreasMode = ViewAreasMode.MANUAL, viewAreasFullscreen = PictureSize(800, 600)),
+            initial.copy(viewAreasFullscreen = PictureSize(800, 600)), initial.copy(viewAreasWindowed = PictureSize(1000, 600)))) {
+            assertTrue(settingsSaveErrors(after, true).isEmpty())
+            assertTrue(settingsInvalidPages(after, initial) { true }.isEmpty())
+            assertEquals(SettingsNotice.NEXT_START, settingsNotice(initial, after, false))
+            assertEquals(R.string.settings_restart, settingsFeedback(initial, after, false, true)?.action)
+        }
+    }
+
 }

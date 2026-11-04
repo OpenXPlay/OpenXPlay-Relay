@@ -95,7 +95,7 @@ fun relayRouteParents(route: String): List<String> = when (route.substringBefore
 
 fun settingsSessionActive(entries: List<String>) = entries.any { it.startsWith("settings") || it.startsWith("developer") || it == "experimental" }
 
-fun firstSettingsErrorPage(errors: Set<String>) = listOf("settings/output", "settings/tesla", "settings/connection/network",
+fun firstSettingsErrorPage(errors: Set<String>) = listOf("settings/output", "settings/car", "settings/tesla", "settings/picture", "settings/connection/network",
     "settings/identity", "developer/video", "developer/connection", "experimental").firstOrNull { it in errors } ?: "settings"
 
 fun showsDeveloperDiagnostics(route: String) = route in setOf("developer", "developer/diagnostics", "developer/carlink", "settings/identity")

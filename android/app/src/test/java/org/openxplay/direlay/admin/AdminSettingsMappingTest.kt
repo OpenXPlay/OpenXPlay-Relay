@@ -150,4 +150,20 @@ class AdminSettingsMappingTest {
         assertEquals("error.networks", missingPassword.errors["sharedWifiNetworks"])
     }
 
+
+    @Test fun adminSavesKeepAllNativeManualPictureChoicesIncludingParkedProfiles() {
+        val keys = setOf("carplayScreenWidthCustomMm", "viewAreasMode", "viewAreasFullscreen", "viewAreasWindowed")
+        for (mode in ViewAreasMode.entries) {
+            val before = initial().copy(displayMode = DisplayMode.AUTOMATIC, display = DisplayProfile(1600, 900, 200),
+                carplayScreenWidthCustomMm = 235, viewAreasMode = mode,
+                viewAreasFullscreen = PictureSize(3840, 2160), viewAreasWindowed = PictureSize(320, 240))
+            assertTrue(AdminSettingsMapping.schema.flatMap { it.fields }.none { it.key in keys })
+            assertTrue(AdminSettingsMapping.values(before).keys.none { it in keys })
+            assertEquals(before.copy(autoStartOnBoot = true), AdminSettingsMapping.update(before, mapOf("bootStart" to true), true).settings)
+            val unchanged = AdminSettingsMapping.values(before).filterKeys { it != "sharedWifiNetworks" }
+            assertEquals(before, AdminSettingsMapping.update(before, unchanged, true).settings)
+            for (key in keys) assertNull(AdminSettingsMapping.update(before, mapOf(key to 200), true).settings)
+        }
+    }
+
 }

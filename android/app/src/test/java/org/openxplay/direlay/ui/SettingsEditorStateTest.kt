@@ -90,7 +90,7 @@ class SettingsEditorStateTest {
         state.customDisplay = true
         state.updateDisplay("width", "")
         assertEquals("", state.numberText["width"])
-        assertEquals(setOf("developer/video"), state.errorPages { false })
+        assertEquals(setOf("settings/picture", "developer/video"), state.errorPages { false })
         assertEquals(initial, state.draft.value)
         val stack = RelayBackStack().open("developer/video").back().open("settings/audio")
         state.draft.value = state.draft.value.copy(carBluetoothAudio = true)
@@ -121,6 +121,89 @@ class SettingsEditorStateTest {
         state.changeExperimental { it.copy(active = true, bluetoothAddress = "A0:B1:C2:D3:E4:F5") }
         assertTrue(state.errorPages { false }.isEmpty())
         assertNull(settingsFeedback(initial, state.draft.value, carlinkConnected = true, running = true))
+    }
+
+
+    @Test fun manualAutomaticManualKeepsTheSharedProfileAndUseReplacesAllFields() {
+        val state = editor()
+        val reference = DisplayProfile(1920, 720, 240)
+        state.chooseDisplayMode(DisplayMode.FIXED, reference)
+        assertEquals(reference, state.draft.value.display)
+        state.updateDisplay("width", "1600")
+        val edited = checkNotNull(state.draft.value.display)
+        state.chooseDisplayMode(DisplayMode.AUTOMATIC)
+        assertEquals(edited, state.draft.value.display)
+        state.chooseDisplayMode(DisplayMode.FIXED, DisplayProfile(800, 480, 160))
+        assertEquals(edited, state.draft.value.display)
+        state.updateDisplay("height", "")
+        assertEquals(setOf("settings/picture", "developer/video"), state.errorPages { false })
+        state.useDisplayReference(reference)
+        assertEquals(reference, state.draft.value.display)
+        assertTrue(state.invalidNumbers.isEmpty()); assertTrue(state.numberText.isEmpty())
+        assertTrue(state.customDisplay)
+        state.chooseDisplayMode(DisplayMode.AUTOMATIC)
+        assertFalse(state.customDisplay)
+        state.draft.value = state.draft.value.copy(displayMode = DisplayMode.FIXED, display = DisplayProfile.presets.first())
+        state.updateDisplay("width", "1000")
+        assertTrue(state.customDisplay)
+    }
+
+    @Test fun customWidthStartsFromTheReferenceAndUseClearsInvalidText() {
+        val state = editor()
+        state.chooseScreenWidth(referenceMm = 250)
+        assertEquals(250, state.draft.value.carplayScreenWidthCustomMm)
+        state.editNumber("carplayScreenWidthCustomMm", "401", { it.toIntOrNull() in 100..400 }) {
+            fail("Invalid width must not enter the draft")
+        }
+        assertEquals(setOf("settings/picture"), state.errorPages { false })
+        state.useScreenWidthReference(225)
+        assertTrue(state.invalidNumbers.isEmpty()); assertTrue(state.numberText.isEmpty())
+        assertEquals(225, state.draft.value.carplayScreenWidthCustomMm)
+        state.chooseScreenWidth(CarPlayScreenWidth.MM125)
+        assertNull(state.draft.value.carplayScreenWidthCustomMm)
+        assertEquals(CarPlayScreenWidth.MM125, state.draft.value.carplayScreenWidth)
+    }
+
+    @Test fun manualAreasRequireOneCompletePairKeepPartialTextAndAllowClearingEitherPair() {
+        val state = editor()
+        state.chooseViewAreas(mode = ViewAreasMode.MANUAL)
+        assertEquals(setOf("settings/car"), state.errorPages { false })
+        state.updateViewArea("viewAreasFullscreenWidth", "3840")
+        assertNull(state.draft.value.viewAreasFullscreen)
+        state.updateViewArea("viewAreasFullscreenHeight", "2160")
+        assertEquals(PictureSize(3840, 2160), state.draft.value.viewAreasFullscreen)
+        assertTrue(state.errorPages { false }.isEmpty())
+        state.updateViewArea("viewAreasWindowedWidth", "320")
+        state.updateViewArea("viewAreasWindowedHeight", "241")
+        assertNull(state.draft.value.viewAreasWindowed)
+        assertEquals(setOf("settings/car"), state.errorPages { false })
+        state.updateViewArea("viewAreasWindowedHeight", "240")
+        assertEquals(PictureSize(320, 240), state.draft.value.viewAreasWindowed)
+        state.updateViewArea("viewAreasFullscreenWidth", "")
+        state.updateViewArea("viewAreasFullscreenHeight", "")
+        assertNull(state.draft.value.viewAreasFullscreen)
+        assertTrue(state.errorPages { false }.isEmpty())
+        state.updateViewArea("viewAreasWindowedWidth", "")
+        state.updateViewArea("viewAreasWindowedHeight", "")
+        assertEquals(setOf("settings/car"), state.errorPages { false })
+        state.chooseViewAreas(enabled = false)
+        assertTrue(state.errorPages { false }.isEmpty())
+    }
+
+    @Test fun useAreaReferenceReplacesBothPairsAndNormalizesRecordedPixelsToInputBounds() {
+        val state = editor()
+        state.chooseViewAreas(mode = ViewAreasMode.MANUAL)
+        state.updateViewArea("viewAreasFullscreenWidth", "bad")
+        state.useViewAreaReference(org.openxplay.direlay.relay.ViewAreaReference(
+            org.openxplay.direlay.relay.ViewAreaSize(1533, 1015), org.openxplay.direlay.relay.ViewAreaSize(5000, 200)))
+        assertEquals(PictureSize(1532, 1014), state.draft.value.viewAreasFullscreen)
+        assertEquals(PictureSize(3840, 240), state.draft.value.viewAreasWindowed)
+        assertTrue(state.invalidNumbers.isEmpty()); assertTrue(state.numberText.isEmpty())
+        state.useViewAreaReference(org.openxplay.direlay.relay.ViewAreaReference(windowed = org.openxplay.direlay.relay.ViewAreaSize(800, 600)))
+        assertNull(state.draft.value.viewAreasFullscreen)
+        assertEquals(PictureSize(800, 600), state.draft.value.viewAreasWindowed)
+        state.chooseViewAreas(mode = ViewAreasMode.AUTOMATIC)
+        assertEquals(PictureSize(800, 600), state.draft.value.viewAreasWindowed)
     }
 
 }

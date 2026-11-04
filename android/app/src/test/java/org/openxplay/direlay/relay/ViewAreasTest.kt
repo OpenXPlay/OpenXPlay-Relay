@@ -145,4 +145,20 @@ class ViewAreasTest {
         assertEquals(listOf(carlinkRow), ViewAreaPlanner.mergeRecords(listOf(browserRow, carlinkRow), emptyList(), carlink))
     }
 
+
+    @Test fun referenceRanksMergedRecordsByCountThenRecencyAndKeepsMissingTypesDistinct() {
+        val screen = ScreenDataKey(1920, 1080, 160)
+        val local = listOf(row(1500, 1000, 3, 1, full = true), row(1600, 1000, 4, 9, full = true),
+            row(800, 800, 8, 1), row(1000, 800, 8, 2))
+        val builtIn = listOf(CarScreenData(screen, listOf(row(1500, 1000, 2, 3, full = true))))
+        val merged = ViewAreaPlanner.mergeRecords(local + row(900, 600, 999).copy(screenWidth = 800), builtIn, screen)
+        assertEquals(ViewAreaReference(ViewAreaSize(1500, 1000), ViewAreaSize(1000, 800)), ViewAreaPlanner.mostUsed(merged))
+        val fullOnly = ViewAreaPlanner.mostUsed(merged.filter { it.fullscreen })
+        assertEquals(ViewAreaSize(1500, 1000), fullOnly.fullscreen); assertNull(fullOnly.windowed); assertFalse(fullOnly.empty)
+        val windowOnly = ViewAreaPlanner.mostUsed(merged.filterNot { it.fullscreen })
+        assertNull(windowOnly.fullscreen); assertEquals(ViewAreaSize(1000, 800), windowOnly.windowed)
+        assertEquals(ViewAreaReference(), ViewAreaPlanner.mostUsed(emptyList()))
+        assertTrue(ViewAreaPlanner.mostUsed(emptyList()).empty)
+    }
+
 }

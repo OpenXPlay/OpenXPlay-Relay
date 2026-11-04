@@ -33,18 +33,13 @@ fun DeveloperVideo(state: SettingsEditorState) {
                 state.clearDisplayErrors()
                 draft = draft.copy(
                 displayMode = when (index) { 0 -> DisplayMode.AUTOMATIC; 1 -> DisplayMode.RELAY_SCREEN; else -> DisplayMode.FIXED },
-                display = if (index < 2) null else profiles[index - 2])
+                display = if (index < 2) draft.display else profiles[index - 2])
             }
         }
 
         AnimatedVisibility(custom, enter = expandVertically(tween(ms), expandFrom = Alignment.Top), exit = shrinkVertically(tween(ms), shrinkTowards = Alignment.Top)) {
             Column {
-                EditorNumberField(state, "width", R.string.direlay_width, (draft.display?.width ?: 1280).toString(),
-                    valid = { displayNumberValid("width", it) }) { value -> state.updateDisplay("width", value) }
-                EditorNumberField(state, "height", R.string.direlay_height, (draft.display?.height ?: 720).toString(),
-                    valid = { displayNumberValid("height", it) }) { value -> state.updateDisplay("height", value) }
-                EditorNumberField(state, "density", R.string.direlay_density, (draft.display?.density ?: 160).toString(),
-                    valid = { displayNumberValid("density", it) }) { value -> state.updateDisplay("density", value) }
+                DisplaySizeFields(state)
             }
         }
     }
