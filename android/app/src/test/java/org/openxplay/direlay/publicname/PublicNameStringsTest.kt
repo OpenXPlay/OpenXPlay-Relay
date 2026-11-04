@@ -44,7 +44,7 @@ class PublicNameStringsTest {
         R.string.public_name_guide to ("Setup guide on openxplay.org" to "查看 OpenXPlay 官网教程"),
         R.string.public_name_url_duckdns to ("https://www.duckdns.org/" to "https://www.duckdns.org/"),
         R.string.public_name_url_dynv6 to ("https://dynv6.com/" to "https://dynv6.com/"),
-        R.string.public_name_guide_url to ("https://openxplay.org/en/trusted-https" to "https://openxplay.org/trusted-https"),
+        R.string.public_name_guide_url to ("https://openxplay.org/trusted-https" to "https://openxplay.org/zh/trusted-https"),
         R.string.public_name_name to ("Domain name" to "域名"),
         R.string.public_name_name_hint_duckdns to ("For example myrelay.duckdns.org" to "例如 myrelay.duckdns.org"),
         R.string.public_name_name_hint_dynv6 to ("For example myrelay.dynv6.net" to "例如 myrelay.dynv6.net"),

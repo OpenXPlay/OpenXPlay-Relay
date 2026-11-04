@@ -175,7 +175,7 @@ it('shows the provider guidance, name examples and safe external links in both l
     const html = publicNameGuidance(values, t, language);
     expect(html).toContain(t('publicName.perProvider'));
     expect(html).toContain(provider === 'duckdns' ? 'href="https://www.duckdns.org/"' : 'href="https://dynv6.com/"');
-    expect(html).toContain(`href="https://openxplay.org/${language === 'en' ? 'en/' : ''}trusted-https"`);
+    expect(html).toContain(`href="https://openxplay.org/${language === 'en' ? '' : 'zh/'}trusted-https"`);
     expect(html.match(/target="_blank" rel="noopener"/g)).toHaveLength(2);
     expect(html).toContain(t(`publicName.open.${provider}`));
     expect(html).toContain(t('publicName.guide'));

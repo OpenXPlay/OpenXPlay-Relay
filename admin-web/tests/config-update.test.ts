@@ -97,7 +97,7 @@ it('keeps result and channel through navigation and language changes, with an Ab
 it.each(['en', 'zh-CN'] as const)('includes Android project, NOTICE, mixed licence, acknowledgements and trademark text (%s)', language => {
   const host = new Host(); const tr = language === 'en' ? t : zh;
   mountFeaturePage(host as unknown as HTMLElement, 'settings/about', { t: tr, language, version: 'test', platform: 'linux', adminFeatures: [], setLanguage: () => {}, error: () => '', reload: async () => {} });
-  expect(host.innerHTML).toContain('https://openxplay.org'); expect(host.innerHTML).toContain('/blob/main/NOTICE');
+  expect(host.innerHTML).toContain(`href="https://openxplay.org/${language === 'en' ? '' : 'zh/'}"`); expect(host.innerHTML).toContain('/blob/main/NOTICE');
   for (const key of ['files.licence', 'files.acknowledgementText', 'files.trademark']) expect(host.innerHTML).toContain(tr(key));
 });
 it.each(['en', 'zh-CN'] as const)('aligns About label/value and link rows and keeps language selection working (%s)', language => {

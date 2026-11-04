@@ -5,7 +5,7 @@
 <resources>
     <string name="direlay_app_name">OpenXPlay Relay</string>
     <string name="direlay_attribution">Powered by OpenXPlay.</string>
-    <string name="direlay_project_url">https://openxplay.org/en/</string>
+    <string name="direlay_project_url">https://openxplay.org/</string>
     <string name="direlay_source_url" translatable="false">https://github.com/OpenXPlay/OpenXPlay-Relay</string>
     <string name="direlay_identity">CarPlay identity</string>
     <string name="direlay_identity_hint">Select identity.pk8 and certificate.p7b together or one after the other, in any order, or a ZIP containing them.</string>
@@ -421,7 +421,7 @@
     <string name="setup_browser_hint">Open an address in the car’s built-in browser. Works when the browser supports WebCodecs, as on most recent head units.</string>
     <string name="setup_carlink_hint">Use a Carlink app that is already installed on the car.</string>
     <string name="setup_carlink_android10">Needs Android 10 or later on this phone.</string>
-    <string name="setup_browser_check_tip">Not sure about the browser? Open openxplay.org/en/check in the car’s browser to test it.</string>
+    <string name="setup_browser_check_tip">Not sure about the browser? Open openxplay.org/check in the car’s browser to test it.</string>
     <string name="setup_connection_title">How does the iPhone connect to this phone?</string>
     <string name="setup_connection_hint">This phone sits between the iPhone and the car.</string>
     <string name="setup_wireless_hint">Over Bluetooth and Wi-Fi. The iPhone connects by itself when you get in.</string>
@@ -605,7 +605,7 @@
     <string name="public_name_guide">Setup guide on openxplay.org</string>
     <string name="public_name_url_duckdns" translatable="false">https://www.duckdns.org/</string>
     <string name="public_name_url_dynv6" translatable="false">https://dynv6.com/</string>
-    <string name="public_name_guide_url">https://openxplay.org/en/trusted-https</string>
+    <string name="public_name_guide_url">https://openxplay.org/trusted-https</string>
     <string name="public_name_name">Domain name</string>
     <string name="public_name_name_hint_duckdns">For example myrelay.duckdns.org</string>
     <string name="public_name_name_hint_dynv6">For example myrelay.dynv6.net</string>
