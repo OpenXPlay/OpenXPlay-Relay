@@ -142,7 +142,7 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
                 "settings/output" -> outputSummary(draft)
                 "settings/car" -> carSummary
                 "settings/tesla" -> stringResource(teslaBrowserOption(draft.teslaBrowser).title)
-                "settings/picture" -> pictureMenuSummary(resolutionSummary(draft), draft.carplayScreenWidth.mm, codecSummary(draft), frameRate)
+                "settings/picture" -> pictureMenuSummary(resolutionSummary(draft), draft.carplayScreenWidthCustomMm ?: draft.carplayScreenWidth.mm, codecSummary(draft), frameRate)
                 "settings/audio" -> stringResource(R.string.menu_audio_summary, menuToggleSummary(draft.carBluetoothAudio))
                 else -> null
             }
@@ -193,7 +193,8 @@ fun SettingsMenu(draft: RelaySettings, invalidPages: Set<String>, wireless: Bool
 fun menuToggleSummary(enabled: Boolean) = stringResource(if (enabled) R.string.menu_on else R.string.menu_off)
 
 @Composable
-fun resolutionSummary(draft: RelaySettings): String = listOf(stringResource(R.string.display_automatic),
+fun resolutionSummary(draft: RelaySettings): String = if (draft.displayMode == org.openxplay.direlay.settings.DisplayMode.FIXED && draft.display != null)
+    "${draft.display.width} × ${draft.display.height}" else listOf(stringResource(R.string.display_automatic),
     stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen))[draft.carplayResolution.ordinal]
 
 @Composable

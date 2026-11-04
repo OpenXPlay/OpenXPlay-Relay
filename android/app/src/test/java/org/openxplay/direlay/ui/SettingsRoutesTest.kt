@@ -85,7 +85,7 @@ class SettingsRoutesTest {
 
     @Test fun errorPagesFollowTheSettingsMenuOrder() {
         assertEquals("settings", firstSettingsErrorPage(emptySet()))
-        val order = listOf("settings/output", "settings/tesla", "settings/connection/network", "settings/identity",
+        val order = listOf("settings/output", "settings/car", "settings/tesla", "settings/picture", "settings/connection/network", "settings/identity",
             "developer/video", "developer/connection", "experimental")
         order.forEachIndexed { index, page ->
             assertEquals(page, firstSettingsErrorPage(order.drop(index).reversed().toSet()))

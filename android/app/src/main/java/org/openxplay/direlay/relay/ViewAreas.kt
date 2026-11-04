@@ -12,6 +12,10 @@ data class WindowSizeRecord(val screenWidth: Int, val screenHeight: Int, val den
     val headUnit get() = "$screenWidth×$screenHeight@$densityDpi"
 }
 
+data class ViewAreaReference(val fullscreen: ViewAreaSize? = null, val windowed: ViewAreaSize? = null) {
+    val empty get() = fullscreen == null && windowed == null
+}
+
 /** Pure geometry; declarations are frozen for a session, while observations keep accumulating. */
 object ViewAreaPlanner {
     fun mergeRecords(local: List<WindowSizeRecord>, builtIn: List<CarScreenData>, screen: ScreenDataKey): List<WindowSizeRecord> =
@@ -20,6 +24,14 @@ object ViewAreaPlanner {
                 rows.first().copy(count = rows.fold(0L) { count, row -> count + row.count.coerceAtMost(Long.MAX_VALUE - count) },
                     lastSeen = rows.maxOf { it.lastSeen })
             }
+
+    /** Reference values use the same merged counts as automatic planning, before canvas scaling. */
+    fun mostUsed(records: List<WindowSizeRecord>): ViewAreaReference {
+        fun size(full: Boolean) = records.filter { it.fullscreen == full }
+            .maxWithOrNull(compareBy<WindowSizeRecord> { it.count }.thenBy { it.lastSeen })
+            ?.let { ViewAreaSize(it.width, it.height) }
+        return ViewAreaReference(size(true), size(false))
+    }
 
     fun plan(width: Int, height: Int, records: List<WindowSizeRecord>, current: ViewAreaSize? = null,
         fullscreen: Boolean? = null): List<ViewAreaSize> {

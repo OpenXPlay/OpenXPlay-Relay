@@ -25,7 +25,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
 import org.openxplay.stream.core.FrameRatePreference
 import org.openxplay.direlay.relay.CarPlayFrameRate
-import org.openxplay.direlay.relay.WirelessPicturePolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -175,12 +174,12 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 }
                 if (draft.dlnaOutput || draft.miracastOutput) {
                     val picture by sources.wirelessPicture.screenState()
-                    WirelessDisplaySettings(draft, picture, actions.searchRenderers, state, openCarScreen = { open("settings/car") }) { draft = it }
+                    WirelessDisplaySettings(draft, picture, actions.searchRenderers, state, openPictureSize = { open("settings/picture#resolution") }) { draft = it }
                 }
             }
             "settings/car" -> {
                 val view by sources.car.screenState()
-                CarScreenSettings(draft, view, wireless, actions.clearHeadUnit, target,
+                CarScreenSettings(draft, view, state, wireless, actions.clearHeadUnit, target,
                     openTrustedHttps = { open("settings/access/publicName") }) { draft = it }
             }
             "settings/tesla" -> {
@@ -190,16 +189,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     openOutput = { open("settings/output") }) { draft = it }
             }
             "settings/picture" -> {
-                val customWireless = WirelessPicturePolicy.customCanvas(draft)
-                SettingsGroup("resolution", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_resolution), resolutionSummary(draft),
-                    initiallyExpanded = target.isEmpty() || target == "resolution", targeted = target == "resolution",
-                    footer = if (customWireless) stringResource(R.string.wireless_custom_resolution,
-                        draft.wirelessPictureSize.width, draft.wirelessPictureSize.height)
-                        else if (draft.carplayResolution == CarPlayResolution.NATIVE) stringResource(R.string.picture_native_hint) else null) {
-                    Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_native), "1080p", "720p", stringResource(R.string.picture_screen)),
-                        CarPlayResolution.entries.indexOf(draft.carplayResolution)) { draft = draft.copy(carplayResolution = CarPlayResolution.entries[it]) }
-                }
-                if (customWireless) TextButton(onClick = { open("settings/output") }) { Text(stringResource(R.string.ui_output)) }
+                val car by sources.car.screenState()
+                CarPlaySizeSettings(state, car.referenceCanvas, target, openOutput = { open("settings/output") })
                 val picture by sources.carlinkPicture.screenState()
                 val trial = picture.trial
                 val selectPicture = actions.tryCarlinkPicture
@@ -214,11 +205,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     Options(listOf(stringResource(R.string.picture_frame_rate_auto)) + (30..60 step 5).map(Int::toString),
                         FrameRatePreference.entries.indexOf(draft.frameRate)) { draft = draft.copy(frameRate = FrameRatePreference.entries[it]) }
                 }
-                SettingsGroup("width", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_screen_width), "${draft.carplayScreenWidth.mm} mm",
-                    initiallyExpanded = false, targeted = target == "width", footer = stringResource(R.string.picture_screen_width_hint)) {
-                    Options(CarPlayScreenWidth.entries.map { "${it.mm} mm" },
-                        CarPlayScreenWidth.entries.indexOf(draft.carplayScreenWidth)) { draft = draft.copy(carplayScreenWidth = CarPlayScreenWidth.entries[it]) }
-                }
+                CarPlayWidthSettings(state, car.referenceCanvas, target)
                 SettingsGroup("codec", R.drawable.symbol_monitor, IconHue.PICTURE, stringResource(R.string.picture_video_codec), codecSummary(draft),
                     initiallyExpanded = false, targeted = target == "codec", footer = stringResource(R.string.picture_video_codec_hint)) {
                     Options(listOf(stringResource(R.string.display_automatic), stringResource(R.string.picture_force_h265), stringResource(R.string.picture_force_h264)),

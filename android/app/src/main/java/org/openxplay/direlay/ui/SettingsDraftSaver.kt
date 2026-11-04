@@ -120,6 +120,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         putString("teslaAndroidAddress", value.teslaAndroidAddress)
         putString("carplayResolution", value.carplayResolution.name)
         putInt("carplayScreenWidth", value.carplayScreenWidth.mm)
+        putInt("carplayScreenWidthCustomMm", value.carplayScreenWidthCustomMm ?: 0)
+        putString("viewAreasMode", value.viewAreasMode.name)
+        putIntArray("viewAreasFullscreen", value.viewAreasFullscreen?.let { intArrayOf(it.width, it.height) })
+        putIntArray("viewAreasWindowed", value.viewAreasWindowed?.let { intArrayOf(it.width, it.height) })
         value.display?.let { putIntArray("display", intArrayOf(it.width, it.height, it.density)) }
     }
 }, restore = { bundle ->
@@ -184,6 +188,10 @@ fun relaySettingsSaver(base: RelaySettings) = Saver<RelaySettings, Bundle>(save 
         carlinkHevc = org.openxplay.stream.clink.ClinkHevcMode.entries.firstOrNull { it.name == bundle.getString("carlinkHevc") } ?: base.carlinkHevc,
         carlinkPictureSize = org.openxplay.stream.clink.ClinkPictureSize.entries.firstOrNull { it.name == bundle.getString("carlinkPictureSize") } ?: base.carlinkPictureSize,
         viewAreas = bundle.getBoolean("carPlayViewAreas", base.viewAreas),
+        carplayScreenWidthCustomMm = bundle.getInt("carplayScreenWidthCustomMm", base.carplayScreenWidthCustomMm ?: 0).takeIf { it != 0 },
+        viewAreasMode = ViewAreasMode.entries.firstOrNull { it.name == bundle.getString("viewAreasMode") } ?: base.viewAreasMode,
+        viewAreasFullscreen = if (bundle.containsKey("viewAreasFullscreen")) bundle.getIntArray("viewAreasFullscreen")?.let { PictureSize(it[0], it[1]) } else base.viewAreasFullscreen,
+        viewAreasWindowed = if (bundle.containsKey("viewAreasWindowed")) bundle.getIntArray("viewAreasWindowed")?.let { PictureSize(it[0], it[1]) } else base.viewAreasWindowed,
         carBluetoothAudio = bundle.getBoolean("carBluetoothAudio", base.carBluetoothAudio),
         car = bundle.getStringArrayList("car")?.takeIf { it.size == 4 || it.size == 6 }?.let {
             if (it.size == 4) CarSelection(it[0], it[1], it[2], it[3]).normalized()

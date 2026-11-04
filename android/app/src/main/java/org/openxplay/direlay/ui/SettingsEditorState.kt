@@ -105,9 +105,10 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
     fun errorPages(wireless: (RelaySettings) -> Boolean): Set<String> = settingsInvalidPages(draft.value, lastSaved.value, wireless) +
         invalidNumbers.keys.map { when (it) {
             in wirelessPictureNumberKeys -> "settings/output"
-            "width", "height", "density" -> "developer/video"
+            "width", "height", "density", "carplayScreenWidthCustomMm" -> "settings/picture"
+            in viewAreaNumberKeys -> "settings/car"
             else -> "developer/connection"
-        } }
+        } } + if (invalidNumbers.keys.any { it in listOf("width", "height", "density") }) setOf("developer/video") else emptySet()
     fun chooseWirelessPicture(mode: WirelessPictureMode, automatic: WirelessPictureSize) {
         wirelessPictureNumberKeys.forEach { invalidNumbers.remove(it); numberText.remove(it) }
         draft.value = org.openxplay.direlay.relay.WirelessPicturePolicy.choose(draft.value, mode, automatic)
@@ -148,7 +149,55 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
         draft.value = draft.value.deleteCarlinkPicture(size)
     }
     fun clearDisplayErrors() {
-        listOf("width", "height", "density").forEach { invalidNumbers.remove(it) }
+        listOf("width", "height", "density").forEach { invalidNumbers.remove(it); numberText.remove(it) }
+    }
+    fun chooseDisplayMode(mode: DisplayMode, reference: DisplayProfile = CarDisplayFit.default) {
+        clearDisplayErrors()
+        customDisplay = mode == DisplayMode.FIXED
+        draft.value = draft.value.copy(displayMode = mode,
+            display = draft.value.display ?: reference.takeIf { mode == DisplayMode.FIXED })
+    }
+    fun useDisplayReference(reference: DisplayProfile) {
+        clearDisplayErrors()
+        customDisplay = true
+        draft.value = draft.value.copy(displayMode = DisplayMode.FIXED, display = reference)
+    }
+    fun chooseScreenWidth(preset: CarPlayScreenWidth? = null, referenceMm: Int = 200) {
+        invalidNumbers.remove("carplayScreenWidthCustomMm"); numberText.remove("carplayScreenWidthCustomMm")
+        draft.value = if (preset == null) draft.value.copy(carplayScreenWidthCustomMm = draft.value.carplayScreenWidthCustomMm ?: referenceMm)
+            else draft.value.copy(carplayScreenWidth = preset, carplayScreenWidthCustomMm = null)
+    }
+    fun useScreenWidthReference(mm: Int) {
+        invalidNumbers.remove("carplayScreenWidthCustomMm"); numberText.remove("carplayScreenWidthCustomMm")
+        draft.value = draft.value.copy(carplayScreenWidthCustomMm = mm)
+    }
+    fun chooseViewAreas(enabled: Boolean = draft.value.viewAreas, mode: ViewAreasMode = draft.value.viewAreasMode) {
+        viewAreaNumberKeys.forEach { invalidNumbers.remove(it); numberText.remove(it) }
+        draft.value = draft.value.copy(viewAreas = enabled, viewAreasMode = mode)
+    }
+    fun updateViewArea(key: String, text: String) {
+        require(key in viewAreaNumberKeys)
+        numberText[key] = text
+        val full = key.startsWith("viewAreasFullscreen")
+        val prefix = if (full) "viewAreasFullscreen" else "viewAreasWindowed"
+        val current = if (full) draft.value.viewAreasFullscreen else draft.value.viewAreasWindowed
+        val width = numberText["${prefix}Width"] ?: current?.width?.toString().orEmpty()
+        val height = numberText["${prefix}Height"] ?: current?.height?.toString().orEmpty()
+        val empty = width.isEmpty() && height.isEmpty()
+        val size = parseViewAreaSize(width, height)
+        listOf("${prefix}Width", "${prefix}Height").forEach {
+            if (!empty && size == null) invalidNumbers[it] = true else invalidNumbers.remove(it)
+        }
+        if (empty || size != null) draft.value = if (full) draft.value.copy(viewAreasFullscreen = size)
+            else draft.value.copy(viewAreasWindowed = size)
+    }
+    fun useViewAreaReference(reference: org.openxplay.direlay.relay.ViewAreaReference) {
+        viewAreaNumberKeys.forEach { invalidNumbers.remove(it); numberText.remove(it) }
+        // Observations may contain odd pixels or exceed the manual input bounds.
+        fun size(value: org.openxplay.direlay.relay.ViewAreaSize?) = value?.let {
+            PictureSize((it.width / 2 * 2).coerceIn(320, 3840), (it.height / 2 * 2).coerceIn(240, 2160))
+        }
+        draft.value = draft.value.copy(viewAreasFullscreen = size(reference.fullscreen), viewAreasWindowed = size(reference.windowed))
     }
     fun updateDisplay(key: String? = null, value: String = "") {
         if (key != null) numberText[key] = value
@@ -159,10 +208,18 @@ class SettingsEditorState(val draft: MutableState<RelaySettings>, val lastSaved:
         listOf("width" to width, "height" to height, "density" to density).forEach { (name, number) ->
             if (number == null || !displayNumberValid(name, number.toString())) invalidNumbers[name] = true else invalidNumbers.remove(name)
         }
-        if (width != null && height != null && density != null && listOf("width", "height", "density").none { it in invalidNumbers })
+        if (width != null && height != null && density != null && listOf("width", "height", "density").none { it in invalidNumbers }) {
+            customDisplay = true
             draft.value = draft.value.copy(displayMode = DisplayMode.FIXED, display = DisplayProfile(width, height, density))
+        }
     }
 }
+
+internal val viewAreaNumberKeys = listOf("viewAreasFullscreenWidth", "viewAreasFullscreenHeight", "viewAreasWindowedWidth", "viewAreasWindowedHeight")
+internal fun parseViewAreaSize(width: String, height: String): PictureSize? =
+    width.toIntOrNull()?.let { w -> height.toIntOrNull()?.let { h ->
+        PictureSize(w, h).takeIf { runCatching { it.validateViewArea() }.isSuccess }
+    } }
 
 internal val wirelessPictureNumberKeys = listOf("wirelessPictureWidth", "wirelessPictureHeight")
 

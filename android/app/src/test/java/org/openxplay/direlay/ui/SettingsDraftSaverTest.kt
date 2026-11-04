@@ -358,4 +358,26 @@ class SettingsDraftSaverTest {
         assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
     }
 
+
+    @Test fun manualPictureFieldsAndParkedCanvasSurviveParcelAndNullablePairsReplaceTheBase() {
+        for (mode in ViewAreasMode.entries) for (full in listOf(null, PictureSize(3840, 2160)))
+            for (window in listOf(null, PictureSize(320, 240))) for (mm in listOf(null, 235)) {
+                val chosen = base.copy(displayMode = DisplayMode.AUTOMATIC, display = DisplayProfile(1600, 900, 200),
+                    carplayScreenWidthCustomMm = mm, viewAreas = full != null || window != null,
+                    viewAreasMode = mode, viewAreasFullscreen = full, viewAreasWindowed = window)
+                val parcel = Parcel.obtain()
+                try {
+                    parcel.writeBundle(bundle(chosen)); parcel.setDataPosition(0)
+                    val restored = requireNotNull(parcel.readBundle(javaClass.classLoader))
+                    val populatedBase = base.copy(carplayScreenWidthCustomMm = 250, viewAreasFullscreen = PictureSize(800, 600),
+                        viewAreasWindowed = PictureSize(1000, 600))
+                    assertEquals(chosen, relaySettingsSaver(populatedBase).restore(restored))
+                } finally { parcel.recycle() }
+                val legacy = bundle(chosen).apply {
+                    listOf("carplayScreenWidthCustomMm", "viewAreasMode", "viewAreasFullscreen", "viewAreasWindowed").forEach { remove(it) }
+                }
+                assertEquals(chosen, relaySettingsSaver(chosen).restore(legacy))
+            }
+    }
+
 }

@@ -25,6 +25,11 @@ fun settingsErrors(value: RelaySettings, wireless: Boolean, allowEmptySharedWifi
     if (value.carlinkDeviceName.isBlank() || value.carlinkDeviceName.toByteArray(Charsets.UTF_8).size > 128 ||
         value.carlinkDeviceName.any { Character.isISOControl(it) }) put("name", R.string.settings_name_error)
     if (runCatching { value.wirelessPictureSize.validate() }.isFailure) put("wirelessPictureSize", R.string.settings_advanced_error)
+    if (value.carplayScreenWidthCustomMm?.let { !customScreenWidthValid(it) } == true) put("carplayScreenWidthCustomMm", R.string.settings_advanced_error)
+    for ((key, size) in listOf("viewAreasFullscreen" to value.viewAreasFullscreen, "viewAreasWindowed" to value.viewAreasWindowed))
+        if (runCatching { size?.validateViewArea() }.isFailure) put(key, R.string.settings_advanced_error)
+    if (value.viewAreas && value.viewAreasMode == ViewAreasMode.MANUAL && value.viewAreasFullscreen == null && value.viewAreasWindowed == null)
+        put("viewAreasMode", R.string.view_areas_manual_required)
     value.teslaAddress()?.let { if (!TeslaAddressPolicy.valid(it)) put("teslaAddress", R.string.tesla_address_invalid) }
     if (isEmpty() && runCatching { value.validate(wireless, allowEmptySharedWifi) }.isFailure) put("advanced", R.string.settings_advanced_error)
 }
@@ -59,6 +64,10 @@ fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (
     val network = saved.copy(connectionMode = value.connectionMode, wirelessNetwork = value.wirelessNetwork)
     if (settingsErrors(network, wireless(network)).isNotEmpty()) add("settings/connection/network")
     check("developer/video", saved.copy(displayMode = value.displayMode, display = value.display))
+    check("settings/picture", saved.copy(displayMode = value.displayMode, display = value.display,
+        carplayScreenWidthCustomMm = value.carplayScreenWidthCustomMm))
+    check("settings/car", saved.copy(viewAreas = value.viewAreas, viewAreasMode = value.viewAreasMode,
+        viewAreasFullscreen = value.viewAreasFullscreen, viewAreasWindowed = value.viewAreasWindowed))
     check("developer/connection", saved.copy(webPort = value.webPort, carlinkDeviceModel = value.carlinkDeviceModel,
         connectionMode = value.connectionMode, wirelessNetwork = saved.wirelessNetwork.copy(
             channel = value.wirelessNetwork.channel, band = value.wirelessNetwork.band, security = value.wirelessNetwork.security)))

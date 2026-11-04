@@ -21,7 +21,7 @@ import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.presentation.CarScreenView
 import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 
-@Composable fun CarScreenSettings(draft: RelaySettings, view: CarScreenView, wireless: (RelaySettings) -> Boolean,
+@Composable fun CarScreenSettings(draft: RelaySettings, view: CarScreenView, editor: SettingsEditorState, wireless: (RelaySettings) -> Boolean,
     clearHeadUnit: () -> Unit, target: String = "", openTrustedHttps: () -> Unit = {}, change: (RelaySettings) -> Unit) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
@@ -30,7 +30,9 @@ import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
     val savedCanvas = view.savedCanvas
     val version = view.version
     SettingsToggleGroup(stringResource(R.string.car_view_areas), draft.viewAreas, R.drawable.symbol_monitor, IconHue.CAR,
-        footer = stringResource(R.string.car_view_areas_hint)) { change(draft.copy(viewAreas = it)) }
+        footer = stringResource(R.string.car_view_areas_hint)) { editor.chooseViewAreas(enabled = it) }
+    if (draft.viewAreas && draft.displayMode != org.openxplay.direlay.settings.DisplayMode.AUTOMATIC) Hint(stringResource(R.string.view_areas_manual_size))
+    if (draft.viewAreas) ManualViewAreasSettings(editor, view.viewAreaReference)
     val none = stringResource(R.string.car_none)
     val other = stringResource(R.string.car_other)
     val car = draft.car

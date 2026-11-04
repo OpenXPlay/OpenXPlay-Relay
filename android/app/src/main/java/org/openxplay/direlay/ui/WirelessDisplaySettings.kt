@@ -22,7 +22,7 @@ import org.openxplay.stream.cast.CastRenderer
 
 @Composable fun WirelessDisplaySettings(draft: RelaySettings, view: org.openxplay.direlay.presentation.WirelessPictureView,
     searchRenderers: suspend () -> List<CastRenderer>,
-    editor: SettingsEditorState, openCarScreen: () -> Unit, change: (RelaySettings) -> Unit) {
+    editor: SettingsEditorState, openPictureSize: () -> Unit, change: (RelaySettings) -> Unit) {
     if (!draft.dlnaOutput && !draft.miracastOutput) return
     val context = LocalContext.current
     val openRendererPicker = LocalOpenRendererPicker.current
@@ -51,7 +51,7 @@ import org.openxplay.stream.cast.CastRenderer
             if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.miracast_carlink_hint))
             Hint(stringResource(R.string.miracast_wifi_direct_constraint))
         }
-        if (draft.dlnaOutput || draft.miracastOutput) WirelessPictureSettings(editor, view, openCarScreen)
+        if (draft.dlnaOutput || draft.miracastOutput) WirelessPictureSettings(editor, view, openPictureSize)
     }
 }
 

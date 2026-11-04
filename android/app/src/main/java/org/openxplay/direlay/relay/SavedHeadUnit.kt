@@ -75,7 +75,15 @@ fun startupCarPlayScreen(settings: RelaySettings, live: DisplayProfile?, saved: 
     return resolveCarPlayScreen(settings.displayMode, settings.display, live, remembered, builtIn)
 }
 
-fun planHeadUnitAreas(width: Int, height: Int, display: HeadUnitDisplay?, local: List<WindowSizeRecord>, year: CarYear?): List<ViewAreaSize> {
+fun planHeadUnitAreas(width: Int, height: Int, display: HeadUnitDisplay?, local: List<WindowSizeRecord>, year: CarYear?,
+    mode: ViewAreasMode = ViewAreasMode.AUTOMATIC, fullscreenSize: PictureSize? = null,
+    windowedSize: PictureSize? = null): List<ViewAreaSize> {
+    if (mode == ViewAreasMode.MANUAL) {
+        val records = listOf(true to fullscreenSize, false to windowedSize).mapNotNull { (full, size) ->
+            size?.let { WindowSizeRecord(width, height, 160, it.width, it.height, full, 1, 0) }
+        }
+        return ViewAreaPlanner.plan(width, height, records)
+    }
     val records = display?.let { ViewAreaPlanner.mergeRecords(local, year?.screens.orEmpty(), it.screen) }.orEmpty()
     return ViewAreaPlanner.plan(width, height, records, display?.visible, display?.fullscreen)
 }

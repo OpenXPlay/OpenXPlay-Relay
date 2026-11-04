@@ -886,4 +886,91 @@ class RelaySettingsTest {
             }
         }
     }
+
+    @Test fun manualPictureChoicesRoundTripWithParkedValuesAndNullableAreaPairs() {
+        store.use { store ->
+            val initial = store.load()
+            assertNull(initial.carplayScreenWidthCustomMm)
+            assertEquals(ViewAreasMode.AUTOMATIC, initial.viewAreasMode)
+            assertNull(initial.viewAreasFullscreen); assertNull(initial.viewAreasWindowed)
+            val manual = DisplayProfile(1600, 900, 200)
+            for (displayMode in listOf(DisplayMode.FIXED, DisplayMode.AUTOMATIC, DisplayMode.FIXED))
+                for (mode in ViewAreasMode.entries) for (full in listOf(null, PictureSize(3840, 2160)))
+                    for (window in listOf(null, PictureSize(320, 240))) for (mm in listOf(null, 100, 235, 400)) {
+                        val chosen = initial.copy(displayMode = displayMode, display = manual, carplayScreenWidthCustomMm = mm,
+                            viewAreas = full != null || window != null, viewAreasMode = mode,
+                            viewAreasFullscreen = full, viewAreasWindowed = window)
+                        store.save(chosen)
+                        assertEquals(chosen, RelaySettingsStore(context).use { it.load() })
+                    }
+            store.save(initial)
+            assertNull(store.load().viewAreasFullscreen); assertNull(store.load().viewAreasWindowed)
+            val prefs = context.getSharedPreferences("direlay", 0)
+            prefs.edit().putInt("carplayScreenWidthCustomMm", 99).putString("viewAreasMode", "future")
+                .putInt("viewAreasFullscreenWidth", 801).putInt("viewAreasFullscreenHeight", 480).commit()
+            val loaded = store.load()
+            assertNull(loaded.carplayScreenWidthCustomMm); assertNull(loaded.viewAreasFullscreen)
+            assertEquals(ViewAreasMode.AUTOMATIC, loaded.viewAreasMode)
+        }
+    }
+
+    @Test fun headUnitPageKeepsCustomWidthForTheSamePresetAndClearsItForADifferentPreset() {
+        store.use { store ->
+            val original = store.awaitSnapshot().copy(carplayScreenWidth = CarPlayScreenWidth.MM200, carplayScreenWidthCustomMm = 235)
+            store.save(original)
+            assertEquals(200, store.current().screenWidth)
+            val origin = org.openxplay.stream.core.Origin("web", "test")
+            store.set(store.current().copy(frameRate = FrameRatePreference.FPS_45), origin)
+            assertEquals(original.copy(frameRate = FrameRatePreference.FPS_45), store.load())
+            store.set(store.current().copy(screenWidth = 250), origin)
+            assertEquals(CarPlayScreenWidth.MM250, store.load().carplayScreenWidth)
+            assertNull(store.load().carplayScreenWidthCustomMm)
+        }
+    }
+
+    @Test fun preparedAndFixedDisplaysUseCustomWidthWithoutScalingAndKeepDeveloperPriority() {
+        store.use { store ->
+            val profile = DisplayProfile(2400, 1200, 300)
+            val chosen = store.load().copy(displayMode = DisplayMode.FIXED, display = profile, carplayScreenWidthCustomMm = 215)
+            store.save(chosen)
+            assertEquals(215, AirPlayPersistence.loadWidthPhysicalMm(context))
+            store.prepareDisplay(profile, chosen.carplayScreenWidth, chosen.carplayScreenWidthCustomMm)
+            assertEquals(215, AirPlayPersistence.loadWidthPhysicalMm(context))
+            store.physicalWidthOverrideMm = 225
+            assertEquals(225, AirPlayPersistence.loadWidthPhysicalMm(context))
+            store.prepareDisplay(profile, chosen.carplayScreenWidth, chosen.carplayScreenWidthCustomMm)
+            assertEquals(225, AirPlayPersistence.loadWidthPhysicalMm(context))
+            store.physicalWidthOverrideMm = 0
+            store.save(chosen.copy(carplayScreenWidthCustomMm = 235))
+            assertEquals(235, store.load().carplayScreenWidthCustomMm)
+            assertEquals(235, AirPlayPersistence.loadWidthPhysicalMm(context))
+        }
+    }
+
+    @Test fun invalidManualPictureValuesCannotPartiallyOverwritePreferences() {
+        store.use { store ->
+            val original = store.load()
+            for (invalid in listOf(original.copy(carplayScreenWidthCustomMm = 99), original.copy(carplayScreenWidthCustomMm = 213), original.copy(carplayScreenWidthCustomMm = 401),
+                original.copy(viewAreasMode = ViewAreasMode.MANUAL), original.copy(viewAreasFullscreen = PictureSize(801, 480)),
+                original.copy(viewAreasWindowed = PictureSize(320, 2162)))) {
+                assertThrows(IllegalArgumentException::class.java) { store.save(invalid.copy(autoStartOnBoot = true)) }
+                assertEquals(original, store.load())
+            }
+        }
+    }
+
+
+    @Test fun automaticWithAParkedManualCanvasDoesNotApplyItsDisplayProfileDuringSaves() {
+        store.use { store ->
+            val original = store.load()
+            val parked = original.copy(displayMode = DisplayMode.AUTOMATIC, display = DisplayProfile(800, 480, 160))
+            AirPlayPersistence.saveWidthPhysicalMm(context, 300)
+            store.save(parked)
+            assertEquals(parked, store.load())
+            assertEquals(300, AirPlayPersistence.loadWidthPhysicalMm(context))
+            store.save(parked.copy(autoStartOnBoot = true))
+            assertEquals(300, AirPlayPersistence.loadWidthPhysicalMm(context))
+        }
+    }
+
 }

@@ -41,7 +41,10 @@ fun settingsNotice(before: RelaySettings, after: RelaySettings, carlinkConnected
     before.iphoneAddress != after.iphoneAddress || before.connectionMode != after.connectionMode || !before.wirelessNetwork.sameConnectionAs(after.wirelessNetwork) ||
         before.displayMode != after.displayMode || before.display != after.display || before.mfiTarget != after.mfiTarget ||
         before.i2cPath != after.i2cPath || before.remoteServer != after.remoteServer || before.remoteToken != after.remoteToken ||
-        before.carBluetoothAudio != after.carBluetoothAudio || physicalWidthBefore != physicalWidthAfter -> SettingsNotice.NEXT_START
+        before.carBluetoothAudio != after.carBluetoothAudio || physicalWidthBefore != physicalWidthAfter ||
+        before.carplayScreenWidthCustomMm != after.carplayScreenWidthCustomMm ||
+        before.viewAreasMode != after.viewAreasMode || before.viewAreasFullscreen != after.viewAreasFullscreen ||
+        before.viewAreasWindowed != after.viewAreasWindowed -> SettingsNotice.NEXT_START
     before.carlinkPictureDefault != after.carlinkPictureDefault &&
         (carlinkPictureTrial == null || carlinkPictureTrial.size != after.carlinkPictureDefault) -> SettingsNotice.NEXT_START
     before.carlinkPictureSize != after.carlinkPictureSize && carlinkConnected -> SettingsNotice.RECONNECT

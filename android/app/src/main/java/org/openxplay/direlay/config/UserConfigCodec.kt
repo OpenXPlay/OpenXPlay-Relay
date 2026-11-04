@@ -25,6 +25,9 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  * - wirelessPicture: auto/custom; wirelessPictureSize: {width, height}, even pixels in
  *   landscape 640–1920 × 360–1080 (portrait bounds reversed); miracastStretch: boolean.
  * - carlinkPictureSizes: up to five unique valid custom sizes; carlinkPictureDefault: a preset, saved size or null.
+ * - carplayScreenWidthCustomMm: null (preset), or an integer 100–400 in 5 mm steps, without canvas scaling.
+ * - viewAreasMode: automatic/manual; viewAreasFullscreen, viewAreasWindowed: null or
+ *   {width: even 320–3840, height: even 240–2160}; manual view areas require at least one size when enabled.
  * - sharedWifiNetworks: up to ten {ssid: 1–32 UTF-8 bytes, password: empty or 8–63 chars}.
  * - iphone: Bluetooth address or null; receiverPort: 1024–65535 or null.
  * - iphoneConnection, mfiTarget, hotspotBand, hotspotSecurity, displayMode, microphoneSource,
@@ -77,6 +80,7 @@ object UserConfigCodec {
         ClinkHevcMode.STREAM_ONLY to "stream-only", ClinkHevcMode.OFF to "off", ClinkHevcMode.SIGNAL to "signal",
         ClinkPictureSize.WINDOW to "window", ClinkPictureSize.MODE to "mode",
         WirelessPictureMode.AUTO to "auto", WirelessPictureMode.CUSTOM to "custom",
+        ViewAreasMode.AUTOMATIC to "automatic", ViewAreasMode.MANUAL to "manual",
         DisplayMode.AUTOMATIC to "automatic", DisplayMode.RELAY_SCREEN to "relay-screen", DisplayMode.FIXED to "fixed",
         MicrophoneSource.HEAD_UNIT to "head-unit", MicrophoneSource.THIS_DEVICE to "this-device",
         CarPlayResolution.AUTO to "auto", CarPlayResolution.NATIVE to "native", CarPlayResolution.P1080 to "1080p", CarPlayResolution.P720 to "720p", CarPlayResolution.SCREEN to "screen",
@@ -129,6 +133,10 @@ object UserConfigCodec {
         .put("plugins", s.plugins)
         .put("carlinkTrace", s.carlinkTrace)
         .put("viewAreas", s.viewAreas)
+        .put("viewAreasMode", wire(s.viewAreasMode))
+        .put("viewAreasFullscreen", s.viewAreasFullscreen?.let(CarlinkPictureSizes::json) ?: JSONObject.NULL)
+        .put("viewAreasWindowed", s.viewAreasWindowed?.let(CarlinkPictureSizes::json) ?: JSONObject.NULL)
+        .put("carplayScreenWidthCustomMm", s.carplayScreenWidthCustomMm ?: JSONObject.NULL)
         .put("carBluetoothAudio", s.carBluetoothAudio)
         .put("carlinkDeviceName", s.carlinkDeviceName)
         .put("carlinkDeviceModel", s.carlinkDeviceModel)
@@ -229,6 +237,8 @@ object UserConfigCodec {
         fun unknown(objectValue: JSONObject, known: Set<String>, prefix: String) {
             objectValue.keys().asSequence().filter { it !in known }.forEach { ignored.add("$prefix.$it") }
         }
+        for (key in listOf("viewAreasFullscreen", "viewAreasWindowed"))
+            j.optJSONObject(key)?.let { unknown(it, setOf("width", "height"), key) }
         j.optJSONObject("wirelessPictureSize")?.let { unknown(it, setOf("width", "height"), "wirelessPictureSize") }
         j.optJSONObject("carlinkPictureDefault")?.let { unknown(it, setOf("width", "height"), "carlinkPictureDefault") }
         j.optJSONArray("carlinkPictureSizes")?.let { array -> for (index in 0 until array.length())
@@ -286,6 +296,18 @@ object UserConfigCodec {
                 "plugins" -> { val value = j.bool(key); s = s.copy(plugins = value) }
                 "carlinkTrace" -> { val value = j.bool(key); s = s.copy(carlinkTrace = value) }
                 "viewAreas" -> { val value = j.bool(key); s = s.copy(viewAreas = value) }
+                "viewAreasMode" -> { s = s.copy(viewAreasMode = enumValue<ViewAreasMode>(j.string(key))) }
+                "viewAreasFullscreen", "viewAreasWindowed" -> {
+                    val size = if (j.isNull(key)) null else j.getJSONObject(key).let {
+                        PictureSize(it.integer("width"), it.integer("height")).also { size -> size.validateViewArea() }
+                    }
+                    s = if (key == "viewAreasFullscreen") s.copy(viewAreasFullscreen = size) else s.copy(viewAreasWindowed = size)
+                }
+                "carplayScreenWidthCustomMm" -> {
+                    val value = j.nullableInt(key)
+                    require(value == null || customScreenWidthValid(value))
+                    s = s.copy(carplayScreenWidthCustomMm = value)
+                }
                 "carBluetoothAudio" -> { val value = j.bool(key); s = s.copy(carBluetoothAudio = value) }
                 "carlinkDeviceName" -> { val value = j.string(key); s = s.copy(carlinkDeviceName = value) }
                 "carlinkDeviceModel" -> { val value = j.string(key); s = s.copy(carlinkDeviceModel = value) }
@@ -410,6 +432,7 @@ object UserConfigCodec {
         check("pluginsEnabled") { require(org.openxplay.direlay.plugins.RelayPlugins.validIds(s.pluginsEnabled)) }
         for ((key, value) in listOf("carlinkDeviceName" to s.carlinkDeviceName, "carlinkDeviceModel" to s.carlinkDeviceModel))
             check(key) { require(value.isNotBlank() && value.toByteArray(Charsets.UTF_8).size <= 128 && value.none(Character::isISOControl)) }
+        check("viewAreasMode") { require(!s.viewAreas || s.viewAreasMode != ViewAreasMode.MANUAL || s.viewAreasFullscreen != null || s.viewAreasWindowed != null) }
         check("display") { s.display?.validate(); require(s.displayMode != DisplayMode.FIXED || s.display != null) }
         check("sharedWifiNetworks") { SharedWifiNetworks.validate(s.wirelessNetwork.sharedWifiNetworks) }
         val useWireless = s.connectionMode.wireless(wireless)

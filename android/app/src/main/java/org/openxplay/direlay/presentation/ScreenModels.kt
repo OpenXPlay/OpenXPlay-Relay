@@ -20,7 +20,8 @@ data class SettingsView(val settings: RelaySettings, val overrides: DeveloperOve
 data class DetectedCarScreen(val screen: ScreenDataKey, val records: List<WindowSizeRecord>, val receiver: String?)
 data class CarScreenView(val models: CarModels? = null, val detected: DetectedCarScreen? = null,
     val savedCanvas: CarPlayScreen? = null, val version: String = "", val phoneAddresses: Set<String> = emptySet(),
-    val publicName: PublicNameView = PublicNameView())
+    val publicName: PublicNameView = PublicNameView(), val referenceCanvas: DisplayProfile = CarDisplayFit.default,
+    val viewAreaReference: ViewAreaReference = ViewAreaReference())
 data class WirelessPictureView(val automatic: WirelessPictureResolution? = null, val negotiated: Viewport? = null,
     val overlayAllowed: Boolean = false, val canvas: DisplayProfile? = null)
 data class AreaSwitchView(val time: Long, val index: Int, val accepted: Boolean)
