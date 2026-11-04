@@ -37,7 +37,7 @@ class AcmeTlsTest {
     private val acmeKey = TestCa.keyPair()
     private val acmeLeaf = ca.leaf(name, acmeKey.public)
 
-    private fun store(root: File = temporary.newFolder()) = TlsStore(root, { now }) { changes++ }
+    private fun store(root: File = temporary.newFolder(), sdkInt: Int = 30) = TlsStore(root, { now }, sdkInt) { changes++ }
 
     private val trustAll = SSLContext.getInstance("TLS").apply {
         init(null, arrayOf<TrustManager>(object : X509TrustManager {
@@ -71,6 +71,8 @@ class AcmeTlsTest {
                 client.requestName(sni)
                 client.startHandshake()
                 client.inputStream.read()
+                client.outputStream.write(1)
+                client.outputStream.flush()
                 return client.session.peerCertificates.map { it as X509Certificate }.also { server.join(5_000) }
             }
         }
@@ -136,6 +138,69 @@ class AcmeTlsTest {
         assertEquals(tls.fingerprint(), tls.revision())
         tls.serveAcme("another.duckdns.org")
         assertEquals("a certificate for another name is never served", tls.fingerprint(), fingerprint(served(tls.sslContext()!!, name, "engine").first()))
+    }
+
+    @Test fun legacyAndroidUsesAcmeAsTheDefaultAcrossEveryServerPath() {
+        val tls = store(sdkInt = 29)
+        tls.ensureDefault(setOf("192.168.43.1"))
+        tls.installAcme(name, listOf(acmeLeaf, ca.certificate), acmeKey.private)
+        tls.serveAcme(name)
+        val context = checkNotNull(tls.sslContext())
+        // Old Conscrypt cannot distinguish names or IP clients when it chooses the certificate.
+        for (path in listOf("engine", "admin", "layered")) for (requested in listOf(name, "other.duckdns.org", null)) {
+            assertEquals("$path $requested", listOf(acmeLeaf, ca.certificate), served(context, requested, path))
+        }
+    }
+
+    @Test fun legacyAndroidOffMissingOrDifferentNameKeepsTheFallback() {
+        val tls = store(sdkInt = 29)
+        tls.ensureDefault(setOf("192.168.43.1"))
+        val fallback = tls.fingerprint()
+        tls.serveAcme(name)
+        assertEquals(fallback, fingerprint(served(tls.sslContext()!!, name, "layered").first()))
+        tls.installAcme(name, listOf(acmeLeaf, ca.certificate), acmeKey.private)
+        for (selected in listOf(null, "another.duckdns.org")) {
+            tls.serveAcme(selected)
+            assertEquals(fallback, fingerprint(served(tls.sslContext()!!, name, "layered").first()))
+        }
+    }
+
+    @Test fun bothPoliciesRejectAnOutOfDateCertificateInAnExistingContext() {
+        for (sdk in listOf(29, 30)) {
+            now = acmeLeaf.notBefore.time
+            val tls = store(sdkInt = sdk)
+            tls.ensureDefault(setOf("192.168.43.1"))
+            tls.installAcme(name, listOf(acmeLeaf, ca.certificate), acmeKey.private)
+            tls.serveAcme(name)
+            val context = checkNotNull(tls.sslContext())
+            assertEquals(acmeLeaf, served(context, name, "engine").first())
+            for (invalidTime in listOf(acmeLeaf.notBefore.time - 1, acmeLeaf.notAfter.time)) {
+                now = invalidTime
+                assertEquals("SDK $sdk at $invalidTime", tls.fingerprint(),
+                    fingerprint(served(context, name, "engine").first()))
+            }
+        }
+    }
+
+    @Test fun legacyAndroidRenewalUpdatesTheChainAndOffRestoresImportedMaterial() {
+        val tls = store(sdkInt = 29)
+        tls.importFrom(SyntheticIdentity().pkcs12(charArrayOf()), charArrayOf())
+        val imported = tls.fingerprint()
+        tls.installAcme(name, listOf(acmeLeaf, ca.certificate), acmeKey.private)
+        tls.serveAcme(name)
+        val before = tls.revision()
+        val oldContext = checkNotNull(tls.sslContext())
+        val renewedKey = TestCa.keyPair()
+        val renewed = ca.leaf(name, renewedKey.public)
+        val notifications = changes
+        tls.installAcme(name, listOf(renewed, ca.certificate), renewedKey.private)
+        assertEquals(notifications + 1, changes)
+        assertNotEquals(before, tls.revision())
+        assertEquals(acmeLeaf, served(oldContext, null, "layered").first())
+        assertEquals(listOf(renewed, ca.certificate), served(tls.sslContext()!!, null, "layered"))
+        tls.serveAcme(null)
+        assertEquals(notifications + 2, changes)
+        assertEquals(imported, fingerprint(served(tls.sslContext()!!, name, "layered").first()))
     }
 
     @Test fun anExpiredCertificateFallsBackEvenInAnExistingContext() {
