@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
@@ -65,32 +66,51 @@ fun carlifeRoute(settings: RelaySettings, wireless: Boolean) = CarlifeRoute(
 @Composable fun CarlifeRouteDiagram(settings: RelaySettings, wireless: Boolean) {
     val route = carlifeRoute(settings, wireless)
     val description = stringResource(R.string.carlife_route_description, stringResource(route.iphone), stringResource(route.car))
-    Column(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description },
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Top) {
-            RouteNode(R.drawable.symbol_smartphone, R.string.network_iphone, IconHue.IPHONE, Modifier.weight(1f))
-            RouteLink(route.iphone, wireless, Modifier.weight(1f))
-            RouteNode(R.drawable.symbol_smartphone, R.string.carlife_android_phone, IconHue.NETWORK, Modifier.weight(1.2f))
-            RouteLink(route.car, when (settings.carlifeTransport) {
-                CarlifeTransport.AUTO -> null; CarlifeTransport.USB -> false; CarlifeTransport.WIFI -> true
-            }, Modifier.weight(1f))
-            RouteNode(R.drawable.symbol_car_front, R.string.network_car, IconHue.CAR, Modifier.weight(1f))
+    val carWireless = when (settings.carlifeTransport) {
+        CarlifeTransport.AUTO -> null; CarlifeTransport.USB -> false; CarlifeTransport.WIFI -> true
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description }) {
+        // Stack the route before enlarged captions would break device names into individual letters.
+        val stacked = maxWidth.value / LocalDensity.current.fontScale.coerceAtLeast(1f) < 240f
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (stacked) {
+                RouteNode(R.drawable.symbol_smartphone, R.string.network_iphone, IconHue.IPHONE, Modifier.fillMaxWidth(), true)
+                RouteLink(route.iphone, wireless, Modifier.fillMaxWidth(), true)
+                RouteNode(R.drawable.symbol_smartphone, R.string.carlife_android_phone, IconHue.NETWORK, Modifier.fillMaxWidth(), true)
+                RouteLink(route.car, carWireless, Modifier.fillMaxWidth(), true)
+                RouteNode(R.drawable.symbol_car_front, R.string.network_car, IconHue.CAR, Modifier.fillMaxWidth(), true)
+            } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Top) {
+                RouteNode(R.drawable.symbol_smartphone, R.string.network_iphone, IconHue.IPHONE, Modifier.weight(1f))
+                RouteLink(route.iphone, wireless, Modifier.weight(1f))
+                RouteNode(R.drawable.symbol_smartphone, R.string.carlife_android_phone, IconHue.NETWORK, Modifier.weight(1.2f))
+                RouteLink(route.car, carWireless, Modifier.weight(1f))
+                RouteNode(R.drawable.symbol_car_front, R.string.network_car, IconHue.CAR, Modifier.weight(1f))
+            }
+            Text(description, style = RelayTokens.footnote, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(description, style = RelayTokens.footnote, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
-@Composable private fun RouteNode(icon: Int, caption: Int, hue: IconHue, modifier: Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+@Composable private fun RouteNode(icon: Int, caption: Int, hue: IconHue, modifier: Modifier, stacked: Boolean = false) {
+    if (stacked) Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        IconTile(icon, hue, Modifier.size(40.dp))
+        Text(stringResource(caption), style = RelayTokens.caption)
+    } else Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         IconTile(icon, hue, Modifier.size(40.dp))
         Text(stringResource(caption), style = RelayTokens.caption, textAlign = TextAlign.Center)
     }
 }
 
-@Composable private fun RouteLink(caption: Int, wireless: Boolean?, modifier: Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+@Composable private fun RouteLink(caption: Int, wireless: Boolean?, modifier: Modifier, stacked: Boolean = false) {
+    val icon = when (wireless) { true -> R.drawable.symbol_wifi; false -> R.drawable.symbol_usb; null -> R.drawable.symbol_link }
+    if (stacked) Row(modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Symbol(R.drawable.symbol_chevron_down, null, Modifier.size(16.dp))
+        Symbol(icon, null, Modifier.size(24.dp))
+        Text(stringResource(caption), style = RelayTokens.caption)
+    } else Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            Symbol(when (wireless) { true -> R.drawable.symbol_wifi; false -> R.drawable.symbol_usb; null -> R.drawable.symbol_link }, null, Modifier.size(24.dp))
+            Symbol(icon, null, Modifier.size(24.dp))
             Symbol(R.drawable.symbol_chevron, null, Modifier.size(12.dp))
         }
         Text(stringResource(caption), style = RelayTokens.caption, textAlign = TextAlign.Center)
