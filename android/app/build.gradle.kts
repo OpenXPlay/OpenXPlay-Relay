@@ -131,7 +131,12 @@ androidComponents {
         variant.sources.assets?.addGeneratedSourceDirectory(copyReceiverAssets, CopyReceiverAssets::outputDirectory)
     }
 }
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+    // Use Maven Central's canonical endpoint for Robolectric's separate runtime downloads too.
+    systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+    testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
+}
 
 // -Pplugins.dir may point at an alternate prebuilt install directory.
 val copyPluginAssets = tasks.register<CopyPluginAssets>("copyPluginAssets") {
