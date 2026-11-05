@@ -30,6 +30,8 @@ class StreamBridgeSink(
     private val session = input.begin(control)
     private val audio = mutableMapOf<Int, Pair<AudioStreamId, RelayAudioStream>>()
     private val audioTails = mutableMapOf<Int, RelayAudioStream>()
+    /** Streams DiPlay stopped; their late packets must not start them again. */
+    private val stoppedAudio = mutableSetOf<AudioStreamId>()
     private val microphoneIds = mutableMapOf<Int, AudioStreamId>()
     private val microphoneTails = mutableMapOf<Int, DelegatedMicrophone>()
     private val localMicrophones = mutableMapOf<Int, Pair<AudioStreamId, DelegatedMicrophone>>()
@@ -45,7 +47,7 @@ class StreamBridgeSink(
         val stream = AudioPolicy.stream(id) ?: return
         Log.i("OXP-Audio", "stream_start stream=$stream type=${id.type} codec=${format.codec} " +
             "rate=${format.sampleRate} ch=${format.channels} firstSample=$firstSample")
-        input.deliver(session) { sink -> startAudioStream(id, stream, format, firstSample, sink) }
+        input.deliver(session) { sink -> stoppedAudio.remove(id); startAudioStream(id, stream, format, firstSample, sink) }
     }
 
     /**
@@ -87,7 +89,7 @@ class StreamBridgeSink(
             // missed it and every packet was dropped by offer() (measured: 1026 packets lost
             // between arrival and the queue). Rebuild whenever the stream is missing or stopped.
             val existing = audio[stream]?.takeIf { it.first == id }
-            if (existing == null || !existing.second.isRunning()) {
+            if (id !in stoppedAudio && (existing == null || !existing.second.isRunning())) {
                 Log.i("OXP-Audio", "stream_lazy_start stream=$stream type=${id.type} sample=$sample " +
                     "reason=${if (existing == null) "absent" else "stopped"}")
                 startAudioStream(id, stream, format, sample, sink)
@@ -100,6 +102,7 @@ class StreamBridgeSink(
         val stream = AudioPolicy.stream(id) ?: return
         Log.i("OXP-Audio", "stream_stop stream=$stream type=${id.type}")
         input.deliver(session) { sink ->
+            stoppedAudio.add(id)
             if (audio[stream]?.first == id) {
                 audio.remove(stream)?.second?.close()
                 if (session.audio.remove(stream)) sink.audioFormat(stream, null)
