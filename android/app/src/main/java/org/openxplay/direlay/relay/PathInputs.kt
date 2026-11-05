@@ -57,7 +57,8 @@ fun RelayRuntime.pathInput(local: PathLocal): PathInput {
                     WifiJoinPolicy.Method.NETWORK_SPECIFIER -> "Wi-Fi"
                     else -> null
                 }, carlinkTrusted, carlinkPins.pending != null,
-                clink?.let { negotiatedPicture(it.width, it.height, it.codec) }, carlinkTrail()),
+                clink?.let { negotiatedPicture(it.width, it.height, it.codec) }, carlinkTrail(),
+                carlinkStage?.first == ClinkStage.WIFI_MANUAL, carlinkWifiSsid),
             dlna, cast, teslaPathInput(settings.teslaBrowser != TeslaBrowserMode.OFF, teslaUrl(), teslaFailure, teslaStateSinceMillis),
             carlifePathInput(settings.carlifeOutput, carlifeStatus, carlifeStateSinceMillis)),
         iphone = IphoneInput(iphonePick(selection), iphoneName(selection), when (networkReadings.usb) {
@@ -101,7 +102,7 @@ internal fun carlinkPhase(state: String, stage: ClinkStage?, pinPending: Boolean
         pinPending -> CarlinkPhase.PIN
         stage in setOf(ClinkStage.AUTH, ClinkStage.AUTH_PINNED, ClinkStage.AUTH_SUCCESS, ClinkStage.TCP_CONNECTED) -> CarlinkPhase.AUTHENTICATING
         stage in setOf(ClinkStage.AUTH_PIN, ClinkStage.AUTH_CONFIRM) -> CarlinkPhase.PIN
-        stage in setOf(ClinkStage.WIFI_JOIN, ClinkStage.TCP_CONNECT) -> CarlinkPhase.JOINING
+        stage in setOf(ClinkStage.WIFI_JOIN, ClinkStage.WIFI_MANUAL, ClinkStage.TCP_CONNECT) -> CarlinkPhase.JOINING
         stage in setOf(ClinkStage.BLE_PEER, ClinkStage.GATT_CONNECT, ClinkStage.GATT_CONNECTED,
             ClinkStage.GATT_SERVICES, ClinkStage.BLE_EXCHANGE) -> CarlinkPhase.EXCHANGING
         state == "AUTHENTICATING" -> CarlinkPhase.AUTHENTICATING

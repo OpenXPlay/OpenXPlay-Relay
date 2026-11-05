@@ -33,70 +33,10 @@ fun ExperimentalScreen(state: SettingsEditorState, back: () -> Unit, wireless: (
 @Composable private fun ExperimentalOptionGroup(state: SettingsEditorState, option: ExperimentalOption, header: String?) {
     val options = state.draft.value.experimental
     when (option) {
-        ExperimentalOption.IAP_CHANNEL_WHEN_OFFERED -> SettingsToggleGroup(stringResource(R.string.experimental_iap_channel_when_offered), options.iapChannelWhenOffered,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_iap_channel_when_offered_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(iapChannelWhenOffered = enabled) }
-        }
-        ExperimentalOption.RELEASE_BLUETOOTH_ON_REQUEST -> SettingsToggleGroup(stringResource(R.string.experimental_release_bluetooth), options.releaseBluetoothOnRequest,
-            R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
-            footer = stringResource(R.string.experimental_release_bluetooth_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(releaseBluetoothOnRequest = enabled) }
-        }
-        ExperimentalOption.AWAIT_IPHONE_RECONNECT -> SettingsToggleGroup(stringResource(R.string.experimental_await_iphone_reconnect), options.awaitIphoneReconnect,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_await_iphone_reconnect_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(awaitIphoneReconnect = enabled) }
-        }
-        ExperimentalOption.RADIO_CONFLICT_PROMPT -> SettingsToggleGroup(stringResource(R.string.experimental_radio_conflict_prompt), options.radioConflictPrompt,
+        ExperimentalOption.CARLINK_WIFI_RECOVERY -> SettingsToggleGroup(stringResource(R.string.experimental_carlink_wifi_recovery), options.carlinkWifiRecovery,
             R.drawable.symbol_wifi, IconHue.NETWORK,
-            footer = stringResource(R.string.experimental_radio_conflict_prompt_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(radioConflictPrompt = enabled) }
-        }
-        ExperimentalOption.STALL_WATCHDOG -> SettingsToggleGroup(stringResource(R.string.experimental_stall_watchdog), options.stallWatchdog,
-            R.drawable.symbol_code, IconHue.LOGS,
-            footer = stringResource(R.string.experimental_stall_watchdog_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(stallWatchdog = enabled) }
-        }
-        ExperimentalOption.SCREEN_SESSION_ISOLATION -> SettingsToggleGroup(stringResource(R.string.experimental_screen_session_isolation), options.screenSessionIsolation,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_screen_session_isolation_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(screenSessionIsolation = enabled) }
-        }
-        ExperimentalOption.SCREEN_RECONNECT_RESET -> SettingsToggleGroup(stringResource(R.string.experimental_screen_reconnect_reset), options.screenReconnectReset,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_screen_reconnect_reset_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(screenReconnectReset = enabled) }
-        }
-        ExperimentalOption.SCREEN_DELIVERY_SERIALIZATION -> SettingsToggleGroup(stringResource(R.string.experimental_screen_delivery_serialization), options.screenDeliverySerialization,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_screen_delivery_serialization_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(screenDeliverySerialization = enabled) }
-        }
-        ExperimentalOption.REMOTE_PLAYBACK_PROOF -> SettingsToggleGroup(stringResource(R.string.experimental_remote_playback_proof), options.remotePlaybackProof,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_remote_playback_proof_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(remotePlaybackProof = enabled) }
-        }
-        ExperimentalOption.CANCEL_RECOVERED_RETRIES -> SettingsToggleGroup(stringResource(R.string.experimental_cancel_recovered_retries), options.cancelRecoveredRetries,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_cancel_recovered_retries_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(cancelRecoveredRetries = enabled) }
-        }
-        ExperimentalOption.STARTUP_STATUS -> SettingsToggleGroup(stringResource(R.string.experimental_startup_status), options.startupStatus,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_startup_status_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(startupStatus = enabled) }
-        }
-        ExperimentalOption.STARTUP_DIAGNOSTICS -> SettingsToggleGroup(stringResource(R.string.experimental_startup_diagnostics), options.startupDiagnostics,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_startup_diagnostics_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(startupDiagnostics = enabled) }
-        }
-        ExperimentalOption.NETWORK_OBSERVATION_BACKOFF -> SettingsToggleGroup(stringResource(R.string.experimental_network_observation_backoff), options.networkObservationBackoff,
-            R.drawable.symbol_activity, IconHue.DEVELOPER,
-            footer = stringResource(R.string.experimental_network_observation_backoff_hint), enabled = options.active, header = header) { enabled ->
-            state.changeExperimental { it.copy(networkObservationBackoff = enabled) }
+            footer = stringResource(R.string.experimental_carlink_wifi_recovery_hint), enabled = options.active, header = header) { enabled ->
+            state.changeExperimental { it.copy(carlinkWifiRecovery = enabled) }
         }
         ExperimentalOption.SEND_BLUETOOTH_ADDRESS -> {
             SettingsToggleGroup(stringResource(R.string.experimental_send_address), options.sendBluetoothAddress,

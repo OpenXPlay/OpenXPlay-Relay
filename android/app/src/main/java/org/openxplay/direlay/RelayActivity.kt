@@ -455,7 +455,9 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                     checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED }
                 openActivity(Intent(if (allowed) BluetoothAdapter.ACTION_REQUEST_ENABLE else Settings.ACTION_BLUETOOTH_SETTINGS))
             } }
-            StepAction.OPEN_WIFI -> openActivity(Intent(if (Build.VERSION.SDK_INT >= 29) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS))
+            StepAction.OPEN_WIFI -> openActivity(
+                Intent(if (Build.VERSION.SDK_INT >= 29) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS),
+                alternatives = listOf(Intent(Settings.ACTION_WIFI_SETTINGS)))
             StepAction.OPEN_HOTSPOT -> runCatching { org.openxplay.direlay.ui.NetworkSettingsLauncher(this).open(true) }
                 .onFailure { openActivity(Intent(Settings.ACTION_SETTINGS)) }
             StepAction.KEEP_ALIVE_SETTINGS -> openActivity(RelayActivity.intent(this, destination = "settings/background"),
@@ -761,6 +763,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
         dialogs.active = !requestingPermissions && !pairingInFlight
         presentation.action { runtime.reloadSettings() }
         // Coming back from system Wi-Fi or Bluetooth settings: show the new network at once.
+        runtime.refreshCarlinkWifi()
         lastNetworkRefresh = Long.MIN_VALUE / 2
         materialChecked = false
         refreshNetwork()

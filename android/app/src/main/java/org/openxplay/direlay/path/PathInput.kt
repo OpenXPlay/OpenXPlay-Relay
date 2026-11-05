@@ -91,6 +91,8 @@ data class CarlinkInput(
     /** The picture size and codec the car negotiated, e.g. "1280×720 H.265". */
     val picture: String? = null,
     val trail: List<String> = emptyList(),
+    val wifiSwitchNeeded: Boolean = false,
+    val wifiSsid: String? = null,
 )
 
 /** DLNA, Miracast and the Tesla address. WAITING_USER: the user must act (cast, choose a renderer). */

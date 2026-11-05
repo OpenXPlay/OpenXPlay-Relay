@@ -807,82 +807,35 @@ class RelaySettingsTest {
         RelaySettingsStore(context).use { migrated ->
             val value = migrated.load()
             assertTrue(value.experimental.active)
-            assertEquals(13, value.experimental.optionCount)
+            assertEquals(1, value.experimental.optionCount)
             assertTrue(value.experimental.effective().keepScanning)
             assertFalse(value.experimental.sendBluetoothAddress)
             migrated.save(value.copy(experimental = value.experimental.copy(active = false, startupDiagnostics = false)))
         }
         RelaySettingsStore(context).use {
             assertFalse(it.load().experimental.active)
-            assertFalse(it.load().experimental.startupDiagnostics)
+            assertTrue(it.load().experimental.startupDiagnostics)
         }
     }
 
 
-    @Test fun screenExperimentsDefaultOnForExistingVersionTwoAndPersistEachChoice() {
+    @Test fun upgradePromotesHistoricalOffChoicesAndPreservesTheRemainingExperiments() {
         val prefs = context.getSharedPreferences("direlay", 0)
-        prefs.edit().putInt("experimental.version", 2).putBoolean("experimental.active", true).commit()
+        prefs.edit().putInt("experimental.version", 2).putBoolean("experimental.active", false)
+            .putBoolean("experimental.screenSessionIsolation", false).putBoolean("experimental.iapChannelWhenOffered", false)
+            .putBoolean("experimental.stallWatchdog", false).putBoolean("experimental.sendBluetoothAddress", true)
+            .putString("experimental.bluetoothAddress", "a0:b1:c2:d3:e4:f5").commit()
         RelaySettingsStore(context).use { upgraded ->
-            val defaults = upgraded.load().experimental
-            assertTrue(defaults.screenSessionIsolation && defaults.screenReconnectReset && defaults.screenDeliverySerialization)
-            for (bits in 0..7) {
-                val choice = defaults.copy(screenSessionIsolation = bits and 1 != 0,
-                    screenReconnectReset = bits and 2 != 0, screenDeliverySerialization = bits and 4 != 0)
-                upgraded.save(upgraded.load().copy(experimental = choice))
-                RelaySettingsStore(context).use { restarted -> assertEquals(choice, restarted.load().experimental) }
-            }
-        }
-        prefs.edit().putBoolean("experimental.active", false)
-            .remove("experimental.screenSessionIsolation").remove("experimental.screenReconnectReset")
-            .remove("experimental.screenDeliverySerialization").commit()
-        RelaySettingsStore(context).use { restarted ->
-            val options = restarted.load().experimental
-            assertFalse(options.active)
-            assertTrue(options.screenSessionIsolation && options.screenReconnectReset && options.screenDeliverySerialization)
-            assertFalse(options.effective().screenSessionIsolation)
-        }
-    }
-
-    @Test fun handoffExperimentsUseTheirDefaultsForExistingVersionTwoAndPersistEachParkedChoice() {
-        val prefs = context.getSharedPreferences("direlay", 0)
-        for (active in listOf(false, true)) {
-            prefs.edit().putInt("experimental.version", 2).putBoolean("experimental.active", active)
-                .remove("experimental.iapChannelWhenOffered").remove("experimental.releaseBluetoothOnRequest")
-                .remove("experimental.awaitIphoneReconnect").commit()
-            RelaySettingsStore(context).use { upgraded ->
-                val defaults = upgraded.load().experimental
-                assertEquals(active, defaults.active)
-                assertTrue(defaults.iapChannelWhenOffered && defaults.releaseBluetoothOnRequest && defaults.awaitIphoneReconnect)
-                assertEquals(active, defaults.effective().iapChannelWhenOffered)
-                assertEquals(active, defaults.effective().releaseBluetoothOnRequest)
-                assertEquals(active, defaults.effective().awaitIphoneReconnect)
-                for (bits in 0..7) {
-                    val choice = defaults.copy(iapChannelWhenOffered = bits and 1 != 0,
-                        releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)
-                    upgraded.save(upgraded.load().copy(experimental = choice))
-                    assertEquals(choice.iapChannelWhenOffered, prefs.getBoolean("experimental.iapChannelWhenOffered", !choice.iapChannelWhenOffered))
-                    assertEquals(choice.releaseBluetoothOnRequest, prefs.getBoolean("experimental.releaseBluetoothOnRequest", !choice.releaseBluetoothOnRequest))
-                    assertEquals(choice.awaitIphoneReconnect, prefs.getBoolean("experimental.awaitIphoneReconnect", !choice.awaitIphoneReconnect))
-                    assertEquals(2, prefs.getInt("experimental.version", 0))
-                    RelaySettingsStore(context).use { restarted -> assertEquals(choice, restarted.load().experimental) }
-                }
-            }
-        }
-    }
-
-    @Test fun diagnosticsExperimentsStartOnForExistingSettingsAndPersistEachChoice() {
-        val prefs = context.getSharedPreferences("direlay", 0)
-        prefs.edit().putInt("experimental.version", 2).putBoolean("experimental.active", true)
-            .remove("experimental.radioConflictPrompt").remove("experimental.stallWatchdog").commit()
-        RelaySettingsStore(context).use { upgraded ->
-            val defaults = upgraded.load().experimental
-            assertTrue(defaults.radioConflictPrompt && defaults.stallWatchdog)
-            for (bits in 0..3) {
-                val choice = defaults.copy(radioConflictPrompt = bits and 1 != 0, stallWatchdog = bits and 2 != 0)
-                upgraded.save(upgraded.load().copy(experimental = choice))
-                assertEquals(choice.radioConflictPrompt, prefs.getBoolean("experimental.radioConflictPrompt", !choice.radioConflictPrompt))
-                assertEquals(choice.stallWatchdog, prefs.getBoolean("experimental.stallWatchdog", !choice.stallWatchdog))
-                RelaySettingsStore(context).use { restarted -> assertEquals(choice, restarted.load().experimental) }
+            val value = upgraded.load().experimental
+            assertFalse(value.active)
+            assertTrue(value.sendBluetoothAddress && value.carlinkWifiRecovery)
+            assertTrue(value.effective().screenSessionIsolation && value.effective().iapChannelWhenOffered && value.effective().stallWatchdog)
+            assertEquals(3, prefs.getInt("experimental.version", 0))
+            assertFalse(prefs.contains("experimental.screenSessionIsolation"))
+            for (active in listOf(false, true)) for (wifi in listOf(false, true)) {
+                val selected = value.copy(active = active, carlinkWifiRecovery = wifi)
+                upgraded.save(upgraded.load().copy(experimental = selected))
+                RelaySettingsStore(context).use { restarted -> assertEquals(selected, restarted.load().experimental) }
             }
         }
     }

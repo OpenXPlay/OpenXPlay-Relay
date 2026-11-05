@@ -73,6 +73,8 @@ private fun CarlinkInput.json() = obj(
     "retrying" to retrying,
     "carName" to carName,
     "joinMethod" to joinMethod,
+    "wifiSwitchNeeded" to wifiSwitchNeeded,
+    "wifiSsid" to wifiSsid,
     "trusted" to trusted,
     "pinPending" to pinPending,
     "picture" to picture,

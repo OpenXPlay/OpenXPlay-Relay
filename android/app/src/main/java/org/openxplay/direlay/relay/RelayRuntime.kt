@@ -598,6 +598,8 @@ class RelayRuntime(private val context: Context,
     val carlinkReconnectPending: Boolean get() = carlinkRetrying || carlinkRestartPending
     @Volatile var carlinkName: String? = null
         private set
+    @Volatile var carlinkWifiPending = false
+    @Volatile var carlinkWifiSsid: String? = null
     @Volatile var carlinkJoinMethod: WifiJoinPolicy.Method? = null
         private set
     @Volatile var carlinkTrusted = false
@@ -717,6 +719,7 @@ class RelayRuntime(private val context: Context,
     } }
 
     private var carlinkLink: ClinkLink? = null
+    fun refreshCarlinkWifi() { wirelessUpdate { (carlinkLink as? AndroidClinkLink)?.refreshWifi() } }
     @Volatile private var carlinkEnded = false
     @Volatile private var carlinkRetiring = false
     @Volatile private var carlinkRestartPending = false
@@ -1314,7 +1317,7 @@ class RelayRuntime(private val context: Context,
         carlinkRetrying = requested.enabled && carlinkError != null
         carlinkStage = null
         carlinkStateSinceMillis = System.currentTimeMillis()
-        carlinkName = null; carlinkJoinMethod = null; carlinkTrusted = false
+        carlinkName = null; carlinkWifiSsid = null; carlinkWifiPending = false; carlinkJoinMethod = null; carlinkTrusted = false
         carlinkAttemptDetail = ""
         if (!requested.enabled || carlinkError == null) {
             carlinkDetail = ""
@@ -1364,6 +1367,12 @@ class RelayRuntime(private val context: Context,
                 is ClinkDiagnostic.Trusted -> carlinkTrusted = event.trusted
                 is ClinkDiagnostic.Retry -> carlinkRetrying = true
                 is ClinkDiagnostic.JoinChoice -> carlinkJoinMethod = event.method
+                is ClinkDiagnostic.Handoff -> carlinkWifiSsid = event.ssid
+                is ClinkDiagnostic.WifiRecovery -> when (event.event) {
+                    "identifying", "request_started" -> carlinkWifiPending = true
+                    "network_selected", "closed" -> carlinkWifiPending = false
+                    else -> Unit
+                }
                 else -> Unit
             }
             if (event is ClinkDiagnostic.Failure) {

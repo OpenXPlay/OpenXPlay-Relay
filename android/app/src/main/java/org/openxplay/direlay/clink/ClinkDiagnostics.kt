@@ -26,7 +26,7 @@ enum class ClinkStage(val code: String) : ClinkDiagnostic {
     LINK_STOP("link_stop"), BLE_SCAN("ble_scan_started"), BLE_PEER("ble_peer_found"),
     GATT_CONNECT("gatt_connect_started"), GATT_CONNECTED("gatt_connected"),
     GATT_SERVICES("gatt_services_discovered"), BLE_EXCHANGE("ble_exchange"),
-    WIFI_JOIN("wifi_join"), TCP_CONNECT("tcp_connect_started"), TCP_CONNECTED("tcp_connected"),
+    WIFI_MANUAL("wifi_manual_switch"), WIFI_JOIN("wifi_join"), TCP_CONNECT("tcp_connect_started"), TCP_CONNECTED("tcp_connected"),
     AUTH_PINNED("auth_pinned_key"), AUTH_PIN("auth_pin_requested"),
     AUTH_CONFIRM("auth_confirmation_requested"), AUTH("auth"), AUTH_SUCCESS("auth_success"),
     LINK_LOST("link_lost"), SESSION("session");
@@ -97,6 +97,10 @@ sealed interface ClinkDiagnostic {
     data class Joined(val peer: String, val local: String) : ClinkDiagnostic {
         init { require(WifiJoinPolicy.endpoints(peer, local) != null) }
         override fun line() = "wifi_join_success peer=$peer local=$local"
+    }
+    data class WifiRecovery(val event: String, val match: String? = null, val addressesReady: Boolean? = null) : ClinkDiagnostic {
+        override fun line() = "wifi_recovery event=$event" + (match?.let { " match=$it" } ?: "") +
+            (addressesReady?.let { " addressesReady=$it" } ?: "")
     }
     data class State(val state: ClinkState) : ClinkDiagnostic {
         override fun line() = "state=${state.name}"

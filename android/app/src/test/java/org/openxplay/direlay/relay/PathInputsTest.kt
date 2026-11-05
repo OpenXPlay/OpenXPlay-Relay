@@ -72,7 +72,7 @@ class PathInputsTest {
             assertEquals(phase, carlinkPhase(state, stage, pin))
         val exchanging = setOf(ClinkStage.BLE_PEER, ClinkStage.GATT_CONNECT, ClinkStage.GATT_CONNECTED,
             ClinkStage.GATT_SERVICES, ClinkStage.BLE_EXCHANGE)
-        val joining = setOf(ClinkStage.WIFI_JOIN, ClinkStage.TCP_CONNECT)
+        val joining = setOf(ClinkStage.WIFI_JOIN, ClinkStage.WIFI_MANUAL, ClinkStage.TCP_CONNECT)
         val auth = setOf(ClinkStage.AUTH, ClinkStage.AUTH_PINNED, ClinkStage.AUTH_SUCCESS, ClinkStage.TCP_CONNECTED)
         for (stage in ClinkStage.entries) {
             val phase = when (stage) {

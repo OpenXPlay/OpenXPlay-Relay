@@ -54,7 +54,7 @@ class PathInputJsonTest {
                 "web": {"phase": "FAILED", "port": 9443, "code": "web_port_busy", "trustedName": "car.example", "sinceMillis": 1793000000001},
                 "pageUrl": "https://car.example:9443/", "pages": 2, "screen": "1920×720", "savedScreen": "1280×720",
                 "carlink": {"phase": "PIN", "sinceMillis": 1793000000002, "code": "auth_rejected", "error": "Try again",
-                    "retrying": true, "carName": "G6", "joinMethod": "Wi-Fi Direct", "trusted": true, "pinPending": true,
+                    "retrying": true, "carName": "G6", "joinMethod": "Wi-Fi Direct", "wifiSwitchNeeded": false, "wifiSsid": null, "trusted": true, "pinPending": true,
                     "picture": "1280×720 H.265", "trail": ["scan", "join", "scan"]},
                 "dlna": {"phase": "FAILED", "name": "Renderer", "code": "renderer_stopped", "sinceMillis": 1793000000003},
                 "miracast": {"phase": "PLAYING", "name": "Car display", "code": "display_recovered", "sinceMillis": 1793000000004},

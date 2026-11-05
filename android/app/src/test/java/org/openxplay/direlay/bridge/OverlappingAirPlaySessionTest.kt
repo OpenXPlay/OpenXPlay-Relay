@@ -248,10 +248,10 @@ class OverlappingAirPlaySessionTest {
                     val current = screen(engine, fresh, 2L)
                     current.onCodec(VideoCodec.H264)
                     current.onConfig(avcConfig)
-                    assertEquals(choices.toString(), active && choices.screenReconnectReset,
+                    assertEquals(choices.toString(), true,
                         before != capture.states.last().id)
                     old.close()
-                    val protected = active && (choices.screenSessionIsolation || choices.screenReconnectReset)
+                    val protected = true
                     assertEquals(choices.toString(), if (protected) SessionPhase.ACTIVE else SessionPhase.ENDED,
                         capture.states.last().phase)
                     current.onFrame(hex("00 00 01 65 88"))

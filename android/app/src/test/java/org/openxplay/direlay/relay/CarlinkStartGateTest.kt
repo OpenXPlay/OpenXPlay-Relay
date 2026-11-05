@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-25
 package org.openxplay.direlay.relay
 
 import java.io.IOException
@@ -39,5 +40,16 @@ class CarlinkStartGateTest {
         gate.request(80_000, true)
         assertFalse(gate.ready(80_001, false, true))
         assertEquals(140_000L, gate.untilMillis)
+    }
+    @Test fun choosingWifiDoesNotConsumeTheStartupDeadlineAndStopStillWins() {
+        val gate = CarlinkStartGate()
+        gate.request(100, true)
+        assertFalse(gate.ready(60_100, false, true, waitingForWifi = true))
+        assertFalse(gate.ready(180_100, false, true, waitingForWifi = true))
+        assertEquals(240_100L, gate.untilMillis)
+        assertFalse(gate.ready(180_101, false, true))
+        assertTrue(gate.ready(180_102, true, true))
+        gate.request(100, true)
+        assertThrows(IOException::class.java) { gate.ready(180_100, false, false, waitingForWifi = true) }
     }
 }
