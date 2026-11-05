@@ -43,13 +43,16 @@ class AudioPolicyTest {
         assertArrayEquals(hex("12 34 fe dc 80 00 7f ff"), pcm)
         assertThrows(IllegalArgumentException::class.java) { AudioPolicy.swap(byteArrayOf(1)) }
     }
-    @Test fun timestampsAnchorAtArrivalAdvanceBySamplesAndReanchorOnlyBeyond100ms() {
+    @Test fun timestampsAnchorAtArrivalAdvanceBySamplesAndReanchorOnlyBeyond500ms() {
         val clock = AudioClock(48000)
         assertEquals(1_000_000L, clock.pts(900, 1_000_000))
         assertEquals(1_020_000L, clock.pts(1860, 1_080_000))
         assertEquals(1_040_000L, clock.pts(2820, 1_140_000))
-        assertEquals(1_200_001L, clock.pts(3780, 1_200_001))
-        assertEquals(1_220_001L, clock.pts(4740, 1_220_000))
+        // 140 ms of arrival jitter is inside the 500 ms re-anchor window, so the sample-derived
+        // PTS keeps advancing instead of snapping to the arrival time.
+        assertEquals(1_060_000L, clock.pts(3780, 1_200_001))
+        assertEquals(1_080_000L, clock.pts(4740, 1_220_000))
+        // A first packet has no history: it anchors at its arrival time.
         assertEquals(2_000_000L, AudioClock(48000).pts(4740, 2_000_000))
         val opus = AudioClock(24000)
         assertEquals(5_000_000L, opus.pts(0, 5_000_000))

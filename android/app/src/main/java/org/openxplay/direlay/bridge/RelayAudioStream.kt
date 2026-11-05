@@ -34,6 +34,8 @@ internal class RelayAudioStream(
     private val media = AudioPolicy.role(id.audioType) == AudioRole.MEDIA
     private val worker = Thread({ run() }, "direlay-audio-${id.type}").apply { isDaemon = true }
     fun start() = worker.start()
+    /** False once the worker stopped: offer() drops packets, so callers must rebuild instead. */
+    fun isRunning() = running.get()
     fun offer(rtp: ByteArray, sample: Int, arrivalUs: Long) {
         if (!running.get() || rtp.size <= 12) return
         val packet = Packet(rtp.copyOf(), sample, clock.pts(sample, arrivalUs))
