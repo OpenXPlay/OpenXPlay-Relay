@@ -57,12 +57,26 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         private const val REQUEST_TIMEOUT_MS = 12_000L
         /** Never hand the request less than this, even if priming ate most of the stage budget. */
         private const val MIN_REQUEST_TIMEOUT_MS = 5_000L
+        /**
+         * Window for a join retry. The first attempt gets the full [REQUEST_TIMEOUT_MS] because a slow
+         * access point can still come up inside it; a retry only has to catch an AP that is coming
+         * back, and waiting another full window there costs more than restarting the link.
+         */
+        private const val JOIN_RETRY_BUDGET_MS = 5_000L
+        /**
+         * Pause before a join retry. Short on purpose: every retry polls for the platform's own link,
+         * so the moment the access point returns it is adopted without waiting out the rest.
+         */
+        private const val JOIN_RETRY_FIRST_MS = 500L
+        private const val JOIN_RETRY_NEXT_MS = 1_500L
         /** Quiet window granted to the platform's own join before asking for a network. */
         private const val QUIET_JOIN_MS = 2_500L
         /** How often a link the platform brought up on its own is checked for adoption. */
         private const val ADOPT_POLL_MS = 100L
         /** How long a freshly started scan is given to deliver results before the request goes out. */
         private const val PRIME_BUDGET_MS = 3_000L
+        /** How long a scan result counts as evidence that the head unit's AP is up right now. */
+        private const val PRIME_FRESH_MS = 15_000L
     }
     private val peerStore = object : BlePeerPolicy.Store, BlePeerPolicy.SubscriptionStore {
         private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkPeers", Context.MODE_PRIVATE)
@@ -105,6 +119,20 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         handler.postDelayed({ done.complete(Unit) }, delay)
         await(run, done, 16)
     }
+    /**
+     * Pause between join attempts. Deliberately separate from [retry]: that backoff belongs to the BLE
+     * exchange, and letting a Wi-Fi retry push it to 4 s would slow the next full link start.
+     */
+    private fun joinRetry(run: Run, delayMs: Long) {
+        // Distinct from the BLE backoff on purpose: seeing this line means the link was kept alive
+        // through a Wi-Fi failure instead of being rebuilt from a fresh scan.
+        Log.i("DiRelayCarlink", "join_retry delay=${delayMs}ms")
+        diagnostics.emit(ClinkDiagnostic.Retry(delayMs))
+        val done = CompletableFuture<Unit>()
+        handler.postDelayed({ done.complete(Unit) }, delayMs)
+        await(run, done, 5)
+    }
+
     private fun awaitCleanup() {
         reconnect.awaitReleased(diagnostics)
     }
@@ -151,8 +179,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
      * dialog. One priming per throttle window keeps the remaining requests for the dialog.
      */
     @Volatile private var lastPrimeAt = 0L
-    /** Whether the last priming actually saw the head unit's SSID in the scan results. */
-    @Volatile private var lastPrimeSawTarget = false
+    /**
+     * When the head unit's SSID was last actually seen in scan results. A timestamp, not a flag: the
+     * 2-minute throttle means a retry can reuse a scan from long ago, and treating that as "the AP is
+     * there right now" spends the quiet window waiting for a network that has moved or restarted.
+     */
+    @Volatile private var lastPrimeSawAt = 0L
+    private fun primeSawTarget(): Boolean =
+        lastPrimeSawAt != 0L && android.os.SystemClock.elapsedRealtime() - lastPrimeSawAt < PRIME_FRESH_MS
     /**
      * The confirmation dialog, and the scan-cache workaround for it, are MIUI/Android 10-11 specific.
      * Everything else here is generic AOSP behaviour and must not be slowed down for other vendors.
@@ -196,18 +230,37 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             onSecret(reply.psk)
             diagnostics.handoff(reply.ssid, reply.psk.length)
             // No PIN/UI pause here; return immediately after DHCP so clink can start AUTH.
-            val endpoints = diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) { join(run, reply) }
+            // A join failure says nothing about the BLE exchange: the head unit keeps the same soft AP
+            // for the session, so redoing a scan plus exchange only adds seconds to a Wi-Fi problem it
+            // cannot fix. Retry the join with the reply already in hand; a rotated passphrase still
+            // surfaces as a failure here and the next link attempt redoes BLE anyway.
+            var endpoints: Pair<String, String>? = null
+            for (joinAttempt in 0..2) {
+                try {
+                    endpoints = diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) {
+                        join(run, reply, if (joinAttempt == 0) REQUEST_TIMEOUT_MS else JOIN_RETRY_BUDGET_MS)
+                    }
+                    break
+                } catch (failure: Exception) {
+                    // Drop the request and any P2P channel before asking again, or the next attempt
+                    // stacks a second request on the first one and MIUI pays for both.
+                    main { leaveP2p(run); releaseNetwork(run) }
+                    if (run.cancelled || joinAttempt == 2) throw failure
+                    joinRetry(run, if (joinAttempt == 0) JOIN_RETRY_FIRST_MS else JOIN_RETRY_NEXT_MS)
+                }
+            }
+            val joined = checkNotNull(endpoints)
             logLinkReady(run, "join")
             // A second sample: if the route was missing at join time, this shows when it arrived.
             handler.postDelayed({ logLinkReady(run, "join+2s") }, 2_000)
-            diagnostics.emit(ClinkDiagnostic.Joined(endpoints.first, endpoints.second))
+            diagnostics.emit(ClinkDiagnostic.Joined(joined.first, joined.second))
             main {
                 check(!run.cancelled) { "Link cancelled" }
                 run.failure?.let { throw it }
                 run.ready = true
                 run.peerKey?.let { peers.succeeded(it, checkNotNull(run.peerChoice)) }
             }
-            return ClinkAddresses(endpoints.first, endpoints.second,
+            return ClinkAddresses(joined.first, joined.second,
                 reply.port.takeIf { it != 0 } ?: 57209, carId,
                 socketBinding = if (!isolateNetwork) ClinkSocketBinding.SYSTEM else ClinkSocketBinding { socket ->
                     synchronized(this) {
@@ -623,10 +676,11 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             awaitCleanup()
         }
     }
-    private fun join(run: Run, reply: HeadUnitReply): Pair<String, String> =
-        WifiJoinPolicy.withWifi(readWifiEnabled(context)) { joinWithWifi(run, reply) }
+    private fun join(run: Run, reply: HeadUnitReply, budgetMs: Long = REQUEST_TIMEOUT_MS): Pair<String, String> =
+        WifiJoinPolicy.withWifi(readWifiEnabled(context)) { joinWithWifi(run, reply, budgetMs) }
 
-    private fun joinWithWifi(run: Run, reply: HeadUnitReply): Pair<String, String> {
+
+    private fun joinWithWifi(run: Run, reply: HeadUnitReply, budgetMs: Long): Pair<String, String> {
         val reserved = p2pReservation.reservedByCarPlay()
         var method = WifiJoinPolicy.first(Build.VERSION.SDK_INT, p2p != null && !reserved, reply.type)
         diagnostics.emit(ClinkDiagnostic.JoinChoice(method, when {
@@ -647,7 +701,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             }
         }
         if (method != WifiJoinPolicy.Method.NETWORK_SPECIFIER) throw ClinkFailure(ClinkFailureReason.WIFI_UNAVAILABLE)
-        return if (wifiRecovery) joinRecoverableWifi(run, reply) else joinSpecifier(run, reply)
+        return if (wifiRecovery) joinRecoverableWifi(run, reply) else joinSpecifier(run, reply, budgetMs)
     }
     private fun joinRecoverableWifi(run: Run, reply: HeadUnitReply): Pair<String, String> {
         val flow = AndroidCarlinkWifi(context, handler, reply, diagnostics) { lost(run) }
@@ -716,7 +770,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         }
         return await(run, result, 7)
     }
-    private fun joinSpecifier(run: Run, reply: HeadUnitReply): Pair<String, String> {
+    private fun joinSpecifier(run: Run, reply: HeadUnitReply, budgetMs: Long): Pair<String, String> {
         // The car network is a saved network, so the platform joins it on its own as soon as the AP
         // shows up — around the moment this stage starts. A WifiNetworkSpecifier request issued into
         // that window never attaches: the link completes under the system's uid, the request matches
@@ -732,7 +786,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         // both faster and silent: requestNetwork is what raises MIUI's unanswerable dialog, so give
         // the platform a quiet window before asking for a network of our own.
         var quiet = 0L
-        if (lastPrimeSawTarget && miuiRequestsNeedCache) {
+        if (primeSawTarget() && miuiRequestsNeedCache) {
             val started = SystemClock.elapsedRealtime()
             while (!run.cancelled) {
                 adoptHeadUnitLink(run, reply.ssid)?.let {
@@ -790,7 +844,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).setNetworkSpecifier(specifier).build()
             manager.requestNetwork(request, callback, handler,
-                (REQUEST_TIMEOUT_MS - consumed).coerceAtLeast(MIN_REQUEST_TIMEOUT_MS).toInt())
+                (budgetMs - consumed).coerceAtLeast(MIN_REQUEST_TIMEOUT_MS).toInt())
             // The system's own join of this saved AP is invisible to the request, so adopt it the
             // moment it gets an IPv4 lease instead of waiting out the request timeout.
             val watcher = object : Runnable {
@@ -927,10 +981,10 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return 0
         if (!wifi.isWifiEnabled) return 0
         // A null list means the location permission is missing; waiting would only add delay.
-        lastPrimeSawTarget = false
+        lastPrimeSawAt = 0L
         val cached = wifi.scanResults ?: return 0
         if (cached.any { it.SSID == ssid }) {
-            lastPrimeSawTarget = true
+            lastPrimeSawAt = SystemClock.elapsedRealtime()
             Log.i("DiRelayCarlink", "scan_primed hit=cached waited=0")
             return 0
         }
@@ -944,7 +998,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         while (issued && !run.cancelled) {
             if (SystemClock.elapsedRealtime() - started >= PRIME_BUDGET_MS) break
             val results = wifi.scanResults ?: break
-            if (results.any { it.SSID == ssid }) { hit = true; lastPrimeSawTarget = true; break }
+            if (results.any { it.SSID == ssid }) { hit = true; lastPrimeSawAt = SystemClock.elapsedRealtime(); break }
             try { Thread.sleep(100) } catch (_: InterruptedException) { break }
         }
         val waited = SystemClock.elapsedRealtime() - started
