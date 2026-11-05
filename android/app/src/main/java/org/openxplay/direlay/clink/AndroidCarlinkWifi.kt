@@ -47,6 +47,18 @@ internal class AndroidCarlinkWifi(context: Context, private val handler: Handler
             handler.postDelayed(runnable, millis)
             return AutoCloseable { handler.removeCallbacks(runnable) }
         }
+        /**
+         * MIUI on Android 10/11 raises a Wi-Fi picker for every specifier request that can never be
+         * answered. One scan makes the phone join the saved head-unit network by itself within about
+         * half a second; a refused scan (spent throttle) still leaves a join in progress to wait for.
+         */
+        @Suppress("DEPRECATION")
+        override fun nudgePlatformJoin(): Long {
+            if (!miuiConfirmationDialog() || wifi == null || !runCatching { wifi.isWifiEnabled }.getOrDefault(false)) return 0
+            val issued = runCatching { wifi.startScan() }.getOrDefault(false)
+            diagnostics.emit(ClinkDiagnostic.WifiRecovery(if (issued) "platform_join_scan" else "platform_join_scan_refused"))
+            return if (issued) PLATFORM_JOIN_MILLIS else PLATFORM_JOIN_REFUSED_MILLIS
+        }
     }
     private val flow = CarlinkWifiFlow(reply.ssid, driver, { phase ->
         when (phase) {
@@ -166,6 +178,11 @@ internal class AndroidCarlinkWifi(context: Context, private val handler: Handler
         } else common
     }
     companion object {
+        /** Measured on a MI 8 SE: a scan that shows the AP has it joined in 350-430 ms. */
+        const val PLATFORM_JOIN_MILLIS = 3_000L
+        const val PLATFORM_JOIN_REFUSED_MILLIS = 800L
+        internal fun miuiConfirmationDialog(manufacturer: String = Build.MANUFACTURER, sdk: Int = Build.VERSION.SDK_INT) =
+            manufacturer.equals("Xiaomi", ignoreCase = true) && sdk <= 30
         // UNKNOWN_SSID is an inlined string, including on Android 10.
         @SuppressLint("InlinedApi")
         internal fun normalizeSsid(value: String?): String? = value?.let {

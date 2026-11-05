@@ -29,6 +29,11 @@ internal class CarlinkWifiFlow<N>(private val ssid: String, private val driver: 
         fun observe(observer: Observer<N>): AutoCloseable
         fun request(observer: Observer<N>, unavailable: () -> Unit, timeoutMillis: Int): AutoCloseable
         fun later(millis: Long, action: () -> Unit): AutoCloseable
+        /**
+         * Asks the platform to join a saved network by itself and returns how long to wait for it
+         * before requesting one; 0 when the platform needs no nudge.
+         */
+        fun nudgePlatformJoin(): Long = 0
     }
     val result = CompletableFuture<CarlinkWifiCandidate<N>>()
     var phase = Phase.IDENTIFYING
@@ -36,6 +41,8 @@ internal class CarlinkWifiFlow<N>(private val ssid: String, private val driver: 
     private var observer: AutoCloseable? = null
     private var request: AutoCloseable? = null
     private var timer: AutoCloseable? = null
+    private var claim: AutoCloseable? = null
+    private var platformJoin = false
     private var generation = 0
     private var observationGeneration = 0
     private var selected: CarlinkWifiCandidate<N>? = null
@@ -48,9 +55,20 @@ internal class CarlinkWifiFlow<N>(private val ssid: String, private val driver: 
     fun start() {
         check(observer == null && phase == Phase.IDENTIFYING)
         observe()
-        if (phase == Phase.IDENTIFYING) timer = driver.later(IDENTIFY_MILLIS) {
+        if (phase != Phase.IDENTIFYING) return
+        val nudge = driver.nudgePlatformJoin()
+        timer = driver.later(IDENTIFY_MILLIS) {
             val matching = matching()
-            if (matching.size == 1) select(matching.single()) else automatic()
+            when {
+                matching.size == 1 -> select(matching.single())
+                matching.isEmpty() && nudge > IDENTIFY_MILLIS -> {
+                    // The platform joins the saved network within a second of the scan; adopting that
+                    // link avoids the request, which is what raises MIUI's unanswerable dialog.
+                    platformJoin = true
+                    timer = driver.later(nudge - IDENTIFY_MILLIS) { platformJoin = false; automatic() }
+                }
+                else -> automatic()
+            }
         }
     }
     /** Re-read identities after returning from system settings or changing location permission. */
@@ -94,7 +112,15 @@ internal class CarlinkWifiFlow<N>(private val ssid: String, private val driver: 
         }
         // A network announced during request setup may be owned by that request. Its own callback
         // must select it, otherwise cancelling the pending request could destroy a borrowed link.
-        if (phase == Phase.AUTOMATIC) { automaticNetworks.add(candidate.network); return }
+        if (phase == Phase.AUTOMATIC) {
+            automaticNetworks.add(candidate.network)
+            if (match == WifiTargetMatch.SAME && candidate.endpoints != null) awaitClaim()
+            return
+        }
+        if (phase == Phase.IDENTIFYING && platformJoin && match == WifiTargetMatch.SAME && candidate.endpoints != null) {
+            if (matching().size == 1) select(candidate)
+            return
+        }
         if (phase == Phase.IDENTIFYING || candidate.endpoints == null || candidate.network in automaticNetworks) return
         if (match == WifiTargetMatch.SAME && matching().size == 1) select(candidate)
         else if (phase == Phase.MANUAL && match == WifiTargetMatch.UNKNOWN && unknownRetried.add(candidate.network)) {
@@ -105,6 +131,29 @@ internal class CarlinkWifiFlow<N>(private val ssid: String, private val driver: 
     }
     private fun matching() = candidates.values.filter {
         it.network !in automaticNetworks && it.match(ssid) == WifiTargetMatch.SAME && it.endpoints != null
+    }
+    private fun unclaimed() = candidates.values.filter {
+        it.network in automaticNetworks && it.match(ssid) == WifiTargetMatch.SAME && it.endpoints != null
+    }
+    /**
+     * The request's own network reaches its callback in the same dispatch as the observer, so a target
+     * network the request has not claimed after [CLAIM_MILLIS] was joined by the platform itself (a saved
+     * network). Such a request never attaches; borrow the platform's link instead of waiting it out.
+     */
+    private fun awaitClaim() {
+        if (claim != null) return
+        val token = generation
+        claim = driver.later(CLAIM_MILLIS) {
+            claim = null
+            if (generation != token || phase != Phase.AUTOMATIC) return@later
+            val unclaimed = unclaimed()
+            if (unclaimed.size != 1) return@later
+            ++generation
+            timer?.close(); timer = null
+            request?.close(); request = null
+            automaticNetworks.remove(unclaimed.single().network)
+            select(unclaimed.single())
+        }
     }
     private fun automatic() {
         if (phase !in setOf(Phase.IDENTIFYING, Phase.MANUAL)) return
@@ -131,13 +180,28 @@ internal class CarlinkWifiFlow<N>(private val ssid: String, private val driver: 
         if (generation != token || phase != Phase.AUTOMATIC) return
         ++generation
         timer?.close(); timer = null
+        claim?.close(); claim = null
         request?.close(); request = null
         transition(Phase.MANUAL)
+        // Once the request is gone its own network goes with it. What remains of the target was joined
+        // by the platform during the request; adopt it instead of waiting for a return to the app.
+        val token = generation
+        timer = driver.later(CLAIM_MILLIS) {
+            timer = null
+            if (generation != token || phase != Phase.MANUAL) return@later
+            val unclaimed = unclaimed()
+            if (unclaimed.size == 1 && matching().isEmpty()) {
+                automaticNetworks.remove(unclaimed.single().network)
+                select(unclaimed.single())
+            }
+        }
     }
     private fun select(candidate: CarlinkWifiCandidate<N>) {
         if (phase == Phase.CLOSED || phase == Phase.READY) return
         check(candidate.endpoints != null)
         timer?.close(); timer = null
+        claim?.close(); claim = null
+        platformJoin = false
         selected = candidate
         transition(Phase.READY)
         result.complete(candidate)
@@ -153,12 +217,14 @@ internal class CarlinkWifiFlow<N>(private val ssid: String, private val driver: 
         ++observationGeneration
         transition(Phase.CLOSED)
         timer?.close(); timer = null
+        claim?.close(); claim = null
         request?.close(); request = null
         observer?.close(); observer = null
         result.cancel(false)
     }
     companion object {
         const val IDENTIFY_MILLIS = 250L
+        const val CLAIM_MILLIS = 2_000L
         const val AUTOMATIC_MILLIS = 45_000
     }
 }
