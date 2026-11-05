@@ -38,6 +38,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         private val reconnect = LinkReconnect()
         internal val retryBackoff = LinkBackoff()
         private val scanStartBudget = BleScanStartBudget()
+        /**
+         * Failures that happen before the subscription is ever exercised. They carry no signal about
+         * whether the head unit wants CCCD or a local subscription, so they must not clear that choice.
+         */
+        private val CONNECT_SIDE_FAILURES = setOf(ClinkFailureReason.GATT_CONNECT,
+            ClinkFailureReason.GATT_SERVICES, ClinkFailureReason.BLE_SCAN,
+            ClinkFailureReason.BLE_TIMEOUT, ClinkFailureReason.BLE_DISCOVERY,
+            ClinkFailureReason.BLE_SERVICE_MISSING)
     }
     private val peerStore = object : BlePeerPolicy.Store, BlePeerPolicy.SubscriptionStore {
         private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkPeers", Context.MODE_PRIVATE)
@@ -285,7 +293,9 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         try {
             return exchange(run, device, key, choice)
         } catch (failure: Exception) {
-            if (!run.cancelled) peers.exchangeFailed(key)
+            // A failure that never reached the subscription says nothing about which subscription works.
+            // Forgetting the persisted choice there makes every later connection pay the CCCD timeout again.
+            if (!run.cancelled && (failure as? ClinkFailure)?.reason !in CONNECT_SIDE_FAILURES) peers.exchangeFailed(key)
             throw failure
         }
     }
