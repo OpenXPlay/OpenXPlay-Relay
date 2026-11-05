@@ -1049,6 +1049,8 @@ class RelayRuntime(private val context: Context,
         connectionLog.event("carlife", event, "connection=$connection " + redactFailureMessage(detail))
     }
 
+    fun refreshCarlifeUsb() { wirelessUpdate { carlifeAccessory?.refresh() } }
+
     /** The shell owns platform codecs and USB; CarLife itself only sees OXP media and controls. */
     private fun configureCarlife() {
         if (closed) return

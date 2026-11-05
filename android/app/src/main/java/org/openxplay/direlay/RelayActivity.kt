@@ -53,6 +53,7 @@ import android.os.Handler
 import android.os.Looper
 import com.shilapi.xcertplay.CarPlayHostActivity
 import org.openxplay.stream.core.SessionPhase
+import org.openxplay.direlay.carlife.observeCarlifeUsb
 
 class RelayActivity : androidx.activity.ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -114,6 +115,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        observeCarlifeUsb { runtime.refreshCarlifeUsb() }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) animateSplashExit()
         onBackPressedDispatcher.addCallback(this, homeBack)
         if (identityImport.uri == null) {

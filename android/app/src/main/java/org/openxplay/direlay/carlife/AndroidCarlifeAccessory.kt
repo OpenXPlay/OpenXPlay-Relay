@@ -35,11 +35,14 @@ class AndroidCarlifeAccessory(
     private var registered = false
     private var permission: PendingIntent? = null
     private var requested: UsbAccessory? = null
+    private var lastObservation: String? = null
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             // Read the current system inventory and permission, never trust broadcast extras.
-            if (intent.action == permissionAction || intent.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED ||
-                intent.action == UsbManager.ACTION_USB_ACCESSORY_DETACHED) refresh()
+            when (intent.action) {
+                permissionAction -> refresh(permissionResult = true)
+                UsbManager.ACTION_USB_ACCESSORY_DETACHED -> refresh()
+            }
         }
     }
 
@@ -49,7 +52,6 @@ class AndroidCarlifeAccessory(
         if (registered || lifecycle.closed) return
         val filter = IntentFilter().apply {
             addAction(permissionAction)
-            addAction(UsbManager.ACTION_USB_ACCESSORY_ATTACHED)
             addAction(UsbManager.ACTION_USB_ACCESSORY_DETACHED)
         }
         if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -61,13 +63,17 @@ class AndroidCarlifeAccessory(
         refresh()
     }
 
-    private fun refresh() {
-        if (lifecycle.closed) return
+    /** Activity attach intents and resumes request an inventory scan, never USB I/O on the UI thread. */
+    fun refresh() = refresh(permissionResult = false)
+
+    @Synchronized
+    private fun refresh(permissionResult: Boolean) {
+        if (!registered || lifecycle.closed) return
         try {
             worker.execute {
                 if (lifecycle.closed) return@execute
-                runCatching { reconcile() }.onFailure { failure ->
-                    report("usb_error:${failure.javaClass.simpleName}")
+                runCatching { reconcile(permissionResult) }.onFailure { failure ->
+                    observe("usb_error:${failure.javaClass.simpleName}")
                 }
             }
         } catch (_: RejectedExecutionException) {
@@ -75,14 +81,23 @@ class AndroidCarlifeAccessory(
         }
     }
 
-    private fun reconcile() {
-        val usb = manager ?: return
-        val accessory = usb.accessoryList?.firstOrNull {
+    private fun observe(message: String) {
+        if (lastObservation != message) {
+            lastObservation = message
+            report(message)
+        }
+    }
+
+    private fun reconcile(permissionResult: Boolean) {
+        val usb = manager ?: run { observe("usb_scan state=no_manager"); return }
+        val accessories = usb.accessoryList.orEmpty()
+        val accessory = accessories.firstOrNull {
             carlifeAccessoryMatches(it.manufacturer, it.model)
         }
         if (accessory == null) {
             requested = null
             if (lifecycle.clear()) report("usb_detached")
+            observe("usb_scan state=${if (accessories.isEmpty()) "absent" else "descriptor_mismatch"} count=${accessories.size}")
             return
         }
         if (lifecycle.contains(accessory)) return
@@ -91,13 +106,15 @@ class AndroidCarlifeAccessory(
             if (requested != accessory) {
                 requested = accessory
                 permission?.let { usb.requestPermission(accessory, it) }
-                report("usb_permission")
+                observe("usb_permission")
+            } else if (permissionResult) {
+                observe("usb_permission_denied")
             }
             return
         }
         val generation = lifecycle.generation()
         val descriptor = usb.openAccessory(accessory) ?: run {
-            report("usb_unavailable")
+            observe("usb_unavailable")
             return
         }
         val streams = try { AccessoryStreams(descriptor) }
@@ -112,7 +129,10 @@ class AndroidCarlifeAccessory(
                 runCatching { attachment.close() }
                 streams.close()
             }
-            if (lifecycle.install(accessory, generation, lease)) report("usb_connected")
+            if (lifecycle.install(accessory, generation, lease)) {
+                lastObservation = "usb_connected"
+                report("usb_connected")
+            }
         } catch (failure: Exception) {
             streams.close()
             throw failure
