@@ -73,6 +73,14 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         private const val QUIET_JOIN_MS = 2_500L
         /** How often a link the platform brought up on its own is checked for adoption. */
         private const val ADOPT_POLL_MS = 100L
+        /**
+         * How long the platform gets to join the saved head-unit network after one scan. Measured:
+         * when the scan does show the AP the link is up in 350-430 ms, so this only has to cover a
+         * slow association, not a whole request window.
+         */
+        private const val PLATFORM_JOIN_MS = 3_000L
+        /** Shorter listen when the scan was refused: the platform may already be joining on its own. */
+        private const val PLATFORM_JOIN_REFUSED_MS = 800L
         /** How long a freshly started scan is given to deliver results before the request goes out. */
         private const val PRIME_BUDGET_MS = 3_000L
         /** How long a scan result counts as evidence that the head unit's AP is up right now. */
@@ -131,6 +139,33 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         val done = CompletableFuture<Unit>()
         handler.postDelayed({ done.complete(Unit) }, delayMs)
         await(run, done, 5)
+    }
+    /** MIUI's unanswerable confirmation dialog only: see the comment at the call site. */
+    private val scanAdoptJoin: Boolean get() = miuiRequestsNeedCache
+    /**
+     * Nudges the platform with one scan and adopts whatever link it brings up, without asking for a
+     * network of our own. Returns null when the phone does not join by itself, so the caller falls
+     * back to the request path exactly as before.
+     */
+    @Suppress("DEPRECATION")
+    private fun platformScanJoin(run: Run, ssid: String): Pair<String, String>? {
+        adoptHeadUnitLink(run, ssid)?.let { return it }
+        val wifi = context.getSystemService(android.net.wifi.WifiManager::class.java) ?: return null
+        if (!runCatching { wifi.isWifiEnabled }.getOrDefault(false)) return null
+        val started = SystemClock.elapsedRealtime()
+        val issued = runCatching { wifi.startScan() }.getOrDefault(false)
+        // A refused scan means MIUI's budget is spent. The platform may still be joining, so listen
+        // briefly, but not long enough to delay the request path this is meant to avoid.
+        val deadline = started + if (issued) PLATFORM_JOIN_MS else PLATFORM_JOIN_REFUSED_MS
+        while (!run.cancelled && SystemClock.elapsedRealtime() < deadline) {
+            adoptHeadUnitLink(run, ssid)?.let {
+                Log.i("DiRelayCarlink", "join_scan_adopted issued=$issued waited=${SystemClock.elapsedRealtime() - started}ms")
+                return it
+            }
+            try { Thread.sleep(ADOPT_POLL_MS) } catch (_: InterruptedException) { break }
+        }
+        Log.i("DiRelayCarlink", "join_scan_miss issued=$issued waited=${SystemClock.elapsedRealtime() - started}ms")
+        return null
     }
 
     private fun awaitCleanup() {
@@ -778,6 +813,12 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         // getting in the car always fails, the retry succeeds", so adopt the platform's link whenever
         // it exists and keep watching for it while the request is pending.
         adoptHeadUnitLink(run, reply.ssid)?.let { return it }
+        // MIUI raises its Wi-Fi picker for every WifiNetworkSpecifier request, and on this build the
+        // picker has no input channel: it can never be answered, so the request expires with the
+        // dialog still on screen. The phone joins the saved head-unit network by itself once a scan
+        // shows the AP, and that link is equivalent for us — ask for the scan and take it. Everything
+        // below stays as the fallback, so non-MIUI devices never enter this branch.
+        if (scanAdoptJoin) platformScanJoin(run, reply.ssid)?.let { return it }
         // Let the platform see the AP first: a scan result is what makes it start its own join — and
         // what makes MIUI match the request silently when there is nothing to adopt.
         val primed = primeScanCache(run, reply.ssid)
