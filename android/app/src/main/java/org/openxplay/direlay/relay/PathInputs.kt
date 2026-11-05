@@ -41,7 +41,11 @@ fun RelayRuntime.pathInput(local: PathLocal): PathInput {
             WirelessNetworkChoice.WIFI_DIRECT -> NetworkPlan.WIFI_DIRECT
             WirelessNetworkChoice.PHONE_HOTSPOT -> NetworkPlan.PHONE_HOTSPOT
             WirelessNetworkChoice.EXISTING_WIFI -> NetworkPlan.SHARED_WIFI
-        }, pathOutputs(settings), local.setupSummary, local.setupValid),
+        }, pathOutputs(settings), local.setupSummary, local.setupValid, when (settings.carlifeTransport) {
+            org.openxplay.direlay.settings.CarlifeTransport.AUTO -> CarlifeLink.AUTO
+            org.openxplay.direlay.settings.CarlifeTransport.USB -> CarlifeLink.USB
+            org.openxplay.direlay.settings.CarlifeTransport.WIFI -> CarlifeLink.WIFI
+        }),
         relay = RelayInput(local.identity, local.identityLabel, local.permissionsGranted, local.permissionsTotal,
             local.vpnConsentNeeded, keepAlive.state, networkReadings.bluetooth, local.bluetoothName,
             networkReadings.wifi, local.wifiSsid, networkReadings.hotspot, settings.wirelessNetwork.manualSsid,

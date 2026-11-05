@@ -26,6 +26,21 @@ class PathPresenterTest {
         iphone = IphoneInput(pick = IphonePick.PICKED, name = "iPhone 15", usb = UsbRole.HOST))
 
     private fun path(input: PathInput = ready) = presentPath(input, utc)
+
+    @Test fun carlifeWaitingInstructionsFollowTheChosenCarTransport() {
+        val hints = mapOf(CarlifeLink.AUTO to R.string.path_carlife_wait,
+            CarlifeLink.USB to R.string.path_carlife_usb_wait, CarlifeLink.WIFI to R.string.path_carlife_wifi_wait)
+        for ((transport, hint) in hints) {
+            val input = ready.copy(setup = ready.setup.copy(outputs = setOf(CarOutput.CARLIFE), carlifeLink = transport))
+            assertEquals(StepText.of(hint), path(input).steps.first { it.id == CARLIFE }.detail)
+        }
+        val shared = ready.copy(setup = ready.setup.copy(network = NetworkPlan.SHARED_WIFI,
+            outputs = setOf(CarOutput.CARLIFE), carlifeLink = CarlifeLink.USB), relay = ready.relay.copy(sharedWifiSsid = null))
+        val wifi = path(shared).steps.first { it.id == SHARED_WIFI }
+        assertEquals(R.string.carlife_shared_wifi, wifi.title)
+        assertEquals(StepText.of(R.string.carlife_join_shared_wifi), wifi.detail)
+    }
+
     private fun PathInput.step(id: StepId) = path(this).steps.single { it.id == id }
     private fun phone(step: LinkStep, input: PathInput = ready) = input.copy(iphone = input.iphone.copy(
         started = true, step = step, stepSinceMillis = now - 5000))

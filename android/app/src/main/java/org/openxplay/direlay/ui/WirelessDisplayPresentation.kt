@@ -16,7 +16,9 @@ fun outputLabel(output: RelayOutput): Int = when (output) {
     RelayOutput.MIRACAST -> R.string.wireless_miracast
 }
 fun outputSummaryLabels(settings: RelaySettings): List<Int> =
-    RelayOutput.entries.filter { it in settings.outputs }.map(::outputLabel)
+    RelayOutput.entries.filter { it in settings.outputs }.map {
+        if (it == RelayOutput.CARLIFE) carlifeSummary(settings.carlifeTransport) else outputLabel(it)
+    }
 
 fun outputSummary(settings: RelaySettings, label: (Int) -> String): String =
     outputSummaryLabels(settings).joinToString(" · ", transform = label)

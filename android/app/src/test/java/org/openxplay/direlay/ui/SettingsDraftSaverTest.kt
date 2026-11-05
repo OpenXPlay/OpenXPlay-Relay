@@ -19,6 +19,15 @@ import org.openxplay.direlay.settings.*
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE, application = Application::class)
 class SettingsDraftSaverTest {
+    @Test fun carlifeTransportSurvivesDraftRestorationAndOldDraftsKeepTheBase() {
+        for (transport in CarlifeTransport.entries) {
+            val chosen = CarlifeConnectionPolicy.choose(base.copy(outputs = setOf(RelayOutput.CARLIFE)), transport)
+            assertEquals(chosen, relaySettingsSaver(base).restore(bundle(chosen)))
+            val old = bundle(chosen).apply { remove("carlifeTransport") }
+            assertEquals(transport, relaySettingsSaver(chosen).restore(old)?.carlifeTransport)
+        }
+    }
+
     @Test fun carlifeTargetAndSelectionSurviveDraftRestoration() {
         val chosen = base.copy(outputs = setOf(RelayOutput.CARLIFE), carlifeTargetAddress = "192.168.5.220")
         assertEquals(chosen, relaySettingsSaver(base).restore(bundle(chosen)))

@@ -207,9 +207,11 @@ private fun PathInput.hotspotStep() = when (relay.hotspotOn) {
     null -> pathStep(HOTSPOT, WAITING, text(R.string.path_radio_unknown))
 }
 
-private fun PathInput.sharedWifiStep() = if (relay.sharedWifiSsid != null)
+private fun PathInput.sharedWifiStep() = (if (relay.sharedWifiSsid != null)
     pathStep(SHARED_WIFI, OK, evidence = raw(relay.sharedWifiSsid))
-    else pathStep(SHARED_WIFI, ACTION, text(R.string.path_join_shared_wifi), action = CHOOSE_SHARED_WIFI)
+    else pathStep(SHARED_WIFI, ACTION, text(if (setup.carlifeLink == CarlifeLink.USB)
+        R.string.carlife_join_shared_wifi else R.string.path_join_shared_wifi), action = CHOOSE_SHARED_WIFI))
+        .copy(title = if (setup.carlifeLink == CarlifeLink.USB) R.string.carlife_shared_wifi else R.string.path_shared_wifi)
 
 private fun PathInput.carNetworkStep() = if (car.address != null) pathStep(CAR_NETWORK, OK, evidence = raw(car.address))
     else pathStep(CAR_NETWORK, WAITING, text(R.string.path_car_network_wait))
@@ -316,7 +318,11 @@ private fun PathInput.carlifeStep() = when (car.carlife.phase) {
     OutputPhase.READY, OutputPhase.WAITING_VIDEO -> pathStep(CARLIFE, OK, evidence = raw(car.carlife.name), since = car.carlife.sinceMillis)
     OutputPhase.STARTING -> pathStep(CARLIFE, WORKING, text(R.string.path_negotiating), since = car.carlife.sinceMillis)
     OutputPhase.FAILED -> pathStep(CARLIFE, FAILED, raw(car.carlife.code), code = car.carlife.code, since = car.carlife.sinceMillis)
-    else -> pathStep(CARLIFE, WAITING, text(R.string.path_carlife_wait), since = car.carlife.sinceMillis)
+    else -> pathStep(CARLIFE, WAITING, text(when (setup.carlifeLink) {
+        CarlifeLink.AUTO -> R.string.path_carlife_wait
+        CarlifeLink.USB -> R.string.path_carlife_usb_wait
+        CarlifeLink.WIFI -> R.string.path_carlife_wifi_wait
+    }), since = car.carlife.sinceMillis)
 }
 
 private fun PathInput.miracastStep() = when (car.miracast.phase) {
@@ -397,7 +403,7 @@ private fun PathInput.iphoneAuthStep() = linkProgress(IPHONE_AUTH, WORKING, evid
 private fun PathInput.iphoneWifiStep() = linkProgress(IPHONE_WIFI, WORKING, when (setup.network) {
     NetworkPlan.PHONE_HOTSPOT -> text(R.string.path_iphone_joining_wifi, relay.hotspotSsid.orEmpty())
     NetworkPlan.SHARED_WIFI -> relay.sharedWifiSsid?.let { text(R.string.path_iphone_joining_wifi, it) }
-        ?: text(R.string.path_iphone_joining_car_hotspot)
+        ?: text(if (setup.carlifeLink == CarlifeLink.USB) R.string.carlife_iphone_joining_shared_wifi else R.string.path_iphone_joining_car_hotspot)
     else -> text(R.string.path_iphone_joining_wifi, "Wi-Fi Direct")
 })
 private fun PathInput.usbIphoneStep() = linkProgress(USB_IPHONE,

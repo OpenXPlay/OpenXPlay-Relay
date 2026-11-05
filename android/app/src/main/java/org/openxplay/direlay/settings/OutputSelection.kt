@@ -24,7 +24,7 @@ object OutputSelection {
         OutputChoice.WIRELESS -> kind.output
     })
     fun choose(settings: RelaySettings, choice: OutputChoice, kind: WirelessDisplayKind, wireless: Boolean): RelaySettings {
-        val chosen = CarlinkConnectionPolicy.enabling(settings, settings.copy(outputs = outputs(choice, kind)), wireless)
+        val chosen = CarlifeConnectionPolicy.normalize(CarlinkConnectionPolicy.enabling(settings, settings.copy(outputs = outputs(choice, kind)), wireless))
         val network = chosen.wirelessNetwork
         return if (!CarlinkConnectionPolicy.usesWifiDirect(chosen) && network.choice == WirelessNetworkChoice.PHONE_HOTSPOT &&
             network.manualSsid.isEmpty()) chosen.copy(wirelessNetwork = network.copy(choice = WirelessNetworkChoice.WIFI_DIRECT)) else chosen
@@ -33,7 +33,7 @@ object OutputSelection {
     fun toggle(settings: RelaySettings, output: RelayOutput, on: Boolean, wireless: Boolean): RelaySettings? {
         val outputs = if (on) settings.outputs + output else settings.outputs - output
         return outputs.takeIf { it.isNotEmpty() }?.let {
-            CarlinkConnectionPolicy.enabling(settings, settings.copy(outputs = it), wireless)
+            CarlifeConnectionPolicy.normalize(CarlinkConnectionPolicy.enabling(settings, settings.copy(outputs = it), wireless))
         }
     }
     fun legacy(carlinkOutput: Boolean, bothOutputs: Boolean, dlnaOutput: Boolean, miracastOutput: Boolean): Set<RelayOutput> = buildSet {

@@ -154,6 +154,10 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     if (selected == null) InsetRow(R.drawable.symbol_link, IconHue.DEVELOPER,
                         stringResource(R.string.output_multiple), outputSummary(draft), onClick = { open("developer") })
                     if (draft.carlifeOutput) {
+                        CarlifeTransportOptions(draft, includeAutomatic = true) { draft = it }
+                        CarlifeRouteDiagram(draft, wireless(draft))
+                    }
+                    if (draft.carlifeOutput && draft.carlifeTransport.tcp) {
                         SettingField(stringResource(R.string.carlife_target), draft.carlifeTargetAddress,
                             if (validCarlifeAddress(draft.carlifeTargetAddress)) null else R.string.carlife_address_error) {
                             draft = draft.copy(carlifeTargetAddress = it.trim())
@@ -228,7 +232,9 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
             "settings/connection" -> {
                 SettingsGroup("connection", R.drawable.symbol_phone, IconHue.IPHONE, stringResource(R.string.ui_iphone_connection), stringResource(if (wireless(draft)) R.string.direlay_wireless else R.string.ui_usb),
                     initiallyExpanded = true, targeted = target == "connection" || target == "iphone") {
-                    RadioOptions(connectionOptions, if (wireless(draft)) 0 else 1) {
+                    val options = if (CarlifeConnectionPolicy.iphoneUsbAllowed(draft)) connectionOptions else connectionOptions.take(1)
+                    if (!CarlifeConnectionPolicy.iphoneUsbAllowed(draft)) Hint(stringResource(R.string.carlife_usb_iphone_hint))
+                    RadioOptions(options, if (wireless(draft)) 0 else 1) {
                         val candidate = draft.copy(connectionMode = if (it == 0) ConnectionMode.WIRELESS else ConnectionMode.USB)
                         if (needsUsbConfirmation(draft.connectionMode, candidate.connectionMode, wireless(draft))) confirmUsb = true
                         else draft = CarlinkConnectionPolicy.enabling(draft, candidate, wireless(candidate))
@@ -244,7 +250,7 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                     }
                 }
                 if (wireless(draft)) InsetGroup {
-                    SettingsMenuRow(R.string.ui_network, stringResource(networkOption(draft.wirelessNetwork.choice).title),
+                    SettingsMenuRow(R.string.ui_network, stringResource(carlifeNetworkOption(draft, draft.wirelessNetwork.choice).title),
                         R.drawable.symbol_wifi, "settings/connection/network" in invalidPages) { open("settings/connection/network") }
                 }
             }
@@ -252,12 +258,13 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                 Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     WirelessNetworkChoice.entries.forEach { choice ->
                         val key = choice.name
-                        SettingsGroup(key, R.drawable.symbol_wifi, IconHue.NETWORK, stringResource(networkOption(choice).title), stringResource(networkOption(choice).supporting),
+                        SettingsGroup(key, R.drawable.symbol_wifi, IconHue.NETWORK, stringResource(carlifeNetworkOption(draft, choice).title), stringResource(carlifeNetworkOption(draft, choice).supporting),
                             initiallyExpanded = draft.wirelessNetwork.choice == choice && target.isEmpty(),
                             selected = draft.wirelessNetwork.choice == choice, error = draft.wirelessNetwork.choice == choice && "settings/connection/network" in invalidPages, targeted = target == key || (target == "sharedWifi" && choice == WirelessNetworkChoice.EXISTING_WIFI)) {
-                            RadioOptionRow(networkOption(choice), draft.wirelessNetwork.choice == choice,
+                            RadioOptionRow(carlifeNetworkOption(draft, choice), draft.wirelessNetwork.choice == choice,
                                 extra = {
-                                    NetworkDiagram(choice, draft.wirelessNetwork.choice == choice)
+                                    if (draft.carlifeOutput) CarlifeRouteDiagram(draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice)), wireless(draft))
+                                    else NetworkDiagram(choice, draft.wirelessNetwork.choice == choice)
                                     if (choice == WirelessNetworkChoice.PHONE_HOTSPOT)
                                         NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.HOTSPOT)
                                     if (choice == WirelessNetworkChoice.WIFI_DIRECT && !CarlinkConnectionPolicy.wifiDirectAllowed(draft))
@@ -266,7 +273,8 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
                                 draft = draft.copy(wirelessNetwork = draft.wirelessNetwork.copy(choice = choice))
                             }
                             if (draft.wirelessNetwork.choice == choice && choice != WirelessNetworkChoice.WIFI_DIRECT) {
-                                NetworkFields(draft.wirelessNetwork, choice, errors, currentWifi, target == "sharedWifi" && !sharedWifiLocated, useSharedWifi) {
+                                NetworkFields(draft.wirelessNetwork, choice, errors, currentWifi, target == "sharedWifi" && !sharedWifiLocated, useSharedWifi,
+                                    sharedWifiUsbCarlife = CarlifeConnectionPolicy.usbOutput(draft)) {
                                     draft = draft.copy(wirelessNetwork = it)
                                 }
                                 if (choice == WirelessNetworkChoice.EXISTING_WIFI) LaunchedEffect(Unit) { sharedWifiLocated = true }
@@ -308,12 +316,14 @@ private fun Modifier.semanticsHeading() = this.then(Modifier.semantics { heading
     errors: Map<String, Int>, currentWifi: String?, openSharedWifi: Boolean, useSharedWifi: (String) -> Unit,
     credentialsModifier: Modifier = Modifier, compactHints: Boolean = false,
     hotspotMethod: HotspotSetupMethod? = network.hotspotSetupMethod, hotspotMethodError: Int? = null,
-    onHotspotMethodSelected: () -> Unit = {}, change: (WirelessNetworkSettings) -> Unit) {
+    onHotspotMethodSelected: () -> Unit = {}, sharedWifiUsbCarlife: Boolean = false, change: (WirelessNetworkSettings) -> Unit) {
     val hotspot = choice == WirelessNetworkChoice.PHONE_HOTSPOT
     val context = LocalContext.current
     val opener: NetworkSettingsOpener = remember(context) { NetworkSettingsLauncher(context) }
     if (!hotspot) {
-        SharedWifiEditor(network.sharedWifiNetworks, currentWifi, openSharedWifi, useSharedWifi) { change(network.copy(sharedWifiNetworks = it)) }
+        SharedWifiEditor(network.sharedWifiNetworks, currentWifi, openSharedWifi, useSharedWifi,
+            hint = if (sharedWifiUsbCarlife) R.string.carlife_shared_wifi_hint else R.string.direlay_existing_wifi_hint,
+            emptyHint = if (sharedWifiUsbCarlife) R.string.carlife_shared_wifi_empty else R.string.shared_wifi_empty) { change(network.copy(sharedWifiNetworks = it)) }
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -24,12 +24,15 @@ enum class NetworkPlan { WIFI_DIRECT, PHONE_HOTSPOT, SHARED_WIFI, USB }
 /** Outputs towards the car; TESLA is the browser output through the Tesla address. */
 enum class CarOutput { BROWSER, CARLINK, DLNA, MIRACAST, TESLA, CARLIFE }
 
+enum class CarlifeLink { AUTO, USB, WIFI }
+
 data class SetupInput(
     val network: NetworkPlan = NetworkPlan.WIFI_DIRECT,
     val outputs: Set<CarOutput> = setOf(CarOutput.BROWSER),
     /** Already localized, e.g. "Wireless · Hotspot · Browser". */
     val summary: String = "",
     val valid: Boolean = true,
+    val carlifeLink: CarlifeLink = CarlifeLink.AUTO,
 ) {
     val wireless get() = network != NetworkPlan.USB
 }

@@ -18,7 +18,8 @@ import org.openxplay.direlay.ui.design.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun SharedWifiEditor(networks: List<SharedWifiNetwork>, current: String?, openEditor: Boolean,
-    use: (String) -> Unit, change: (List<SharedWifiNetwork>) -> Unit) {
+    use: (String) -> Unit, hint: Int = R.string.direlay_existing_wifi_hint,
+    emptyHint: Int = R.string.shared_wifi_empty, change: (List<SharedWifiNetwork>) -> Unit) {
     var editing by rememberSaveable { mutableStateOf(openEditor && current != null && networks.none { it.ssid == current }) }
     var original by rememberSaveable { mutableStateOf<String?>(null) }
     var ssid by rememberSaveable { mutableStateOf(current?.takeIf { name -> networks.none { it.ssid == name } } ?: "") }
@@ -26,9 +27,9 @@ import org.openxplay.direlay.ui.design.*
     var reveal by rememberSaveable { mutableStateOf(false) }
     var attempted by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint(stringResource(R.string.direlay_existing_wifi_hint))
+        Hint(stringResource(hint))
         if (current == null) Hint(stringResource(R.string.shared_wifi_unreadable))
-        if (networks.isEmpty()) Text(stringResource(R.string.shared_wifi_empty))
+        if (networks.isEmpty()) Text(stringResource(emptyHint))
         networks.forEach { entry ->
             Column {
                 Text(entry.ssid, style = MaterialTheme.typography.titleMedium)

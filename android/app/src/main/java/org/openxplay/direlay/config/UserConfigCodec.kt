@@ -18,6 +18,7 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 /**
  * Version-1 key catalogue (enum strings are pinned in enumWires below):
  * - outputs: non-empty unique array of web/carlink/dlna/miracast/carlife; wins over legacy output keys.
+ * - carlifeTransport: auto (legacy dual transport), usb, or wifi; USB requires wireless iPhone input.
  * - carlifeTargetAddress: empty for broadcast discovery, or a numeric IPv4 head-unit address.
  * - Legacy output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
  * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string}.
@@ -69,6 +70,7 @@ object UserConfigCodec {
         FrameRatePreference.AUTO to "auto", FrameRatePreference.FPS_30 to "30", FrameRatePreference.FPS_35 to "35",
         FrameRatePreference.FPS_40 to "40", FrameRatePreference.FPS_45 to "45", FrameRatePreference.FPS_50 to "50",
         FrameRatePreference.FPS_55 to "55", FrameRatePreference.FPS_60 to "60",
+        CarlifeTransport.AUTO to "auto", CarlifeTransport.USB to "usb", CarlifeTransport.WIFI to "wifi",
         ConnectionMode.USB to "usb", ConnectionMode.WIRELESS to "wireless", ConnectionMode.LAST_USED to "last-used",
         MfiTarget.LOCAL to "local", MfiTarget.USB_CH341 to "usb-ch341", MfiTarget.I2C to "i2c", MfiTarget.REMOTE to "remote",
         ManualHotspotBand.AUTO to "auto", ManualHotspotBand.GHZ_2_4 to "ghz-2-4", ManualHotspotBand.GHZ_5 to "ghz-5",
@@ -100,6 +102,7 @@ object UserConfigCodec {
 
     private fun values(s: RelaySettings, d: DeveloperOverrides): JSONObject = JSONObject()
         .put("carlifeTargetAddress", s.carlifeTargetAddress)
+        .put("carlifeTransport", wire(s.carlifeTransport))
         .put("outputs", org.json.JSONArray(RelayOutput.entries.filter { it in s.outputs }.map { it.wire }))
         .put("output", when { s.browserOutput && s.carlinkOutput -> "both"; s.carlinkOutput -> "carlink"; s.browserOutput -> "web"; else -> null })
         .put("dlnaOutput", s.dlnaOutput)
@@ -210,7 +213,7 @@ object UserConfigCodec {
 
     fun decode(text: String, current: RelaySettings, choices: DeveloperOverrides = DeveloperOverrides(),
         wireless: Boolean = current.connectionMode == ConnectionMode.WIRELESS, phoneAddresses: Set<String> = emptySet()): UserConfigImport {
-        var s = current.copy(experimental = ExperimentalOptions(), highPerformance = true)
+        var s = current.copy(experimental = ExperimentalOptions(), highPerformance = true, carlifeTransport = CarlifeTransport.AUTO)
         var d = choices
         val errors = linkedMapOf<String, String>()
         val ignored = mutableListOf<String>()
@@ -239,6 +242,7 @@ object UserConfigCodec {
         val legacyOutputs = setOf("output", "dlnaOutput", "miracastOutput")
         for (key in j.keys().asSequence().toList().filterNot { j.has("outputs") && it in legacyOutputs }) try {
             when (key) {
+                "carlifeTransport" -> { s = s.copy(carlifeTransport = enumValue<CarlifeTransport>(j.string(key))) }
                 "carlifeTargetAddress" -> { val value = j.string(key); require(validCarlifeAddress(value)); s = s.copy(carlifeTargetAddress = value) }
                 "outputs" -> {
                     val array = j.getJSONArray(key)
@@ -412,6 +416,7 @@ object UserConfigCodec {
             val address = checkNotNull(s.teslaAddress())
             require(TeslaAddressPolicy.valid(address, if (address != current.teslaAddress()) phoneAddresses else emptySet()))
         }
+        check("carlifeTransport") { require(!CarlifeConnectionPolicy.usbOutput(s) || s.connectionMode == ConnectionMode.WIRELESS) }
         check("carlifeTargetAddress") { require(validCarlifeAddress(s.carlifeTargetAddress)) }
         check("receiverPort") { require(s.webPort?.let { it in 1024..65535 } != false) }
         check("iphone") { require(s.iphoneAddress == null || Regex("[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}").matches(s.iphoneAddress!!)) }

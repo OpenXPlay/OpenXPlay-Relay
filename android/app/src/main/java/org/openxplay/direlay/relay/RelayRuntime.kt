@@ -624,7 +624,7 @@ class RelayRuntime(private val context: Context,
     private data class CarlinkConfig(val enabled: Boolean, val permitted: Boolean, val name: String, val model: String, val blocked: Boolean, val trace: Boolean, val hevc: ClinkHevcMode, val pictureSize: ClinkPictureSize)
     private var carlinkConfig: CarlinkConfig? = null
     private val carlinkBlock = CarlinkWifiDirectBlock()
-    private val carlifeLifecycle = RetiringOutputPolicy<String>()
+    private val carlifeLifecycle = RetiringOutputPolicy<org.openxplay.direlay.settings.CarlifeOutputPlan>()
     private val carlifeGeneration = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var carlifeConnection = 0L
     @Volatile private var carlifeToken: Any? = null
@@ -1055,29 +1055,31 @@ class RelayRuntime(private val context: Context,
     private fun configureCarlife() {
         if (closed) return
         val settings = settingsStore.awaitSnapshot()
-        val requested = settings.carlifeTargetAddress.takeIf { settings.carlifeOutput }
+        val requested = org.openxplay.direlay.settings.CarlifeConnectionPolicy.output(settings)
         when (carlifeLifecycle.update(requested)) {
             OutputChange.KEEP -> return
             OutputChange.REMOVE -> {
-                carlifeLog(carlifeConnection, "output_remove", "cause=${if (requested == null) "disabled" else "target_changed"}")
+                carlifeLog(carlifeConnection, "output_remove", "cause=${if (requested == null) "disabled" else "transport_or_target_changed"}")
                 carlifeAccessory?.close(); carlifeAccessory = null
                 hub.removeOutput("carlife")
                 return
             }
             OutputChange.ADD -> Unit
         }
+        val plan = requireNotNull(requested)
         val token = Any()
         val connection = carlifeGeneration.incrementAndGet()
         carlifeConnection = connection
         carlifeToken = token
-        carlifeLog(connection, "output_config", "transport=tcp+usb discovery=${if (requested.isNullOrBlank()) "broadcast" else "directed"} " +
-            "target=${requested?.takeIf(String::isNotBlank) ?: "-"} fpsCeiling=60 " +
+        carlifeLog(connection, "output_config", "transport=${plan.transport.wire} discovery=${if (!plan.transport.tcp) "off" else if (plan.targetAddress.isBlank()) "broadcast" else "directed"} " +
+            "target=${plan.targetAddress.takeIf(String::isNotBlank) ?: "-"} fpsCeiling=60 " +
             "sourceCodec=${settings.videoCodec.wire} sourceFps=${settings.frameRate} " +
             "selectedScreen=${carPlayScreen?.profile?.let { "${it.width}x${it.height}" } ?: "-"}")
         carlifeStatus = null
         carlifeStateSinceMillis = System.currentTimeMillis()
         val destination = org.openxplay.stream.carlife.CarlifeOutput(
-            org.openxplay.stream.carlife.CarlifeConfig(targetAddress = requested?.takeIf(String::isNotBlank), fps = 60),
+            org.openxplay.stream.carlife.CarlifeConfig(targetAddress = plan.targetAddress.takeIf(String::isNotBlank),
+                tcp = plan.transport.tcp, discovery = plan.transport.tcp, fps = 60),
             org.openxplay.stream.carlife.CarlifeDeviceInfo(android.os.Build.BRAND, android.os.Build.MODEL, android.os.Build.VERSION.SDK),
             object : org.openxplay.stream.carlife.CarlifeListener {
                 override fun onStatus(state: org.openxplay.stream.carlife.CarlifeStatus) = wirelessUpdate {
@@ -1095,22 +1097,22 @@ class RelayRuntime(private val context: Context,
                     if (carlifeToken === token) carlifeLog(connection, "protocol", event)
                 }
             })
-        val accessory = org.openxplay.direlay.carlife.AndroidCarlifeAccessory(context.applicationContext, destination) { message ->
+        val accessory = if (plan.transport.usb) org.openxplay.direlay.carlife.AndroidCarlifeAccessory(context.applicationContext, destination) { message ->
             carlifeLog(connection, "usb", message)
-        }
+        } else null
         carlifeAccessory = accessory
         val converted = carlifeVideoOutput(destination) { event, detail ->
             if (carlifeToken === token) carlifeLog(connection, event, detail)
         }
         val output = object : ProjectionOutput by converted {
             override fun open(host: org.openxplay.stream.core.OutputHost) {
-                carlifeLog(connection, "output_open", "transport=tcp+usb")
+                carlifeLog(connection, "output_open", "transport=${plan.transport.wire}")
                 converted.open(host)
-                accessory.start()
+                accessory?.start()
             }
             override fun close() {
                 carlifeLog(connection, "output_close", "by=local")
-                try { accessory.close(); converted.close() }
+                try { accessory?.close(); converted.close() }
                 finally { wirelessUpdate {
                     if (carlifeToken === token) {
                         carlifeToken = null
@@ -1127,7 +1129,7 @@ class RelayRuntime(private val context: Context,
             hub.addOutput(output)
         }
         catch (failure: Exception) {
-            accessory.close()
+            accessory?.close()
             carlifeLifecycle.ended()
             carlifeLog(connection, "start_failed", "error=${failure.javaClass.simpleName} ${failure.message.orEmpty()}")
         }

@@ -89,10 +89,10 @@ import org.openxplay.direlay.ui.design.*
     val isWireless = wireless(draft)
     val saving = draft != lastSaved && settingsSaveErrors(draft, isWireless).isEmpty()
     val steps = setupSteps(isWireless)
-    var stepKey by rememberSaveable { mutableStateOf((startAt ?: SetupStep.CAR).key) }
+    var stepKey by rememberSaveable { mutableStateOf(setupEntryStep(initial, startAt ?: SetupStep.CAR).key) }
     var requestedStep by rememberSaveable { mutableStateOf(startAt?.key) }
     LaunchedEffect(startAt) {
-        stepKey = relaySetupStep(stepKey, requestedStep, startAt?.key)
+        stepKey = setupEntryStep(draft, setupStep(relaySetupStep(stepKey, requestedStep, startAt?.key)) ?: SetupStep.CAR).key
         requestedStep = startAt?.key
     }
     // The network page disappears with USB; land on the choice that removed it.
@@ -109,14 +109,17 @@ import org.openxplay.direlay.ui.design.*
     val errors = settingsErrors(draft, isWireless)
     val running = home.presentation.running
     val changed = settingsNotice(setupDraft(entry, wireless(entry)), draft, carlinkConnected = false) != SettingsNotice.SILENT
-    fun go(target: SetupStep) { stepKey = target.key; onStepChanged(target) }
+    fun go(target: SetupStep) {
+        val next = setupEntryStep(draft, target)
+        stepKey = next.key; onStepChanged(next)
+    }
     fun previous() { if (index > 0) go(steps[index - 1]) else close() }
     fun next() {
         attempted = true; nextRequests++
         when (step) {
             SetupStep.START -> finish(changed)
             SetupStep.PREPARE -> go(SetupStep.START)
-            else -> if (setupStepErrors(step, errors, draft.car).isEmpty() && !saving && !saveFailed) {
+            else -> if ((step == SetupStep.CAR || !setupCarlifeChoiceRequired(draft)) && setupStepErrors(step, errors, draft.car).isEmpty() && !saving && !saveFailed) {
                 if (step == SetupStep.NETWORK) {
                     when (setupNetworkNext(draft.wirelessNetwork, hotspotMethodChosen)) {
                         SetupNetworkNext.CHOOSE_METHOD -> Unit
@@ -126,7 +129,8 @@ import org.openxplay.direlay.ui.design.*
             }
         }
     }
-    if (confirmLowData) LowDataModeDialog(draft.wirelessNetwork, confirm = {
+    if (confirmLowData) LowDataModeDialog(draft.wirelessNetwork,
+        sharedNetworkLabel = if (CarlifeConnectionPolicy.usbOutput(draft)) R.string.carlife_shared_wifi else R.string.low_data_network_car, confirm = {
         confirmLowData = false
         go(steps[index + 1])
     }, dismiss = { confirmLowData = false })
@@ -145,7 +149,7 @@ import org.openxplay.direlay.ui.design.*
     }
     val ready = home.presentation.canStart || running
     val preparePath = home.path
-    val prepareChecks = setupChecks(home.presentation, isWireless, draft.wirelessNetwork.choice)
+    val prepareChecks = setupChecks(home.presentation, isWireless, draft.wirelessNetwork.choice, CarlifeConnectionPolicy.usbOutput(draft))
     val prepareComplete = setupPrepareComplete(preparePath, prepareChecks)
     var prepareRequests by remember(stepKey) { mutableIntStateOf(0) }
     val view = LocalView.current
@@ -162,6 +166,7 @@ import org.openxplay.direlay.ui.design.*
     }
     val nextEnabled = !saving && when (step) {
         SetupStep.CAR -> draft.car.complete
+        SetupStep.OUTPUT -> !setupCarlifeChoiceRequired(draft)
         SetupStep.PREPARE -> ready
         SetupStep.START -> running || (home.presentation.canStart && !home.busy)
         else -> true
@@ -235,8 +240,8 @@ import org.openxplay.direlay.ui.design.*
                             if (trustedHttpsRecommended(draft.car, trustedConfigured = false))
                                 Hint(stringResource(R.string.car_zeekr_trusted_https_hint))
                         }
-                        SetupStep.OUTPUT -> OutputStep(draft) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
-                        SetupStep.CONNECTION -> ConnectionStep(draft, isWireless) {
+                        SetupStep.OUTPUT -> OutputStep(draft, compact, { draft = it }) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
+                        SetupStep.CONNECTION -> ConnectionStep(draft, isWireless, compact) {
                             val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB
                             if (needsUsbConfirmation(draft.connectionMode, mode, isWireless)) confirmUsb = true
                             else draft = chooseConnection(draft, it)
@@ -334,7 +339,8 @@ import org.openxplay.direlay.ui.design.*
 }
 
 @Composable private fun SetupIllustration(draft: RelaySettings, wireless: Boolean) {
-    if (wireless) SetupNetworkDiagram(draft.wirelessNetwork.choice)
+    if (draft.carlifeOutput) CarlifeRouteDiagram(draft, wireless)
+    else if (wireless) SetupNetworkDiagram(draft.wirelessNetwork.choice)
     else Row(Modifier.fillMaxWidth().padding(vertical = 24.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         listOf(R.drawable.symbol_smartphone to R.string.network_iphone,
@@ -399,7 +405,7 @@ import org.openxplay.direlay.ui.design.*
     }
 }
 
-@Composable private fun OutputStep(draft: RelaySettings, choose: (OutputChoice, WirelessDisplayKind) -> Unit) {
+@Composable private fun OutputStep(draft: RelaySettings, compact: Boolean, change: (RelaySettings) -> Unit, choose: (OutputChoice, WirelessDisplayKind) -> Unit) {
     val carlinkSupported = Build.VERSION.SDK_INT >= 29
     val selected = OutputSelection.choice(draft.outputs)
     val kind = OutputSelection.wirelessKind(draft.outputs)
@@ -433,17 +439,24 @@ import org.openxplay.direlay.ui.design.*
                 if (kind == WirelessDisplayKind.MIRACAST) NetworkChoiceReminder(org.openxplay.direlay.network.NetworkRequirement.WIFI)
             }) { choose(OutputChoice.WIRELESS, kind) }
         ChoiceCard(stringResource(R.string.ui_carlife), stringResource(R.string.carlife_hint), R.drawable.symbol_car_front, IconHue.CAR,
-            selected == OutputChoice.CARLIFE, setupOutputTag(OutputChoice.CARLIFE), order = 3) { choose(OutputChoice.CARLIFE, kind) }
+            selected == OutputChoice.CARLIFE, setupOutputTag(OutputChoice.CARLIFE), order = 3,
+            extra = { CarlifeTransportOptions(draft, change = change) }) { choose(OutputChoice.CARLIFE, kind) }
+    }
+    if (selected == OutputChoice.CARLIFE) {
+        if (setupCarlifeChoiceRequired(draft)) Hint(stringResource(R.string.carlife_choose_transport))
+        if (!compact) CarlifeRouteDiagram(draft, draft.connectionMode != ConnectionMode.USB)
     }
 }
 
-@Composable private fun ConnectionStep(draft: RelaySettings, wireless: Boolean, choose: (Boolean) -> Unit) {
+@Composable private fun ConnectionStep(draft: RelaySettings, wireless: Boolean, compact: Boolean, choose: (Boolean) -> Unit) {
+    if (draft.carlifeOutput && !compact) CarlifeRouteDiagram(draft, wireless)
+    if (!CarlifeConnectionPolicy.iphoneUsbAllowed(draft)) Hint(stringResource(R.string.carlife_usb_iphone_hint))
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ChoiceCard(stringResource(R.string.direlay_wireless), stringResource(R.string.setup_wireless_hint), R.drawable.symbol_bluetooth, IconHue.BLUETOOTH,
             wireless, setupConnectionTag(draft, true), extra = {
                 if (CarlinkConnectionPolicy.enabled(draft)) Hint(stringResource(R.string.setup_carlink_hotspot_tip))
             }) { choose(true) }
-        ChoiceCard(stringResource(R.string.ui_usb), stringResource(R.string.setup_usb_hint), R.drawable.symbol_usb, IconHue.IPHONE,
+        if (CarlifeConnectionPolicy.iphoneUsbAllowed(draft)) ChoiceCard(stringResource(R.string.ui_usb), stringResource(R.string.setup_usb_hint), R.drawable.symbol_usb, IconHue.IPHONE,
             !wireless, setupConnectionTag(draft, false), order = 1) { choose(false) }
     }
 }
@@ -460,14 +473,16 @@ import org.openxplay.direlay.ui.design.*
             fields.bringIntoView()
         }
     }
-    if (!compact) SetupNetworkDiagram(selected)
+    if (!compact) {
+        if (draft.carlifeOutput) CarlifeRouteDiagram(draft, wireless = true) else SetupNetworkDiagram(selected)
+    }
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         WirelessNetworkChoice.entries.forEachIndexed { index, choice ->
             val allowed = choice != WirelessNetworkChoice.WIFI_DIRECT || CarlinkConnectionPolicy.wifiDirectAllowed(draft)
-            ChoiceCard(stringResource(setupNetworkLabel(choice)), stringResource(networkOption(choice).supporting), when (choice) {
+            ChoiceCard(stringResource(setupNetworkLabel(draft, choice)), stringResource(carlifeNetworkOption(draft, choice).supporting), when (choice) {
                 WirelessNetworkChoice.WIFI_DIRECT -> R.drawable.symbol_link
                 WirelessNetworkChoice.PHONE_HOTSPOT -> R.drawable.symbol_hotspot
-                WirelessNetworkChoice.EXISTING_WIFI -> R.drawable.symbol_car_front
+                WirelessNetworkChoice.EXISTING_WIFI -> if (CarlifeConnectionPolicy.usbOutput(draft)) R.drawable.symbol_router else R.drawable.symbol_car_front
             }, IconHue.NETWORK, selected == choice, setupNetworkTag(draft, choice),
                 allowed, if (allowed) null else stringResource(if (draft.miracastOutput && !draft.carlinkOutput)
                     R.string.miracast_wifi_direct_constraint else R.string.carlink_wifi_direct_constraint),
@@ -489,7 +504,7 @@ import org.openxplay.direlay.ui.design.*
                     credentialsModifier = Modifier.bringIntoViewRequester(fields), compactHints = true,
                     hotspotMethod = draft.wirelessNetwork.hotspotSetupMethod.takeIf { hotspotMethodChosen },
                     hotspotMethodError = R.string.setup_hotspot_method_required.takeIf { attempted && !hotspotMethodChosen },
-                    onHotspotMethodSelected = chooseHotspotMethod) {
+                    onHotspotMethodSelected = chooseHotspotMethod, sharedWifiUsbCarlife = CarlifeConnectionPolicy.usbOutput(draft)) {
                     change(draft.copy(wirelessNetwork = it))
                 }
             }
@@ -618,6 +633,7 @@ import org.openxplay.direlay.ui.design.*
 @Composable private fun StartStep(draft: RelaySettings, wireless: Boolean, go: (SetupStep) -> Unit,
     sources: ScreenSources, actions: ScreenActions, change: (RelaySettings) -> Unit) {
     val background by backgroundState(sources, actions)
+    if (draft.carlifeOutput && !compactSetup(LocalConfiguration.current.screenHeightDp)) CarlifeRouteDiagram(draft, wireless)
     SetupEntrance(0) { InsetGroup { ModeSummary(modeRows(draft, wireless), go) } }
     SetupEntrance(1) {
         InsetGroup(footer = stringResource(R.string.settings_automatic_hint)) {

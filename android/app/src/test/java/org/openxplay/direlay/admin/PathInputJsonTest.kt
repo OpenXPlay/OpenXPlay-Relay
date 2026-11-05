@@ -45,7 +45,7 @@ class PathInputJsonTest {
         val expected = JSONObject("""{
             "platform": "android", "nowMillis": 1793000000100, "version": "0.2.1",
             "setup": {"network": "PHONE_HOTSPOT", "outputs": ["CARLINK", "BROWSER", "TESLA"],
-                "summary": "Wireless · Hotspot · Browser", "valid": false},
+                "summary": "Wireless · Hotspot · Browser", "valid": false, "carlifeLink": "AUTO"},
             "relay": {"identity": "READY", "identityLabel": "Installed", "permissionsGranted": 3, "permissionsTotal": 5,
                 "vpnConsentNeeded": true, "keepAlive": "FOREGROUND", "bluetoothOn": false,
                 "bluetoothName": "Relay \"demo\"\n手机", "wifiOn": true, "wifiSsid": "Garage", "hotspotOn": true,
