@@ -11,6 +11,7 @@ import android.net.*
 import android.net.wifi.WifiNetworkSpecifier
 import android.net.wifi.p2p.*
 import android.os.*
+import android.util.Log
 import org.openxplay.stream.clink.*
 import org.openxplay.stream.clink.ble.*
 import org.openxplay.direlay.network.readWifiEnabled
@@ -20,6 +21,7 @@ import java.net.NetworkInterface
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Blocking lifecycle API; Android callbacks and owned resource cleanup run on the main handler. */
 @SuppressLint("MissingPermission")
@@ -46,6 +48,11 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             ClinkFailureReason.GATT_SERVICES, ClinkFailureReason.BLE_SCAN,
             ClinkFailureReason.BLE_TIMEOUT, ClinkFailureReason.BLE_DISCOVERY,
             ClinkFailureReason.BLE_SERVICE_MISSING)
+        /**
+         * How often a running scan reports how much it has heard. A scan that finds nothing produces no
+         * log lines at all, which is why "no progress" and "no such device" looked the same in the field.
+         */
+        private const val SCAN_PROGRESS_MS = 10_000L
     }
     private val peerStore = object : BlePeerPolicy.Store, BlePeerPolicy.SubscriptionStore {
         private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkPeers", Context.MODE_PRIVATE)
@@ -61,7 +68,9 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             if (!preferences.edit().remove("$key.legacy").commit()) cleanupFailure(IllegalStateException("peer_store_failed"))
         }
     }
-    private val peers = BlePeerPolicy(peerStore, if (experimental.rememberSubscription) peerStore else null)
+    private val peers = BlePeerPolicy(peerStore, if (experimental.rememberSubscription) peerStore else null) { message ->
+        Log.i("DiRelayCarlink", message)
+    }
     private val scanPolicy = BleScanPolicy.forAttempt(experimental.keepScanning)
     private val phoneAddress: () -> String = if (experimental.sendBluetoothAddress) ({ experimental.bluetoothAddress }) else ::phoneMac
     private val experimentNames = experimental.names()
@@ -99,6 +108,8 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         var scan: ScanCallback? = null
         var scanner: BluetoothLeScanner? = null
         var scanRenewal: Runnable? = null
+        var scanCounter: ScanCallback? = null
+        var scanProgress: Runnable? = null
         var rawScan: ScanCallback? = null
         var rawCapture: BleRawCapture? = null
         var gatt: BluetoothGatt? = null
@@ -166,6 +177,9 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             diagnostics.handoff(reply.ssid, reply.psk.length)
             // No PIN/UI pause here; return immediately after DHCP so clink can start AUTH.
             val endpoints = diagnosed(ClinkStage.WIFI_JOIN, ClinkFailureReason.WIFI_TIMEOUT) { join(run, reply) }
+            logLinkReady(run, "join")
+            // A second sample: if the route was missing at join time, this shows when it arrived.
+            handler.postDelayed({ logLinkReady(run, "join+2s") }, 2_000)
             diagnostics.emit(ClinkDiagnostic.Joined(endpoints.first, endpoints.second))
             main {
                 check(!run.cancelled) { "Link cancelled" }
@@ -204,17 +218,27 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     }
     private fun scan(run: Run): Pair<BluetoothDevice, String> {
         val result = CompletableFuture<Pair<BluetoothDevice, String>>()
+        // Counters behind ble_scan_progress. Without them a scan that heard nothing at all is
+        // indistinguishable from a scanner whose results never arrive: raw counts every advertisement
+        // the radio delivered, matched every result that passed the service filter, peer the ones that
+        // decoded as ours. raw stays -1 when the counting scan could not be started.
+        val rawSeen = AtomicInteger(-1)
+        val matched = AtomicInteger()
+        val peer = AtomicInteger()
+        val startedAt = SystemClock.elapsedRealtime()
         main {
             check(!run.cancelled)
             val scanner = bluetooth?.adapter?.bluetoothLeScanner ?: throw ClinkFailure(ClinkFailureReason.BLE_UNAVAILABLE)
             val callback = object : ScanCallback() {
                 override fun onScanResult(type: Int, scan: ScanResult) {
                     if (run.cancelled || result.isDone) return
+                    matched.incrementAndGet()
                     val record = scan.scanRecord ?: return
                     try {
                         val identity = record.getServiceData(ParcelUuid(UUID.fromString(BleCodec.IDENTITY_SERVICE))) ?: return
                         val name = record.getServiceData(ParcelUuid(UUID.fromString(BleCodec.NAME_SERVICE))) ?: byteArrayOf()
                         val advertisement = BleCodec.advertisement(identity, name)
+                        peer.incrementAndGet()
                         advertisements?.selected(advertisement)
                         diagnostics.traceLink("ble_advertisement", mapOf(
                             "major" to advertisement.major.toString(), "minor" to advertisement.minor.toString(),
@@ -227,6 +251,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
                     } catch (_: IllegalArgumentException) { /* Ignore malformed advertisements. */ }
                 }
                 override fun onScanFailed(errorCode: Int) {
+                    Log.w("DiRelayCarlink", "ble_scan_failed code=$errorCode elapsed=${(SystemClock.elapsedRealtime() - startedAt) / 1000}s")
                     result.completeExceptionally(ClinkFailure(ClinkFailureReason.BLE_SCAN))
                 }
             }
@@ -236,6 +261,39 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
             if (advertisements != null) scanStartBudget.recordStart(SystemClock.elapsedRealtime())
             scanner.startScan(filters, settings, callback)
+            // One unfiltered scan whose only job is counting. The filtered callback never sees a device
+            // that does not advertise our service UUID, so on its own it cannot answer the question that
+            // matters when nothing is found: is the radio hearing anything at all, or is the scanner dead?
+            if (advertisements == null) {
+                val now = SystemClock.elapsedRealtime()
+                if (scanStartBudget.tryStart(now, reserve = 2)) {
+                    val counter = object : ScanCallback() {
+                        override fun onScanResult(type: Int, scan: ScanResult) { rawSeen.incrementAndGet() }
+                        override fun onBatchScanResults(results: MutableList<ScanResult>) { rawSeen.addAndGet(results.size) }
+                        override fun onScanFailed(errorCode: Int) {
+                            Log.w("DiRelayCarlink", "ble_scan_counter_failed code=$errorCode")
+                            rawSeen.set(-1); run.scanCounter = null
+                        }
+                    }
+                    run.scanCounter = counter
+                    runCatching { scanner.startScan(emptyList(), settings, counter) }
+                        .onFailure { rawSeen.set(-1); run.scanCounter = null }
+                } else {
+                    diagnostics.traceLink("ble_scan_counter_skipped", mapOf(
+                        "reason" to "scan_budget", "count" to scanStartBudget.count(now).toString()))
+                }
+            }
+            val progress = object : Runnable {
+                override fun run() {
+                    if (run.cancelled || result.isDone) return
+                    Log.i("DiRelayCarlink", "ble_scan_progress elapsed=${(SystemClock.elapsedRealtime() - startedAt) / 1000}s" +
+                        " raw=${if (rawSeen.get() >= 0) rawSeen.get().toString() else if (advertisements != null) "capture" else "off"}" +
+                        " matched=${matched.get()} peer=${peer.get()}")
+                    handler.postDelayed(this, SCAN_PROGRESS_MS)
+                }
+            }
+            run.scanProgress = progress
+            handler.postDelayed(progress, SCAN_PROGRESS_MS)
             fun startRawScan(raw: ScanCallback) {
                 val now = SystemClock.elapsedRealtime()
                 if (scanStartBudget.tryStart(now, reserve = 2)) {
@@ -285,7 +343,20 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             diagnostics.emit(ClinkStage.BLE_SCAN)
         }
         try { return await(run, result, scanPolicy.timeoutSeconds) }
-        finally { main { stopScan(run) } }
+        finally {
+            main {
+                stopScan(run)
+                val outcome = when {
+                    run.cancelled -> "cancelled"
+                    result.isDone && !result.isCompletedExceptionally -> "found"
+                    result.isDone -> "failed"
+                    else -> "timeout"
+                }
+                Log.i("DiRelayCarlink", "ble_scan_end elapsed=${(SystemClock.elapsedRealtime() - startedAt) / 1000}s" +
+                    " raw=${if (rawSeen.get() >= 0) rawSeen.get().toString() else if (advertisements != null) "capture" else "off"}" +
+                    " matched=${matched.get()} peer=${peer.get()} outcome=$outcome")
+            }
+        }
     }
     private fun exchange(run: Run, device: BluetoothDevice, carId: String): HeadUnitReply {
         val key = peers.key(carId, device.address)
@@ -715,6 +786,21 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             try { Thread.sleep(350) } catch (_: InterruptedException) { return }
         }
     }
+    private fun logLinkReady(run: Run, stage: String) {
+        val manager = connectivity ?: return
+        runCatching {
+            val network = run.selectedNetwork
+            val properties = network?.let { manager.getLinkProperties(it) }
+            val routes = properties?.routes?.joinToString(",") {
+                it.destination.toString().substringBefore("/") + if (it.isDefaultRoute) "*" else ""
+            } ?: "-"
+            val addresses = properties?.linkAddresses?.joinToString(",") { it.address.hostAddress ?: "-" } ?: "-"
+            val dns = properties?.dnsServers?.joinToString(",") { it.hostAddress ?: "-" } ?: "-"
+            Log.i("DiRelayCarlink", "link_ready stage=$stage iface=${properties?.interfaceName ?: "-"} " +
+                "addrs=$addresses defaultRoute=${properties?.routes?.any { it.isDefaultRoute } ?: false} " +
+                "routes=$routes dns=$dns processBound=${manager.boundNetworkForProcess != null}")
+        }.onFailure { Log.w("DiRelayCarlink", "link_ready stage=$stage failed=${it.javaClass.simpleName}") }
+    }
     private fun lost(run: Run, radioOff: Boolean = false) {
         if (run.cancelled) return
         val failure = ClinkFailure(ClinkFailureReason.LINK_LOST)
@@ -812,6 +898,10 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     }
     private fun stopScan(run: Run) {
         run.scanRenewal?.let(handler::removeCallbacks); run.scanRenewal = null
+        run.scanProgress?.let(handler::removeCallbacks); run.scanProgress = null
+        val counter = run.scanCounter
+        run.scanCounter = null
+        counter?.let { callback -> runCatching { run.scanner?.stopScan(callback) }.onFailure(::cleanupFailure) }
         val raw = run.rawScan
         run.rawScan = null
         raw?.let { callback -> runCatching { run.scanner?.stopScan(callback) }.onFailure(::cleanupFailure) }

@@ -12,7 +12,9 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkInfo
 import android.net.NetworkRequest
+import android.net.wifi.SupplicantState
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.net.wifi.p2p.WifiP2pManager
@@ -34,6 +36,8 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
     private val started = java.util.concurrent.atomic.AtomicBoolean()
     private val closed = java.util.concurrent.atomic.AtomicBoolean()
     private val networks = linkedMapOf<Network, String>()
+    private var hadWifi = false
+    private var lastSnapshotAt = 0L
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = safely {
             if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return@safely
@@ -47,7 +51,8 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
         override fun onReceive(context: Context, intent: Intent) = safely {
             when (intent.action) {
                 WifiManager.WIFI_STATE_CHANGED_ACTION -> wifiState(intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, WifiManager.WIFI_STATE_UNKNOWN))
-                WifiManager.NETWORK_STATE_CHANGED_ACTION -> wifiConnection()
+                WifiManager.NETWORK_STATE_CHANGED_ACTION -> wifiConnection(intent)
+                WifiManager.SUPPLICANT_STATE_CHANGED_ACTION -> supplicant(intent)
                 TETHER -> hotspot(intent)
                 BluetoothAdapter.ACTION_STATE_CHANGED -> bluetooth(intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR))
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> p2p()
@@ -60,6 +65,7 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
             if (closed.get()) return@safely
             val filter = IntentFilter().apply {
                 addAction(WifiManager.WIFI_STATE_CHANGED_ACTION); addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+                addAction(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION)
                 addAction(TETHER); addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
                 addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
             }
@@ -75,7 +81,7 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
                 callbackRegistered = true
             }.onFailure { unavailable("wifi_connection") }
             runCatching { wifiState(wifi.wifiState) }.onFailure { unavailable("wifi") }
-            wifiConnection(); hotspot(); p2p()
+            wifiConnection(null); hotspot(); p2p()
             runCatching { bluetooth(context.getSystemService(BluetoothManager::class.java)?.adapter?.state ?: BluetoothAdapter.ERROR) }
                 .onFailure { unavailable("bluetooth") }
         } }
@@ -98,26 +104,72 @@ class NetworkTimeline(context: Context, private val log: ConnectionLog) : AutoCl
     @Suppress("DEPRECATION") private fun currentWifi(): WifiInfo? = runCatching { wifi.connectionInfo }.getOrNull()
     private fun wifiDetail(info: WifiInfo?): String {
         val frequency = info?.frequency ?: -1
-        if (info == null || info.ssid == WifiManager.UNKNOWN_SSID || frequency <= 0) unavailable("wifi_identity")
+        if (info == null || info.ssid == WifiManager.UNKNOWN_SSID || frequency <= 0) {
+            unavailable("wifi_identity")
+            wifiSnapshot("wifi_identity_lost")
+        }
         val band = when (frequency) { in 2400..2500 -> "2.4GHz"; in 4900..5900 -> "5GHz"; in 5925..7125 -> "6GHz"; else -> "unavailable" }
         return "frequency=$frequency band=$band"
     }
-    @Suppress("DEPRECATION") private fun wifiConnection() {
+    /**
+     * Facts a disconnect report needs: the platform tells us only that the network went away, so the
+     * supplicant state and the last known identity are what separate a deauth from an interface reset.
+     */
+    @Suppress("DEPRECATION") private fun wifiFacts(): String {
+        val enabled = runCatching { wifi.isWifiEnabled }.getOrDefault(false)
+        val info = currentWifi() ?: return "supplicant=unknown ssid=- frequency=-1 rssi=0 linkMbps=-1 networkId=-1 ip=- enabled=$enabled"
+        val raw = info.ipAddress
+        val ip = if (raw == 0) "-"
+            else "${raw and 0xff}.${(raw shr 8) and 0xff}.${(raw shr 16) and 0xff}.${(raw shr 24) and 0xff}"
+        return "supplicant=${info.supplicantState?.name ?: "unknown"} ssid=${info.ssid} frequency=${info.frequency} " +
+            "rssi=${info.rssi} linkMbps=${info.linkSpeed} networkId=${info.networkId} ip=$ip enabled=$enabled"
+    }
+    /** Once per flap window: a burst of callbacks must not bury the snapshot that explains it. */
+    private fun wifiSnapshot(event: String, suffix: String = "") {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastSnapshotAt < 2_000) return
+        lastSnapshotAt = now
+        log.event("network", event, (wifiFacts() + suffix).trim())
+    }
+    @Suppress("DEPRECATION") private fun networkDetail(info: NetworkInfo): String {
+        val reason = info.reason?.takeIf { it.isNotBlank() } ?: "-"
+        return "detailed=${info.detailedState} state=${info.state} reason=$reason"
+    }
+    @Suppress("DEPRECATION") private fun wifiConnection(intent: Intent?) {
+        val network = intent?.let { runCatching { it.getParcelableExtra<NetworkInfo>(WifiManager.EXTRA_NETWORK_INFO) }.getOrNull() }
+        if (network != null) state("wifi/link", "wifi_link", networkDetail(network))
         runCatching {
             val active = connectivity.allNetworks.filter { connectivity.getNetworkCapabilities(it)
                 ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
             networks.keys.retainAll(active.toSet())
-            for (network in active) remember(network, wifiDetail(currentWifi()))
-            connected()
+            for (n in active) remember(n, wifiDetail(currentWifi()))
+            connected(network)
         }.onFailure { unavailable("wifi_connection") }
+    }
+    @Suppress("DEPRECATION") private fun supplicant(intent: Intent?) {
+        if (intent == null) return
+        val supplicantState = if (Build.VERSION.SDK_INT >= 33)
+            intent.getParcelableExtra(WifiManager.EXTRA_NEW_STATE, SupplicantState::class.java)
+        else intent.getParcelableExtra<SupplicantState>(WifiManager.EXTRA_NEW_STATE)
+        val error = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1)
+        val name = supplicantState?.name ?: "unknown"
+        state("wifi/supplicant", "supplicant_state", "supplicant=$name error=$error")
+        if (error != -1 || supplicantState == SupplicantState.DISCONNECTED)
+            wifiSnapshot("supplicant_lost", " supplicant=$name error=$error")
     }
     private fun remember(network: Network, detail: String) {
         networks[network] = detail
     }
-    private fun connected() {
+    @Suppress("DEPRECATION")     private fun connected(network: NetworkInfo? = null) {
         val detail = networks.values.sorted().joinToString("; ")
-        if (networks.isEmpty()) state("wifi_connection", "wifi_disconnected", "by=os cause=network_lost")
-        else state("wifi_connection", "wifi_connected", detail)
+        val wasConnected = hadWifi
+        hadWifi = networks.isNotEmpty()
+        if (networks.isEmpty()) {
+            val reason = network?.reason?.takeIf { it.isNotBlank() }
+            val extra = if (network != null && reason != null) " detailed=${network.detailedState} reason=$reason" else ""
+            state("wifi_connection", "wifi_disconnected", "by=os cause=network_lost$extra")
+            if (wasConnected) wifiSnapshot("wifi_lost", if (reason == null) "" else " reason=$reason")
+        } else state("wifi_connection", "wifi_connected", detail)
     }
     private fun hotspot(intent: Intent? = null) {
         val key = listOf("tetherArray", "activeArray").firstOrNull { intent?.hasExtra(it) == true }
