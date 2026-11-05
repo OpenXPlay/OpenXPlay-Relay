@@ -23,7 +23,7 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
     private val mediaKeysForwarding: () -> Boolean = { false }) : ProjectionInput, AutoCloseable {
     @Volatile override var capabilities = InputCapabilities(
         setOf(VideoCodec.H264, VideoCodec.H265), setOf(ScreenId.MAIN),
-        touch = true, keys = KeyCode.entries.toSet(), microphone = false,
+        touch = true, keys = MEDIA_KEYS, microphone = false,
         keyFrameRequests = true, reconfigure = ReconfigureCost.RESTART_SESSION,
     )
         private set
@@ -320,3 +320,5 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
 }
 
 private const val TAG = "OpenXPlay Relay"
+/** The steering-wheel keys CarPlay accepts as media HID presses; the rest stay with the head unit. */
+private val MEDIA_KEYS = setOf(KeyCode.PLAY_PAUSE, KeyCode.NEXT, KeyCode.PREVIOUS)
