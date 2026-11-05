@@ -18,6 +18,8 @@ import org.openxplay.direlay.settings.StartupPermissions
 import org.openxplay.direlay.settings.CarlinkConnectionPolicy
 import org.openxplay.direlay.network.ManualNetworkStart
 import org.openxplay.direlay.storage.MaterialStatus
+import org.openxplay.stream.clink.ClinkState
+import org.openxplay.stream.core.SessionPhase
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -42,6 +44,9 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
     val carlinkFirst = CarlinkStartGate()
     private val recovery = RecoverOncePolicy()
     private var userStopped = false
+    private var carlinkGateRetries = 0
+    /** Set when a start gave up waiting for Carlink; cleared by the next start, stop, or late start. */
+    private var restartWhenCarlinkReady = false
     private var pendingManual = true
     private var carWaitSatisfied = false
     @Volatile override var bootStart = false
@@ -95,6 +100,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         else -> "error.invalid"
     }
     private fun stop(source: String) {
+        restartWhenCarlinkReady = false
         runtime.carPlayStage.reset()
         runtime.iphoneLink.reset()
         runtime.connectionLog.event("relay", "carplay_stop", "source=$source")
@@ -188,6 +194,22 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         return startAfterNetworkAccepted()
     }
 
+    /**
+     * A start that stopped waiting for Carlink is not a stop. The link keeps scanning on its own and
+     * can come up a minute later — that is exactly what happened in the field, where the only thing
+     * that ever restarted CarPlay was the phone reconnecting by itself. Restart it here instead, and
+     * stand down when a session is already on its way.
+     */
+    @Synchronized fun recheckCarlinkReady(): String? {
+        if (!restartWhenCarlinkReady || closed) return null
+        if (runtime.startRequest.pending || restarting) return null
+        if (runtime.carlinkState != ClinkState.PLAYING.name) return null
+        if (runtime.status.session?.phase in SESSION_STARTING) return null
+        restartWhenCarlinkReady = false
+        runtime.connectionLog.event("relay", "carplay_late_start", "reason=carlink_ready carlink=${runtime.carlinkState}")
+        return start(manual = false)
+    }
+
     @Synchronized fun recoverRadio(readings: org.openxplay.direlay.network.NetworkReadings) {
         val code = recovery.observe(runtime.iphoneLink.snapshot.failure, readings, userStopped) ?: return
         runtime.connectionLog.event("relay", "carplay_radio_recover", "code=$code")
@@ -255,6 +277,7 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
         runtime.carPlayDiagnostics.clear()
         carlinkFirst.request(System.currentTimeMillis(), wireless && CarlinkConnectionPolicy.enabled(settings) &&
             settings.experimental.effective().waitForCarlink)
+        carlinkGateRetries = 0
         if (carlinkFirst.untilMillis != null) waits.begin("carlink", "max=${CarlinkStartGate.MAX_WAIT_MILLIS} carlink=${runtime.carlinkState}")
         if (!carWaitSatisfied && carFirst.request(System.currentTimeMillis(), settings.displayMode == org.openxplay.direlay.settings.DisplayMode.AUTOMATIC,
             settings.browserOutput || settings.carlifeOutput, settings.carlinkOutput,
@@ -276,6 +299,17 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
                 return
             }
             waits.end("carlink", "ready")
+        } catch (timeout: CarlinkStartTimeout) {
+            waits.end("carlink", "timeout carlink=${runtime.carlinkState}")
+            // Expiring here says nothing about the link: it is still scanning, and the head unit is
+            // known to stop advertising for minutes. Buy another window instead of tearing the start
+            // down, but keep a bound so a link that never comes up still fails visibly.
+            if (carlinkGateRetries >= CARLINK_GATE_RETRIES) { restartWhenCarlinkReady = true; startFailed(timeout); return }
+            carlinkGateRetries++
+            carlinkFirst.request(System.currentTimeMillis(), true)
+            waits.begin("carlink", "retry=$carlinkGateRetries max=${CarlinkStartGate.MAX_WAIT_MILLIS} carlink=${runtime.carlinkState}")
+            worker.schedule({ continueStart(launchGeneration, source, networkAccepted) }, 100, TimeUnit.MILLISECONDS)
+            return
         } catch (failure: Exception) { waits.end("carlink", "failed carlink=${runtime.carlinkState}"); startFailed(failure); return }
         if (!carFirst.ready(System.currentTimeMillis(), runtime.carScreenReported)) {
             waits.tick("car_screen")
@@ -333,4 +367,14 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
     }
     private fun endWaits(outcome: String) { listOf("network", "carlink", "car_screen", "restart").forEach { waits.end(it, outcome) } }
     @Synchronized override fun close() { closed = true; generation++; restarting = false; networkStart.cancel(); carFirst.cancel(); carlinkFirst.cancel(); runtime.startRequest.finish(); worker.shutdownNow() }
+    private companion object {
+        /**
+         * How many extra Carlink gate windows an expired wait buys. The link is still scanning when the
+         * gate expires and the head unit stops advertising for minutes at a time, so failing the whole
+         * start there throws away work that is about to succeed; four windows bound the cost instead.
+         */
+        const val CARLINK_GATE_RETRIES = 3
+        /** Session phases that already mean "CarPlay is being brought up"; a late start stands down. */
+        val SESSION_STARTING = setOf(SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.RECONNECTING)
+    }
 }

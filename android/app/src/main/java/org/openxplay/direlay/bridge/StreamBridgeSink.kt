@@ -30,6 +30,8 @@ class StreamBridgeSink(
     private val session = input.begin(control)
     private val audio = mutableMapOf<Int, Pair<AudioStreamId, RelayAudioStream>>()
     private val audioTails = mutableMapOf<Int, RelayAudioStream>()
+    /** Streams DiPlay stopped; their late packets must not start them again. */
+    private val stoppedAudio = mutableSetOf<AudioStreamId>()
     private val microphoneIds = mutableMapOf<Int, AudioStreamId>()
     private val microphoneTails = mutableMapOf<Int, DelegatedMicrophone>()
     private val localMicrophones = mutableMapOf<Int, Pair<AudioStreamId, DelegatedMicrophone>>()
@@ -43,39 +45,64 @@ class StreamBridgeSink(
 
     override fun onAudioStarted(id: AudioStreamId, format: CarPlayAudioFormat, firstSample: Int) {
         val stream = AudioPolicy.stream(id) ?: return
-        input.deliver(session) { sink ->
-            audio.remove(stream)?.second?.close()
-            if (session.audio.remove(stream)) sink.audioFormat(stream, null)
-            lateinit var run: RelayAudioStream
-            run = RelayAudioStream(id, format, { bytes, pts ->
-                input.deliver(session) { target ->
-                    if (audio[stream]?.second === run) target.audioPacket(AudioPacket(stream, session.id, bytes, pts))
+        Log.i("OXP-Audio", "stream_start stream=$stream type=${id.type} codec=${format.codec} " +
+            "rate=${format.sampleRate} ch=${format.channels} firstSample=$firstSample")
+        input.deliver(session) { sink -> stoppedAudio.remove(id); startAudioStream(id, stream, format, firstSample, sink) }
+    }
+
+    /**
+     * Creates the forwarding stream. Called from onAudioStarted, and again from onAudioRtp when the
+     * map is empty: a reconnect builds a fresh StreamBridgeSink whose audio map starts empty, while
+     * DiPlay keeps the same audio stream and never re-fires onAudioStarted. Without the lazy path
+     * every packet after a reconnect was dropped silently (audio[stream] == null).
+     */
+    private fun startAudioStream(id: AudioStreamId, stream: Int, format: CarPlayAudioFormat,
+        firstSample: Int, sink: InputSink) {
+        audio.remove(stream)?.second?.close()
+        if (session.audio.remove(stream)) sink.audioFormat(stream, null)
+        lateinit var run: RelayAudioStream
+        run = RelayAudioStream(id, format, { bytes, pts ->
+            input.deliver(session) { target ->
+                if (audio[stream]?.second === run) target.audioPacket(AudioPacket(stream, session.id, bytes, pts))
+            }
+        }, {
+            input.deliver(session) { target ->
+                if (audio[stream]?.second === run) {
+                    audio.remove(stream)
+                    if (session.audio.remove(stream)) target.audioFormat(stream, null)
                 }
-            }, {
-                input.deliver(session) { target ->
-                    if (audio[stream]?.second === run) {
-                        audio.remove(stream)
-                        if (session.audio.remove(stream)) target.audioFormat(stream, null)
-                    }
-                }
-            }, delegate, playAudioLocally, firstSample, audioTails[stream])
-            audioTails[stream] = run
-            audio[stream] = id to run
-            session.audio.add(stream)
-            sink.audioFormat(stream, AudioPolicy.format(id, format))
-            run.start()
-        }
+            }
+        }, delegate, playAudioLocally, firstSample, audioTails[stream])
+        audioTails[stream] = run
+        audio[stream] = id to run
+        session.audio.add(stream)
+        sink.audioFormat(stream, AudioPolicy.format(id, format))
+        run.start()
     }
 
     override fun onAudioRtp(id: AudioStreamId, format: CarPlayAudioFormat, rtp: ByteArray, sample: Int) {
         val arrival = System.nanoTime() / 1000
         val stream = AudioPolicy.stream(id) ?: return
-        input.deliver(session) { audio[stream]?.takeIf { it.first == id }?.second?.offer(rtp, sample, arrival) }
+        input.deliver(session) { sink ->
+            // A reconnect can leave a *closed* stream in the map: its ended-callback ran while the
+            // session had already moved on, so the entry was never removed. Checking only for null
+            // missed it and every packet was dropped by offer() (measured: 1026 packets lost
+            // between arrival and the queue). Rebuild whenever the stream is missing or stopped.
+            val existing = audio[stream]?.takeIf { it.first == id }
+            if (id !in stoppedAudio && (existing == null || !existing.second.isRunning())) {
+                Log.i("OXP-Audio", "stream_lazy_start stream=$stream type=${id.type} sample=$sample " +
+                    "reason=${if (existing == null) "absent" else "stopped"}")
+                startAudioStream(id, stream, format, sample, sink)
+            }
+            audio[stream]?.takeIf { it.first == id }?.second?.offer(rtp, sample, arrival)
+        }
     }
 
     override fun onAudioStopped(id: AudioStreamId) {
         val stream = AudioPolicy.stream(id) ?: return
+        Log.i("OXP-Audio", "stream_stop stream=$stream type=${id.type}")
         input.deliver(session) { sink ->
+            stoppedAudio.add(id)
             if (audio[stream]?.first == id) {
                 audio.remove(stream)?.second?.close()
                 if (session.audio.remove(stream)) sink.audioFormat(stream, null)

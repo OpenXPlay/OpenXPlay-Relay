@@ -5,6 +5,9 @@ package org.openxplay.direlay.relay
 
 import java.io.IOException
 
+/** The gate ran out of time while the Carlink link was still starting. */
+class CarlinkStartTimeout : IOException("Carlink output did not become ready before CarPlay startup")
+
 /** One explicit start owns a bounded wait; a saved screen never releases it. */
 class CarlinkStartGate {
     @Volatile var untilMillis: Long? = null
@@ -19,7 +22,7 @@ class CarlinkStartGate {
         if (!outputEnabled) throw IOException("Carlink output was disabled while waiting to start CarPlay")
         if (outputReady) { cancel(); return true }
         if (waitingForWifi) { untilMillis = nowMillis + MAX_WAIT_MILLIS; return false }
-        if (nowMillis >= until) throw IOException("Carlink output did not become ready before CarPlay startup")
+        if (nowMillis >= until) throw CarlinkStartTimeout()
         return false
     }
 

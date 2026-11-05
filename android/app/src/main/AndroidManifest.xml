@@ -106,6 +106,12 @@
             <intent-filter tools:node="removeAll" />
         </activity>
 
+        <!-- DiPlay's host turns with the sensor on head units; on the relay phone it follows the rotation lock. -->
+        <activity android:name="com.shilapi.xcertplay.CarPlayHostActivity"
+            android:screenOrientation="fullUser" tools:replace="android:screenOrientation" />
+        <activity android:name="com.shilapi.xcertplay.SameTaskCarPlayHostActivity"
+            android:screenOrientation="fullUser" tools:replace="android:screenOrientation" />
+
 
         <activity
             android:name=".RelayActivity"

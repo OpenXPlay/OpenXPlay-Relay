@@ -70,6 +70,12 @@ class AndroidCarlinkWifiTest {
         callback.onLinkPropertiesChanged(network, links)
         callback.onCapabilitiesChanged(network, capabilities)
     }
+    @Test fun onlyMiuiOnAndroid10And11IsNudgedToJoinByItself() {
+        assertTrue(AndroidCarlinkWifi.miuiConfirmationDialog("Xiaomi", 29))
+        assertTrue(AndroidCarlinkWifi.miuiConfirmationDialog("xiaomi", 30))
+        assertFalse(AndroidCarlinkWifi.miuiConfirmationDialog("Xiaomi", 31))
+        assertFalse(AndroidCarlinkWifi.miuiConfirmationDialog("OnePlus", 29))
+    }
     @Test fun reusesAnIdentifiedSystemNetworkAndUnregistersWithoutReplacingIt() {
         flow().use { flow ->
             flow.start()

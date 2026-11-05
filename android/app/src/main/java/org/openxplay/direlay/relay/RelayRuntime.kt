@@ -127,6 +127,9 @@ class RelayRuntime(private val context: Context,
         remotePlaybackProof = { settingsStore.snapshot.value?.experimental?.effective()?.remotePlaybackProof == true },
         startupStatus = { settingsStore.snapshot.value?.experimental?.effective()?.startupStatus == true },
         automaticHevc = { settingsStore.snapshot.value?.videoCodec == VideoCodecSetting.AUTO && appliedVideoDecision.codec == VideoCodec.H265 },
+        // Media keys follow the audio route: CarPlay audio → forward Carlink method=12 to the iPhone;
+        // car Bluetooth audio → the phone already gets them over AVRCP, so do not double-forward.
+        mediaKeysForwarding = { settingsStore.snapshot.value?.carBluetoothAudio == false },
     )
     private val bundledPlugins = org.openxplay.direlay.plugins.BundledPlugins(context.applicationContext)
     fun installedPlugins() = runCatching {
@@ -746,6 +749,7 @@ class RelayRuntime(private val context: Context,
     }
     val networkStart get() = sessionController.networkStart
     fun recheckNetworkStart() = sessionController.recheckNetworkStart()
+    fun recheckCarlinkReady() = sessionController.recheckCarlinkReady()
     fun startAnyway() = sessionController.startAnyway()
     fun cancelNetworkStart() = sessionController.cancelNetworkStart()
     val adminService = org.openxplay.direlay.admin.RelayAdminService(context.applicationContext, this,
@@ -836,6 +840,7 @@ class RelayRuntime(private val context: Context,
             status.session?.phase == org.openxplay.stream.core.SessionPhase.ACTIVE)
         sessionController.recoverRadio(networkReadings)
         sessionController.recheckNetworkStart()
+        sessionController.recheckCarlinkReady()
         // A session start or stop can block or release Carlink without a settings change.
         if (carlinkBlock.sessionChanged(autoStartSessions.tracker.running)) enqueueCarlink()
     }, 0, 500, TimeUnit.MILLISECONDS)

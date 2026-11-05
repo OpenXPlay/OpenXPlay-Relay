@@ -6,6 +6,7 @@ package org.openxplay.direlay.bridge
 import android.util.Log
 import kotlinx.coroutines.flow.asStateFlow
 import com.shilapi.xcertplay.airplay.AirPlayContact
+import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.airplay.SessionControl
 import org.openxplay.stream.core.*
 import java.util.concurrent.RejectedExecutionException
@@ -18,10 +19,11 @@ import java.util.concurrent.TimeUnit
 class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val restartCarPlay: () -> Unit = {},
     private val automaticHevc: () -> Boolean = { false }, private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
     private val remotePlaybackProof: () -> Boolean = { false },
-    private val startupStatus: () -> Boolean = { false }) : ProjectionInput, AutoCloseable {
+    private val startupStatus: () -> Boolean = { false },
+    private val mediaKeysForwarding: () -> Boolean = { false }) : ProjectionInput, AutoCloseable {
     @Volatile override var capabilities = InputCapabilities(
         setOf(VideoCodec.H264, VideoCodec.H265), setOf(ScreenId.MAIN),
-        touch = true, keys = emptySet(), microphone = false,
+        touch = true, keys = MEDIA_KEYS, microphone = false,
         keyFrameRequests = true, reconfigure = ReconfigureCost.RESTART_SESSION,
     )
         private set
@@ -264,6 +266,27 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
                     )
                 }
             }
+            is ControlEvent.Key -> {
+                // Steering-wheel media keys arrive as down/up pairs; trigger once on down so a
+                // single press does not skip two tracks. Forwarding follows the audio route: the
+                // caller enables it only when CarPlay carries the audio, because when the phone
+                // keeps car Bluetooth audio it already receives the keys over AVRCP and forwarding
+                // here would skip tracks twice.
+                if (!event.down) return false
+                if (!mediaKeysForwarding()) return false
+                val index = when (event.code) {
+                    KeyCode.NEXT -> CarPlayMediaButton.NEXT
+                    KeyCode.PREVIOUS -> CarPlayMediaButton.PREVIOUS
+                    KeyCode.PLAY_PAUSE -> CarPlayMediaButton.PLAY_PAUSE
+                    else -> return false
+                }
+                synchronized(gate) {
+                    if (current !== session || sink == null) false
+                    else session.control.sendMediaButton(index)
+                }.also { sent ->
+                    Log.i(TAG, "media key code=${event.code.name} index=$index sent=$sent")
+                }
+            }
             is ControlEvent.KeyFrameRequest -> {
                 val accepted = synchronized(gate) {
                     if (sink == null || current !== session || event.screen !in session.handlers) false
@@ -297,3 +320,5 @@ class DiPlayInput(private val applyFrameRate: (Double) -> Unit = {}, private val
 }
 
 private const val TAG = "OpenXPlay Relay"
+/** The steering-wheel keys CarPlay accepts as media HID presses; the rest stay with the head unit. */
+private val MEDIA_KEYS = setOf(KeyCode.PLAY_PAUSE, KeyCode.NEXT, KeyCode.PREVIOUS)

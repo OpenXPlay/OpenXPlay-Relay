@@ -5,6 +5,7 @@ package org.openxplay.direlay.bridge
 
 import com.shilapi.xcertplay.airplay.AirPlayContact
 import com.shilapi.xcertplay.airplay.MediaSink
+import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.airplay.SessionControl
 import com.shilapi.xcertplay.orchestration.CarPlayHostUiHandler
 import com.shilapi.xcertplay.orchestration.CarPlayStatus
@@ -202,6 +203,27 @@ class DiPlayInputTest {
         }
     }
 
+    @Test fun mediaKeysReachTheCurrentSessionOncePerPressOnlyWhileCarPlayCarriesTheAudio() {
+        var forwarding = false
+        val pressed = mutableListOf<Int>()
+        val control = object : SessionControl {
+            override fun sendTouch(contacts: List<AirPlayContact>) = false
+            override fun sendMediaButton(index: Int): Boolean { pressed.add(index); return true }
+        }
+        DiPlayInput(mediaKeysForwarding = { forwarding }).use { input ->
+            fun key(code: KeyCode, down: Boolean = true) = input.control(ControlEvent.Key(code, down, origin))
+            input.start(configuration, CapturingInputSink())
+            input.begin(control)
+            assertFalse(key(KeyCode.NEXT))
+            forwarding = true
+            assertTrue(key(KeyCode.NEXT)); assertFalse(key(KeyCode.NEXT, down = false))
+            assertTrue(key(KeyCode.PREVIOUS)); assertTrue(key(KeyCode.PLAY_PAUSE))
+            assertFalse(key(KeyCode.HOME))
+            input.stop(); assertFalse(key(KeyCode.NEXT))
+            assertEquals(listOf(CarPlayMediaButton.NEXT, CarPlayMediaButton.PREVIOUS, CarPlayMediaButton.PLAY_PAUSE), pressed)
+        }
+    }
+
     @Test fun viewAreaCommandsUseOnlyTheCurrentDecoratedSession() {
         DiPlayInput().use { input ->
             val calls = mutableListOf<Int>()
@@ -245,7 +267,7 @@ class DiPlayInputTest {
             assertEquals(setOf(ScreenId.MAIN), input.capabilities.screens)
             assertTrue(input.capabilities.touch)
             assertTrue(input.capabilities.keyFrameRequests)
-            assertTrue(input.capabilities.keys.isEmpty())
+            assertEquals(setOf(KeyCode.PLAY_PAUSE, KeyCode.NEXT, KeyCode.PREVIOUS), input.capabilities.keys)
             assertFalse(input.capabilities.microphone)
             assertEquals(ReconfigureCost.RESTART_SESSION, input.capabilities.reconfigure)
             assertEquals(ReconfigureResult.RESTART_SESSION, input.reconfigure(configuration))

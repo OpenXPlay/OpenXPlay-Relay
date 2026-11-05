@@ -58,6 +58,26 @@ class AudioBridgeTest {
             assertEquals(2, capture.audio.size)
         }
     }
+    @Test fun aStreamDiPlayKeptAcrossAReconnectStartsOnItsFirstPacketButAStoppedOneStaysStopped() {
+        DiPlayInput().use { input ->
+            val capture = Capture(); input.start(configuration, capture)
+            val id = AudioStreamId(102, "media")
+            val format = CarPlayAudioFormat(AudioCodecKind.AAC_LC, 48000, 2, 102)
+            // A reconnect builds a new bridge while DiPlay keeps the stream: no onAudioStarted.
+            val bridge = StreamBridgeSink(input, object : MediaSink {}, SessionControl { true })
+            bridge.onAudioRtp(id, format, ByteArray(12) + hex("21 43 65"), 0)
+            assertTrue(capture.packetReady.await(2, TimeUnit.SECONDS))
+            assertEquals(1, capture.audio.size)
+            bridge.onAudioStopped(id)
+            assertEquals(2, capture.audio.size)
+            bridge.onAudioRtp(id, format, ByteArray(12) + hex("21 43 65"), 1024)
+            bridge.onAudioStopped(AudioStreamId(999, "media"))
+            assertEquals(2, capture.audio.size)
+            assertEquals(1, capture.packets.size)
+            bridge.onAudioStarted(id, format, 2048)
+            assertEquals(3, capture.audio.size)
+        }
+    }
     @Test fun voiceLpcmIsSwappedOnTheWorkerAndStoppedExplicitly() {
         DiPlayInput().use { input ->
             val capture = Capture(); input.start(configuration, capture)

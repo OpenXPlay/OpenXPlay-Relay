@@ -17,6 +17,9 @@ class CarlinkWifiFlowTest {
         var requests = 0
         var releases = 0
         var unobserved = 0
+        var nudge = 0L
+        var nudges = 0
+        override fun nudgePlatformJoin(): Long { nudges++; return nudge }
         override fun observe(observer: CarlinkWifiFlow.Observer<Int>): AutoCloseable {
             this.observer = observer
             return AutoCloseable { unobserved++ }
@@ -43,8 +46,8 @@ class CarlinkWifiFlowTest {
     private fun candidate(id: Int = 1, ssid: String? = "car", encrypted: Boolean? = true,
         peer: String? = "192.168.49.1", local: String? = "192.168.49.2") =
         CarlinkWifiCandidate(id, ssid, encrypted, peer, local)
-    private class Fixture {
-        val driver = Driver()
+    private class Fixture(nudge: Long = 0) {
+        val driver = Driver().also { it.nudge = nudge }
         val phases = mutableListOf<CarlinkWifiFlow.Phase>()
         var losses = 0
         val flow = CarlinkWifiFlow("car", driver, phases::add, { _, _ -> }, { losses++ })
@@ -170,5 +173,60 @@ class CarlinkWifiFlowTest {
         assertTrue(f.flow.result.isCancelled)
         assertEquals(CarlinkWifiFlow.Phase.CLOSED, f.flow.phase)
         assertEquals(1, f.driver.releases); assertEquals(1, f.driver.unobserved)
+    }
+    @Test fun thePlatformsOwnJoinAfterTheNudgeIsAdoptedWithoutARequest() {
+        val f = Fixture(nudge = 3_000); f.automatic()
+        assertEquals(1, f.driver.nudges)
+        assertEquals(0, f.driver.requests)
+        f.driver.advance(400)
+        f.driver.observer.changed(candidate())
+        assertEquals(1, f.flow.result.get().network)
+        assertEquals(0, f.driver.requests)
+        f.driver.advance(10_000)
+        assertEquals(0, f.driver.requests)
+        assertFalse(CarlinkWifiFlow.Phase.AUTOMATIC in f.phases)
+    }
+    @Test fun withoutAJoinTheNudgeWindowEndsInTheExactTargetRequest() {
+        val f = Fixture(nudge = 3_000)
+        f.driver.advance(2_999); assertEquals(0, f.driver.requests)
+        f.driver.advance(1); assertEquals(1, f.driver.requests)
+        f.driver.observer.changed(candidate(ssid = "other"))
+        assertFalse(f.flow.result.isDone)
+    }
+    @Test fun aTargetTheRequestNeverClaimsIsBorrowedFromThePlatform() {
+        val f = Fixture(); f.automatic()
+        f.driver.observer.changed(candidate())
+        f.driver.advance(CarlinkWifiFlow.CLAIM_MILLIS - 1)
+        assertFalse(f.flow.result.isDone)
+        f.driver.advance(1)
+        assertEquals(1, f.flow.result.get().network)
+        assertEquals(1, f.driver.releases)
+        assertFalse(CarlinkWifiFlow.Phase.MANUAL in f.phases)
+        f.driver.requested.changed(candidate(2))
+        assertEquals(1, f.flow.result.get().network)
+    }
+    @Test fun twoUnclaimedTargetsAreNeverBorrowed() {
+        val f = Fixture(); f.automatic()
+        f.driver.observer.changed(candidate(1)); f.driver.observer.changed(candidate(2))
+        f.driver.advance(CarlinkWifiFlow.CLAIM_MILLIS)
+        assertFalse(f.flow.result.isDone)
+        assertEquals(0, f.driver.releases)
+    }
+    @Test fun afterTheRequestEndsTheTargetThePlatformJoinedIsAdopted() {
+        val f = Fixture(); f.automatic()
+        f.driver.observer.changed(candidate(2))
+        f.driver.unavailable()
+        assertEquals(CarlinkWifiFlow.Phase.MANUAL, f.flow.phase)
+        f.driver.advance(CarlinkWifiFlow.CLAIM_MILLIS)
+        assertEquals(2, f.flow.result.get().network)
+    }
+    @Test fun theRequestsOwnNetworkGoingAwayIsNotAdoptedAfterTheRequestEnds() {
+        val f = Fixture(); f.automatic()
+        f.driver.observer.changed(candidate(2))
+        f.driver.unavailable()
+        f.driver.observer.lost(2)
+        f.driver.advance(CarlinkWifiFlow.CLAIM_MILLIS)
+        assertFalse(f.flow.result.isDone)
+        assertEquals(CarlinkWifiFlow.Phase.MANUAL, f.flow.phase)
     }
 }

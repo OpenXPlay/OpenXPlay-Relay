@@ -56,6 +56,13 @@ import org.openxplay.stream.core.SessionPhase
 
 class RelayActivity : androidx.activity.ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
+    /**
+     * Keeps the display awake while a Carlink link is being brought up. The Bluetooth stack stops
+     * scanning the moment the screen goes to sleep, so a connection attempt that is still looking for
+     * the head unit dies with it — and the wait that follows then has nothing left to find it with.
+     */
+    private var keepAwakeForLink = false
+    private val homeBack = HomeBack(this)
     private val identityImport by lazy { androidx.lifecycle.ViewModelProvider(this)[IdentityImportState::class.java] }
     private var identityDialog: AlertDialog? = null
     private var dialogVisible by androidx.compose.runtime.mutableStateOf(false)
@@ -108,6 +115,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) animateSplashExit()
+        onBackPressedDispatcher.addCallback(this, homeBack)
         if (identityImport.uri == null) {
             identityImport.uri = savedInstanceState?.getString("identityUri")?.let(Uri::parse)
             identityImport.kind = savedInstanceState?.getString("identityKind")?.let(IdentityKind::valueOf) ?: IdentityKind.UNKNOWN
@@ -134,6 +142,23 @@ class RelayActivity : androidx.activity.ComponentActivity() {
                 launch { presentation.readiness.collect { sample ->
                     if (sample != null && sample.flags == hostFlags() && shouldAutoStart(sample.automatic, hostFlags())) startCarPlay()
                 } }
+                launch {
+                    var connectingSince = 0L
+                    while (true) {
+                        val connecting = runtime.carlinkState == org.openxplay.stream.clink.ClinkState.CONNECTING.name
+                        // Bounded: an abandoned start leaves the link reporting CONNECTING forever, and
+                        // holding the screen on there would never end. Five minutes covers every gate window.
+                        if (!connecting) connectingSince = 0L
+                        else if (connectingSince == 0L) connectingSince = android.os.SystemClock.elapsedRealtime()
+                        val awake = connecting && android.os.SystemClock.elapsedRealtime() - connectingSince < LINK_AWAKE_LIMIT_MS
+                        if (awake != keepAwakeForLink) {
+                            keepAwakeForLink = awake
+                            if (awake) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        kotlinx.coroutines.delay(1000)
+                    }
+                }
             }
         }
         setContent {
@@ -731,6 +756,8 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     }
 
     companion object {
+        /** Longest a pending link may hold the display awake: every Carlink gate window in a row. */
+        private const val LINK_AWAKE_LIMIT_MS = 300_000L
         /** A separate singleton task keeps bringing up Relay from clearing the CarPlay host. */
         fun intent(context: Context, destination: String? = null, stepAction: StepAction? = null): Intent =
             Intent(context, RelayActivity::class.java)
@@ -758,6 +785,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        homeBack.refresh()
         presentation.action { runtime.keepAlive.uiVisible() }
         resumed = true
         dialogs.active = !requestingPermissions && !pairingInFlight
