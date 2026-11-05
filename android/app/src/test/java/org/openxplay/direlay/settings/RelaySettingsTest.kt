@@ -25,6 +25,23 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 33], manifest = Config.NONE, application = Application::class)
 class RelaySettingsTest {
+    @Test fun explicitCarlifeTransportSurvivesReloadAndOldPreferencesKeepAutomatic() {
+        store.use { store ->
+            for (transport in CarlifeTransport.entries) {
+                val chosen = CarlifeConnectionPolicy.choose(store.load().copy(outputs = setOf(RelayOutput.CARLIFE)), transport)
+                store.save(chosen)
+                assertEquals(chosen, RelaySettingsStore(context).use { it.load() })
+            }
+            val prefs = context.getSharedPreferences("direlay", 0)
+            for (stored in listOf(null, "future")) {
+                val edit = prefs.edit()
+                if (stored == null) edit.remove("carlifeTransport") else edit.putString("carlifeTransport", stored)
+                edit.commit()
+                assertEquals(CarlifeTransport.AUTO, store.load().carlifeTransport)
+            }
+        }
+    }
+
     @Test fun carlifeSelectionAndDirectedDiscoverySurviveReloadWithoutChangingExistingOutputs() {
         store.use { store ->
             val original = store.load()

@@ -31,6 +31,13 @@ fun recommendedNetwork(settings: RelaySettings) =
 fun setupNetworkLabel(choice: WirelessNetworkChoice) =
     if (choice == WirelessNetworkChoice.WIFI_DIRECT) R.string.direlay_wifi_direct else choice.label
 
+fun setupNetworkLabel(settings: RelaySettings, choice: WirelessNetworkChoice) =
+    if (CarlifeConnectionPolicy.usbOutput(settings)) carlifeNetworkOption(settings, choice).title else setupNetworkLabel(choice)
+
+fun setupCarlifeChoiceRequired(settings: RelaySettings) = settings.carlifeOutput && settings.carlifeTransport == CarlifeTransport.AUTO
+fun setupEntryStep(settings: RelaySettings, requested: SetupStep) =
+    if (setupCarlifeChoiceRequired(settings) && requested.ordinal > SetupStep.OUTPUT.ordinal) SetupStep.OUTPUT else requested
+
 enum class SetupChoiceTag(val label: Int, val warning: Boolean = false) {
     RECOMMENDED(R.string.setup_recommended), EXPERIMENTAL(R.string.setup_experimental, true),
     NOT_RECOMMENDED(R.string.setup_not_recommended, true)
@@ -65,7 +72,7 @@ fun modeRows(settings: RelaySettings, wireless: Boolean): List<ModeRow> = listOf
     ModeRow(R.string.setup_summary_output, when (OutputSelection.choice(settings.outputs)) {
         OutputChoice.BROWSER -> R.string.ui_browser
         OutputChoice.CARLINK -> R.string.ui_carlink
-        OutputChoice.CARLIFE -> R.string.ui_carlife
+        OutputChoice.CARLIFE -> carlifeSummary(settings.carlifeTransport)
         OutputChoice.WIRELESS -> if (OutputSelection.wirelessKind(settings.outputs) == WirelessDisplayKind.MIRACAST)
             R.string.wireless_miracast else R.string.wireless_dlna
         null -> R.string.output_multiple
@@ -78,7 +85,7 @@ fun modeRows(settings: RelaySettings, wireless: Boolean): List<ModeRow> = listOf
     }, SetupStep.OUTPUT),
     ModeRow(R.string.ui_iphone_connection, if (wireless) R.string.direlay_wireless else R.string.ui_usb,
         if (wireless) R.drawable.symbol_wifi else R.drawable.symbol_phone, SetupStep.CONNECTION),
-    if (!wireless) null else ModeRow(R.string.setup_summary_network, setupNetworkLabel(settings.wirelessNetwork.choice),
+    if (!wireless) null else ModeRow(R.string.setup_summary_network, setupNetworkLabel(settings, settings.wirelessNetwork.choice),
         R.drawable.symbol_router, SetupStep.NETWORK),
 )
 
@@ -93,6 +100,7 @@ fun setupStepErrors(step: SetupStep, errors: Map<String, Int>, car: CarSelection
     else -> errors - networkFields
 }
 fun chooseConnection(settings: RelaySettings, wireless: Boolean): RelaySettings {
+    if (!wireless && !CarlifeConnectionPolicy.iphoneUsbAllowed(settings)) return settings
     val candidate = settings.copy(connectionMode = if (wireless) ConnectionMode.WIRELESS else ConnectionMode.USB)
     return CarlinkConnectionPolicy.enabling(settings, candidate, wireless)
 }
@@ -103,7 +111,7 @@ data class SetupCheck(val title: Int, val state: SetupCheckState, val detail: In
     val actionLabel: Int? = null, val action: SetupAction? = null)
 
 /** Every check that applies to the chosen mode, done or not, derived from the home checklist. */
-fun setupChecks(home: HomePresentation, wireless: Boolean, network: WirelessNetworkChoice): List<SetupCheck> {
+fun setupChecks(home: HomePresentation, wireless: Boolean, network: WirelessNetworkChoice, usbCarlife: Boolean = false): List<SetupCheck> {
     fun find(vararg actions: SetupAction) = home.checklist.firstOrNull { it.action in actions }
     fun check(title: Int, item: SetupItem?, detail: Int? = item?.text, checking: Boolean = false) = when {
         checking -> SetupCheck(title, SetupCheckState.CHECKING)
@@ -115,7 +123,7 @@ fun setupChecks(home: HomePresentation, wireless: Boolean, network: WirelessNetw
         add(check(R.string.setup_check_identity, find(SetupAction.IDENTITY), R.string.setup_check_identity_hint, home.checking))
         find(SetupAction.SETTINGS)?.let { add(check(R.string.setup_check_settings, it)) }
         if (wireless && network == WirelessNetworkChoice.EXISTING_WIFI)
-            add(check(R.string.setup_check_shared_wifi, find(SetupAction.SHARED_WIFI)))
+            add(check(if (usbCarlife) R.string.carlife_shared_wifi else R.string.setup_check_shared_wifi, find(SetupAction.SHARED_WIFI)))
         if (wireless) {
             // "Pair your iPhone" repeats the title; the screen shows where to pair instead.
             val iphone = find(SetupAction.IPHONE, SetupAction.CHOOSE_IPHONE)

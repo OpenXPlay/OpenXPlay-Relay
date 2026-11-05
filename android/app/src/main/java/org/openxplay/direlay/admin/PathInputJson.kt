@@ -23,6 +23,7 @@ private fun SetupInput.json() = obj(
     "outputs" to outputs.map { it.name },
     "summary" to summary,
     "valid" to valid,
+    "carlifeLink" to carlifeLink.name,
 )
 
 private fun RelayInput.json() = obj(

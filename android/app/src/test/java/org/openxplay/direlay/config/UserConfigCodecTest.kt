@@ -19,6 +19,27 @@ import org.openxplay.stream.clink.ClinkPictureSize
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class UserConfigCodecTest {
+    @Test fun carlifeTransportRoundTripsAndLegacyExportsRetainAutomaticConnections() {
+        for (transport in CarlifeTransport.entries) {
+            val chosen = CarlifeConnectionPolicy.choose(base.copy(outputs = setOf(RelayOutput.CARLIFE)), transport)
+            val encoded = UserConfigCodec.encode(chosen, DeveloperOverrides(), meta)
+            val restored = UserConfigCodec.decode(encoded, base)
+            assertTrue(restored.errors.toString(), restored.errors.isEmpty())
+            assertEquals(chosen, restored.settings)
+            val legacy = JSONObject(encoded).getJSONObject("settings").apply { remove("carlifeTransport") }
+            assertEquals(CarlifeTransport.AUTO, UserConfigCodec.decode(wrapped(legacy), chosen).settings.carlifeTransport)
+        }
+        for (value in listOf<Any>("future", 1, JSONObject.NULL)) {
+            val bad = decode(JSONObject().put("carlifeTransport", value).put("autoStartOnBoot", true))
+            assertEquals(mapOf("carlifeTransport" to "invalid"), bad.errors)
+            assertEquals(base, bad.settings)
+        }
+        val conflict = decode(JSONObject().put("outputs", org.json.JSONArray(listOf("carlife")))
+            .put("carlifeTransport", "usb").put("iphoneConnection", "usb"))
+        assertEquals(mapOf("carlifeTransport" to "invalid"), conflict.errors)
+        assertEquals(base, conflict.settings)
+    }
+
     @Test fun carlifeConfigRoundTripsAndMalformedTargetRejectsAtomically() {
         val chosen = base.copy(outputs = setOf(RelayOutput.CARLIFE), carlifeTargetAddress = "192.168.5.220")
         val restored = UserConfigCodec.decode(UserConfigCodec.encode(chosen, DeveloperOverrides(), meta), base)

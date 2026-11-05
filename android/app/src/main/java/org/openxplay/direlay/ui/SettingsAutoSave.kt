@@ -17,9 +17,11 @@ fun settingsErrors(value: RelaySettings, wireless: Boolean, allowEmptySharedWifi
     if (wireless) when (value.wirelessNetwork.choice) {
         WirelessNetworkChoice.PHONE_HOTSPOT -> credentials(value.wirelessNetwork.manualSsid, value.wirelessNetwork.manualPassphrase,
             hotspot = true, allowEmptySsid = allowEmptySharedWifi && CarlinkConnectionPolicy.usesWifiDirect(value))
-        WirelessNetworkChoice.EXISTING_WIFI -> if (!allowEmptySharedWifi && value.wirelessNetwork.sharedWifiNetworks.isEmpty()) put("ssid", R.string.shared_wifi_empty)
+        WirelessNetworkChoice.EXISTING_WIFI -> if (!allowEmptySharedWifi && value.wirelessNetwork.sharedWifiNetworks.isEmpty()) put("ssid", if (CarlifeConnectionPolicy.usbOutput(value)) R.string.carlife_shared_wifi_empty else R.string.shared_wifi_empty)
         else -> Unit
     }
+    if (CarlifeConnectionPolicy.usbOutput(value) && value.connectionMode != ConnectionMode.WIRELESS)
+        put("carlifeTransport", R.string.carlife_usb_iphone_hint)
     if (!validCarlifeAddress(value.carlifeTargetAddress)) put("carlifeTargetAddress", R.string.carlife_address_error)
     if (value.experimental.invalidAddress) put("experimental.bluetoothAddress", R.string.experimental_address_error)
     if (value.carlinkDeviceName.isBlank() || value.carlinkDeviceName.toByteArray(Charsets.UTF_8).size > 128 ||
@@ -52,11 +54,13 @@ class SettingsAutoSave(initial: RelaySettings, private val publish: (RelaySettin
 /** Validate groups against the last valid draft so one invalid page cannot hide another page's error. */
 fun settingsInvalidPages(value: RelaySettings, saved: RelaySettings, wireless: (RelaySettings) -> Boolean): Set<String> = buildSet {
     if (value.experimental.invalidAddress) add("experimental")
+    if (CarlifeConnectionPolicy.usbOutput(value) && value.connectionMode != ConnectionMode.WIRELESS) add("settings/output")
     fun check(page: String, candidate: RelaySettings) {
         if (settingsSaveErrors(candidate, wireless(candidate)).isNotEmpty()) add(page)
     }
     check("settings/output", saved.copy(carlinkDeviceName = value.carlinkDeviceName,
         wirelessPicture = value.wirelessPicture, wirelessPictureSize = value.wirelessPictureSize,
+        carlifeTransport = value.carlifeTransport,
         carlifeTargetAddress = value.carlifeTargetAddress))
     check("settings/tesla", saved.copy(teslaBrowser = value.teslaBrowser,
         teslaVirtualAddress = value.teslaVirtualAddress, teslaPublicAddress = value.teslaPublicAddress,

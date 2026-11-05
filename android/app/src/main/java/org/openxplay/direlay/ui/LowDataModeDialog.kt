@@ -16,10 +16,11 @@ import org.openxplay.direlay.settings.WirelessNetworkChoice
 import org.openxplay.direlay.settings.WirelessNetworkSettings
 import org.openxplay.direlay.ui.design.*
 
-@Composable fun LowDataModeDialog(network: WirelessNetworkSettings, confirm: () -> Unit, dismiss: () -> Unit) {
+@Composable fun LowDataModeDialog(network: WirelessNetworkSettings, confirm: () -> Unit, dismiss: () -> Unit,
+    sharedNetworkLabel: Int = R.string.low_data_network_car) {
     val name = when (network.choice) {
         WirelessNetworkChoice.PHONE_HOTSPOT -> network.manualSsid
-        WirelessNetworkChoice.EXISTING_WIFI -> stringResource(R.string.low_data_network_car)
+        WirelessNetworkChoice.EXISTING_WIFI -> stringResource(sharedNetworkLabel)
         WirelessNetworkChoice.WIFI_DIRECT -> stringResource(R.string.low_data_network_direct)
     }
     RelayDecisionDialog(onDismissRequest = dismiss,
