@@ -62,6 +62,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
      * the head unit dies with it — and the wait that follows then has nothing left to find it with.
      */
     private var keepAwakeForLink = false
+    private val homeBack = HomeBack(this)
     private val identityImport by lazy { androidx.lifecycle.ViewModelProvider(this)[IdentityImportState::class.java] }
     private var identityDialog: AlertDialog? = null
     private var dialogVisible by androidx.compose.runtime.mutableStateOf(false)
@@ -114,6 +115,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) animateSplashExit()
+        onBackPressedDispatcher.addCallback(this, homeBack)
         if (identityImport.uri == null) {
             identityImport.uri = savedInstanceState?.getString("identityUri")?.let(Uri::parse)
             identityImport.kind = savedInstanceState?.getString("identityKind")?.let(IdentityKind::valueOf) ?: IdentityKind.UNKNOWN
@@ -783,6 +785,7 @@ class RelayActivity : androidx.activity.ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        homeBack.refresh()
         presentation.action { runtime.keepAlive.uiVisible() }
         resumed = true
         dialogs.active = !requestingPermissions && !pairingInFlight
