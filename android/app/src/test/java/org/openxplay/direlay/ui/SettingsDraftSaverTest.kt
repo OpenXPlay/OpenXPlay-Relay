@@ -309,8 +309,7 @@ class SettingsDraftSaverTest {
             requireNotNull(relaySettingsSaver(base).restore(bundle)).wirelessNetwork.sharedWifiNetworks)
     }
     @Test fun experimentalChoicesAndIncompleteAddressSurviveParcelRoundTrip() {
-        val options = ExperimentalOptions(active = false, remotePlaybackProof = false, startupStatus = false, networkObservationBackoff = false,
-            screenSessionIsolation = false, screenReconnectReset = true, screenDeliverySerialization = false, rememberSubscription = true, keepScanning = true,
+        val options = ExperimentalOptions(active = false, carlinkWifiRecovery = false, rememberSubscription = true, keepScanning = true,
             recordAdvertisements = true, sendBluetoothAddress = true,
             isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true, bluetoothAddress = "A0:B1:")
         val chosen = base.copy(experimental = options)
@@ -323,41 +322,19 @@ class SettingsDraftSaverTest {
         assertEquals(base, relaySettingsSaver(base).restore(old))
     }
 
-    @Test fun diagnosticsChoicesSurviveTheDraftBundle() {
-        for (bits in 0..3) {
-            val chosen = base.copy(experimental = base.experimental.copy(radioConflictPrompt = bits and 1 != 0, stallWatchdog = bits and 2 != 0))
+    @Test fun wifiRecoveryChoiceSurvivesTheDraftAndRetiredChoicesDoNotReturn() {
+        for (active in listOf(false, true)) for (wifi in listOf(false, true)) {
+            val chosen = base.copy(experimental = ExperimentalOptions(active = active, carlinkWifiRecovery = wifi))
             val saved = bundle(chosen)
-            assertEquals(chosen.experimental.radioConflictPrompt, saved.getBoolean("experimental.radioConflictPrompt", !chosen.experimental.radioConflictPrompt))
-            assertEquals(chosen.experimental.stallWatchdog, saved.getBoolean("experimental.stallWatchdog", !chosen.experimental.stallWatchdog))
+            assertEquals(wifi, saved.getBoolean("experimental.carlinkWifiRecovery", !wifi))
+            assertFalse(saved.containsKey("experimental.stallWatchdog"))
             assertEquals(chosen, relaySettingsSaver(base).restore(saved))
+            saved.putBoolean("experimental.stallWatchdog", false)
+            saved.putBoolean("experimental.screenSessionIsolation", false)
+            val restored = requireNotNull(relaySettingsSaver(base).restore(saved))
+            assertTrue(restored.experimental.effective().stallWatchdog && restored.experimental.effective().screenSessionIsolation)
         }
     }
-
-    @Test fun handoffChoicesSurviveParcelRoundTripAndOlderDraftsKeepTheBaseChoices() {
-        for (active in listOf(false, true)) for (bits in 0..7) {
-            val options = ExperimentalOptions(active = active, iapChannelWhenOffered = bits and 1 != 0,
-                releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)
-            val chosen = base.copy(experimental = options)
-            val saved = bundle(chosen)
-            assertEquals(options.iapChannelWhenOffered, saved.getBoolean("experimental.iapChannelWhenOffered", !options.iapChannelWhenOffered))
-            assertEquals(options.releaseBluetoothOnRequest, saved.getBoolean("experimental.releaseBluetoothOnRequest", !options.releaseBluetoothOnRequest))
-            assertEquals(options.awaitIphoneReconnect, saved.getBoolean("experimental.awaitIphoneReconnect", !options.awaitIphoneReconnect))
-            val parcel = Parcel.obtain()
-            try {
-                parcel.writeBundle(saved); parcel.setDataPosition(0)
-                assertEquals(chosen, relaySettingsSaver(base).restore(requireNotNull(parcel.readBundle(javaClass.classLoader))))
-            } finally { parcel.recycle() }
-        }
-        val old = bundle(base).apply {
-            remove("experimental.iapChannelWhenOffered"); remove("experimental.releaseBluetoothOnRequest")
-            remove("experimental.awaitIphoneReconnect")
-        }
-        assertEquals(base, relaySettingsSaver(base).restore(old))
-        val remembered = base.copy(experimental = ExperimentalOptions(iapChannelWhenOffered = false,
-            releaseBluetoothOnRequest = false, awaitIphoneReconnect = false))
-        assertEquals(remembered, relaySettingsSaver(remembered).restore(old))
-    }
-
 
     @Test fun manualPictureFieldsAndParkedCanvasSurviveParcelAndNullablePairsReplaceTheBase() {
         for (mode in ViewAreasMode.entries) for (full in listOf(null, PictureSize(3840, 2160)))

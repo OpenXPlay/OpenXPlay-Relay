@@ -863,4 +863,8 @@
     <string name="view_areas_reference_none">无</string>
     <string name="view_areas_reference_empty">还没有记录到窗口尺寸。</string>
     <string name="view_areas_manual_size">视图区域只在 CarPlay 尺寸为自动时生效。</string>
+    <string name="experimental_carlink_wifi_recovery">Carlink Wi-Fi 连接恢复</string>
+    <string name="experimental_carlink_wifi_recovery_hint">复用已连接的车机 Wi-Fi，自动连接失败时可切换网络后继续。</string>
+    <string name="path_join_car_wifi">连接车机 Wi-Fi</string>
+    <string name="path_join_car_wifi_named">连接至 %1$s</string>
 </resources>

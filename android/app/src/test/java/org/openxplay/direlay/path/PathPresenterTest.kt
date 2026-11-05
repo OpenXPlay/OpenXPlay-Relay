@@ -702,4 +702,11 @@ class PathPresenterTest {
             R.string.path_action_pair_iphone, R.string.path_action_choose, R.string.path_action_start_now, R.string.path_action_retry)
         assertEquals(labels, StepAction.entries.map { it.labelResource() })
     }
+    @Test fun waitingForManualCarWifiHasASystemWifiActionAndKeepsTheLinkPending() {
+        val input = carlink(CarlinkInput(phase = CarlinkPhase.JOINING, wifiSwitchNeeded = true, wifiSsid = "Car Wi-Fi"))
+        val step = input.step(CARLINK_LINK)
+        assertEquals(ACTION, step.state)
+        assertEquals(OPEN_WIFI, step.action)
+        assertEquals(StepText.of(R.string.path_join_car_wifi_named, "Car Wi-Fi"), step.detail)
+    }
 }

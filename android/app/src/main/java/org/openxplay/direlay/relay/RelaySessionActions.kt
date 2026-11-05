@@ -269,7 +269,8 @@ class RelaySessionActions(private val context: Context, private val runtime: Rel
             val settings = runtime.settingsStore.awaitSnapshot()
             if (!carlinkFirst.ready(System.currentTimeMillis(),
                     runtime.carlinkReadyForCarPlay,
-                    CarlinkConnectionPolicy.enabled(settings))) {
+                    CarlinkConnectionPolicy.enabled(settings),
+                    runtime.carlinkWifiPending)) {
                 waits.tick("carlink", "carlink=${runtime.carlinkState}")
                 worker.schedule({ continueStart(launchGeneration, source, networkAccepted) }, 100, TimeUnit.MILLISECONDS)
                 return

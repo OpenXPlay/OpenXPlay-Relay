@@ -278,6 +278,9 @@ private fun PathInput.carlinkLinkStep(): PathStep {
         else -> null
     }
     return when {
+        car.carlink.wifiSwitchNeeded -> carlinkStep(CARLINK_LINK, ACTION,
+            car.carlink.wifiSsid?.let { text(R.string.path_join_car_wifi_named, it) } ?: text(R.string.path_join_car_wifi),
+            action = OPEN_WIFI)
         carlinkFailureStep() == CARLINK_LINK -> carlinkStep(CARLINK_LINK, FAILED, text(R.string.path_link_failed))
         carlinkPassed(CARLINK_LINK) -> carlinkStep(CARLINK_LINK, OK, evidence = raw(car.carlink.joinMethod))
         detail != null -> carlinkStep(CARLINK_LINK, WORKING, detail)

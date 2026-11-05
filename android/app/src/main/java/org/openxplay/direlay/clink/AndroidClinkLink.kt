@@ -57,6 +57,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     private val scanPolicy = BleScanPolicy.forAttempt(experimental.keepScanning)
     private val phoneAddress: () -> String = if (experimental.sendBluetoothAddress) ({ experimental.bluetoothAddress }) else ::phoneMac
     private val experimentNames = experimental.names()
+    private val wifiRecovery = experimental.carlinkWifiRecovery
     private val isolateNetwork = experimental.isolateCarlinkNetwork
     private val advertisements = if (experimental.recordAdvertisements) BleAdvertisementTrace(diagnostics, object : BleAdvertisementTrace.Store {
         private val preferences = this@AndroidClinkLink.context.getSharedPreferences("clinkAdvertisementSerials", Context.MODE_PRIVATE)
@@ -68,6 +69,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
     }) else null
     fun authenticated() { advertisements?.connected() }
     fun sessionDiagnostic(message: String) { advertisements?.sessionDiagnostic(message) }
+    fun refreshWifi() { main { current?.takeUnless { it.cancelled }?.wifiFlow?.refresh() } }
     private val backoff = retryBackoff
     private fun retry(run: Run) {
         val delay = backoff.next()
@@ -101,6 +103,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         var headUnitClientGroup = false
         var expectedSsid: String? = null
         var receiver: BroadcastReceiver? = null
+        var wifiFlow: AndroidCarlinkWifi? = null
         var networkCallback: ConnectivityManager.NetworkCallback? = null
         var monitor: Runnable? = null
         var bound: Network? = null
@@ -543,7 +546,23 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
             }
         }
         if (method != WifiJoinPolicy.Method.NETWORK_SPECIFIER) throw ClinkFailure(ClinkFailureReason.WIFI_UNAVAILABLE)
-        return joinSpecifier(run, reply)
+        return if (wifiRecovery) joinRecoverableWifi(run, reply) else joinSpecifier(run, reply)
+    }
+    private fun joinRecoverableWifi(run: Run, reply: HeadUnitReply): Pair<String, String> {
+        val flow = AndroidCarlinkWifi(context, handler, reply, diagnostics) { lost(run) }
+        main {
+            check(!run.cancelled)
+            run.wifiFlow = flow
+            diagnostics.emit(ClinkStage.WIFI_JOIN)
+            flow.start()
+        }
+        val selected = await(run, flow.result, null)
+        main {
+            check(!run.cancelled)
+            run.failure?.let { throw it }
+            run.selectedNetwork = selected.network
+        }
+        return checkNotNull(selected.endpoints)
     }
     private fun joinP2p(run: Run, reply: HeadUnitReply): Pair<String, String> {
         val result = CompletableFuture<Pair<String, String>>()
@@ -723,6 +742,7 @@ class AndroidClinkLink(context: Context, private val deviceId: String,
         }
     }
     private fun releaseNetwork(run: Run) {
+        run.wifiFlow?.close(); run.wifiFlow = null
         run.networkCallback?.let {
             // unregisterNetworkCallback releases the request synchronously. Android does not send
             // onLost for an unregistered callback, so waiting for it would stall every reconnect.

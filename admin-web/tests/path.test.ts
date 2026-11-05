@@ -79,3 +79,12 @@ it('keeps an active retry ahead of the armed automatic-start wait', () => {
   expect(view.headline).toMatchObject({ res: 'path_trying_again' });
   expect(view.primary).toBeNull(); expect(view.secondary).toEqual({ type: 'Stop' });
 });
+
+it('keeps the car Wi-Fi switch actionable while waiting for the system network', () => {
+  const path = presentPath({ setup: { outputs: ['CARLINK'], network: 'PHONE_HOTSPOT' },
+    relay: { identity: 'READY', permissionsGranted: 1, permissionsTotal: 1, bluetoothOn: true, wifiOn: true, hotspotOn: true },
+    car: { carlink: { phase: 'JOINING', wifiSwitchNeeded: true, wifiSsid: 'Car network' } } });
+  const link = path.sections.flatMap(section => section.steps).find(step => step.id === 'CARLINK_LINK');
+  expect(link).toMatchObject({ state: 'ACTION', action: 'OPEN_WIFI',
+    detail: { res: 'path_join_car_wifi_named', args: ['Car network'] } });
+});

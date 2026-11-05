@@ -143,7 +143,7 @@ export interface OutputInput { phase: 'OFF' | 'WAITING_USER' | 'SEARCHING' | 'RE
 export interface CarlinkInput {
   phase: 'OFF' | 'UNSUPPORTED' | 'NEEDS_PERMISSIONS' | 'BLOCKED' | 'SCANNING' | 'EXCHANGING' | 'JOINING' | 'AUTHENTICATING' | 'PIN' | 'NEGOTIATING' | 'PLAYING' | 'ENDED';
   sinceMillis: number | null; code: string | null; error: string | null; retrying: boolean; carName: string | null;
-  joinMethod: string | null; trusted: boolean; pinPending: boolean; pinConfirmation?: boolean; picture: string | null; trail: string[];
+  joinMethod: string | null; wifiSwitchNeeded?: boolean; wifiSsid?: string | null; trusted: boolean; pinPending: boolean; pinConfirmation?: boolean; picture: string | null; trail: string[];
 }
 export type LinkStep = 'IDLE' | 'STARTING' | 'WAITING_IPHONE' | 'BLUETOOTH' | 'AUTH' | 'WIFI_SENT' | 'JOINING' | 'USB_DETECT' | 'USB_PERMISSION' | 'USB_TRUST' | 'USB_CONTROL' | 'SESSION' | 'VIDEO' | 'ENDED';
 export interface LinkFailure { step: LinkStep; code: string; text: string; atMillis: number; retrying: boolean; trail: string[] }

@@ -9,6 +9,7 @@ package org.openxplay.direlay.settings
  */
 data class ExperimentalOptions(
     val active: Boolean = true,
+    val carlinkWifiRecovery: Boolean = true,
     val rememberSubscription: Boolean = true,
     val keepScanning: Boolean = true,
     val recordAdvertisements: Boolean = true,
@@ -33,65 +34,33 @@ data class ExperimentalOptions(
 ) {
     fun effective(carlinkTrace: Boolean = true): ExperimentalOptions {
         val address = normalizedBluetoothAddress(bluetoothAddress)
-        return copy(rememberSubscription = true, keepScanning = true, recordAdvertisements = carlinkTrace,
+        return copy(carlinkWifiRecovery = active && carlinkWifiRecovery, rememberSubscription = true, keepScanning = true, recordAdvertisements = carlinkTrace,
             isolateCarlinkNetwork = true, waitForCarlink = true, recoverWirelessNetwork = true,
             sendBluetoothAddress = active && sendBluetoothAddress && address != null,
             bluetoothAddress = if (active) address.orEmpty() else "",
-            remotePlaybackProof = active && remotePlaybackProof,
-            cancelRecoveredRetries = active && cancelRecoveredRetries,
-            startupStatus = active && startupStatus,
-            startupDiagnostics = active && startupDiagnostics,
-            networkObservationBackoff = active && networkObservationBackoff,
-            screenSessionIsolation = active && screenSessionIsolation,
-            screenReconnectReset = active && screenReconnectReset,
-            screenDeliverySerialization = active && screenDeliverySerialization,
-            iapChannelWhenOffered = active && iapChannelWhenOffered,
-            releaseBluetoothOnRequest = active && releaseBluetoothOnRequest,
-            awaitIphoneReconnect = active && awaitIphoneReconnect,
-            radioConflictPrompt = active && radioConflictPrompt,
-            stallWatchdog = active && stallWatchdog)
+            remotePlaybackProof = true,
+            cancelRecoveredRetries = true,
+            startupStatus = true,
+            startupDiagnostics = true,
+            networkObservationBackoff = true,
+            screenSessionIsolation = true,
+            screenReconnectReset = true,
+            screenDeliverySerialization = true,
+            iapChannelWhenOffered = true,
+            releaseBluetoothOnRequest = true,
+            awaitIphoneReconnect = true,
+            radioConflictPrompt = true,
+            stallWatchdog = true)
     }
 
     val invalidAddress: Boolean get() = active && sendBluetoothAddress && normalizedBluetoothAddress(bluetoothAddress) == null
-    val optionCount: Int get() = listOf(remotePlaybackProof, cancelRecoveredRetries, startupStatus, startupDiagnostics,
-        networkObservationBackoff, screenSessionIsolation, screenReconnectReset, screenDeliverySerialization,
-        iapChannelWhenOffered, releaseBluetoothOnRequest, awaitIphoneReconnect, radioConflictPrompt, stallWatchdog,
-        sendBluetoothAddress).count { it }
+    val optionCount: Int get() = listOf(carlinkWifiRecovery, sendBluetoothAddress).count { it }
 
-    fun names(): List<String> = listOf(rememberSubscription to "remember_subscription", keepScanning to "keep_scanning",
-        recordAdvertisements to "record_advertisements", sendBluetoothAddress to "send_bluetooth_address",
-        isolateCarlinkNetwork to "isolate_carlink_network", waitForCarlink to "wait_for_carlink",
-        recoverWirelessNetwork to "recover_wireless_network",
-        remotePlaybackProof to "remote_playback_proof",
-        cancelRecoveredRetries to "cancel_recovered_retries",
-        startupStatus to "startup_status",
-        startupDiagnostics to "startup_diagnostics",
-        networkObservationBackoff to "network_observation_backoff",
-        screenSessionIsolation to "screen_session_isolation",
-        screenReconnectReset to "screen_reconnect_reset",
-        screenDeliverySerialization to "screen_delivery_serialization",
-        iapChannelWhenOffered to "iap_channel_when_offered",
-        releaseBluetoothOnRequest to "release_bluetooth_on_request",
-        awaitIphoneReconnect to "await_iphone_reconnect",
-        radioConflictPrompt to "radio_conflict_prompt",
-        stallWatchdog to "stall_watchdog")
-        .filter { it.first }.map { it.second }
+    fun names(): List<String> = listOf(carlinkWifiRecovery to "carlink_wifi_recovery",
+        sendBluetoothAddress to "send_bluetooth_address").filter { it.first }.map { it.second }
 
     companion object {
-        val OFF = ExperimentalOptions(active = false,
-            remotePlaybackProof = false,
-            cancelRecoveredRetries = false,
-            startupStatus = false,
-            startupDiagnostics = false,
-            networkObservationBackoff = false,
-            screenSessionIsolation = false,
-            screenReconnectReset = false,
-            screenDeliverySerialization = false,
-            iapChannelWhenOffered = false,
-            releaseBluetoothOnRequest = false,
-            awaitIphoneReconnect = false,
-            radioConflictPrompt = false,
-            stallWatchdog = false)
+        val OFF = ExperimentalOptions(active = false, carlinkWifiRecovery = false)
 
         fun normalizedBluetoothAddress(value: String): String? {
             val octets = value.split(':')

@@ -872,4 +872,8 @@
     <string name="view_areas_reference_none">none</string>
     <string name="view_areas_reference_empty">No window sizes recorded yet.</string>
     <string name="view_areas_manual_size">View areas work only with an automatic CarPlay size.</string>
+    <string name="experimental_carlink_wifi_recovery">Carlink Wi-Fi connection recovery</string>
+    <string name="experimental_carlink_wifi_recovery_hint">Reuse the car Wi-Fi connection. If automatic connection fails, switch networks and continue.</string>
+    <string name="path_join_car_wifi">Join the car Wi-Fi</string>
+    <string name="path_join_car_wifi_named">Join %1$s</string>
 </resources>

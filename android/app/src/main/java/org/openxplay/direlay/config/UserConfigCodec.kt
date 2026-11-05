@@ -55,11 +55,8 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
  *   physicalWidthOverrideMm is 0 or 100–400 in steps of 25; carlinkDeviceModel uses the name rule.
  * - Legacy fps is ignored. Without frameRate, developer.fpsEnabled=true and a valid
  *   developer.fps migrate to frameRate; otherwise both developer keys are ignored.
- * - experimental: version=2; active, remotePlaybackProof, cancelRecoveredRetries, startupStatus,
- *   startupDiagnostics, networkObservationBackoff, screenSessionIsolation, screenReconnectReset,
- *   screenDeliverySerialization, iapChannelWhenOffered, releaseBluetoothOnRequest,
- *   awaitIphoneReconnect, radioConflictPrompt, stallWatchdog and sendBluetoothAddress are booleans; missing experiment keys default true
- *   except sendBluetoothAddress, which defaults false;
+ * - experimental: version=3; active, carlinkWifiRecovery and sendBluetoothAddress are booleans.
+ *   carlinkWifiRecovery defaults true; sendBluetoothAddress defaults false.
  *   bluetoothAddress is a user-entered unicast Bluetooth address. Retired booleans are ignored.
  * Linux aliases: output, networkMode, sharedWifiNetworks[].password, receiverPort and iphone.
  * Android aliases: iphoneConnection, mfiI2cPath, mfiRemoteServer and hotspot*.
@@ -182,21 +179,9 @@ object UserConfigCodec {
     }
 
     private fun experimentalValues(e: ExperimentalOptions): JSONObject = JSONObject()
-        .put("version", 2)
+        .put("version", 3)
+        .put("carlinkWifiRecovery", e.carlinkWifiRecovery)
         .put("active", e.active)
-        .put("remotePlaybackProof", e.remotePlaybackProof)
-        .put("cancelRecoveredRetries", e.cancelRecoveredRetries)
-        .put("startupStatus", e.startupStatus)
-        .put("startupDiagnostics", e.startupDiagnostics)
-        .put("networkObservationBackoff", e.networkObservationBackoff)
-        .put("screenSessionIsolation", e.screenSessionIsolation)
-        .put("screenReconnectReset", e.screenReconnectReset)
-        .put("screenDeliverySerialization", e.screenDeliverySerialization)
-        .put("iapChannelWhenOffered", e.iapChannelWhenOffered)
-        .put("releaseBluetoothOnRequest", e.releaseBluetoothOnRequest)
-        .put("awaitIphoneReconnect", e.awaitIphoneReconnect)
-        .put("radioConflictPrompt", e.radioConflictPrompt)
-        .put("stallWatchdog", e.stallWatchdog)
         .put("sendBluetoothAddress", e.sendBluetoothAddress)
         .put("bluetoothAddress", e.bluetoothAddress)
 
@@ -342,21 +327,22 @@ object UserConfigCodec {
                     var e = ExperimentalOptions()
                     for (field in objectValue.keys().asSequence().toList()) try {
                         e = when (field) {
-                            "version" -> { require(objectValue.get(field) == 2); e }
+                            "version" -> { require(objectValue.get(field) in listOf(2, 3)); e }
                             "active" -> e.copy(active = objectValue.bool(field))
-                            "remotePlaybackProof" -> e.copy(remotePlaybackProof = objectValue.bool(field))
-                            "cancelRecoveredRetries" -> e.copy(cancelRecoveredRetries = objectValue.bool(field))
-                            "startupStatus" -> e.copy(startupStatus = objectValue.bool(field))
-                            "startupDiagnostics" -> e.copy(startupDiagnostics = objectValue.bool(field))
-                            "networkObservationBackoff" -> e.copy(networkObservationBackoff = objectValue.bool(field))
-                            "screenSessionIsolation" -> e.copy(screenSessionIsolation = objectValue.bool(field))
-                            "screenReconnectReset" -> e.copy(screenReconnectReset = objectValue.bool(field))
-                            "screenDeliverySerialization" -> e.copy(screenDeliverySerialization = objectValue.bool(field))
-                            "iapChannelWhenOffered" -> e.copy(iapChannelWhenOffered = objectValue.bool(field))
-                            "releaseBluetoothOnRequest" -> e.copy(releaseBluetoothOnRequest = objectValue.bool(field))
-                            "awaitIphoneReconnect" -> e.copy(awaitIphoneReconnect = objectValue.bool(field))
-                            "radioConflictPrompt" -> e.copy(radioConflictPrompt = objectValue.bool(field))
-                            "stallWatchdog" -> e.copy(stallWatchdog = objectValue.bool(field))
+                            "carlinkWifiRecovery" -> e.copy(carlinkWifiRecovery = objectValue.bool(field))
+                            "remotePlaybackProof" -> { objectValue.bool(field); e }
+                            "cancelRecoveredRetries" -> { objectValue.bool(field); e }
+                            "startupStatus" -> { objectValue.bool(field); e }
+                            "startupDiagnostics" -> { objectValue.bool(field); e }
+                            "networkObservationBackoff" -> { objectValue.bool(field); e }
+                            "screenSessionIsolation" -> { objectValue.bool(field); e }
+                            "screenReconnectReset" -> { objectValue.bool(field); e }
+                            "screenDeliverySerialization" -> { objectValue.bool(field); e }
+                            "iapChannelWhenOffered" -> { objectValue.bool(field); e }
+                            "releaseBluetoothOnRequest" -> { objectValue.bool(field); e }
+                            "awaitIphoneReconnect" -> { objectValue.bool(field); e }
+                            "radioConflictPrompt" -> { objectValue.bool(field); e }
+                            "stallWatchdog" -> { objectValue.bool(field); e }
                             "rememberSubscription" -> { objectValue.bool(field); e }
                             "keepScanning" -> { objectValue.bool(field); e }
                             "recordAdvertisements" -> { objectValue.bool(field); e }

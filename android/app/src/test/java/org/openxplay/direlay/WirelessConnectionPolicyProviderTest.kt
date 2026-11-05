@@ -24,7 +24,7 @@ class WirelessConnectionPolicyProviderTest {
         assertFalse(provider.awaitIphoneReconnect)
     }
 
-    @Test fun applicationMapsEachRememberedHandoffChoiceThroughTheMaster() {
+    @Test fun promotedHandoffPoliciesIgnoreHistoricalChoicesAndMaster() {
         val runtime = RelayRuntime(RuntimeEnvironment.getApplication())
         try {
             runtime.settingsStore.awaitSnapshot()
@@ -38,9 +38,9 @@ class WirelessConnectionPolicyProviderTest {
                 val options = ExperimentalOptions(active = active, iapChannelWhenOffered = bits and 1 != 0,
                     releaseBluetoothOnRequest = bits and 2 != 0, awaitIphoneReconnect = bits and 4 != 0)
                 runtime.settingsStore.save(runtime.settingsStore.awaitSnapshot().copy(experimental = options))
-                assertEquals(active && options.iapChannelWhenOffered, provider.iapChannelOnlyWhenOffered)
-                assertEquals(active && options.releaseBluetoothOnRequest, provider.releaseBluetoothOnHandoffRequest)
-                assertEquals(active && options.awaitIphoneReconnect, provider.awaitIphoneReconnect)
+                assertEquals(true, provider.iapChannelOnlyWhenOffered)
+                assertEquals(true, provider.releaseBluetoothOnHandoffRequest)
+                assertEquals(true, provider.awaitIphoneReconnect)
             }
         } finally { runtime.close() }
     }

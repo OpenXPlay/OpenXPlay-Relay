@@ -106,7 +106,7 @@ function presentStep(id: StepId, input: PathInput, canStart: boolean, running: b
         : failedLink === id ? clink('FAILED', text('path_car_not_found')) : passed(id) ? clink('OK', null, raw(link.carName)) : clink('WAITING', text('path_open_carlink')); break;
     case 'CARLINK_LINK': {
       const detail = ({ EXCHANGING: 'path_exchanging', JOINING: 'path_joining_car_wifi', AUTHENTICATING: 'path_verifying' } as Record<string, string>)[link.phase];
-      own = failedLink === id ? clink('FAILED', text('path_link_failed')) : passed(id) ? clink('OK', null, raw(link.joinMethod)) : detail ? clink('WORKING', text(detail)) : clink('BLOCKED'); break;
+      own = link.wifiSwitchNeeded ? clink('ACTION', link.wifiSsid ? text('path_join_car_wifi_named', link.wifiSsid) : text('path_join_car_wifi'), null, 'OPEN_WIFI') : failedLink === id ? clink('FAILED', text('path_link_failed')) : passed(id) ? clink('OK', null, raw(link.joinMethod)) : detail ? clink('WORKING', text(detail)) : clink('BLOCKED'); break;
     }
     case 'CARLINK_PIN': own = link.pinPending ? { ...clink('ACTION', text(input.platform === 'linux' && link.pinConfirmation ? 'path_approve_car' : 'path_enter_pin'), null, 'ENTER_PIN'), actionLabel: input.platform === 'linux' && link.pinConfirmation ? 'path_action_approve' : actionLabels.ENTER_PIN } : link.trusted || passed(id) ? clink('OK', text('path_trusted')) : clink('BLOCKED'); break;
     case 'CARLINK_READY': own = failedLink === id ? clink('FAILED', raw(link.code)) : link.phase === 'NEGOTIATING' ? clink('WORKING', text('path_negotiating')) : link.phase === 'PLAYING' ? clink('OK', null, raw(link.picture)) : link.phase === 'ENDED' ? clink('WAITING', text('path_carlink_disconnected'), null, 'RECONNECT_CARLINK') : clink('BLOCKED'); break;

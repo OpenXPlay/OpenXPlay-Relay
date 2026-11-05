@@ -458,44 +458,33 @@ class RelaySettingsStore(private val context: Context) : AutoCloseable, org.open
         val oldActive = relay.getBoolean("experimental.active", true)
         val value = ExperimentalOptions(
             active = legacy || oldActive,
+            carlinkWifiRecovery = relay.getBoolean("experimental.carlinkWifiRecovery", true),
             sendBluetoothAddress = relay.getBoolean("experimental.sendBluetoothAddress", false) && (!legacy || oldActive),
             bluetoothAddress = relay.getString("experimental.bluetoothAddress", "").orEmpty(),
-            remotePlaybackProof = relay.getBoolean("experimental.remotePlaybackProof", true),
-            cancelRecoveredRetries = relay.getBoolean("experimental.cancelRecoveredRetries", true),
-            startupStatus = relay.getBoolean("experimental.startupStatus", true),
-            startupDiagnostics = relay.getBoolean("experimental.startupDiagnostics", true),
-            networkObservationBackoff = relay.getBoolean("experimental.networkObservationBackoff", true),
-            screenSessionIsolation = relay.getBoolean("experimental.screenSessionIsolation", true),
-            screenReconnectReset = relay.getBoolean("experimental.screenReconnectReset", true),
-            screenDeliverySerialization = relay.getBoolean("experimental.screenDeliverySerialization", true),
-            iapChannelWhenOffered = relay.getBoolean("experimental.iapChannelWhenOffered", true),
-            releaseBluetoothOnRequest = relay.getBoolean("experimental.releaseBluetoothOnRequest", true),
-            awaitIphoneReconnect = relay.getBoolean("experimental.awaitIphoneReconnect", true),
-            radioConflictPrompt = relay.getBoolean("experimental.radioConflictPrompt", true),
-            stallWatchdog = relay.getBoolean("experimental.stallWatchdog", true),
         )
-        if (legacy) relay.edit().also { writeExperimentalOptions(it, value) }.apply()
+        if (relay.all.keys.any { it.startsWith("experimental.") } && relay.getInt("experimental.version", 0) < 3) relay.edit().also { writeExperimentalOptions(it, value) }.apply()
         return value
     }
 
     private fun writeExperimentalOptions(edit: android.content.SharedPreferences.Editor, value: ExperimentalOptions) {
-        edit.putInt("experimental.version", 2)
+        edit.putInt("experimental.version", 3)
+            .putBoolean("experimental.carlinkWifiRecovery", value.carlinkWifiRecovery)
             .putBoolean("experimental.active", value.active)
             .putBoolean("experimental.sendBluetoothAddress", value.sendBluetoothAddress)
             .putString("experimental.bluetoothAddress", value.bluetoothAddress)
-            .putBoolean("experimental.remotePlaybackProof", value.remotePlaybackProof)
-            .putBoolean("experimental.cancelRecoveredRetries", value.cancelRecoveredRetries)
-            .putBoolean("experimental.startupStatus", value.startupStatus)
-            .putBoolean("experimental.startupDiagnostics", value.startupDiagnostics)
-            .putBoolean("experimental.networkObservationBackoff", value.networkObservationBackoff)
-            .putBoolean("experimental.screenSessionIsolation", value.screenSessionIsolation)
-            .putBoolean("experimental.screenReconnectReset", value.screenReconnectReset)
-            .putBoolean("experimental.screenDeliverySerialization", value.screenDeliverySerialization)
-            .putBoolean("experimental.iapChannelWhenOffered", value.iapChannelWhenOffered)
-            .putBoolean("experimental.releaseBluetoothOnRequest", value.releaseBluetoothOnRequest)
-            .putBoolean("experimental.awaitIphoneReconnect", value.awaitIphoneReconnect)
-            .putBoolean("experimental.radioConflictPrompt", value.radioConflictPrompt)
-            .putBoolean("experimental.stallWatchdog", value.stallWatchdog)
+            .remove("experimental.remotePlaybackProof")
+            .remove("experimental.cancelRecoveredRetries")
+            .remove("experimental.startupStatus")
+            .remove("experimental.startupDiagnostics")
+            .remove("experimental.networkObservationBackoff")
+            .remove("experimental.screenSessionIsolation")
+            .remove("experimental.screenReconnectReset")
+            .remove("experimental.screenDeliverySerialization")
+            .remove("experimental.iapChannelWhenOffered")
+            .remove("experimental.releaseBluetoothOnRequest")
+            .remove("experimental.awaitIphoneReconnect")
+            .remove("experimental.radioConflictPrompt")
+            .remove("experimental.stallWatchdog")
             .remove("experimental.rememberSubscription")
             .remove("experimental.keepScanning")
             .remove("experimental.recordAdvertisements")
