@@ -27,7 +27,7 @@ export function carSelectionErrors(v: Values): Record<string, string> {
   return errors;
 }
 /** These cars' browsers open the receiver page only over HTTPS with a publicly trusted certificate. */
-export const trustedHttpsBrands = ['tesla', 'nio', 'zeekr'];
+export const trustedHttpsBrands = ['tesla', 'nio', 'zeekr', 'jiyue'];
 export function trustedHttpsRequired(v: Values): boolean {
   return trustedHttpsBrands.includes(String(v.carBrand)) && ['web', 'both'].includes(String(v.output)) && !(v.publicNameEnabled === true && !!v.publicName && !!v.publicNameProvider && v.publicNameTokenSet === true && v.publicNameAgreeTerms === true);
 }

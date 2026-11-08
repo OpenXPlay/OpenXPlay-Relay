@@ -735,6 +735,14 @@
               "value": "nio"
             },
             {
+              "labelKey": "",
+              "labels": {
+                "en": "JIYUE",
+                "zh-CN": "极越"
+              },
+              "value": "jiyue"
+            },
+            {
               "labelKey": "option.carBrand.other",
               "value": "other"
             }

@@ -264,5 +264,21 @@
         {"id": "et9-2025", "names": {"en": "2025+", "zh-CN": "2025 起"}, "screens": []}
       ]
     }]
+  }, {
+    "id": "jiyue",
+    "names": {"en": "JIYUE", "zh-CN": "极越"},
+    "models": [{
+      "id": "01",
+      "names": {"en": "01", "zh-CN": "01"},
+      "years": [
+        {"id": "01-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
+      ]
+    }, {
+      "id": "07",
+      "names": {"en": "07", "zh-CN": "07"},
+      "years": [
+        {"id": "07-2024", "names": {"en": "2024+", "zh-CN": "2024 起"}, "screens": []}
+      ]
+    }]
   }]
 }
