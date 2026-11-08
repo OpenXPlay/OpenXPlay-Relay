@@ -727,6 +727,14 @@
               "value": "zeekr"
             },
             {
+              "labelKey": "",
+              "labels": {
+                "en": "NIO",
+                "zh-CN": "蔚来"
+              },
+              "value": "nio"
+            },
+            {
               "labelKey": "option.carBrand.other",
               "value": "other"
             }

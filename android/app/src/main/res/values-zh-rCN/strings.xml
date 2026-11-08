@@ -515,7 +515,7 @@
     <string name="car_model_required">请选择车型。</string>
     <string name="setup_car_title">你的车</string>
     <string name="car_choose_hint">不同车型会使用不同的设置和策略。</string>
-    <string name="car_zeekr_trusted_https_hint">极氪车主建议设置可信 HTTPS。</string>
+    <string name="car_trusted_https_hint">此车型的浏览器必须配置公网证书（可信 HTTPS）。</string>
     <string name="car_open_trusted_https">设置可信 HTTPS</string>
     <string name="car_detected">检测到的屏幕数据</string>
     <string name="car_built_in">此年份自带内置屏幕数据。</string>
@@ -588,6 +588,7 @@
     <string name="audio_wireless_forwarding">声音随投屏送到车机，DLNA 会和画面一样延迟几秒。Siri 和通话使用本机麦克风。</string>
     <string name="audio_bluetooth_tip">如果声音从手机播放，请在车辆中控屏打开蓝牙设置，找到 iPhone，把它右侧的图标从静音改为播放。仍从手机播放时，再关闭上面的选项。</string>
     <string name="public_name_title">可信 HTTPS</string>
+    <string name="public_name_required">你的车机浏览器必须使用公网证书才能打开页面。设置公网域名即可获取证书。</string>
     <string name="public_name_summary">用免费域名，让车机打开网页时不再出现证书警告。</string>
     <string name="public_name_enabled">使用免费域名</string>
     <string name="public_name_provider">域名服务商</string>

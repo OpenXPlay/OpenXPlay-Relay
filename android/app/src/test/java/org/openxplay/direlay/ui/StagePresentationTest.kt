@@ -262,16 +262,17 @@ class StagePresentationTest {
 
     @Test fun noticeOrderAndVisibilityCoverAllFlagCombinations() {
         listOf(false, true).forEach { running -> listOf(false, true).forEach { display ->
-            listOf(false, true).forEach { car -> listOf(false, true).forEach { setup ->
-                val flags = StageFlags(displayChanged = display, carIncomplete = car, setupCompleted = setup)
+            listOf(false, true).forEach { car -> listOf(false, true).forEach { setup -> listOf(false, true).forEach { https ->
+                val flags = StageFlags(displayChanged = display, carIncomplete = car, setupCompleted = setup, trustedHttpsRequired = https)
                 val expected = when {
                     running && display -> StageNotice.DISPLAY_CHANGED
                     car -> StageNotice.CHOOSE_CAR
+                    https -> StageNotice.TRUSTED_HTTPS
                     !setup && !running -> StageNotice.SET_UP
                     else -> null
                 }
                 assertEquals("$running $flags", expected, presentStage(path(running = running), flags).notice)
-            } }
+            } } }
         } }
     }
 

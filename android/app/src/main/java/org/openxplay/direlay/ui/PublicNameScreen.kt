@@ -48,7 +48,8 @@ internal val publicNameProviderResources = mapOf(
  * saved-state Bundle and never shown back; an empty field keeps the saved token.
  */
 @Composable fun PublicNameScreen(view: PublicNameView, status: PublicNameStatus, url: String?, back: () -> Unit,
-    save: suspend (PublicNameEdit) -> List<ConfigError>?, importFile: () -> Unit, renew: () -> Unit, remove: suspend () -> Boolean) {
+    save: suspend (PublicNameEdit) -> List<ConfigError>?, importFile: () -> Unit, renew: () -> Unit, remove: suspend () -> Boolean,
+    required: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // Shared fields and the active selection follow saves, imports and removals.
@@ -72,6 +73,7 @@ internal val publicNameProviderResources = mapOf(
         if (!view.configured) { drafts = PublicNameDrafts(); errors = emptyMap() }
     }
     DetailPage(stringResource(R.string.public_name_title), back) {
+        if (required) Hint(stringResource(R.string.public_name_required))
         SettingsToggleGroup(stringResource(R.string.public_name_enabled), enabled, R.drawable.symbol_globe, IconHue.NETWORK,
             footer = stringResource(R.string.public_name_summary)) { enabled = it; saved = false }
         SettingsGroup("configuration", R.drawable.symbol_globe, IconHue.NETWORK, stringResource(R.string.public_name_provider), fields.name.ifEmpty { stringResource(R.string.public_name_name) }, initiallyExpanded = true) {

@@ -13,6 +13,7 @@
     <string name="stage_auto_in">Connecting in %1$d s</string>
     <string name="stage_notice_display">Car screen changed · Reconnect</string>
     <string name="stage_notice_car">Choose your car</string>
+    <string name="stage_notice_https">Car browser needs a public certificate</string>
     <string name="stage_gallery">Stage</string>
     <string name="stage_countdown">Countdown</string>
     <string name="stage_busy">Busy</string>

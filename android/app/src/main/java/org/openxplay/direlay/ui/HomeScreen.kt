@@ -37,11 +37,12 @@ data class HomeContent(val presentation: HomePresentation, val addresses: List<S
     onAutomatic: (Boolean) -> Unit, onCopy: (String) -> Unit, onStepAction: (StepAction, PathStep) -> Unit,
     onRecheck: () -> Unit, onVehicle: () -> Unit, vehicleModifier: Modifier = Modifier,
     vehicleContentModifier: Modifier = Modifier, onRestart: () -> Unit = {},
-    setupCompleted: Boolean = true, carRequired: Boolean = false, onGuide: () -> Unit = {},
+    setupCompleted: Boolean = true, carRequired: Boolean = false, trustedHttpsRequired: Boolean = false, onGuide: () -> Unit = {},
     countdown: Boolean = false, onCancelCountdown: (ArrivalEnd) -> Unit = {}, onCountdownComplete: () -> Unit = {}) {
     BackHandler(countdown) { onCancelCountdown(ArrivalEnd.BACK) }
     StageHome(value.path, StageFlags(countdown = countdown, busy = value.busy,
         displayChanged = value.displayMismatch && value.path.running, carIncomplete = carRequired,
+        trustedHttpsRequired = trustedHttpsRequired,
         setupCompleted = setupCompleted, phoneControl = value.phoneControl), value.addresses, value.stepProblems, onStepAction, onRecheck, onCopy,
         onStartStop, onSettings = onSettings, onGuide = onGuide, onRestart = onRestart,
         onCancelCountdown = onCancelCountdown, onCountdownComplete = onCountdownComplete,

@@ -71,7 +71,7 @@ class CarModelsTest {
     }
     @Test fun zeekrFollowsTeslaWithLocalizedNamesLaunchYearsAndNoMeasuredScreens() {
         val catalog = models()
-        assertEquals(listOf("xpeng", "tesla", "zeekr"), catalog.brands.map { it.id })
+        assertEquals(listOf("xpeng", "tesla", "zeekr", "nio"), catalog.brands.map { it.id })
         val brand = requireNotNull(catalog.brand(CarSelection("zeekr")))
         assertEquals("ZEEKR", brand.name(Locale.ENGLISH))
         assertEquals("极氪", brand.name(Locale.SIMPLIFIED_CHINESE))
@@ -91,6 +91,26 @@ class CarModelsTest {
             assertSame(model, catalog.model(CarSelection("zeekr", model = model.id)))
             assertSame(year, catalog.year(CarSelection("zeekr", model = model.id, year = year.id)))
             assertNull(catalog.model(CarSelection("tesla", model = model.id)))
+        }
+    }
+    @Test fun nioFollowsZeekrWithLaunchOrderLaunchYearsAndNoMeasuredScreens() {
+        val catalog = models()
+        val brand = requireNotNull(catalog.brand(CarSelection("nio")))
+        assertEquals("NIO", brand.name(Locale.ENGLISH))
+        assertEquals("蔚来", brand.name(Locale.SIMPLIFIED_CHINESE))
+        assertEquals("NIO", brand.name(Locale.TRADITIONAL_CHINESE))
+        assertEquals(listOf("es8", "es6", "ec6", "et7", "et5", "es7", "ec7", "et5t", "et9"), brand.models.map { it.id })
+        val names = listOf("ES8", "ES6", "EC6", "ET7", "ET5", "ES7", "EC7", "ET5T", "ET9")
+        assertEquals(names, brand.models.map { it.name(Locale.ENGLISH) })
+        assertEquals(names, brand.models.map { it.name(Locale.SIMPLIFIED_CHINESE) })
+        val launches = listOf(2018, 2019, 2020, 2022, 2022, 2022, 2023, 2023, 2025)
+        brand.models.zip(launches).forEach { (model, launch) ->
+            val year = model.years.single()
+            assertEquals("${model.id}-$launch", year.id)
+            assertEquals("$launch+", year.name(Locale.ENGLISH))
+            assertEquals("$launch 起", year.name(Locale.SIMPLIFIED_CHINESE))
+            assertTrue(year.screens.isEmpty())
+            assertSame(year, catalog.year(CarSelection("nio", model = model.id, year = year.id)))
         }
     }
     @Test fun teslaModelsGroupYearsOldestFirstWithBareLocalizedYearNames() {

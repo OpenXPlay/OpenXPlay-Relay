@@ -206,5 +206,63 @@
         {"id": "mix-2024", "names": {"en": "2024+", "zh-CN": "2024 起"}, "screens": []}
       ]
     }]
+  }, {
+    "id": "nio",
+    "names": {"en": "NIO", "zh-CN": "蔚来"},
+    "models": [{
+      "id": "es8",
+      "names": {"en": "ES8", "zh-CN": "ES8"},
+      "years": [
+        {"id": "es8-2018", "names": {"en": "2018+", "zh-CN": "2018 起"}, "screens": []}
+      ]
+    }, {
+      "id": "es6",
+      "names": {"en": "ES6", "zh-CN": "ES6"},
+      "years": [
+        {"id": "es6-2019", "names": {"en": "2019+", "zh-CN": "2019 起"}, "screens": []}
+      ]
+    }, {
+      "id": "ec6",
+      "names": {"en": "EC6", "zh-CN": "EC6"},
+      "years": [
+        {"id": "ec6-2020", "names": {"en": "2020+", "zh-CN": "2020 起"}, "screens": []}
+      ]
+    }, {
+      "id": "et7",
+      "names": {"en": "ET7", "zh-CN": "ET7"},
+      "years": [
+        {"id": "et7-2022", "names": {"en": "2022+", "zh-CN": "2022 起"}, "screens": []}
+      ]
+    }, {
+      "id": "et5",
+      "names": {"en": "ET5", "zh-CN": "ET5"},
+      "years": [
+        {"id": "et5-2022", "names": {"en": "2022+", "zh-CN": "2022 起"}, "screens": []}
+      ]
+    }, {
+      "id": "es7",
+      "names": {"en": "ES7", "zh-CN": "ES7"},
+      "years": [
+        {"id": "es7-2022", "names": {"en": "2022+", "zh-CN": "2022 起"}, "screens": []}
+      ]
+    }, {
+      "id": "ec7",
+      "names": {"en": "EC7", "zh-CN": "EC7"},
+      "years": [
+        {"id": "ec7-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
+      ]
+    }, {
+      "id": "et5t",
+      "names": {"en": "ET5T", "zh-CN": "ET5T"},
+      "years": [
+        {"id": "et5t-2023", "names": {"en": "2023+", "zh-CN": "2023 起"}, "screens": []}
+      ]
+    }, {
+      "id": "et9",
+      "names": {"en": "ET9", "zh-CN": "ET9"},
+      "years": [
+        {"id": "et9-2025", "names": {"en": "2025+", "zh-CN": "2025 起"}, "screens": []}
+      ]
+    }]
   }]
 }

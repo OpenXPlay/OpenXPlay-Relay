@@ -87,6 +87,7 @@ import org.openxplay.direlay.vehicle.VehicleView
         when (stageNoticeTarget(notice)) {
             StageNoticeTarget.RESTART -> onRestart()
             StageNoticeTarget.CAR_SETTINGS -> onSettings("car")
+            StageNoticeTarget.TRUSTED_HTTPS -> onSettings("publicName")
             StageNoticeTarget.GUIDE -> onGuide()
         }
     }, onCountdownComplete = onCountdownComplete, state = pageState,

@@ -13,6 +13,7 @@
     <string name="stage_auto_in">%1$d 秒后自动连接</string>
     <string name="stage_notice_display">车机屏幕变了 · 重新连接</string>
     <string name="stage_notice_car">选择你的车型</string>
+    <string name="stage_notice_https">车机浏览器需要公网证书</string>
     <string name="stage_gallery">连接舞台</string>
     <string name="stage_countdown">倒计时</string>
     <string name="stage_busy">忙碌</string>

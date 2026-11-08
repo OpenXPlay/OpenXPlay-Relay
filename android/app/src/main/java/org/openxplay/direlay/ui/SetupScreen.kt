@@ -44,6 +44,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
+import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 import org.openxplay.direlay.R
 import org.openxplay.direlay.path.*
 import org.openxplay.direlay.background.BackgroundDestination
@@ -69,6 +70,7 @@ import org.openxplay.direlay.ui.design.*
     val entry by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
     var draft by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(setupDraft(initial, wireless(initial))) }
     var lastSaved by rememberSaveable(stateSaver = relaySettingsSaver(initial)) { mutableStateOf(initial) }
+    val trustedName by sources.name.screenState()
     var saveFailed by remember { mutableStateOf(false) }
     var confirmUsb by remember { mutableStateOf(false) }
     var confirmLowData by remember { mutableStateOf(false) }
@@ -235,12 +237,10 @@ import org.openxplay.direlay.ui.design.*
                     SetupStep.START -> R.string.setup2_start_subtitle
                 }), illustration = { if (compact && current != SetupStep.CAR) SetupIllustration(draft, isWireless) }) {
                     when (current) {
-                        SetupStep.CAR -> {
-                            CarPicker(draft.car, carModels, LocalConfiguration.current.locales[0]) { draft = draft.copy(car = it) }
-                            if (trustedHttpsRecommended(draft.car, trustedConfigured = false))
-                                Hint(stringResource(R.string.car_zeekr_trusted_https_hint))
-                        }
-                        SetupStep.OUTPUT -> OutputStep(draft, compact, { draft = it }) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
+                        SetupStep.CAR -> CarPicker(draft.car, carModels, LocalConfiguration.current.locales[0]) { draft = draft.copy(car = it) }
+                        SetupStep.OUTPUT -> OutputStep(draft, compact,
+                            trustedHttpsRequired(draft.car, browserOutput = true, trustedName.view.hasTrustedNameConfiguration()),
+                            { draft = it }) { choice, kind -> draft = chooseOutput(draft, choice, kind, isWireless) }
                         SetupStep.CONNECTION -> ConnectionStep(draft, isWireless, compact) {
                             val mode = if (it) ConnectionMode.WIRELESS else ConnectionMode.USB
                             if (needsUsbConfirmation(draft.connectionMode, mode, isWireless)) confirmUsb = true
@@ -405,7 +405,7 @@ import org.openxplay.direlay.ui.design.*
     }
 }
 
-@Composable private fun OutputStep(draft: RelaySettings, compact: Boolean, change: (RelaySettings) -> Unit, choose: (OutputChoice, WirelessDisplayKind) -> Unit) {
+@Composable private fun OutputStep(draft: RelaySettings, compact: Boolean, trustedHttps: Boolean, change: (RelaySettings) -> Unit, choose: (OutputChoice, WirelessDisplayKind) -> Unit) {
     val carlinkSupported = Build.VERSION.SDK_INT >= 29
     val selected = OutputSelection.choice(draft.outputs)
     val kind = OutputSelection.wirelessKind(draft.outputs)
@@ -413,7 +413,10 @@ import org.openxplay.direlay.ui.design.*
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ChoiceCard(stringResource(R.string.ui_browser), stringResource(R.string.setup_browser_hint), R.drawable.symbol_monitor, IconHue.CAR,
             selected == OutputChoice.BROWSER, setupOutputTag(OutputChoice.BROWSER),
-            extra = { Hint(stringResource(R.string.setup_browser_check_tip)) }) { choose(OutputChoice.BROWSER, kind) }
+            extra = {
+                Hint(stringResource(R.string.setup_browser_check_tip))
+                if (trustedHttps) Text(stringResource(R.string.car_trusted_https_hint), style = RelayTokens.footnote, color = LocalStatusColors.current.action)
+            }) { choose(OutputChoice.BROWSER, kind) }
         ChoiceCard(stringResource(R.string.ui_carlink), stringResource(R.string.setup_carlink_hint), R.drawable.symbol_car_front, IconHue.CAR,
             selected == OutputChoice.CARLINK, setupOutputTag(OutputChoice.CARLINK), carlinkSupported,
             if (carlinkSupported) null else stringResource(R.string.setup_carlink_android10), order = 1,
