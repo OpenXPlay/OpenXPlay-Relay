@@ -82,13 +82,14 @@ class CarSelectionTest {
             CarSelection("zeekr", model = "x", year = "x-2023").normalized())
     }
 
-    @Test fun trustedHttpsIsRequiredForTeslaNioAndZeekrBrowsersUntilConfigured() {
+    @Test fun trustedHttpsIsRequiredForTeslaNioZeekrAndJiyueBrowsersUntilConfigured() {
         val cars = listOf(CarSelection("zeekr"), CarSelection("zeekr", model = "001"),
             CarSelection("zeekr", model = "007-gt", year = "007-gt-2025"),
             CarSelection("zeekr", model = "mix-2024"), CarSelection("zeekr", model = "other", modelText = "Custom"),
             CarSelection("zeekr", model = "unknown", year = "unknown"), CarSelection("tesla", model = "model-x"),
             CarSelection("tesla", model = "model-3", year = "model-3-2024"), CarSelection("nio"),
-            CarSelection("nio", model = "et5t", year = "et5t-2023"), CarSelection("nio", model = "es8-2018"))
+            CarSelection("nio", model = "et5t", year = "et5t-2023"), CarSelection("nio", model = "es8-2018"),
+            CarSelection("jiyue"), CarSelection("jiyue", model = "01", year = "01-2023"), CarSelection("jiyue", model = "07-2024"))
         for (car in cars) {
             assertTrue(car.toString(), trustedHttpsRequired(car, browserOutput = true, trustedConfigured = false))
             assertFalse(car.toString(), trustedHttpsRequired(car, browserOutput = true, trustedConfigured = true))
@@ -98,7 +99,7 @@ class CarSelectionTest {
 
     @Test fun trustedHttpsRequirementDoesNotApplyToOtherOrInvalidBrands() {
         val cars = listOf(CarSelection(), CarSelection("xpeng", model = "g6"),
-            CarSelection("other", "ZEEKR", "other", "001"), CarSelection("ZEEKR", model = "001"), CarSelection("NIO"),
+            CarSelection("other", "ZEEKR", "other", "001"), CarSelection("ZEEKR", model = "001"), CarSelection("NIO"), CarSelection("JIYUE"),
             CarSelection("unknown", "zeekr", "001", year = "001-2021"), CarSelection(model = "001", year = "001-2021"))
         for (car in cars) for (configured in listOf(false, true)) for (browser in listOf(false, true))
             assertFalse(car.toString(), trustedHttpsRequired(car, browser, configured))

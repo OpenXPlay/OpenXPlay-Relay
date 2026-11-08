@@ -71,7 +71,7 @@ class CarModelsTest {
     }
     @Test fun zeekrFollowsTeslaWithLocalizedNamesLaunchYearsAndNoMeasuredScreens() {
         val catalog = models()
-        assertEquals(listOf("xpeng", "tesla", "zeekr", "nio"), catalog.brands.map { it.id })
+        assertEquals(listOf("xpeng", "tesla", "zeekr", "nio", "jiyue"), catalog.brands.map { it.id })
         val brand = requireNotNull(catalog.brand(CarSelection("zeekr")))
         assertEquals("ZEEKR", brand.name(Locale.ENGLISH))
         assertEquals("极氪", brand.name(Locale.SIMPLIFIED_CHINESE))
@@ -111,6 +111,23 @@ class CarModelsTest {
             assertEquals("$launch 起", year.name(Locale.SIMPLIFIED_CHINESE))
             assertTrue(year.screens.isEmpty())
             assertSame(year, catalog.year(CarSelection("nio", model = model.id, year = year.id)))
+        }
+    }
+    @Test fun jiyueFollowsNioWithLaunchYearsAndNoMeasuredScreens() {
+        val catalog = models()
+        val brand = requireNotNull(catalog.brand(CarSelection("jiyue")))
+        assertEquals("JIYUE", brand.name(Locale.ENGLISH))
+        assertEquals("极越", brand.name(Locale.SIMPLIFIED_CHINESE))
+        assertEquals("JIYUE", brand.name(Locale.TRADITIONAL_CHINESE))
+        assertEquals(listOf("01", "07"), brand.models.map { it.id })
+        assertEquals(listOf("01", "07"), brand.models.map { it.name(Locale.SIMPLIFIED_CHINESE) })
+        brand.models.zip(listOf(2023, 2024)).forEach { (model, launch) ->
+            val year = model.years.single()
+            assertEquals("${model.id}-$launch", year.id)
+            assertEquals("$launch+", year.name(Locale.ENGLISH))
+            assertEquals("$launch 起", year.name(Locale.SIMPLIFIED_CHINESE))
+            assertTrue(year.screens.isEmpty())
+            assertSame(year, catalog.year(CarSelection("jiyue", model = model.id, year = year.id)))
         }
     }
     @Test fun teslaModelsGroupYearsOldestFirstWithBareLocalizedYearNames() {

@@ -69,13 +69,16 @@ data class CarSelection(val brand: String = "", val brandText: String = "", val 
                 "es7" to setOf("es7-2022"),
                 "ec7" to setOf("ec7-2023"),
                 "et5t" to setOf("et5t-2023"),
-                "et9" to setOf("et9-2025"))
+                "et9" to setOf("et9-2025")),
+            "jiyue" to mapOf(
+                "01" to setOf("01-2023"),
+                "07" to setOf("07-2024"))
         )
         fun cleanText(value: String) = value.filterNot { Character.isISOControl(it) }.take(40)
     }
 }
 
 /** These cars' browsers open the receiver page only over HTTPS with a publicly trusted certificate. */
-val trustedHttpsBrands = setOf("tesla", "nio", "zeekr")
+val trustedHttpsBrands = setOf("tesla", "nio", "zeekr", "jiyue")
 fun trustedHttpsRequired(car: CarSelection, browserOutput: Boolean, trustedConfigured: Boolean) =
     browserOutput && car.normalized().brand in trustedHttpsBrands && !trustedConfigured

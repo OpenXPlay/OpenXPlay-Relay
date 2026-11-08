@@ -32,10 +32,10 @@ it('requires brand and model including Other text, while year is optional', () =
   expect(carSelectionErrors({ carBrand: 'other', carBrandText: 'A', carModel: 'other', carModelText: 'B', carYear: 'other', carYearText: '' })).toEqual({});
   expect(carSelectionErrors({ carBrand: 'zeekr', carModel: '001' })).toEqual({});
 });
-it.each(['en', 'zh-CN'] as const)('requires trusted HTTPS for Tesla, NIO and ZEEKR browsers until it is configured (%s)', language => {
+it.each(['en', 'zh-CN'] as const)('requires trusted HTTPS for Tesla, NIO, ZEEKR and JIYUE browsers until it is configured (%s)', language => {
   const t = (key: string, args?: Record<string, string | number>) => translate(language, key, args);
   const configured = { publicNameEnabled: true, publicName: 'car.example.org', publicNameProvider: 'dynv6', publicNameTokenSet: true, publicNameAgreeTerms: true };
-  for (const carBrand of ['tesla', 'nio', 'zeekr']) for (const output of ['web', 'both']) {
+  for (const carBrand of ['tesla', 'nio', 'zeekr', 'jiyue']) for (const output of ['web', 'both']) {
     const values = { carBrand, carModel: '', output };
     expect(trustedHttpsRequired(values)).toBe(true);
     expect(carNotes(values, t)).toContain('#settings/access/public-name');
