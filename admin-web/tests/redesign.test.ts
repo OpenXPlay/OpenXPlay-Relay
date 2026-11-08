@@ -69,7 +69,7 @@ it.each(['en', 'zh-CN'] as const)('translates every new route, path string and p
   const sources = ['stage.ts', 'settings-tree.ts', 'feature-pages.ts', 'picture-sizes.ts', 'path/texts.ts'].map(f => readFileSync(new URL('src/' + f, root), 'utf8')).join('\n');
   const keys = [...sources.matchAll(/["']((?:menu\.|stage[_.]|files\.|picture\.|path_|error_explain_|logs_)[\w./-]+)["']/g)].map(m => m[1]).filter(k => !k.endsWith('.'));
   for (const key of new Set(keys)) expect(t(key), key).not.toBe(key);
-  const notice = privacyMarkup(t); expect(notice).toContain('Cloudflare'); expect(notice).toContain('AWS'); expect(notice).toContain('48'); expect(notice).toContain('72'); expect(notice).toContain('support@openxplay.org');
+  const notice = privacyMarkup(t); expect(notice).toContain('Cloudflare'); expect(notice).toContain('AWS'); expect(notice).toContain('48'); expect(notice).toContain('30'); expect(notice).toContain('support@openxplay.org');
 });
 it('validates config size in UTF-8 and requires an envelope object', () => {
   expect(parseConfig('{"format":"openxplay-user-config","settings":{}}')).toMatchObject({ settings: {} });
