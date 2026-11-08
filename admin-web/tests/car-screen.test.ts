@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-27
 
 import { expect, it } from 'vitest';
-import { carNotes, carSelectionErrors, carScreenView, displayPresets, screenShare, screenShareText, trustedHttpsRecommended, viewAreasView } from '../src/car-screen';
+import { carNotes, carSelectionErrors, carScreenView, displayPresets, screenShare, screenShareText, trustedHttpsRequired, trustedHttpsRequiredNote, viewAreasView } from '../src/car-screen';
 import { fieldRoute } from '../src/settings-tree';
 import { presentStage } from '../src/path/present-stage';
 import { presentPath } from '../src/path/present-path';
@@ -32,18 +32,24 @@ it('requires brand and model including Other text, while year is optional', () =
   expect(carSelectionErrors({ carBrand: 'other', carBrandText: 'A', carModel: 'other', carModelText: 'B', carYear: 'other', carYearText: '' })).toEqual({});
   expect(carSelectionErrors({ carBrand: 'zeekr', carModel: '001' })).toEqual({});
 });
-it.each(['en', 'zh-CN'] as const)('offers the Zeekr recommendation and stage notice until HTTPS is configured (%s)', language => {
+it.each(['en', 'zh-CN'] as const)('requires trusted HTTPS for Tesla, NIO and ZEEKR browsers until it is configured (%s)', language => {
   const t = (key: string, args?: Record<string, string | number>) => translate(language, key, args);
-  const values = { carBrand: 'zeekr', carModel: '001' };
-  expect(trustedHttpsRecommended(values)).toBe(true);
-  expect(carNotes(values, t)).toContain('#settings/access/public-name');
-  expect(carNotes(values, t)).toContain(esc(t('car.zeekrHttps')));
-  expect(trustedHttpsRecommended({ ...values, publicNameEnabled: true, publicName: 'car.example.org', publicNameProvider: 'dynv6', publicNameTokenSet: true, publicNameAgreeTerms: true })).toBe(false);
-  expect(trustedHttpsRecommended({ ...values, carBrand: 'tesla' })).toBe(false);
+  const configured = { publicNameEnabled: true, publicName: 'car.example.org', publicNameProvider: 'dynv6', publicNameTokenSet: true, publicNameAgreeTerms: true };
+  for (const carBrand of ['tesla', 'nio', 'zeekr']) for (const output of ['web', 'both']) {
+    const values = { carBrand, carModel: '', output };
+    expect(trustedHttpsRequired(values)).toBe(true);
+    expect(carNotes(values, t)).toContain('#settings/access/public-name');
+    expect(carNotes(values, t)).toContain(esc(t('car.trustedHttps')));
+    expect(trustedHttpsRequiredNote(values, t)).toContain(esc(t('publicName.required')));
+    expect(trustedHttpsRequired({ ...values, ...configured })).toBe(false);
+    expect(trustedHttpsRequiredNote({ ...values, ...configured }, t)).toBe('');
+    expect(trustedHttpsRequired({ ...values, output: 'carlink' })).toBe(false);
+  }
+  for (const carBrand of ['xpeng', 'other', 'NIO', '']) expect(trustedHttpsRequired({ carBrand, output: 'web' })).toBe(false);
   const path = presentPath(fixture().pathInput!);
-  expect(presentStage(path, { trustedHttpsRecommended: true }).notice).toBe('TRUSTED_HTTPS');
-  expect(presentStage(path, { carIncomplete: true, trustedHttpsRecommended: true }).notice).toBe('TRUSTED_HTTPS');
-  expect(presentStage(path, { displayChanged: true, trustedHttpsRecommended: true }).notice).toBe('DISPLAY_CHANGED');
+  expect(presentStage(path, { trustedHttpsRequired: true }).notice).toBe('TRUSTED_HTTPS');
+  expect(presentStage(path, { carIncomplete: true, trustedHttpsRequired: true }).notice).toBe('TRUSTED_HTTPS');
+  expect(presentStage(path, { displayChanged: true, trustedHttpsRequired: true }).notice).toBe('DISPLAY_CHANGED');
 });
 it('shares only Android format-2 car, matching screen observations and allowlisted capabilities', () => {
   const status = fixture(), settings = structuredClone(linuxSettings);
@@ -85,8 +91,8 @@ it('places view areas in Car, Carlink sizes in Picture, and calibration in Devel
 it('keeps first-open car notes free of required-field errors, including incomplete ZEEKR choices', () => {
   const t = (key: string) => translate('en', key);
   expect(carNotes({}, t)).toBe('');
-  expect(carNotes({ carBrand: 'zeekr' }, t)).toContain(esc(t('car.zeekrHttps')));
-  expect(carNotes({ carBrand: 'zeekr' }, t)).not.toContain(t('car.modelRequired'));
-  expect(carNotes({ carBrand: 'tesla' }, t)).toBe('');
-  expect(carNotes({ carBrand: 'zeekr', publicNameEnabled: true, publicName: 'relay.example.org', publicNameProvider: 'dynv6', publicNameTokenSet: true, publicNameAgreeTerms: true }, t)).toBe('');
+  expect(carNotes({ carBrand: 'zeekr', output: 'web' }, t)).toContain(esc(t('car.trustedHttps')));
+  expect(carNotes({ carBrand: 'zeekr', output: 'web' }, t)).not.toContain(t('car.modelRequired'));
+  expect(carNotes({ carBrand: 'xpeng', output: 'web' }, t)).toBe('');
+  expect(carNotes({ carBrand: 'zeekr', output: 'web', publicNameEnabled: true, publicName: 'relay.example.org', publicNameProvider: 'dynv6', publicNameTokenSet: true, publicNameAgreeTerms: true }, t)).toBe('');
 });

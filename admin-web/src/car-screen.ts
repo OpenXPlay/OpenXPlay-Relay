@@ -26,11 +26,16 @@ export function carSelectionErrors(v: Values): Record<string, string> {
   if (!v.carModel || v.carModel === 'other' && !String(v.carModelText ?? '').trim()) errors.carModel = 'car.modelRequired';
   return errors;
 }
-export function trustedHttpsRecommended(v: Values): boolean {
-  return v.carBrand === 'zeekr' && !(v.publicNameEnabled === true && !!v.publicName && !!v.publicNameProvider && v.publicNameTokenSet === true && v.publicNameAgreeTerms === true);
+/** These cars' browsers open the receiver page only over HTTPS with a publicly trusted certificate. */
+export const trustedHttpsBrands = ['tesla', 'nio', 'zeekr'];
+export function trustedHttpsRequired(v: Values): boolean {
+  return trustedHttpsBrands.includes(String(v.carBrand)) && ['web', 'both'].includes(String(v.output)) && !(v.publicNameEnabled === true && !!v.publicName && !!v.publicNameProvider && v.publicNameTokenSet === true && v.publicNameAgreeTerms === true);
 }
 export function carNotes(v: Values, t: Translate): string {
-  return (trustedHttpsRecommended(v) ? `<p class="notice">${esc(t('car.zeekrHttps'))} <a href="#settings/access/public-name">${esc(t('car.openHttps'))}</a></p>` : '');
+  return (trustedHttpsRequired(v) ? `<p class="notice">${esc(t('car.trustedHttps'))} <a href="#settings/access/public-name">${esc(t('car.openHttps'))}</a></p>` : '');
+}
+export function trustedHttpsRequiredNote(v: Values, t: Translate): string {
+  return trustedHttpsRequired(v) ? `<p class="notice" role="status">${esc(t('publicName.required'))}</p>` : '';
 }
 function sameScreen(a: Screen, b: Screen): boolean { return a.width === b.width && a.height === b.height && a.densityDpi === b.densityDpi; }
 export function screenRecords(data: ScreenData, full: boolean): ScreenRecord[] {

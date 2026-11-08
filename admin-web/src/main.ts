@@ -5,7 +5,7 @@
 import { mountIdentity, IdentitySelection } from './identity';
 import { setupSteps, setupFields, guideBack, setupBlocker, preparationView, type SetupBlocker, type SetupStep } from './setup-guide';
 import { restartPending } from './startup';
-import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRecommended, displayPresets, displayPresetsView } from './car-screen';
+import { carNotes, carSelectionErrors, carScreenView, viewAreasView, screenShareText, trustedHttpsRequired, trustedHttpsRequiredNote, displayPresets, displayPresetsView } from './car-screen';
 import { teslaHint, teslaNotes } from './tesla';
 import { constraintKey, connectionConstraint, networkOptionState, wifiDirectDisabled, needsHotspotConfirmation } from './carlink-connection';
 import { needsUsbConfirmation, usbTransportHint } from './usb-connection';
@@ -244,6 +244,7 @@ function renderReady() {
     if (route === 'settings/output' && status!.platform === 'linux' && ['carlink', 'both'].includes(status!.output)) container.insertAdjacentHTML('beforeend', `<div class="inset-group">${menuRow('settings/vehicle', 'vehicle.title', t(`vehicle.${(!status!.carlink?.vehicle || status!.carlink.vehicle.state === 'off') ? 'off' : status!.carlink?.vehicle?.state === 'data' ? 'title' : 'waiting'}`), 'car')}</div>`);
     if (route === 'settings/experimental') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('hint.experimentalScope'))}</p>`);
     if (route === 'settings/tesla') container.insertAdjacentHTML('beforeend', `<p class="muted">${esc(t('tesla.intro'))}</p>`);
+    if (route === 'settings/access/public-name') container.insertAdjacentHTML('beforeend', '<div id="public-name-required"></div>');
     const special = new Set(['sharedWifiNetworks', 'networkRoles', 'adminHotspotPassword']);
     const list = pageFields(settings!, route).filter(f => !special.has(f.key) && !(status!.platform === 'linux' && route === 'settings/output' && f.key === 'vehicleInformation') && !['carlinkPictureDefault', 'carlinkPictureTry', ...(route === 'settings/car' ? ['carPlayViewAreas'] : [])].includes(f.key)).map(editorField);
     if (route === 'settings/car') { const order = setupFields('car'), rank = (key: string) => order.includes(key) ? order.indexOf(key) : order.length; list.sort((a, b) => rank(a.key) - rank(b.key)); }
@@ -342,7 +343,7 @@ function guideStep(): SetupStep { const step = route.split('/')[1] as SetupStep;
 function renderGuide() {
   const step = guideStep(), index = setupSteps.indexOf(step);
   const list = setupFields(step).flatMap(key => fields().filter(field => field.key === key)).map(editorField);
-  patchMarkup(document.getElementById('main')!, `<div class="settings-page"><div class="guide-progress" role="img" aria-label="${esc(t('setup_progress', { arg1: index + 1, arg2: setupSteps.length }))}">${setupSteps.map((_, i) => `<span class="${i <= index ? 'done' : ''}"></span>`).join('')}</div><h1>${esc(t(step === 'car' ? 'setup_car_title' : step === 'prepare' ? 'setup_prepare_title' : step === 'start' ? 'setup_start_title' : 'setup2_' + step + '_title'))}</h1><p>${esc(t(step === 'car' ? 'setup.carHint' : 'setup2_' + step + '_subtitle'))}</p>${step === 'connection' ? `<p>${esc(t('setup.wirelessLinux'))}</p>` : ''}${list.length ? `<div class="inset-group">${list.map(fieldMarkup).join('')}</div>` : ''}${step === 'car' ? `<div id="car-notes">${carNotes(settings!.values, t)}</div>` : ''}${step === 'network' ? `<div id="network-panel" class="inset-group"></div>` : ''}<div id="setup-preparation"></div>${step === 'start' ? `<div class="inset-group">${setupSteps.slice(0, 4).map(key => `<a class="inset-row" href="#setup/${key}">${esc(t(key === 'car' ? 'menu.car' : key === 'output' ? 'menu.output' : key === 'connection' ? 'menu.connection' : 'menu.connection/network'))}${pageSummary('settings/' + (key === 'network' ? 'connection/network' : key)) ? ` · ${esc(pageSummary('settings/' + (key === 'network' ? 'connection/network' : key)))}` : ''}</a>`).join('')}</div>` : ''}<p id="setup-error" class="error" role="alert"></p><div class="guide-actions"><button id="setup-next" class="primary">${esc(t(step === 'start' ? 'setup_start' : 'setup_next'))}</button><a class="quiet" href="#home">${esc(t('stage_not_now'))}</a></div></div>`);
+  patchMarkup(document.getElementById('main')!, `<div class="settings-page"><div class="guide-progress" role="img" aria-label="${esc(t('setup_progress', { arg1: index + 1, arg2: setupSteps.length }))}">${setupSteps.map((_, i) => `<span class="${i <= index ? 'done' : ''}"></span>`).join('')}</div><h1>${esc(t(step === 'car' ? 'setup_car_title' : step === 'prepare' ? 'setup_prepare_title' : step === 'start' ? 'setup_start_title' : 'setup2_' + step + '_title'))}</h1><p>${esc(t(step === 'car' ? 'setup.carHint' : 'setup2_' + step + '_subtitle'))}</p>${step === 'connection' ? `<p>${esc(t('setup.wirelessLinux'))}</p>` : ''}${list.length ? `<div class="inset-group">${list.map(fieldMarkup).join('')}</div>` : ''}${step === 'car' || step === 'output' ? `<div id="car-notes">${carNotes(settings!.values, t)}</div>` : ''}${step === 'network' ? `<div id="network-panel" class="inset-group"></div>` : ''}<div id="setup-preparation"></div>${step === 'start' ? `<div class="inset-group">${setupSteps.slice(0, 4).map(key => `<a class="inset-row" href="#setup/${key}">${esc(t(key === 'car' ? 'menu.car' : key === 'output' ? 'menu.output' : key === 'connection' ? 'menu.connection' : 'menu.connection/network'))}${pageSummary('settings/' + (key === 'network' ? 'connection/network' : key)) ? ` · ${esc(pageSummary('settings/' + (key === 'network' ? 'connection/network' : key)))}` : ''}</a>`).join('')}</div>` : ''}<p id="setup-error" class="error" role="alert"></p><div class="guide-actions"><button id="setup-next" class="primary">${esc(t(step === 'start' ? 'setup_start' : 'setup_next'))}</button><a class="quiet" href="#home">${esc(t('stage_not_now'))}</a></div></div>`);
   list.forEach(bindField); renderNetworkPanel(); updateVisibility(); updateGuide(); syncVisibleTimer();
   on(document.getElementById('setup-next'), 'click', async event => {
     const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
@@ -432,7 +433,7 @@ function updateDashboard() {
   const currentPicture = document.querySelector<HTMLElement>('[data-current-picture]');
   if (currentPicture) currentPicture.textContent = applied ? `${t('picture.current')}: ${applied.width} × ${applied.height}` : t('picture.pending');
   if (!status || !stage) { if (status && document.getElementById('context-action')) renderCarlink(); syncPinDialog(); syncVisibleTimer(); return; }
-  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: displayChanged(status, restartPending(status, needsRestart)), carIncomplete: !!settings && Object.keys(carSelectionErrors(settings.values)).length > 0, trustedHttpsRecommended: !!settings && trustedHttpsRecommended(settings.values), setupCompleted: status.setupCompleted }, pageError);
+  stage.update(status.pathInput ?? { platform: status.platform, version: status.version }, { busy: actionBusy, displayChanged: displayChanged(status, restartPending(status, needsRestart)), carIncomplete: !!settings && Object.keys(carSelectionErrors(settings.values)).length > 0, trustedHttpsRequired: !!settings && trustedHttpsRequired(settings.values), setupCompleted: status.setupCompleted }, pageError);
   syncPinDialog(); syncVisibleTimer();
 }
 function syncVisibleTimer() {
@@ -489,6 +490,8 @@ function renderPairingPanel() {
 function renderPublicName() {
   const el = document.getElementById('public-name-panel'); if (!el || !status || !settings) return;
   const v = settings.values;
+  const required = document.getElementById('public-name-required');
+  if (required) patchMarkup(required, trustedHttpsRequiredNote(v, t));
   const signature = JSON.stringify([status.publicName, status.receiverUrls, v.publicNameEnabled, v.publicNameTokenSet, v.publicName, v.publicNameProvider, publicNameBusy, publicNameMessage, language]);
   if (el.dataset.signature === signature) return;
   const focused = el.contains(document.activeElement) ? (document.activeElement as HTMLElement).id : '';

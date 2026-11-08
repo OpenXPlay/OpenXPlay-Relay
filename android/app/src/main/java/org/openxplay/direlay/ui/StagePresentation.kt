@@ -12,6 +12,7 @@ import org.openxplay.direlay.path.*
     val busy: Boolean = false,
     val displayChanged: Boolean = false,
     val carIncomplete: Boolean = false,
+    val trustedHttpsRequired: Boolean = false,
     val setupCompleted: Boolean = true,
     val overlay: Boolean = false,
     val phoneControl: Boolean = false,
@@ -64,7 +65,7 @@ import org.openxplay.direlay.path.*
     @Immutable data class Step(val action: StepAction, val step: StepId, val label: Int?) : StageAction
 }
 
-@Immutable enum class StageNotice { DISPLAY_CHANGED, CHOOSE_CAR, SET_UP }
+@Immutable enum class StageNotice { DISPLAY_CHANGED, CHOOSE_CAR, TRUSTED_HTTPS, SET_UP }
 
 fun presentStage(path: ConnectionPath, flags: StageFlags = StageFlags()): StageView {
     val focus = focusForPage(path)
@@ -127,6 +128,7 @@ fun presentStage(path: ConnectionPath, flags: StageFlags = StageFlags()): StageV
     val notice = when {
         path.running && flags.displayChanged -> StageNotice.DISPLAY_CHANGED
         flags.carIncomplete -> StageNotice.CHOOSE_CAR
+        flags.trustedHttpsRequired -> StageNotice.TRUSTED_HTTPS
         !flags.setupCompleted && !path.running -> StageNotice.SET_UP
         else -> null
     }

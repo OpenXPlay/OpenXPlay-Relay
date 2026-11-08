@@ -198,11 +198,15 @@ internal class StageTapGuard(private var action: StageAction?) {
             val label = stringResource(when (shown) {
                 StageNotice.DISPLAY_CHANGED -> R.string.stage_notice_display
                 StageNotice.CHOOSE_CAR -> R.string.stage_notice_car
+                StageNotice.TRUSTED_HTTPS -> R.string.stage_notice_https
                 StageNotice.SET_UP -> R.string.home2_setup
             })
             TextButton({ onNotice(shown) }, Modifier.heightIn(min = 48.dp), shape = RelayTokens.pill) {
-                Symbol(if (shown == StageNotice.SET_UP) R.drawable.symbol_settings_2 else R.drawable.symbol_car_front,
-                    null, Modifier.size(18.dp))
+                Symbol(when (shown) {
+                    StageNotice.SET_UP -> R.drawable.symbol_settings_2
+                    StageNotice.TRUSTED_HTTPS -> R.drawable.symbol_lock
+                    else -> R.drawable.symbol_car_front
+                }, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(label, Modifier.weight(1f, fill = false), style = RelayTokens.footnote, textAlign = TextAlign.Center)
                 Spacer(Modifier.width(8.dp))

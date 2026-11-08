@@ -22,6 +22,7 @@ import org.openxplay.direlay.R
 import org.openxplay.direlay.presentation.*
 import org.openxplay.direlay.path.StepAction
 import org.openxplay.direlay.path.PathStep
+import org.openxplay.direlay.publicname.hasTrustedNameConfiguration
 import org.openxplay.direlay.settings.*
 import org.openxplay.direlay.ui.design.*
 
@@ -192,18 +193,24 @@ import org.openxplay.direlay.ui.design.*
                     savedStates.SaveableStateProvider("${stack.lastIndex}:${relayPageKey(route)}") {
                         CompositionLocalProvider(LocalRelaySurfaceActive provides (!surfaceBlocked && stack == entries && sheet == null)) {
                             when {
-                                route == "home" -> HomeScreen(value, { open("settings:$it") }, {
-                                    endArrival(ArrivalEnd.CONNECT)
-                                    onStartStop()
-                                }, onAutomatic, copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
-                                    setupCompleted, carRequired = homeCarRowVisible(initial.car), onGuide = { open("setup") },
-                                    countdown = showCountdown, onCancelCountdown = ::endArrival,
-                                    onCountdownComplete = {
-                                        if (arrivalCountdown(countdown, value.automatic, value.path, value.busy)) {
-                                            endArrival(ArrivalEnd.COMPLETE)
-                                            if (!value.path.running) onStartStop()
-                                        }
-                                    })
+                                route == "home" -> {
+                                    val name by sources.name.screenState()
+                                    HomeScreen(value, { open("settings:$it") }, {
+                                        endArrival(ArrivalEnd.CONNECT)
+                                        onStartStop()
+                                    }, onAutomatic, copy, ::stepAction, onRecheck, { open("vehicle") }, shared, sharedContent, onRestart,
+                                        setupCompleted, carRequired = homeCarRowVisible(initial.car),
+                                        trustedHttpsRequired = trustedHttpsRequired(initial.car, initial.browserOutput,
+                                            name.view.hasTrustedNameConfiguration()),
+                                        onGuide = { open("setup") },
+                                        countdown = showCountdown, onCancelCountdown = ::endArrival,
+                                        onCountdownComplete = {
+                                            if (arrivalCountdown(countdown, value.automatic, value.path, value.busy)) {
+                                                endArrival(ArrivalEnd.COMPLETE)
+                                                if (!value.path.running) onStartStop()
+                                            }
+                                        })
+                                }
                                 route.startsWith("setup") -> SetupScreen(initial, wireless, value,
                                     setupStep(route.substringAfter(':', "")), actions.readIphones, actions.useSharedWifi,
                                     { _, after -> actions.save(after) != null }, onSetup, back, sources, actions,
@@ -224,7 +231,9 @@ import org.openxplay.direlay.ui.design.*
                                 route == "settings/access/publicName" -> {
                                     val name by sources.name.screenState()
                                     PublicNameScreen(name.view, name.status, name.url, back,
-                                        actions.saveName, importPublicName, actions.renewName, actions.removeName)
+                                        actions.saveName, importPublicName, actions.renewName, actions.removeName,
+                                        required = trustedHttpsRequired(initial.car, initial.browserOutput,
+                                            name.view.hasTrustedNameConfiguration()))
                                 }
                                 route == "developer/design" -> org.openxplay.direlay.ui.design.DesignGalleryScreen(back)
                                 route == "experimental" -> ExperimentalScreen(settingsEditor, back, wireless)

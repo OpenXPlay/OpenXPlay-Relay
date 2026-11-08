@@ -170,7 +170,9 @@ class HomePresentationTest {
         assertEquals(StageNoticeTarget.RESTART, stageNoticeTarget(StageNotice.DISPLAY_CHANGED))
         assertEquals(StageNoticeTarget.CAR_SETTINGS, stageNoticeTarget(StageNotice.CHOOSE_CAR))
         assertEquals(StageNoticeTarget.GUIDE, stageNoticeTarget(StageNotice.SET_UP))
+        assertEquals(StageNoticeTarget.TRUSTED_HTTPS, stageNoticeTarget(StageNotice.TRUSTED_HTTPS))
         assertEquals("settings/car#car", relayRoute("settings:car"))
+        assertEquals("settings/access/publicName", relayRoute("settings:publicName"))
     }
 
     @Test fun idleWaitsCollapseWhileProblemsAndRunningWaitsExpand() {

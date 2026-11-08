@@ -98,10 +98,11 @@ internal fun stageCommand(action: StageAction, path: ConnectionPath, phoneContro
     is StageAction.Step -> path.steps.firstOrNull { it.id == action.step }?.let { StageCommand.Step(action.action, it) }
 }
 
-internal enum class StageNoticeTarget { RESTART, CAR_SETTINGS, GUIDE }
+internal enum class StageNoticeTarget { RESTART, CAR_SETTINGS, TRUSTED_HTTPS, GUIDE }
 internal fun stageNoticeTarget(notice: StageNotice): StageNoticeTarget = when (notice) {
     StageNotice.DISPLAY_CHANGED -> StageNoticeTarget.RESTART
     StageNotice.CHOOSE_CAR -> StageNoticeTarget.CAR_SETTINGS
+    StageNotice.TRUSTED_HTTPS -> StageNoticeTarget.TRUSTED_HTTPS
     StageNotice.SET_UP -> StageNoticeTarget.GUIDE
 }
 

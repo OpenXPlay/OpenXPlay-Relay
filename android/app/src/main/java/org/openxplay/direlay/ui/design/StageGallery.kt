@@ -47,13 +47,13 @@ import org.openxplay.direlay.ui.*
         InsetToggleRow(title = stringResource(R.string.stage_show_carplay), checked = phoneControl, onChange = { phoneControl = it })
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        listOf(R.string.car_none, R.string.stage_notice_display, R.string.stage_notice_car, R.string.home2_setup).forEachIndexed { index, label ->
+        listOf(R.string.car_none, R.string.stage_notice_display, R.string.stage_notice_car, R.string.home2_setup, R.string.stage_notice_https).forEachIndexed { index, label ->
             FilterChip(notice == index, { notice = index }, modifier = Modifier.heightIn(min = 48.dp), label = { Text(stringResource(label)) })
         }
     }
     val sample = samples[selected.coerceIn(samples.indices)]
     val flags = StageFlags(countdown = countdown, busy = busy, displayChanged = notice == 1,
-        carIncomplete = notice == 2, setupCompleted = notice != 3, phoneControl = phoneControl)
+        carIncomplete = notice == 2, setupCompleted = notice != 3, trustedHttpsRequired = notice == 4, phoneControl = phoneControl)
     val view = presentStage(sample.path, flags)
     val complete: () -> Unit = {
         if (countdown) { countdown = false; onPreview() }
