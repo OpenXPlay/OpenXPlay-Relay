@@ -36,7 +36,7 @@ class LogsPresentationTest {
             R.string.logs_copy to "复制链接", R.string.logs_empty to "这段时间没有记录到日志。", R.string.logs_no_internet to "没有可用的互联网连接。",
             R.string.logs_consent_title to "上传前请确认",
             R.string.logs_consent_destination to "日志将上传到 logs.openxplay.org，仅用于帮助排查连接失败等问题，不提供公开下载。",
-            R.string.logs_consent_retention to "上传后 48 小时内可以查看回执；日志最多保存 72 小时，到期后自动从我们的服务器永久删除。这个 App 上传的日志会通过随机标识自动关联。",
+            R.string.logs_consent_retention to "上传后 48 小时内可以查看回执；日志最多保存 30 天，到期后自动从我们的服务器永久删除。这个 App 上传的日志会通过随机标识自动关联。",
             R.string.logs_consent_alternative to "如果介意，可以改选“保存到本机文件”：App 不会联网，再由你私下发给作者。", R.string.logs_consent_agree to "同意并上传")
         labels.forEach { (id, text) -> assertEquals(text, chinese.getString(id)); assertNotEquals(text, context.getString(id)) }
         assertEquals("Logs stay on this phone by default, covering about the last 24 hours. They are uploaded only after you choose “Upload online and show QR code” and agree.", context.getString(R.string.logs_privacy_local))
