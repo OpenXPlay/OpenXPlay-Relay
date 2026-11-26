@@ -883,6 +883,9 @@
     <string name="carlife_auto">USB / Wi-Fi (automatic)</string>
     <string name="carlife_usb_summary">CarLife · USB</string>
     <string name="carlife_wifi_summary">CarLife · Wi-Fi</string>
+    <string name="carlife_civic_usb">Honda Civic · USB</string>
+    <string name="carlife_civic_summary">CarLife (Honda Civic)</string>
+    <string name="carlife_civic_hint">2022 Civic with factory CarLife. Use the car’s USB data port.</string>
     <string name="carlife_usb_hint">Open CarLife on the car. Connect this Android phone to the car’s CarLife USB port with a data cable. The iPhone connects wirelessly to Android.</string>
     <string name="carlife_wifi_hint">Requires wireless CarLife on the car. Open it and put Android and the car on the same Wi-Fi, or connect the car to Android’s hotspot. The iPhone can connect to Android wirelessly or by USB.</string>
     <string name="carlife_auto_hint">Accept USB or Wi-Fi CarLife, as in earlier versions. Choose a specific connection in the guide.</string>

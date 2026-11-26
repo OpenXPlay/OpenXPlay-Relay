@@ -18,7 +18,7 @@ class UserConfigImport(val settings: RelaySettings, val developer: DeveloperOver
 /**
  * Version-1 key catalogue (enum strings are pinned in enumWires below):
  * - outputs: non-empty unique array of web/carlink/dlna/miracast/carlife; wins over legacy output keys.
- * - carlifeTransport: auto (legacy dual transport), usb, or wifi; USB requires wireless iPhone input.
+ * - carlifeTransport: auto, usb, wifi, or honda-civic. USB presets require wireless iPhone input.
  * - carlifeTargetAddress: empty for broadcast discovery, or a numeric IPv4 head-unit address.
  * - Legacy output: web/carlink/both; networkMode: device-hotspot/shared-wifi/wifi-direct.
  * - dlnaOutput, miracastOutput: booleans; dlnaRenderer: null or {udn: string, name: string}.
@@ -71,6 +71,7 @@ object UserConfigCodec {
         FrameRatePreference.FPS_40 to "40", FrameRatePreference.FPS_45 to "45", FrameRatePreference.FPS_50 to "50",
         FrameRatePreference.FPS_55 to "55", FrameRatePreference.FPS_60 to "60",
         CarlifeTransport.AUTO to "auto", CarlifeTransport.USB to "usb", CarlifeTransport.WIFI to "wifi",
+        CarlifeTransport.HONDA_CIVIC to "honda-civic",
         ConnectionMode.USB to "usb", ConnectionMode.WIRELESS to "wireless", ConnectionMode.LAST_USED to "last-used",
         MfiTarget.LOCAL to "local", MfiTarget.USB_CH341 to "usb-ch341", MfiTarget.I2C to "i2c", MfiTarget.REMOTE to "remote",
         ManualHotspotBand.AUTO to "auto", ManualHotspotBand.GHZ_2_4 to "ghz-2-4", ManualHotspotBand.GHZ_5 to "ghz-5",

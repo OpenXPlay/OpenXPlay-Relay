@@ -874,6 +874,9 @@
     <string name="carlife_auto">USB / Wi-Fi（自动）</string>
     <string name="carlife_usb_summary">CarLife · USB 有线</string>
     <string name="carlife_wifi_summary">CarLife · Wi-Fi 无线</string>
+    <string name="carlife_civic_usb">本田思域版 · USB 有线</string>
+    <string name="carlife_civic_summary">CarLife（本田思域版）</string>
+    <string name="carlife_civic_hint">适用于 2022 款第十一代思域的原厂 CarLife，请使用车机的 USB 数据接口。</string>
     <string name="carlife_usb_hint">打开车机 CarLife，用数据线将安卓手机连接到车机的 CarLife USB 接口。iPhone 无线连接安卓手机。</string>
     <string name="carlife_wifi_hint">车机需要支持无线 CarLife。打开它，让安卓手机和车机接入同一 Wi-Fi，或让车机连接安卓手机热点。iPhone 可通过无线或 USB 连接安卓手机。</string>
     <string name="carlife_auto_hint">沿用原来的自动接入方式，接受 USB 或 Wi-Fi CarLife。引导中可明确选择连接方式。</string>

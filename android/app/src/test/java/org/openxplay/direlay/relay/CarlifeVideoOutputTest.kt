@@ -24,13 +24,13 @@ class CarlifeVideoOutputTest {
         mapOf(ScreenId.MAIN to DisplayInfo(avc.width, avc.height, 160, 60.0, frameSize = Viewport(avc.width, avc.height))),
         2, setOf(KeyCode.BACK), emptySet(), false)
 
-    private class Destination(private val caps: OutputCapabilities) : ProjectionOutput {
+    private class Destination(private val caps: OutputCapabilities? = null) : ProjectionOutput {
         override val id = "carlife"
         lateinit var host: OutputHost
         val formats = mutableListOf<VideoFormat?>()
         val frames = mutableListOf<VideoFrame>()
         var closed = false
-        override fun open(host: OutputHost) { this.host = host; host.capabilities(caps) }
+        override fun open(host: OutputHost) { this.host = host; caps?.let(host::capabilities) }
         override fun onSession(state: SessionState, config: SessionConfig) {}
         override fun onVideoFormat(screen: ScreenId, format: VideoFormat?) { formats += format }
         override fun onVideoFrame(frame: VideoFrame) { frames += frame }
@@ -135,5 +135,83 @@ class CarlifeVideoOutputTest {
         assertTrue(logs.any { it.first == "video_failed" && "error=IllegalStateException" in it.second && "encoder_unavailable" in it.second })
         assertTrue(logs.any { it.first == "video_decision" && "failed=true" in it.second && "source=H265" in it.second })
         failed.close()
+    }
+
+    @Test fun civicUsesTheReceiverScreenWhenCarlifeReportsTheSourceAsItsCodedSize() {
+        val destination = Destination()
+        val host = Host()
+        val picture = Viewport(800, 480)
+        val attempts = mutableListOf<VideoCompatibility.Target>()
+        val output = carlifeVideoOutput(destination, VideoPipeline.Factory { _, target, _ ->
+            attempts += target
+            throw IllegalStateException("encoder_unavailable")
+        }, receiverBounds = Viewport(1920, 1080))
+
+        output.open(host)
+        output.onVideoFormat(ScreenId.MAIN, avc)
+        assertNull(destination.formats.single())
+        assertTrue(attempts.isEmpty())
+
+        destination.host.capabilities(capabilities.copy(displays = mapOf(ScreenId.MAIN to
+            DisplayInfo(picture.width, picture.height, 160, 60.0, frameSize = Viewport(avc.width, avc.height)))))
+
+        assertEquals(picture, host.capabilities.single().displays.getValue(ScreenId.MAIN).frameSize)
+        assertEquals(picture, attempts.single().geometry?.picture)
+        assertTrue(destination.formats.all { it == null })
+        output.close()
+    }
+
+    @Test fun wiredNegotiationReplaysAnAlreadyRunningCompatibleFormat() {
+        val destination = Destination()
+        val output = carlifeVideoOutput(destination, VideoPipeline.Factory { _, _, _ ->
+            error("Compatible H.264 must pass through")
+        }, receiverBounds = Viewport(1920, 1080))
+        val firstFrame = frame(VideoCodec.H264)
+        output.open(Host())
+        output.onVideoFormat(ScreenId.MAIN, avc)
+        output.onVideoFrame(firstFrame)
+        assertNull(destination.formats.single())
+        assertTrue(destination.frames.isEmpty())
+
+        destination.host.capabilities(capabilities)
+        output.onVideoFrame(firstFrame)
+        assertSame(avc, destination.formats.last())
+        assertSame(firstFrame, destination.frames.single())
+
+        output.resetReceiverCapabilities()
+        assertNull(destination.formats.last())
+        output.onVideoFrame(firstFrame)
+        assertEquals(1, destination.frames.size)
+        destination.host.capabilities(capabilities)
+        assertSame(avc, destination.formats.last())
+        output.close()
+    }
+
+    @Test fun wiredRenegotiationRetriesAFailedEncoderWithIdenticalReceiverCapabilities() {
+        val destination = Destination()
+        var attempts = 0
+        lateinit var pipeline: Pipeline
+        val output = carlifeVideoOutput(destination, VideoPipeline.Factory { _, target, listener ->
+            if (++attempts == 1) throw IllegalStateException("encoder_unavailable")
+            Pipeline(listener, target).also { pipeline = it }
+        }, receiverBounds = Viewport(1920, 1080))
+        output.open(Host())
+        output.onVideoFormat(ScreenId.MAIN, hevc)
+        destination.host.capabilities(capabilities)
+        output.onVideoFrame(frame(VideoCodec.H265))
+        assertEquals(1, attempts)
+        assertNull(destination.formats.last())
+        assertTrue(destination.frames.isEmpty())
+
+        output.resetReceiverCapabilities()
+        destination.host.capabilities(capabilities)
+        assertEquals(2, attempts)
+        assertTrue(pipeline.started)
+        pipeline.listener.format(avc)
+        val encoded = frame(VideoCodec.H264)
+        pipeline.listener.frame(encoded)
+        assertSame(avc, destination.formats.last())
+        assertSame(encoded, destination.frames.single())
+        output.close()
     }
 }

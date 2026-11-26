@@ -43,7 +43,7 @@ fun RelayRuntime.pathInput(local: PathLocal): PathInput {
             WirelessNetworkChoice.EXISTING_WIFI -> NetworkPlan.SHARED_WIFI
         }, pathOutputs(settings), local.setupSummary, local.setupValid, when (settings.carlifeTransport) {
             org.openxplay.direlay.settings.CarlifeTransport.AUTO -> CarlifeLink.AUTO
-            org.openxplay.direlay.settings.CarlifeTransport.USB -> CarlifeLink.USB
+            CarlifeTransport.USB, CarlifeTransport.HONDA_CIVIC -> CarlifeLink.USB
             org.openxplay.direlay.settings.CarlifeTransport.WIFI -> CarlifeLink.WIFI
         }),
         relay = RelayInput(local.identity, local.identityLabel, local.permissionsGranted, local.permissionsTotal,

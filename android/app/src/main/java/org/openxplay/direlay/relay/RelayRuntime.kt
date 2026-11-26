@@ -1071,27 +1071,37 @@ class RelayRuntime(private val context: Context,
         val connection = carlifeGeneration.incrementAndGet()
         carlifeConnection = connection
         carlifeToken = token
-        carlifeLog(connection, "output_config", "transport=${plan.transport.wire} discovery=${if (!plan.transport.tcp) "off" else if (plan.targetAddress.isBlank()) "broadcast" else "directed"} " +
+        carlifeLog(connection, "output_config", "transport=${plan.transport.wire} followReceiverSize=${plan.followReceiverSize} " +
+            "discovery=${if (!plan.transport.tcp) "off" else if (plan.targetAddress.isBlank()) "broadcast" else "directed"} " +
             "target=${plan.targetAddress.takeIf(String::isNotBlank) ?: "-"} fpsCeiling=60 " +
             "sourceCodec=${settings.videoCodec.wire} sourceFps=${settings.frameRate} " +
             "selectedScreen=${carPlayScreen?.profile?.let { "${it.width}x${it.height}" } ?: "-"}")
         carlifeStatus = null
         carlifeStateSinceMillis = System.currentTimeMillis()
-        val destination = org.openxplay.stream.carlife.CarlifeOutput(
-            org.openxplay.stream.carlife.CarlifeConfig(targetAddress = plan.targetAddress.takeIf(String::isNotBlank),
-                tcp = plan.transport.tcp, discovery = plan.transport.tcp, fps = 60),
+        val config = org.openxplay.stream.carlife.CarlifeConfig(targetAddress = plan.targetAddress.takeIf(String::isNotBlank),
+            tcp = plan.transport.tcp, discovery = plan.transport.tcp, fps = 60)
+        lateinit var converted: CarlifeVideoOutput
+        val destination = org.openxplay.stream.carlife.CarlifeOutput(config,
             org.openxplay.stream.carlife.CarlifeDeviceInfo(android.os.Build.BRAND, android.os.Build.MODEL, android.os.Build.VERSION.SDK),
             object : org.openxplay.stream.carlife.CarlifeListener {
-                override fun onStatus(state: org.openxplay.stream.carlife.CarlifeStatus) = wirelessUpdate {
-                    if (carlifeToken !== token) return@wirelessUpdate
-                    if (carlifeStatus?.state != state.state) {
-                        carlifeStateSinceMillis = System.currentTimeMillis()
-                        carlifeLog(connection, "state", "state=${state.state} frames=${state.frames} " +
-                            "width=${state.width} height=${state.height} reason=${redactFailureMessage(state.reason.orEmpty())}")
-                    } else if (state.frames != carlifeStatus?.frames && (state.frames == 1L || state.frames % 300L == 0L)) {
-                        carlifeLog(connection, "video_sent", "frames=${state.frames} width=${state.width} height=${state.height}")
+                override fun onStatus(status: org.openxplay.stream.carlife.CarlifeStatus) {
+                    if (carlifeToken !== token) return
+                    if (plan.followReceiverSize && (status.state == org.openxplay.stream.carlife.CarlifeState.LISTENING ||
+                            status.state == org.openxplay.stream.carlife.CarlifeState.CONNECTED)) {
+                        // The protocol worker must clear stale media before handling the next receiver's size request.
+                        converted.resetReceiverCapabilities()
                     }
-                    carlifeStatus = state
+                    wirelessUpdate {
+                        if (carlifeToken !== token) return@wirelessUpdate
+                        if (carlifeStatus?.state != status.state) {
+                            carlifeStateSinceMillis = System.currentTimeMillis()
+                            carlifeLog(connection, "state", "state=${status.state} frames=${status.frames} " +
+                                "width=${status.width} height=${status.height} reason=${redactFailureMessage(status.reason.orEmpty())}")
+                        } else if (status.frames != carlifeStatus?.frames && (status.frames == 1L || status.frames % 300L == 0L)) {
+                            carlifeLog(connection, "video_sent", "frames=${status.frames} width=${status.width} height=${status.height}")
+                        }
+                        carlifeStatus = status
+                    }
                 }
                 override fun diagnostic(event: String) {
                     if (carlifeToken === token) carlifeLog(connection, "protocol", event)
@@ -1101,7 +1111,8 @@ class RelayRuntime(private val context: Context,
             carlifeLog(connection, "usb", message)
         } else null
         carlifeAccessory = accessory
-        val converted = carlifeVideoOutput(destination) { event, detail ->
+        val receiverBounds = if (plan.followReceiverSize) org.openxplay.stream.core.Viewport(config.maxWidth, config.maxHeight) else null
+        converted = carlifeVideoOutput(destination, receiverBounds = receiverBounds) { event, detail ->
             if (carlifeToken === token) carlifeLog(connection, event, detail)
         }
         val output = object : ProjectionOutput by converted {

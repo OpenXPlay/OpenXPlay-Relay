@@ -90,8 +90,10 @@ class CarlifeUsbEventsTest {
             activity.newIntent(Intent(UsbManager.ACTION_USB_ACCESSORY_ATTACHED))
             drain()
         }
-        fun broadcast(action: String) {
-            context.sendBroadcast(Intent(action).setPackage(context.packageName))
+        fun broadcast(action: String, accessory: UsbAccessory? = null) {
+            val intent = Intent(action).setPackage(context.packageName)
+            accessory?.let { intent.putExtra(UsbManager.EXTRA_ACCESSORY, it) }
+            context.sendBroadcast(intent)
             shadowOf(Looper.getMainLooper()).idle()
             drain()
         }
@@ -152,6 +154,24 @@ class CarlifeUsbEventsTest {
             h.start()
             assertEquals(1, h.usb.requests)
             assertEquals(0, h.usb.opens)
+        }
+    }
+
+    @Test fun detachReplacesTheLeaseEvenWhenTheSameAccessoryAlreadyReappeared() {
+        Harness().use { h ->
+            val car = accessory()
+            h.usb.setAttachedUsbAccessory(car)
+            h.usb.grantPermission(car)
+            h.start()
+            assertEquals(1, h.usb.opens)
+
+            h.broadcast(UsbManager.ACTION_USB_ACCESSORY_DETACHED, accessory(model = "Other"))
+            assertEquals(1, h.usb.opens)
+
+            h.broadcast(UsbManager.ACTION_USB_ACCESSORY_DETACHED, car)
+            h.attached()
+            assertEquals(2, h.usb.opens)
+            assertEquals(listOf("usb_connected", "usb_detached", "usb_connected"), h.reports.toList())
         }
     }
 

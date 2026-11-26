@@ -38,10 +38,10 @@ class AndroidCarlifeAccessory(
     private var lastObservation: String? = null
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            // Read the current system inventory and permission, never trust broadcast extras.
+            // The detach extra identifies the old lease. A new open still requires live inventory and permission.
             when (intent.action) {
                 permissionAction -> refresh(permissionResult = true)
-                UsbManager.ACTION_USB_ACCESSORY_DETACHED -> refresh()
+                UsbManager.ACTION_USB_ACCESSORY_DETACHED -> refresh(permissionResult = false, detached = detachedAccessory(intent))
             }
         }
     }
@@ -66,13 +66,24 @@ class AndroidCarlifeAccessory(
     /** Activity attach intents and resumes request an inventory scan, never USB I/O on the UI thread. */
     fun refresh() = refresh(permissionResult = false)
 
+    @Suppress("DEPRECATION")
+    private fun detachedAccessory(intent: Intent): UsbAccessory? =
+        if (Build.VERSION.SDK_INT >= 34) intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY, UsbAccessory::class.java)
+        else intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY)
+
     @Synchronized
-    private fun refresh(permissionResult: Boolean) {
+    private fun refresh(permissionResult: Boolean, detached: UsbAccessory? = null) {
         if (!registered || lifecycle.closed) return
         try {
             worker.execute {
                 if (lifecycle.closed) return@execute
-                runCatching { reconcile(permissionResult) }.onFailure { failure ->
+                runCatching {
+                    if (detached != null) {
+                        if (requested == detached) requested = null
+                        if (lifecycle.contains(detached) && lifecycle.clear()) report("usb_detached")
+                    }
+                    reconcile(permissionResult)
+                }.onFailure { failure ->
                     observe("usb_error:${failure.javaClass.simpleName}")
                 }
             }

@@ -33,6 +33,7 @@ class TranscodingOutput(
     private val onFailure: (VideoFormat, Exception) -> Unit = { _, _ -> },
     private val carlinkGeometry: Boolean = false,
     private val reportGeometry: (CarlinkGeometry?, VideoCompatibility.Mode) -> Unit = { _, _ -> },
+    private val waitForReceiverCapabilities: Boolean = false,
 ) : ProjectionOutput by inner {
     private class Stream(val format: VideoFormat) {
         var decision = VideoCompatibility.Decision(VideoCompatibility.Mode.PASSTHROUGH)
@@ -56,6 +57,13 @@ class TranscodingOutput(
     fun setCarlinkArea(x: Int, y: Int, width: Int, height: Int, canvasWidth: Int, canvasHeight: Int) = locked {
         requestedArea = Viewport(canvasWidth, canvasHeight) to CarlinkCrop(x, y, width, height)
         streams.values.forEach { configure(it) }
+    }
+
+    /** Keeps the current source format available for the next receiver negotiation. */
+    internal fun resetReceiverCapabilities() = locked {
+        if (capabilities == null) return@locked
+        capabilities = null
+        streams.values.forEach { configure(it, force = true) }
     }
     // Requests to the host are queued under the gate and sent after it is released: the hub can call
     // back into the input while the input thread holds its own lock and waits for this gate.
@@ -116,7 +124,9 @@ class TranscodingOutput(
             // transcoder for it requests another keyframe and loops; keep the running pipeline.
             if (existing.pipeline != null && !existing.failed) return@locked
             if (existing.decision.mode != VideoCompatibility.Mode.TRANSCODE || existing.failed) {
-                inner.onVideoFormat(screen, format)
+                if (!waitForReceiverCapabilities || existing.decision.mode == VideoCompatibility.Mode.PASSTHROUGH) {
+                    inner.onVideoFormat(screen, format)
+                }
                 return@locked
             }
         }
@@ -144,11 +154,15 @@ class TranscodingOutput(
             }.maxOrNull() else null
             CarlinkGeometry.calculate(canvas.width, canvas.height, crop, display.viewport ?: Viewport(display.widthPx, display.heightPx), display.frameSize, limit)
         } else null
-        // No capability report yet: preserve the existing output's negotiation behavior.
-        val decision = capabilities?.let { caps -> VideoCompatibility.decide(stream.format, caps.decoders.filter {
-            (if (it.codecString.startsWith("avc1.")) VideoCodec.H264 else VideoCodec.H265) in deliveryCodecs
-        }, geometry) }
-            ?: VideoCompatibility.Decision(VideoCompatibility.Mode.PASSTHROUGH)
+        val caps = capabilities
+        val decision = when {
+            waitForReceiverCapabilities && caps?.displays?.get(stream.format.screen)?.frameSize == null ->
+                VideoCompatibility.Decision(VideoCompatibility.Mode.UNSUPPORTED)
+            caps != null -> VideoCompatibility.decide(stream.format, caps.decoders.filter {
+                (if (it.codecString.startsWith("avc1.")) VideoCodec.H264 else VideoCodec.H265) in deliveryCodecs
+            }, geometry)
+            else -> VideoCompatibility.Decision(VideoCompatibility.Mode.PASSTHROUGH)
+        }
         if (!force && stream.pipeline != null && decision.mode == VideoCompatibility.Mode.TRANSCODE &&
             decision.target?.copy(geometry = null) == stream.decision.target?.copy(geometry = null) &&
             decision.target?.geometry?.picture == stream.decision.target?.geometry?.picture &&
@@ -171,7 +185,9 @@ class TranscodingOutput(
         stream.decision = decision
         reportChange(stream.format, decision, false)
         if (decision.mode != VideoCompatibility.Mode.TRANSCODE) {
-            inner.onVideoFormat(stream.format.screen, if (geometry?.identity == false) null else stream.format)
+            val hold = geometry?.identity == false ||
+                (waitForReceiverCapabilities && decision.mode == VideoCompatibility.Mode.UNSUPPORTED)
+            inner.onVideoFormat(stream.format.screen, stream.format.takeUnless { hold })
             return
         }
         inner.onVideoFormat(stream.format.screen, null)
@@ -203,8 +219,8 @@ class TranscodingOutput(
                         area = area?.let { it.copy(area = CarlinkCrop(0, 0, it.canvas.width, it.canvas.height), picture = it.canvas) }
                         reportGeometry(area, VideoCompatibility.Mode.PASSTHROUGH)
                     }
-                    inner.onVideoFormat(stream.format.screen, stream.format)
-                    requestKeyFrame(stream.format.screen)
+                    inner.onVideoFormat(stream.format.screen, stream.format.takeUnless { waitForReceiverCapabilities })
+                    if (!waitForReceiverCapabilities) requestKeyFrame(stream.format.screen)
                 }
             }
         }
@@ -221,7 +237,8 @@ class TranscodingOutput(
         val stream = streams[frame.screen] ?: return@synchronized
         val pipeline = stream.pipeline
         if (pipeline != null) pipeline.offer(frame)
-        else if (stream.decision.mode == VideoCompatibility.Mode.PASSTHROUGH || stream.failed) inner.onVideoFrame(frame)
+        else if (stream.decision.mode == VideoCompatibility.Mode.PASSTHROUGH || (stream.failed && !waitForReceiverCapabilities))
+            inner.onVideoFrame(frame)
     }
 
     override fun onSession(state: SessionState, config: SessionConfig) = synchronized(gate) {

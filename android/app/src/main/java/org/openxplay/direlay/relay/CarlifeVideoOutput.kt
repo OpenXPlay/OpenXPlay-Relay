@@ -3,6 +3,7 @@
 // Created by riko chen on 2026-11-02
 package org.openxplay.direlay.relay
 
+import org.openxplay.direlay.settings.CarDisplayFit
 import org.openxplay.direlay.video.MediaCodecPipeline
 import org.openxplay.direlay.video.TranscodingOutput
 import org.openxplay.direlay.video.VideoPipeline
@@ -12,10 +13,34 @@ import org.openxplay.stream.core.*
 internal fun carlifeVideoOutput(
     destination: ProjectionOutput,
     factory: VideoPipeline.Factory = MediaCodecPipeline.factory,
+    receiverBounds: Viewport? = null,
     diagnostic: (String, String) -> Unit = { _, _ -> },
-): ProjectionOutput {
+): CarlifeVideoOutput {
     val formats = mutableMapOf<ScreenId, String>()
     val delivered = object : ProjectionOutput by destination {
+        override fun open(host: OutputHost) {
+            destination.open(if (receiverBounds == null) host else object : OutputHost by host {
+                override fun capabilities(capabilities: OutputCapabilities) {
+                    val display = capabilities.displays[ScreenId.MAIN]
+                    if (display == null || display.widthPx <= 0 || display.heightPx <= 0) {
+                        host.capabilities(capabilities)
+                        return
+                    }
+                    val scale = minOf(1.0, receiverBounds.width.toDouble() / display.widthPx,
+                        receiverBounds.height.toDouble() / display.heightPx)
+                    val picture = Viewport((display.widthPx * scale / 2).toInt().coerceAtLeast(8) * 2,
+                        (display.heightPx * scale / 2).toInt().coerceAtLeast(8) * 2)
+                    val blocks = CarDisplayFit.macroblocks(picture.width, picture.height)
+                    val selected = capabilities.copy(
+                        decoders = capabilities.decoders.filter {
+                            CarDisplayFit.h264MaxMacroblocks(it.codecString)?.let { limit -> blocks <= limit } == true
+                        },
+                        displays = capabilities.displays + (ScreenId.MAIN to display.copy(frameSize = picture)))
+                    host.capabilities(selected)
+                }
+            })
+        }
+
         override fun onVideoFormat(screen: ScreenId, format: VideoFormat?) {
             val key = format?.let { "codec=${it.codec} size=${it.width}x${it.height} fps=${it.fpsHint ?: "-"} profile=${it.codecString}" } ?: "none"
             synchronized(formats) {
@@ -28,6 +53,7 @@ internal fun carlifeVideoOutput(
     val capabilitiesLock = Any()
     val converted = TranscodingOutput(delivered, factory,
         deliveryCodecs = setOf(VideoCodec.H264), carlinkGeometry = true,
+        waitForReceiverCapabilities = receiverBounds != null,
         report = { source, decision, failed ->
             val target = decision.target
             val geometry = target?.geometry
@@ -56,19 +82,27 @@ internal fun carlifeVideoOutput(
                 "error=${failure.javaClass.simpleName} cause=${failure.cause?.javaClass?.simpleName ?: "-"} " +
                 "detail=${failure.message.orEmpty().filterNot(Character::isISOControl).take(240)}")
         })
-    var sessionKey: Pair<SessionState, SessionConfig>? = null
-    return object : ProjectionOutput by converted {
-        override fun onSession(state: SessionState, config: SessionConfig) {
-            synchronized(this) {
-                val key = state to config
-                if (sessionKey != key) {
-                    sessionKey = key
-                    val main = config.screens[ScreenId.MAIN]
-                    diagnostic("oxp_session", "session=${state.id.value} phase=${state.phase} " +
-                        "screen=0 codec=${main?.codec ?: "-"} size=${main?.let { "${it.width}x${it.height}" } ?: "-"} fps=${main?.fps ?: "-"}")
-                }
+    return CarlifeVideoOutput(converted, diagnostic)
+}
+
+internal class CarlifeVideoOutput(
+    private val converted: TranscodingOutput,
+    private val diagnostic: (String, String) -> Unit,
+) : ProjectionOutput by converted {
+    private var sessionKey: Pair<SessionState, SessionConfig>? = null
+
+    fun resetReceiverCapabilities() = converted.resetReceiverCapabilities()
+
+    override fun onSession(state: SessionState, config: SessionConfig) {
+        synchronized(this) {
+            val key = state to config
+            if (sessionKey != key) {
+                sessionKey = key
+                val main = config.screens[ScreenId.MAIN]
+                diagnostic("oxp_session", "session=${state.id.value} phase=${state.phase} " +
+                    "screen=0 codec=${main?.codec ?: "-"} size=${main?.let { "${it.width}x${it.height}" } ?: "-"} fps=${main?.fps ?: "-"}")
             }
-            converted.onSession(state, config)
         }
+        converted.onSession(state, config)
     }
 }
