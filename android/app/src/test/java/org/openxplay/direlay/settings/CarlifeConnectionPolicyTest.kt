@@ -16,11 +16,14 @@ class CarlifeConnectionPolicyTest {
 
     @Test fun explicitCarTransportsOpenOnlyTheirOwnLinkAndLegacyOpensBoth() {
         for ((transport, usb, tcp) in listOf(Triple(CarlifeTransport.AUTO, true, true),
-            Triple(CarlifeTransport.USB, true, false), Triple(CarlifeTransport.WIFI, false, true))) {
-            val chosen = CarlifeConnectionPolicy.choose(base, transport)
+            Triple(CarlifeTransport.USB, true, false), Triple(CarlifeTransport.WIFI, false, true),
+            Triple(CarlifeTransport.HONDA_CIVIC, true, false))) {
+            val chosen = CarlifeConnectionPolicy.choose(base.copy(carlifeTargetAddress = "192.168.5.220"), transport)
             val plan = requireNotNull(CarlifeConnectionPolicy.output(chosen))
             assertEquals(usb, plan.transport.usb)
             assertEquals(tcp, plan.transport.tcp)
+            assertEquals(if (tcp) "192.168.5.220" else "", plan.targetAddress)
+            assertEquals(transport == CarlifeTransport.HONDA_CIVIC, plan.followReceiverSize)
             assertEquals(if (usb && !tcp) ConnectionMode.WIRELESS else ConnectionMode.USB, chosen.connectionMode)
             chosen.validate(wireless = false)
         }

@@ -24,11 +24,13 @@ fun carlifeOption(transport: CarlifeTransport) = when (transport) {
     CarlifeTransport.AUTO -> RadioOption(R.string.carlife_auto, R.string.carlife_auto_hint)
     CarlifeTransport.USB -> RadioOption(R.string.carlife_usb, R.string.carlife_usb_hint)
     CarlifeTransport.WIFI -> RadioOption(R.string.carlife_wifi, R.string.carlife_wifi_hint)
+    CarlifeTransport.HONDA_CIVIC -> RadioOption(R.string.carlife_civic_usb, R.string.carlife_civic_hint)
 }
 fun carlifeSummary(transport: CarlifeTransport) = when (transport) {
     CarlifeTransport.AUTO -> R.string.ui_carlife
     CarlifeTransport.USB -> R.string.carlife_usb_summary
     CarlifeTransport.WIFI -> R.string.carlife_wifi_summary
+    CarlifeTransport.HONDA_CIVIC -> R.string.carlife_civic_summary
 }
 fun carlifeNetworkOption(settings: RelaySettings, choice: WirelessNetworkChoice): RadioOption {
     if (!CarlifeConnectionPolicy.usbOutput(settings)) return networkOption(choice)
@@ -59,7 +61,7 @@ fun carlifeRoute(settings: RelaySettings, wireless: Boolean) = CarlifeRoute(
         WirelessNetworkChoice.EXISTING_WIFI -> R.string.network_wifi
     }, when (settings.carlifeTransport) {
         CarlifeTransport.AUTO -> R.string.carlife_auto_link
-        CarlifeTransport.USB -> R.string.carlife_usb_link
+        CarlifeTransport.USB, CarlifeTransport.HONDA_CIVIC -> R.string.carlife_usb_link
         CarlifeTransport.WIFI -> R.string.network_wifi
     })
 
@@ -67,7 +69,9 @@ fun carlifeRoute(settings: RelaySettings, wireless: Boolean) = CarlifeRoute(
     val route = carlifeRoute(settings, wireless)
     val description = stringResource(R.string.carlife_route_description, stringResource(route.iphone), stringResource(route.car))
     val carWireless = when (settings.carlifeTransport) {
-        CarlifeTransport.AUTO -> null; CarlifeTransport.USB -> false; CarlifeTransport.WIFI -> true
+        CarlifeTransport.AUTO -> null
+        CarlifeTransport.USB, CarlifeTransport.HONDA_CIVIC -> false
+        CarlifeTransport.WIFI -> true
     }
     BoxWithConstraints(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description }) {
         // Stack the route before enlarged captions would break device names into individual letters.
