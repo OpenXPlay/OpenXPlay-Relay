@@ -1112,9 +1112,21 @@ class RelayRuntime(private val context: Context,
         } else null
         carlifeAccessory = accessory
         val receiverBounds = if (plan.followReceiverSize) org.openxplay.stream.core.Viewport(config.maxWidth, config.maxHeight) else null
-        converted = carlifeVideoOutput(destination, receiverBounds = receiverBounds) { event, detail ->
+        val diagnostic: (String, String) -> Unit = { event, detail ->
             if (carlifeToken === token) carlifeLog(connection, event, detail)
         }
+        val audio = CarlifeAudioOutput(destination, diagnostic = diagnostic, onClosed = {
+            wirelessUpdate {
+                if (carlifeToken === token) {
+                    carlifeToken = null
+                    carlifeAccessory = null
+                    carlifeStatus = null
+                    carlifeLifecycle.ended()
+                    configureCarlife()
+                }
+            }
+        })
+        converted = carlifeVideoOutput(audio, receiverBounds = receiverBounds, diagnostic = diagnostic)
         val output = object : ProjectionOutput by converted {
             override fun open(host: org.openxplay.stream.core.OutputHost) {
                 carlifeLog(connection, "output_open", "transport=${plan.transport.wire}")
@@ -1123,16 +1135,7 @@ class RelayRuntime(private val context: Context,
             }
             override fun close() {
                 carlifeLog(connection, "output_close", "by=local")
-                try { accessory?.close(); converted.close() }
-                finally { wirelessUpdate {
-                    if (carlifeToken === token) {
-                        carlifeToken = null
-                        carlifeAccessory = null
-                        carlifeStatus = null
-                        carlifeLifecycle.ended()
-                        configureCarlife()
-                    }
-                } }
+                try { accessory?.close() } finally { converted.close() }
             }
         }
         try {
